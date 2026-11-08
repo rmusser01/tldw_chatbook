@@ -512,7 +512,9 @@ ARCH_REVIEW_TARGETS = (
 )
 #: Owner decision (2026-11-06): suites runnable again after being red in no PR
 #: lane, in their own job, serial under --storage-lease-guard. Sandboxed suites
-#: first, then the bootstrap_profile ones (TASK-32873).
+#: first, then the bootstrap_profile ones (TASK-32873), except a sandboxed suite
+#: whose path reads no config in-process, which may follow them (the pixel
+#: buddy file below).
 RECOVERED_SUITES_TARGETS = (
     # TASK-39043: TASK-38973's repaired stub-screen suites, ~86 s serial each.
     "Tests/Backup_Recovery/test_console_config_sync_lifetime.py",
@@ -533,8 +535,11 @@ RECOVERED_SUITES_TARGETS = (
     # the stores they open (130 live leases before).
     "Tests/Library/test_library_ingest_runner.py",
     # TASK-39124: the built-in pixel buddy file, no Persona_Visual file ran on
-    # a PR lane before. Sandboxed, yet last: it passed after the
-    # bootstrap_profile suites in every timed run of the step.
+    # a PR lane before. Sandboxed, yet last: nothing on its path reads config
+    # in-process, so the bootstrap enrollment cannot reach it.
+    # BuddyLibrary.ensure_builtin and ChaChaNotes take no config, its readiness
+    # cases patch get_user_data_dir, and with no app_config the Buddy-preference
+    # migration returns before its writer (library.migrate_legacy_selection).
     "Tests/Persona_Visual/test_builtin_pixel_migu_buddy.py",
 )
 DREAMS_ADMISSION_TARGETS = (
@@ -1309,7 +1314,8 @@ def test_recovered_suites_lane_is_one_serial_guarded_minimal_python_312_job() ->
     """Owner decision (2026-11-06): the recovered suites' own bounded job.
 
     One invocation under --storage-lease-guard, sandboxed suites before the
-    bootstrap_profile ones, and each file in no other PR-lane step.
+    bootstrap_profile ones (bar a sandboxed suite that reads no config
+    in-process), and each file in no other PR-lane step.
     """
     workflow = _workflow("derived-artifacts.yml")
     job = workflow["jobs"]["recovered-suites"]

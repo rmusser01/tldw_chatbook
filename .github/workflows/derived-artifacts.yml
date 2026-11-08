@@ -1338,7 +1338,9 @@ jobs:
     #
     # One invocation, sandboxed suites first, then the bootstrap_profile ones
     # (module pytestmark): their enrollment would break a sandboxed suite that
-    # followed them (TASK-32873).
+    # followed them and read config in-process (TASK-32873). A sandboxed
+    # suite whose path reads no config in-process may follow them; the step
+    # note names the one that does.
     name: PR lane (recovered suites)
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
     runs-on: ubuntu-latest
@@ -1362,9 +1364,12 @@ jobs:
       # TASK-39142's prompt-improvement and keyword-leg files, with TASK-39049's
       # keyword-leg pool retirement file beside them, and TASK-39049's Library
       # ingest runner. TASK-39124 appends the built-in pixel buddy file
-      # (sandboxed, ~2.5 min serial at load 105-117), last as asked; it passed
-      # there, after the bootstrap_profile suites, in every timed run of this
-      # step.
+      # (sandboxed, ~2.5 min serial at load 105-117), last as asked. It may
+      # follow the bootstrap_profile suites because nothing on its path reads
+      # config in-process: BuddyLibrary.ensure_builtin and ChaChaNotes take no
+      # config, its readiness cases patch get_user_data_dir, and with no
+      # app_config the Buddy-preference migration returns before its writer
+      # (Persona_Buddy/library.py, migrate_legacy_selection).
       - name: Run the recovered suites
         run: |
           pytest \
