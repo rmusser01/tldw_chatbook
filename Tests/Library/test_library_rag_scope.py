@@ -274,7 +274,7 @@ async def test_scoped_keyword_search_real_seams_returns_only_allowlisted_ids(
         }
     )
     scope = _scoped(**{SOURCE_TYPE_MEDIA: {str(media_in)}, SOURCE_TYPE_NOTE: {note_in}})
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search(
         "quarterly roadmap",
@@ -326,7 +326,7 @@ async def test_unscoped_keyword_search_real_seams_returns_everything(
             "timestamp": "2026-01-01T00:00:00Z",
         }
     )
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search(
         "quarterly roadmap", ("notes", "media", "conversations"), "search", top_k=10
@@ -432,7 +432,7 @@ async def test_scoped_keyword_search_excludes_conversations_and_diagnoses():
         notes_scope_service=notes_service,
         media_reading_scope_service=None,
     )
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
     scope = _scoped(**{SOURCE_TYPE_NOTE: {"n1"}})
 
     result = await service.search(
@@ -459,7 +459,7 @@ async def test_unscoped_keyword_search_includes_conversations_no_diagnostics():
         notes_scope_service=None,
         media_reading_scope_service=None,
     )
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search("q", ("conversations",), "search", top_k=5)
 
@@ -487,7 +487,7 @@ async def test_scoped_keyword_search_excludes_prompts_and_diagnoses():
         media_reading_scope_service=None,
         chachanotes_db=None,
     )
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
     scope = _scoped(**{SOURCE_TYPE_NOTE: {"n1"}})
 
     result = await service.search(
@@ -525,7 +525,7 @@ async def test_scoped_keyword_search_excludes_conversations_and_prompts_together
         notes_scope_service=notes_service,
         media_reading_scope_service=None,
     )
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
     scope = _scoped(**{SOURCE_TYPE_NOTE: {"n1"}})
 
     result = await service.search(
@@ -559,7 +559,7 @@ async def test_scoped_zero_results_count_covers_only_searched_source_types():
         media_reading_scope_service=None,
         chachanotes_db=None,
     )
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
     # Scope carries BOTH media and note allowlists, but this call only
     # searches "notes" -- the count must be 1 (notes), not 4 (media+notes).
     scope = _scoped(**{SOURCE_TYPE_MEDIA: {"m1", "m2", "m3"}, SOURCE_TYPE_NOTE: {"n1"}})
@@ -581,7 +581,7 @@ async def test_unscoped_keyword_search_includes_prompts_no_diagnostics():
         media_reading_scope_service=None,
         chachanotes_db=None,
     )
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search("q", ("prompts",), "search", top_k=5)
 
@@ -601,7 +601,7 @@ async def test_unscoped_call_without_scope_kwarg_is_byte_identical_to_explicit_n
         media_reading_scope_service=None,
         chachanotes_db=None,
     )
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     implicit = await service.search("q", ("notes",), "search", top_k=5)
     explicit = await service.search("q", ("notes",), "search", top_k=5, scope=None)
@@ -655,7 +655,7 @@ async def test_empty_scope_raises_value_error():
     """state=='empty' must never reach the service -- callers must
     short-circuit first (mirrors task-5's EMPTY short-circuit contract)."""
     app = SimpleNamespace()
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
     scope = EffectiveScope(state="empty", allowlist={}, cause="deleted-items")
 
     with pytest.raises(ValueError):
@@ -670,7 +670,7 @@ async def test_scoped_keyword_search_zero_results_marker():
         media_reading_scope_service=None,
         chachanotes_db=None,
     )
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
     scope = _scoped(**{SOURCE_TYPE_NOTE: {"n1", "n2"}})
 
     outcome = await service.search("q", ("notes",), "search", top_k=5, scope=scope)
@@ -699,7 +699,7 @@ async def test_scoped_semantic_search_sends_one_union_call_merged_by_score():
         }
     )
     app = SimpleNamespace(_rag_service=rag)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
     scope = _scoped(**{SOURCE_TYPE_MEDIA: {"m1"}, SOURCE_TYPE_NOTE: {"n1"}})
 
     result = await service.search("q", ("notes", "media"), "rag", top_k=5, scope=scope)
@@ -717,7 +717,7 @@ async def test_scoped_semantic_search_sends_one_union_call_merged_by_score():
 async def test_unscoped_semantic_search_issues_a_single_unrestricted_query():
     rag = _SpyRagService({"note": [_sem_item("n1", "note", 0.9)]})
     app = SimpleNamespace(_rag_service=rag)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search("q", ("notes",), "rag", top_k=5)
 
@@ -737,7 +737,7 @@ async def test_scoped_semantic_search_diagnostics_report_uncovered_source_types(
         }
     )
     app = SimpleNamespace(_rag_service=rag)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
     scope = _scoped(**{SOURCE_TYPE_MEDIA: {"m1"}, SOURCE_TYPE_NOTE: {"n1"}})
 
     result = await service.search("q", ("notes", "media"), "rag", top_k=5, scope=scope)
@@ -752,7 +752,7 @@ async def test_scoped_semantic_search_diagnostics_report_uncovered_source_types(
 async def test_scoped_semantic_search_zero_results_marker():
     rag = _SpyRagService({})
     app = SimpleNamespace(_rag_service=rag)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
     scope = _scoped(**{SOURCE_TYPE_NOTE: {"n1", "n2", "n3"}})
 
     outcome = await service.search("q", ("notes",), "rag", top_k=5, scope=scope)

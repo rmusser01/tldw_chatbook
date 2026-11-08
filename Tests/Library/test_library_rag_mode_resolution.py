@@ -278,7 +278,7 @@ async def test_hybrid_profile_unscoped_calls_engine_hybrid():
     """The whole point of the port: a hybrid profile actually reaches the
     engine's hybrid path (FTS leg + vector leg, RRF-fused)."""
     rag = _ProfileRagService(mode="hybrid", results=[_media_result()])
-    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
+    service = LibraryLocalRagSearchService.from_app(SimpleNamespace(_rag_service=rag))
 
     result = await service.search(
         "credential", ("notes", "media"), "rag", top_k=5, include_citations=True
@@ -303,7 +303,7 @@ async def test_hybrid_profile_with_active_scope_runs_fused_hybrid():
     nothing was diverted.
     """
     rag = _ProfileRagService(mode="hybrid", results=[_media_result()])
-    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
+    service = LibraryLocalRagSearchService.from_app(SimpleNamespace(_rag_service=rag))
     scope = _scoped(**{SOURCE_TYPE_MEDIA: {"media-1"}})
 
     result = await service.search("credential", ("media",), "rag", top_k=5, scope=scope)
@@ -339,7 +339,7 @@ async def test_scoped_hybrid_sends_one_allowlist_entry_per_scoped_source_type():
     Library's call.
     """
     rag = _ProfileRagService(mode="hybrid", results=[_media_result()])
-    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
+    service = LibraryLocalRagSearchService.from_app(SimpleNamespace(_rag_service=rag))
     scope = _scoped(**{SOURCE_TYPE_MEDIA: {"media-1"}, SOURCE_TYPE_NOTE: {"note-1"}})
 
     await service.search("credential", ("media", "notes"), "rag", top_k=5, scope=scope)
@@ -365,7 +365,7 @@ async def test_scoped_selection_with_no_servable_source_still_diverts():
     widen retrieval.
     """
     rag = _ProfileRagService(mode="hybrid", results=[_note_result()])
-    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
+    service = LibraryLocalRagSearchService.from_app(SimpleNamespace(_rag_service=rag))
     scope = _scoped(**{SOURCE_TYPE_MEDIA: {"media-1"}})
 
     result = await service.search(
@@ -403,7 +403,7 @@ async def test_scoped_prompts_only_selection_now_routes_hybrid_and_fails_closed(
     scope vocabulary today, and this is where that is written down.
     """
     rag = _ProfileRagService(mode="hybrid", results=[_note_result()])
-    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
+    service = LibraryLocalRagSearchService.from_app(SimpleNamespace(_rag_service=rag))
     scope = _scoped(**{SOURCE_TYPE_MEDIA: {"media-1"}})
 
     await service.search("credential", ("prompts",), "rag", top_k=5, scope=scope)
@@ -427,7 +427,7 @@ async def test_scoped_hybrid_with_no_rows_keeps_the_scope_recovery_state():
     change.
     """
     rag = _ProfileRagService(mode="hybrid", results=[])
-    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
+    service = LibraryLocalRagSearchService.from_app(SimpleNamespace(_rag_service=rag))
     scope = _scoped(**{SOURCE_TYPE_MEDIA: {"media-1", "media-2"}})
 
     result = await service.search("credential", ("media",), "rag", top_k=5, scope=scope)
@@ -460,7 +460,7 @@ async def test_hybrid_runs_for_any_fts_servable_source_without_media(
     getting semantic-only search precisely in the case the fix was for.
     """
     rag = _ProfileRagService(mode="hybrid", results=[result_row])
-    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
+    service = LibraryLocalRagSearchService.from_app(SimpleNamespace(_rag_service=rag))
 
     result = await service.search("credential", source_types, "rag", top_k=5)
 
@@ -483,7 +483,7 @@ async def test_hybrid_profile_with_only_unservable_sources_stays_semantic():
     source-type post-filter, turning a search into a silent empty result.
     """
     rag = _ProfileRagService(mode="hybrid", results=[_note_result()])
-    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
+    service = LibraryLocalRagSearchService.from_app(SimpleNamespace(_rag_service=rag))
 
     result = await service.search("credential", ("workspaces",), "rag", top_k=5)
 
@@ -502,7 +502,7 @@ async def test_hybrid_runs_for_a_prompts_only_selection():
     index that structurally cannot answer it.
     """
     rag = _ProfileRagService(mode="hybrid", results=[_prompt_result()])
-    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
+    service = LibraryLocalRagSearchService.from_app(SimpleNamespace(_rag_service=rag))
 
     result = await service.search("credential", ("prompts",), "rag", top_k=5)
 
@@ -526,7 +526,7 @@ async def test_plain_profile_routes_to_four_seam_keyword_path():
     notes = FakeNotesScopeService(
         rows=[{"id": "note-1", "title": "Runbook", "content": "Rotate the credential."}]
     )
-    service = LibraryLocalRagSearchService(
+    service = LibraryLocalRagSearchService.from_app(
         SimpleNamespace(_rag_service=rag, notes_scope_service=notes)
     )
 
@@ -544,7 +544,7 @@ async def test_semantic_profile_unchanged():
     """The default profile keeps today's exact payload -- same search_type,
     same backend label, no routing note to explain (nothing was diverted)."""
     rag = _ProfileRagService(mode="semantic", results=[_note_result()])
-    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
+    service = LibraryLocalRagSearchService.from_app(SimpleNamespace(_rag_service=rag))
 
     result = await service.search("credential", ("notes",), "rag", top_k=5)
 
@@ -585,7 +585,7 @@ async def test_index_empty_not_claimed_when_keyword_rows_present():
             ),
         ],
     )
-    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
+    service = LibraryLocalRagSearchService.from_app(SimpleNamespace(_rag_service=rag))
 
     result = await service.search("credential", ("media",), "rag", top_k=5)
 
@@ -617,7 +617,7 @@ async def test_semantic_leg_empty_note_never_fires_when_the_vector_leg_scored():
             )
         ],
     )
-    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
+    service = LibraryLocalRagSearchService.from_app(SimpleNamespace(_rag_service=rag))
 
     result = await service.search("credential", ("media",), "rag", top_k=5)
 
@@ -663,7 +663,7 @@ async def test_hybrid_coverage_separates_keyword_only_types_from_absent_ones():
             ),
         ],
     )
-    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
+    service = LibraryLocalRagSearchService.from_app(SimpleNamespace(_rag_service=rag))
 
     result = await service.search(
         "credential", ("notes", "media", "conversations"), "rag", top_k=5
@@ -687,7 +687,7 @@ async def test_hybrid_rows_without_a_fusion_block_are_never_called_keyword_only(
     pointed the other way.
     """
     rag = _ProfileRagService(mode="hybrid", results=[_media_result("media-1")])
-    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
+    service = LibraryLocalRagSearchService.from_app(SimpleNamespace(_rag_service=rag))
 
     result = await service.search("credential", ("media",), "rag", top_k=5)
 
@@ -732,7 +732,7 @@ async def test_profile_switch_mid_session_reroutes_and_renames_the_disclosure(
         # Profile A is the process-wide runtime; the app has no cache yet.
         ingestion_indexing.set_shared_rag_service(profile_a)
         app = SimpleNamespace(_rag_service=None, notes_scope_service=notes)
-        service = LibraryLocalRagSearchService(app)
+        service = LibraryLocalRagSearchService.from_app(app)
 
         first = await service.search("credential", ("notes", "media"), "rag", top_k=5)
 
@@ -771,7 +771,7 @@ async def test_injected_runtime_without_a_generation_stamp_still_wins(monkeypatc
     monkeypatch.setattr(rag_service_module, "embeddings_rag_deps_installed", _forbidden)
     monkeypatch.setattr(rag_service_module, "get_shared_rag_service", _forbidden)
     injected = _ProfileRagService(mode="hybrid", results=[_media_result()])
-    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=injected))
+    service = LibraryLocalRagSearchService.from_app(SimpleNamespace(_rag_service=injected))
     # Bump the generation so a naive "generation moved -> stale" rule would
     # wrongly discard the injected runtime.
     ingestion_indexing.set_shared_rag_service(None)

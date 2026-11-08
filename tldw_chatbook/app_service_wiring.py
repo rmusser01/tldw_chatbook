@@ -3305,7 +3305,7 @@ class ServiceWiringMixin(
         self.local_media_reading_service.notification_dispatcher = (
             self.notification_dispatch_service
         )
-        self.local_media_reading_service.notification_app = self
+        self.local_media_reading_service.notification_app = NotifyTarget(lambda *a, **k: self.notify(*a, **k))
         self.local_watchlists_service.notification_dispatcher = (
             self.notification_dispatch_service
         )

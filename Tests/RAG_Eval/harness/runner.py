@@ -323,7 +323,7 @@ def run_eval(
     if not modes:
         raise ValueError("refusing to run an eval over no modes")
 
-    seam = LibraryLocalRagSearchService(runtime.app)
+    seam = LibraryLocalRagSearchService.from_app(runtime.app)
     lookup = slug_lookup_from(runtime.slug_to_source)
     scope = tuple(source_types)
 

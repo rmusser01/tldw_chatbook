@@ -66,7 +66,7 @@ def _all_broken_app() -> SimpleNamespace:
 class TestSeamStates:
     @pytest.mark.asyncio
     async def test_unconfigured_seam_is_unavailable(self):
-        service = LibraryLocalRagSearchService(SimpleNamespace())
+        service = LibraryLocalRagSearchService.from_app(SimpleNamespace())
         state, rows = await service._search_prompts("q", 5)
         assert state is SeamState.UNAVAILABLE
         assert rows == []
@@ -75,7 +75,7 @@ class TestSeamStates:
     async def test_throwing_seam_is_failed_not_available(self):
         """THE BUG. A configured backend that raises used to return
         `(True, [])` -- claiming health while broken."""
-        service = LibraryLocalRagSearchService(_all_broken_app())
+        service = LibraryLocalRagSearchService.from_app(_all_broken_app())
         for coro in (
             service._search_notes("q", 5, "u"),
             service._search_media("q", 5),
@@ -92,7 +92,7 @@ class TestTotalFailure:
     async def test_total_failure_is_not_a_zero_row_success(self):
         """The headline. Before: a plain dict with results=[] -- a successful
         search that matched nothing."""
-        service = LibraryLocalRagSearchService(_all_broken_app())
+        service = LibraryLocalRagSearchService.from_app(_all_broken_app())
         outcome = await service.search("q", ALL_TYPES, "search", top_k=5)
         assert not isinstance(outcome, dict), (
             "a total backend failure must not present as a successful search"
@@ -108,13 +108,13 @@ class TestTotalFailure:
             LIBRARY_RAG_ANSWERABLE_RETRIEVAL_STATUSES,
         )
 
-        service = LibraryLocalRagSearchService(_all_broken_app())
+        service = LibraryLocalRagSearchService.from_app(_all_broken_app())
         outcome = await service.search("q", ALL_TYPES, "search", top_k=5)
         assert outcome.status not in LIBRARY_RAG_ANSWERABLE_RETRIEVAL_STATUSES
 
     @pytest.mark.asyncio
     async def test_total_failure_carries_a_recovery_state_naming_the_seams(self):
-        service = LibraryLocalRagSearchService(_all_broken_app())
+        service = LibraryLocalRagSearchService.from_app(_all_broken_app())
         outcome = await service.search("q", ALL_TYPES, "search", top_k=5)
         assert outcome.recovery_state is not None
         assert outcome.recovery_state.status_label
@@ -127,7 +127,7 @@ class TestAllUnavailableUnchanged:
         `failed`. This pin also catches the enum-truthiness trap -- an `Enum`
         member is truthy, so a gate left as `if not any(state ...)` would go
         silently inert and stop blocking."""
-        service = LibraryLocalRagSearchService(SimpleNamespace())
+        service = LibraryLocalRagSearchService.from_app(SimpleNamespace())
         outcome = await service.search("q", ALL_TYPES, "search", top_k=5)
         assert outcome.status == "blocked"
 
@@ -154,7 +154,7 @@ class TestPartialFailure:
             prompt_scope_service=ExplodingBackend("prompts"),
             notes_user_id="u",
         )
-        outcome = await LibraryLocalRagSearchService(app).search(
+        outcome = await LibraryLocalRagSearchService.from_app(app).search(
             "c", ("notes", "prompts"), "search", top_k=5
         )
         # survivors still returned
@@ -176,7 +176,7 @@ class TestPartialFailure:
                 return []
 
         app = SimpleNamespace(notes_scope_service=FakeNotesBackend(), notes_user_id="u")
-        outcome = await LibraryLocalRagSearchService(app).search(
+        outcome = await LibraryLocalRagSearchService.from_app(app).search(
             "q", ("notes",), "search", top_k=5
         )
         diagnostics = (
@@ -211,7 +211,7 @@ class TestUserVisibleNotice:
             prompt_scope_service=ExplodingBackend("prompts"),
             notes_user_id="u",
         )
-        outcome = await LibraryLocalRagSearchService(app).search(
+        outcome = await LibraryLocalRagSearchService.from_app(app).search(
             "c", ("notes", "prompts"), "search", top_k=5
         )
         diagnostics = (
@@ -233,7 +233,7 @@ class TestUserVisibleNotice:
                 return []
 
         app = SimpleNamespace(notes_scope_service=FakeNotesBackend(), notes_user_id="u")
-        outcome = await LibraryLocalRagSearchService(app).search(
+        outcome = await LibraryLocalRagSearchService.from_app(app).search(
             "q", ("notes",), "search", top_k=5
         )
         diagnostics = (

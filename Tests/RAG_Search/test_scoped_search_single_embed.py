@@ -137,7 +137,7 @@ async def test_library_scoped_semantic_single_search_union_allowlist():
             SOURCE_TYPE_NOTE: [_RagResult("n1", 0.9, SOURCE_TYPE_NOTE)],
         }
     )
-    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=fake))
+    service = LibraryLocalRagSearchService.from_app(SimpleNamespace(_rag_service=fake))
     scope = _scoped(**{SOURCE_TYPE_MEDIA: {"m1"}, SOURCE_TYPE_NOTE: {"n1"}})
 
     result = await service.search(
