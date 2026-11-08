@@ -89,7 +89,7 @@ All five reds were stale pins, not product defects. Base 8b762b52fa, 2026-11-07.
   - The service calling `complete_auxiliary(request, None)`: both recipe nodes red with "the service's complete_auxiliary call does not match the real gateway: … too many positional arguments" (AC#3).
   - The rule verdict returned ahead of the active run's copy: the run-copy node red.
 
-**Whole files (AC#1, second half): not met at this host's load.** Six whole-file runs at `-n 4` and load 42-98 each failed only on tests outside these five, all in `test_console_response_rules.py`:
+**Whole files (AC#1, second half): not met at this host's load.** Nine whole-file runs at `-n 4` and load 32-98 each failed only on tests outside these five, all in `test_console_response_rules.py`:
 - `test_fixture_failure_retires_held_transport[primary|helper]`;
 - `test_console_syncs_never_wait_for_a_config_rebuild[full-ui-held|full-ui]`;
 - `test_console_mount_refreshes_never_wait_for_a_config_rebuild[roleplay|mount]`.
