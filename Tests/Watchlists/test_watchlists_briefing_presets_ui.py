@@ -853,6 +853,7 @@ async def test_load_voice_options_degrades_to_empty_on_lookup_failure():
 # --- Screen wiring: the mount/dismiss round trip ----------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_open_briefing_preset_manager_notifies_when_briefings_db_unavailable():
     app = _build_test_app()
@@ -869,6 +870,7 @@ async def test_open_briefing_preset_manager_notifies_when_briefings_db_unavailab
     assert kwargs.get("severity") == "error"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_open_briefing_preset_manager_passes_built_options_to_the_modal():
     app = _build_test_app()
@@ -901,6 +903,7 @@ async def test_open_briefing_preset_manager_passes_built_options_to_the_modal():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_open_briefing_preset_manager_reloads_presets_only_when_something_changed():
     app = _build_test_app()
@@ -927,6 +930,7 @@ async def test_open_briefing_preset_manager_reloads_presets_only_when_something_
     assert [row["name"] for row in screen._loaded_briefing_presets] == ["New preset"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_open_briefing_preset_manager_leaves_preset_list_untouched_when_cancelled():
     app = _build_test_app()

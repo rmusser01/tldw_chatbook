@@ -111,6 +111,7 @@ def _status(db: SubscriptionsDB, table: str, row_id: int) -> str:
         ).fetchone()["status"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("stranded_status", ["running", "queued"])
 def test_a_stranded_run_is_failed_with_a_distinguishable_reason(db, stranded_status):
     """`queued` matters as much as `running`: nothing will ever dispatch it."""
@@ -126,6 +127,7 @@ def test_a_stranded_run_is_failed_with_a_distinguishable_reason(db, stranded_sta
     assert row["finished_at"], "a failed run must carry an end time"
 
 
+@pytest.mark.bootstrap_profile
 def test_finished_history_is_never_rewritten(db):
     source_id = _source(db)
     finished = {
@@ -142,6 +144,7 @@ def test_finished_history_is_never_rewritten(db):
     assert _run_row(db, stranded)["status"] == "failed"
 
 
+@pytest.mark.bootstrap_profile
 def test_an_existing_error_message_is_kept(db):
     """A run that recorded WHY it failed keeps its own text."""
     source_id = _source(db)
@@ -158,6 +161,7 @@ def test_an_existing_error_message_is_kept(db):
     assert _run_row(db, run_id)["error_msg"] == "upstream returned 503"
 
 
+@pytest.mark.bootstrap_profile
 def test_a_clean_database_sweeps_to_zero(db):
     source_id = _source(db)
     _run(db, source_id, "completed")
@@ -165,6 +169,7 @@ def test_a_clean_database_sweeps_to_zero(db):
     assert fail_interrupted_watchlist_runs(db, boundary.runs) == 0
 
 
+@pytest.mark.bootstrap_profile
 def test_the_sweep_is_idempotent(db):
     source_id = _source(db)
     _run(db, source_id, "running")
@@ -173,6 +178,7 @@ def test_the_sweep_is_idempotent(db):
     assert fail_interrupted_watchlist_runs(db, boundary.runs) == 0
 
 
+@pytest.mark.bootstrap_profile
 def test_reconcile_covers_runs_and_briefings_together(db):
     source_id = _source(db)
     run_id = _run(db, source_id, "running")
@@ -221,6 +227,7 @@ def test_one_failing_sweep_does_not_veto_the_others(db, monkeypatch):
 # `test_startup_reconcile_scheduler_race.py`; these pin the mechanism.
 
 
+@pytest.mark.bootstrap_profile
 def test_a_row_created_after_the_boundary_is_never_swept(db):
     """The whole point: this process's own in-flight work is out of reach."""
     source_id = _source(db)
@@ -240,6 +247,7 @@ def test_a_row_created_after_the_boundary_is_never_swept(db):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_the_boundary_protects_every_table_the_sweep_touches(db):
     """Briefings, scripts and audio get the same protection as runs."""
     source_id = _source(db)
@@ -276,6 +284,7 @@ def test_the_boundary_protects_every_table_the_sweep_touches(db):
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_an_empty_boundary_sweeps_nothing_at_all(db):
     """No boundary is a refusal to sweep, not a licence to sweep everything.
 
@@ -294,6 +303,7 @@ def test_an_empty_boundary_sweeps_nothing_at_all(db):
     assert _briefing_status(db, briefing) == "generating"
 
 
+@pytest.mark.bootstrap_profile
 def test_an_empty_table_yields_no_boundary_and_so_no_sweep(db):
     """`MAX(id)` of an empty table is NULL, which is the same refusal.
 
@@ -311,6 +321,7 @@ def test_an_empty_table_yields_no_boundary_and_so_no_sweep(db):
     assert _run_row(db, live)["status"] == "running"
 
 
+@pytest.mark.bootstrap_profile
 def test_deleting_the_highest_row_cannot_let_a_later_row_slip_under(db):
     """The AUTOINCREMENT guarantee the boundary rests on, asserted directly.
 

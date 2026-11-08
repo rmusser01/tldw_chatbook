@@ -162,6 +162,7 @@ def _destination_label(pane: SourcesPane) -> str:
 # --- AC#1: the destination is visible before submit -------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_form_shows_the_active_scope_as_its_destination():
     """AC#1, and the UAT's exact setup: a watchlist is selected in the rail."""
@@ -187,6 +188,7 @@ async def test_the_form_shows_the_active_scope_as_its_destination():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_form_shows_unassigned_when_no_watchlist_is_in_scope():
     """AC#1's other half: Unassigned is a destination, stated, not a silence."""
@@ -206,6 +208,7 @@ async def test_the_form_shows_unassigned_when_no_watchlist_is_in_scope():
         assert any(str(label) == "Reading" for label, _value in options)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.asyncio
 async def test_the_destination_control_carries_a_visible_label(size):
@@ -250,6 +253,7 @@ async def test_the_destination_control_carries_a_visible_label(size):
 # --- AC#2: it lands where the form said --------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_source_created_under_a_watchlist_scope_joins_that_watchlist():
     """AC#5, the regression the UAT asked for, asserted at the store."""
@@ -289,6 +293,7 @@ async def test_a_source_created_under_a_watchlist_scope_joins_that_watchlist():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_choosing_unassigned_really_leaves_the_source_unassigned():
     """AC#2 in the other direction: the control is not decorative.
@@ -332,6 +337,7 @@ async def test_choosing_unassigned_really_leaves_the_source_unassigned():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_changing_the_destination_survives_a_workbench_rebuild():
     """The destination is draft state, like the name and the url.
@@ -371,6 +377,7 @@ async def test_changing_the_destination_survives_a_workbench_rebuild():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_new_form_re_reads_the_scope_rather_than_the_last_submission():
     """Opening the form again aims it at where the user is NOW."""
@@ -399,6 +406,7 @@ async def test_a_new_form_re_reads_the_scope_rather_than_the_last_submission():
 # --- AC#3/#4: the form's own polish ------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.asyncio
 async def test_the_type_select_carries_a_visible_label(size):
@@ -440,6 +448,7 @@ async def test_the_type_select_carries_a_visible_label(size):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_ignore_selectors_block_is_absent_for_feed_types():
     """AC#4. CSS selectors cannot affect an RSS feed, so the form does not
@@ -458,6 +467,7 @@ async def test_the_ignore_selectors_block_is_absent_for_feed_types():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_ignore_selectors_block_returns_for_a_page_type():
     """AC#4's other half: gated, not deleted. A page type is reachable from
@@ -475,6 +485,7 @@ async def test_the_ignore_selectors_block_returns_for_a_page_type():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_feed_source_is_not_created_with_selectors_it_cannot_use():
     """The gate has to reach the payload, not just the paint.
@@ -503,6 +514,7 @@ async def test_a_feed_source_is_not_created_with_selectors_it_cannot_use():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.asyncio
 async def test_the_noise_help_text_fits_the_field_it_is_painted_on(size):
@@ -546,6 +558,7 @@ async def test_the_noise_help_text_fits_the_field_it_is_painted_on(size):
 # --- degradation --------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_destination_offers_nothing_when_membership_cannot_be_written():
     """The server backend has no wire path for membership, so the form must
@@ -575,6 +588,7 @@ async def test_the_destination_offers_nothing_when_membership_cannot_be_written(
         assert "Unassigned" in _destination_label(pane)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_destination_that_vanished_before_submit_is_reported_as_news():
     """Review wave, M3, driven through the real FK.
@@ -629,6 +643,7 @@ async def test_a_destination_that_vanished_before_submit_is_reported_as_news():
 # --- the watchlist set changes while a form is alive -------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_deleting_the_destination_watchlist_under_an_open_form_degrades():
     """Review wave, I3(a). `_resolved_destination`'s stale-draft fallback.
@@ -683,6 +698,7 @@ async def test_deleting_the_destination_watchlist_under_an_open_form_degrades():
         ), "the degrade must not cost the user the rest of their draft"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_watchlist_created_mid_session_reaches_the_next_form():
     """Review wave, I3(b). The `watchlist_choices` push.

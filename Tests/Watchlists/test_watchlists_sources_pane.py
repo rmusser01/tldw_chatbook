@@ -260,6 +260,7 @@ def _option_pairs(select: Select) -> list[tuple[str, object]]:
     return [(str(label), value) for label, value in select._options]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_create_form_stores_the_default_noise_selectors(tmp_path):
     """TASK-1362, spec §2: the prefill has to land in the database.
@@ -282,6 +283,7 @@ async def test_create_form_stores_the_default_noise_selectors(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clearing_the_noise_field_stores_no_selectors(tmp_path):
     """TASK-1362, spec §2: deliberate emptiness is honoured.
@@ -375,6 +377,7 @@ async def test_create_is_refused_when_a_noise_line_is_not_valid_css(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_valid_multi_line_noise_field_still_creates(tmp_path):
     """The refusal's other direction: real selectors must not be rejected.
@@ -1005,6 +1008,7 @@ async def _submit_unsupported_form_type(
     return pane, toasts
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unsupported_form_type_sitemap_is_rejected_before_event(tmp_path):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")

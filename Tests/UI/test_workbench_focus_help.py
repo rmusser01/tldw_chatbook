@@ -123,6 +123,7 @@ def test_console_help_map_covers_the_full_keyboard_vocabulary():
         assert token in rendered, token
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_help_panel_renders_body_and_close_button():
     app = _build_test_app()
@@ -152,6 +153,7 @@ async def test_help_panel_renders_body_and_close_button():
         assert len(app.screen_stack) == initial_depth
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_help_panel_escape_dismisses():
     app = _build_test_app()
@@ -177,6 +179,7 @@ async def test_help_panel_escape_dismisses():
         assert len(app.screen_stack) == initial_depth
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_help_panel_second_f1_dismisses():
     """task-4023 AC#4 (RC-10): F1 must toggle the help closed. Live at
@@ -235,6 +238,7 @@ async def test_generic_help_fallback_lists_screen_bindings():
     assert ("ctrl+n", "New note") in panel.state.shortcuts
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_generic_help_fallback_uses_app_bindings_when_screen_has_none():
     """A screen with no BINDINGS still gets truthful help from the app layer."""

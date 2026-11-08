@@ -68,6 +68,7 @@ async def _open_sources(pilot, host):
     return screen, pane
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_entirely_skipped_check_now_reports_the_skip_not_a_clean_zero():
     app = _build_test_app()

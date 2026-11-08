@@ -217,6 +217,7 @@ def _rendered_svg_text(svg: str) -> str:
     return "\n".join(rendered_rows)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("density", ("normal", "compact"))
 @pytest.mark.asyncio
 async def test_console_workbench_normal_and_compact_snapshots(density: str) -> None:
@@ -241,6 +242,7 @@ async def test_console_workbench_normal_and_compact_snapshots(density: str) -> N
             _assert_console_density_evidence(svg)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", ((130, 30), (140, 42), (160, 45)))
 @pytest.mark.parametrize("approval_count", (0, 3))
 @pytest.mark.asyncio
@@ -346,6 +348,7 @@ async def test_task_15783_console_collapsed_inspector_rail_visual_parity_sweep(
             _assert_svg_healthy(svg)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     (
         "size",
@@ -563,6 +566,7 @@ async def test_task_16001_console_directional_rail_buttons_visual_sweep(
             assert inspector_label in rendered_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workbench_standard_width_inspector_snapshot() -> None:
     app = _build_test_app()
@@ -596,6 +600,7 @@ async def test_console_workbench_standard_width_inspector_snapshot() -> None:
             _assert_console_inspector_evidence(svg)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workbench_command_palette_snapshot() -> None:
     app = _build_test_app()
@@ -635,6 +640,7 @@ async def test_console_workbench_command_palette_snapshot() -> None:
             _assert_svg_healthy(svg)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workbench_focus_state_snapshot() -> None:
     app = _build_test_app()

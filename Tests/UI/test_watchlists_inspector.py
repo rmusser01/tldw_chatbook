@@ -89,6 +89,7 @@ def _app_with_watchlists(watch_items):
     return app
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_inspector_pane_mounts_in_screen():
     """The production destination mounts its Inspector pane."""
@@ -101,6 +102,7 @@ async def test_inspector_pane_mounts_in_screen():
         assert screen.query_one("#watchlists-entity-inspector", InspectorPane)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selecting_source_updates_inspector_actions():
     sources = [
@@ -134,6 +136,7 @@ async def test_selecting_source_updates_inspector_actions():
         assert inspector.query_one("#inspector-delete-button", Button)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_entity_title_strips_control_characters():
     """Batch-4 review, I1. `title` is remote-derived (the same source name
@@ -172,6 +175,7 @@ async def test_entity_title_strips_control_characters():
         assert "Evil" in rendered and "31mFeed" in rendered
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selecting_run_updates_inspector_actions():
     runs = [
@@ -209,6 +213,7 @@ async def test_selecting_run_updates_inspector_actions():
         assert inspector.query_one("#inspector-delete-button", Button)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_inspector_delete_button_posts_delete_requested():
     sources = [
@@ -268,6 +273,7 @@ async def test_inspector_delete_button_posts_delete_requested():
 # drive from the tree.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_breadcrumb_shows_each_selected_level():
     app = _app_with_watchlists([])
@@ -294,6 +300,7 @@ async def test_breadcrumb_shows_each_selected_level():
         assert not inspector.query("#inspector-breadcrumb-1")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_actions_belong_to_the_deepest_level():
     app = _app_with_watchlists([])
@@ -319,6 +326,7 @@ async def test_actions_belong_to_the_deepest_level():
         assert not inspector.query("#inspector-preview-button")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selected_entity_is_deeper_than_scope():
     """A row picked within a pane (an item, here) is one level deeper than
@@ -349,6 +357,7 @@ async def test_selected_entity_is_deeper_than_scope():
         assert not inspector.query("#inspector-check-now-button")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clicking_breadcrumb_requests_scope_promotion():
     app = _app_with_watchlists([])
@@ -390,6 +399,7 @@ async def test_clicking_breadcrumb_requests_scope_promotion():
 # capability to render whatever `scope`/`breadcrumb_labels` it is given.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tree_scope_reaching_screen_populates_inspector_breadcrumb():
     app = _app_with_watchlists([])
@@ -418,6 +428,7 @@ async def test_tree_scope_reaching_screen_populates_inspector_breadcrumb():
         assert "Morning AI Brief" in " ".join(texts)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_inspector_breadcrumb_survives_a_left_rail_toggle():
     """`[` toggles the LEFT rail, not the right rail the Inspector lives in
@@ -464,6 +475,7 @@ async def test_inspector_breadcrumb_survives_a_left_rail_toggle():
 #   shallower breadcrumb did nothing.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_changing_scope_clears_a_stale_entity_selection():
     """Finding 1's exact reproduction: select an item under one watchlist,
@@ -513,6 +525,7 @@ async def test_changing_scope_clears_a_stale_entity_selection():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selecting_an_entity_clears_a_stale_watchlist_ancestor():
     """The other write direction of Finding 1: browse into a source via the
@@ -547,6 +560,7 @@ async def test_selecting_an_entity_clears_a_stale_watchlist_ancestor():
         assert inspector.query_one("#inspector-ingest-button", Button)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlist_level_actions_are_disabled_not_silently_broken():
     """Finding 2: Check now/Delete render for a bare watchlist scope but
@@ -573,6 +587,7 @@ async def test_watchlist_level_actions_are_disabled_not_silently_broken():
         assert "not implemented yet" in str(delete.tooltip or "")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clicking_breadcrumb_actually_promotes_the_scope():
     """Finding 3: the click reaching the screen must actually change what's
@@ -605,6 +620,7 @@ async def test_clicking_breadcrumb_actually_promotes_the_scope():
         assert not inspector.query("#inspector-breadcrumb-0")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stale_notification_mirror_does_not_resurrect_under_a_new_scope():
     """Task 5 fix round 3, Finding 1's remaining gap.
@@ -664,6 +680,7 @@ async def test_stale_notification_mirror_does_not_resurrect_under_a_new_scope():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_apply_tree_scope_clears_all_persisted_selection_shadows():
     """Pins Task 5 fix round 3's core change directly.
@@ -772,6 +789,7 @@ async def _save_selectors(pilot, screen, text: str) -> None:
     inspector.query_one("#inspector-save-selectors-button", Button).press()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_saving_selectors_writes_them_to_the_database():
     """Step 1: the field, the real message path, and the stored row."""
@@ -803,6 +821,7 @@ async def test_saving_selectors_writes_them_to_the_database():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_editor_renders_only_for_url_family_sources():
     """Step 1's second half: `ignore_selectors` shapes `URLMonitor.check_url`
@@ -906,6 +925,7 @@ _GEOMETRY_SELECTOR_SETS = {
 }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", _GEOMETRY_SIZES)
 @pytest.mark.parametrize(
     "selectors", _GEOMETRY_SELECTOR_SETS.values(), ids=_GEOMETRY_SELECTOR_SETS
@@ -1022,6 +1042,7 @@ async def test_the_editor_fits_on_screen_with_the_source_actions(selectors, size
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_saving_selectors_makes_the_next_check_rebaseline(monkeypatch):
     """The payoff (spec §3): the edit re-baselines instead of firing a phantom.
@@ -1099,6 +1120,7 @@ async def test_saving_selectors_makes_the_next_check_rebaseline(monkeypatch):
         assert _stored_items(db, source_id) == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_saving_selectors_does_not_recompose_the_screen():
     """Phase D Task 5's regression class, guarded for this new write path.
@@ -1181,6 +1203,7 @@ def test_cleared_selectors_stay_cleared_on_a_dual_shape_entity():
     assert InspectorPane._ignore_selectors_text(cleared) == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_save_that_cannot_write_says_so():
     """Fix round 1 (Minor 4): no silent no-op behind the Save button.
@@ -1207,6 +1230,7 @@ async def test_a_save_that_cannot_write_says_so():
         assert kwargs.get("severity") == "warning"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_successful_save_warns_that_the_next_check_loses_a_window():
     """Whole-branch review, Critical 1, third leg: warn at the source.
@@ -1260,6 +1284,7 @@ async def test_a_successful_save_warns_that_the_next_check_loses_a_window():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_save_with_an_unparseable_selector_is_refused_and_says_why(
     monkeypatch: pytest.MonkeyPatch,
@@ -1326,6 +1351,7 @@ async def test_a_save_with_an_unparseable_selector_is_refused_and_says_why(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_inspector_still_saves_every_shipped_default_selector():
     """The refusal's other direction, on the real prefill plus the hard cases.
@@ -1463,6 +1489,7 @@ def _queued_indicator_shown(pane: ArticleListPane, row_key: str) -> bool:
     return False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_queue_for_briefing_writes_the_flag_and_repaints_the_row():
     """Step 1: press the REAL button and follow the write all the way
@@ -1529,6 +1556,7 @@ async def test_pressing_queue_for_briefing_writes_the_flag_and_repaints_the_row(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_queue_write_runs_off_the_event_loop_thread():
     """Fix round 1: pin the load-bearing part of moving the write off the
@@ -1579,6 +1607,7 @@ async def test_the_queue_write_runs_off_the_event_loop_thread():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_item_status_write_runs_off_the_event_loop_thread():
     """TASK-1541: pin the load-bearing part of moving `_update_item_status`'s
@@ -1650,6 +1679,7 @@ async def test_the_item_status_write_runs_off_the_event_loop_thread():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_queue_for_briefing_again_unqueues_and_relabels():
     """Step 1's other half: toggling back clears the flag, the indicator,
@@ -1698,6 +1728,7 @@ async def test_pressing_queue_for_briefing_again_unqueues_and_relabels():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_queue_button_only_renders_for_item_selections():
     """AC#3 / mutation (c): a discriminator that always answers "item" (or
@@ -1732,6 +1763,7 @@ async def test_the_queue_button_only_renders_for_item_selections():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_failed_queue_write_leaves_the_flag_and_indicator_unchanged():
     """Honest failure: a DB error must not move the flag, must not repaint
@@ -1791,6 +1823,7 @@ async def test_a_failed_queue_write_leaves_the_flag_and_indicator_unchanged():
         assert screen.is_attached
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_queued_indicator_renders_from_the_normalized_flag_on_load():
     """Requirement 5: an item already queued (via a prior session, say)
@@ -1867,6 +1900,7 @@ _PAUSED_LOOKING_SERVER_SOURCE = {
 }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_resume_button_renders_only_for_a_paused_local_subscription():
     """AC#1/#2: the Resume affordance is selectively visible -- present for
@@ -1931,6 +1965,7 @@ async def test_resume_button_renders_only_for_a_paused_local_subscription():
         assert not inspector.query("#inspector-resume-button")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_resume_posts_resume_source_requested():
     """The real press, the real message -- not just that the button exists."""
@@ -2009,6 +2044,7 @@ async def _seed_paused_source(app):
     return db, service, source_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_resume_clears_the_pause_and_reloads_sources():
     """AC#2/#3 end to end: the real button, the real service call, the real
@@ -2103,6 +2139,7 @@ async def test_pressing_resume_clears_the_pause_and_reloads_sources():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_resume_on_a_source_that_is_not_paused_is_a_harmless_no_op():
     """The DB-level consistency guard: `resume_source` on a healthy source
@@ -2136,6 +2173,7 @@ async def test_resume_on_a_source_that_is_not_paused_is_a_harmless_no_op():
     assert resumed["paused"] is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_resume_refuses_a_non_local_subscription_entity():
     """task-2050 Qodo: `_resume_source` takes a RAW local db id, so a

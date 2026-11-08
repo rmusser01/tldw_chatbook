@@ -95,6 +95,7 @@ def _right_rail_is_collapsed(screen) -> bool:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 async def test_construction_seeds_region_layout_from_a_single_persisted_load(
     monkeypatch,
 ):
@@ -142,6 +143,7 @@ async def test_construction_seeds_region_layout_from_a_single_persisted_load(
     assert get_cli_setting("watchlists", "content_reader_migrated", None) is None
 
 
+@pytest.mark.bootstrap_profile
 async def test_construction_seeds_an_explicitly_saved_non_default_layout(monkeypatch):
     """The same construction-time seed must reflect a REAL persisted choice,
     not just the first-run default -- proving the fix derives from
@@ -172,6 +174,7 @@ async def test_construction_seeds_an_explicitly_saved_non_default_layout(monkeyp
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 async def test_cold_open_with_the_first_run_default_shows_the_collapsed_rail_with_no_swap(
     monkeypatch,
 ):
@@ -202,6 +205,7 @@ async def test_cold_open_with_the_first_run_default_shows_the_collapsed_rail_wit
     assert Region.RIGHT_RAIL not in builds.regions
 
 
+@pytest.mark.bootstrap_profile
 async def test_cold_open_honors_an_explicit_non_default_layout_with_no_swap(
     monkeypatch,
 ):
@@ -239,6 +243,7 @@ async def test_cold_open_honors_an_explicit_non_default_layout_with_no_swap(
     assert Region.LEFT_RAIL not in builds.regions
 
 
+@pytest.mark.bootstrap_profile
 async def test_cold_open_with_a_fresh_real_config_shows_the_collapsed_rail_with_no_swap(
     monkeypatch,
 ):
@@ -276,6 +281,7 @@ async def test_cold_open_with_a_fresh_real_config_shows_the_collapsed_rail_with_
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 async def test_mount_schedules_no_persist_worker_when_nothing_changed(monkeypatch):
     """`on_mount`'s `_apply_layout(self.region_layout)` call must be a true
     no-op: `_last_persisted_collapsed` already agrees (primed at

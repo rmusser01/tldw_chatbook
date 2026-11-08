@@ -202,6 +202,7 @@ async def _mount_failed_reader_return(screen, pilot, host, scope):
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_section_switch_never_recomposes_the_whole_screen():
     """The screen, its navigation bar and its footer are shared chrome that
     a tab click has nothing to say about.
@@ -235,6 +236,7 @@ async def test_a_section_switch_never_recomposes_the_whole_screen():
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_section_switch_leaves_both_rails_standing():
     """The rails carry no `active_section`-derived state at all.
 
@@ -267,6 +269,7 @@ async def test_a_section_switch_leaves_both_rails_standing():
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_inspector_preference_and_grip_action_are_shared_across_all_tabs(
     monkeypatch,
 ) -> None:
@@ -334,6 +337,7 @@ async def test_inspector_preference_and_grip_action_are_shared_across_all_tabs(
         assert writes == [RegionLayout(), expected_collapsed]
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_section_switch_builds_the_sections_pane_exactly_once():
     """One scoped region build per switch, and no duplicate pane rebuild.
 
@@ -417,6 +421,7 @@ async def test_a_section_switch_builds_the_sections_pane_exactly_once():
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_section_switch_shows_rows_that_land_while_the_swap_runs():
     """The window `_reseed_active_section_pane` closes.
 
@@ -478,6 +483,7 @@ async def test_a_section_switch_shows_rows_that_land_while_the_swap_runs():
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_rapid_management_section_requests_keep_captured_intent_on_failure(
     monkeypatch,
 ) -> None:
@@ -537,6 +543,7 @@ async def test_rapid_management_section_requests_keep_captured_intent_on_failure
         assert screen.query("#watchlists-rules-pane")
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_section_switch_moves_the_tab_strip_and_the_backend_control():
     """Behaviour, not just widget counts: the scoped swap must still render
     the section it was asked for, mark its tab, and disable the backend
@@ -622,6 +629,7 @@ async def test_a_section_switch_moves_the_tab_strip_and_the_backend_control():
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_clicking_a_tab_leaves_focus_on_that_tab_so_z_stays_refused():
     """A tab click must not hand the left rail to the next keypress.
 
@@ -671,6 +679,7 @@ async def test_clicking_a_tab_leaves_focus_on_that_tab_so_z_stays_refused():
         assert screen.query("#wl-region-left_rail"), "the rail is still expanded"
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_section_switch_driven_from_elsewhere_does_not_steal_focus():
     """The other half of the focus rule: only re-home focus the swap destroyed.
 
@@ -701,6 +710,7 @@ async def test_a_section_switch_driven_from_elsewhere_does_not_steal_focus():
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_tree_click_updates_each_affected_pane_at_most_once():
     """A tree click fans out to the Inspector, the tree's own highlight, the
     centre header and the section's rows. Each of those is one update; none
@@ -728,6 +738,7 @@ async def test_a_tree_click_updates_each_affected_pane_at_most_once():
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_briefing_selection_never_recomposes_the_pane():
     """The select->clear->reload pipeline, fully scoped.
 
@@ -788,6 +799,7 @@ async def test_a_briefing_selection_never_recomposes_the_pane():
 _SCRIPT_ROSTER = [{"name": "Narrator", "role_prompt": "Calm narration."}]
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_script_selection_never_recomposes_the_briefing_detail_region():
     """Task-16852: the identical guarantee, one level down.
 
@@ -849,6 +861,7 @@ async def test_a_script_selection_never_recomposes_the_briefing_detail_region():
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("failure", ["false", "exception"])
 async def test_browser_worker_failure_does_not_rebuild_reader(
     monkeypatch, failure: str
@@ -896,6 +909,7 @@ async def test_browser_worker_failure_does_not_rebuild_reader(
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_rail_toggle_rebuilds_only_the_toggled_region():
     """`[` collapses the left rail. Nothing in the centre or on the right has
     changed, so nothing there may be rebuilt."""
@@ -936,6 +950,7 @@ async def test_a_rail_toggle_rebuilds_only_the_toggled_region():
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_collapsing_items_rebuilds_neither_rail_nor_the_reader():
     """`z` on Feed Items removes only that side body."""
     app = _build_test_app()
@@ -961,6 +976,7 @@ async def test_collapsing_items_rebuilds_neither_rail_nor_the_reader():
         assert screen.query_one("#wl-region-content") is content_region
 
 
+@pytest.mark.bootstrap_profile
 async def test_an_inspector_toggle_leaves_the_centre_and_the_left_rail_alone():
     """`]` collapses the right rail: the mirror image of the `[` test, so a
     regression that scoped one rail and not the other cannot hide."""
@@ -984,6 +1000,7 @@ async def test_an_inspector_toggle_leaves_the_centre_and_the_left_rail_alone():
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_layout_toggle_mounts_far_fewer_widgets_than_a_full_rebuild():
     """The headline number, asserted rather than described.
 
@@ -1006,6 +1023,7 @@ async def test_a_layout_toggle_mounts_far_fewer_widgets_than_a_full_rebuild():
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_layout_keys_keep_independent_side_pane_state():
     """Scoping the rebuild must not couple the side-pane preferences."""
     app = _build_test_app()
@@ -1038,6 +1056,7 @@ async def test_layout_keys_keep_independent_side_pane_state():
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_collapsed_region_still_expands_from_its_grip_button() -> None:
     """The grip route through `RegionToggled`, not just the keybinding."""
     app = _build_test_app()
@@ -1056,6 +1075,7 @@ async def test_a_collapsed_region_still_expands_from_its_grip_button() -> None:
         assert screen.query("#wl-tree"), "and rebuild its content"
 
 
+@pytest.mark.bootstrap_profile
 async def test_resize_derives_effective_layout_without_persisting_preference(
     monkeypatch,
 ) -> None:
@@ -1079,6 +1099,7 @@ async def test_resize_derives_effective_layout_without_persisting_preference(
         assert writes == []
 
 
+@pytest.mark.bootstrap_profile
 async def test_resize_hysteresis_suppresses_sub_band_layout_requests(
     monkeypatch,
 ) -> None:
@@ -1138,6 +1159,7 @@ async def test_resize_hysteresis_suppresses_sub_band_layout_requests(
         assert screen.focused is focused
 
 
+@pytest.mark.bootstrap_profile
 async def test_zero_width_never_seeds_or_replaces_responsive_history(
     monkeypatch,
 ) -> None:
@@ -1196,6 +1218,7 @@ async def test_zero_width_never_seeds_or_replaces_responsive_history(
         assert len(requests) == positive_request_count
 
 
+@pytest.mark.bootstrap_profile
 async def test_article_focus_is_transient_and_restores_exact_preference() -> None:
     app = _build_test_app()
     async with _open(app) as (screen, pilot, host):
@@ -1220,6 +1243,7 @@ async def test_article_focus_is_transient_and_restores_exact_preference() -> Non
         assert screen._effective_region_layout == preferred
 
 
+@pytest.mark.bootstrap_profile
 async def test_article_focus_is_refused_off_read_without_layout_change() -> None:
     app = _build_test_app()
     async with _open(app, section="sources") as (screen, pilot, host):
@@ -1232,6 +1256,7 @@ async def test_article_focus_is_refused_off_read_without_layout_change() -> None
         assert (screen.region_layout, screen._effective_region_layout) == before
 
 
+@pytest.mark.bootstrap_profile
 async def test_responsive_grip_open_protects_preferred_open_pane(
     monkeypatch,
 ) -> None:
@@ -1266,6 +1291,7 @@ async def test_responsive_grip_open_protects_preferred_open_pane(
         assert not screen._effective_region_layout.is_collapsed(Region.RIGHT_RAIL)
 
 
+@pytest.mark.bootstrap_profile
 async def test_article_focus_preserves_priority_lease_and_hidden_baseline(
     monkeypatch,
 ) -> None:
@@ -1329,6 +1355,7 @@ async def test_article_focus_preserves_priority_lease_and_hidden_baseline(
         assert screen._effective_region_layout == hidden_baseline
 
 
+@pytest.mark.bootstrap_profile
 async def test_priority_lease_parks_across_management_and_replaces_in_read() -> None:
     app = _build_test_app()
     async with _open(app) as (screen, pilot, host):
@@ -1366,6 +1393,7 @@ async def test_priority_lease_parks_across_management_and_replaces_in_read() -> 
         assert screen._responsive_priority_lease is None
 
 
+@pytest.mark.bootstrap_profile
 async def test_priority_lease_clears_only_after_origin_mode_fits_past_dead_band() -> (
     None
 ):
@@ -1389,6 +1417,7 @@ async def test_priority_lease_clears_only_after_origin_mode_fits_past_dead_band(
         assert screen._responsive_priority_lease is None
 
 
+@pytest.mark.bootstrap_profile
 async def test_manual_grip_during_article_focus_exits_before_opening() -> None:
     app = _build_test_app()
     async with _open(app) as (screen, pilot, host):
@@ -1404,6 +1433,7 @@ async def test_manual_grip_during_article_focus_exits_before_opening() -> None:
         assert not screen._effective_region_layout.is_collapsed(Region.LEFT_RAIL)
 
 
+@pytest.mark.bootstrap_profile
 async def test_z_targets_only_collapsible_side_panes() -> None:
     app = _build_test_app()
     async with _open(app) as (screen, pilot, host):
@@ -1421,6 +1451,7 @@ async def test_z_targets_only_collapsible_side_panes() -> None:
         assert screen.region_layout == before
 
 
+@pytest.mark.bootstrap_profile
 async def test_z_ignores_stale_region_after_focus_moves_outside_workbench(
     monkeypatch,
 ) -> None:
@@ -1450,6 +1481,7 @@ async def test_z_ignores_stale_region_after_focus_moves_outside_workbench(
         assert writes == []
 
 
+@pytest.mark.bootstrap_profile
 async def test_mounted_layout_cycles_preserve_complete_reader_and_list_state() -> None:
     app = _build_test_app()
     watchlist_id = _seed(app, items=40)
@@ -1558,6 +1590,7 @@ async def test_mounted_layout_cycles_preserve_complete_reader_and_list_state() -
         await assert_restored()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("failure", [False, OSError("disk full")])
 async def test_layout_persistence_advances_only_after_current_success(
     monkeypatch,
@@ -1591,6 +1624,7 @@ async def test_layout_persistence_advances_only_after_current_success(
         assert screen._pending_persist_layout is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("failure", [False, OSError("disk full")])
 async def test_manual_focus_exit_retries_pending_preference_without_changing_it(
     monkeypatch,
@@ -1634,6 +1668,7 @@ async def test_manual_focus_exit_retries_pending_preference_without_changing_it(
         assert screen._manual_layout_rollback is None
 
 
+@pytest.mark.bootstrap_profile
 async def test_layout_persistence_rapid_toggles_drain_latest_request(
     monkeypatch,
 ) -> None:
@@ -1672,6 +1707,7 @@ async def test_layout_persistence_rapid_toggles_drain_latest_request(
         assert screen._layout_persist_draining is False
 
 
+@pytest.mark.bootstrap_profile
 async def test_layout_persist_disarm_is_atomic_with_a_newer_generation(
     monkeypatch,
 ) -> None:
@@ -1736,6 +1772,7 @@ async def test_layout_persist_disarm_is_atomic_with_a_newer_generation(
         assert screen._layout_persist_draining is False
 
 
+@pytest.mark.bootstrap_profile
 async def test_layout_acknowledgements_ignore_stale_tokens_and_clear_current_noop() -> (
     None
 ):
@@ -1782,6 +1819,7 @@ async def test_layout_acknowledgements_ignore_stale_tokens_and_clear_current_noo
         assert screen._manual_layout_rollback is None
 
 
+@pytest.mark.bootstrap_profile
 async def test_stale_failure_cannot_rollback_rekeyed_manual_intent(
     monkeypatch,
 ) -> None:
@@ -1842,6 +1880,7 @@ async def test_stale_failure_cannot_rollback_rekeyed_manual_intent(
         assert screen._manual_layout_rollback is None
 
 
+@pytest.mark.bootstrap_profile
 async def test_suppressed_manual_preference_change_does_not_reuse_stale_token(
     monkeypatch,
 ) -> None:
@@ -1893,6 +1932,7 @@ async def test_suppressed_manual_preference_change_does_not_reuse_stale_token(
         assert persisted == [preferred]
 
 
+@pytest.mark.bootstrap_profile
 async def test_failed_responsive_inspector_open_restores_layout_snapshots(
     monkeypatch,
 ) -> None:
@@ -1963,6 +2003,7 @@ async def test_failed_responsive_inspector_open_restores_layout_snapshots(
         workbench._content[Region.RIGHT_RAIL] = original_factory
 
 
+@pytest.mark.bootstrap_profile
 async def test_failed_manual_expansion_rolls_back_full_layout_intent(
     monkeypatch,
 ) -> None:
@@ -2036,6 +2077,7 @@ async def test_failed_manual_expansion_rolls_back_full_layout_intent(
         assert screen.region_layout == newer
 
 
+@pytest.mark.bootstrap_profile
 async def test_failed_manual_expansion_survives_resize_request_supersession(
     monkeypatch,
 ) -> None:
@@ -2081,6 +2123,7 @@ async def test_failed_manual_expansion_survives_resize_request_supersession(
         assert getattr(grip, "expanded") is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("focus_id", ["items-search-input", "items-status-select"])
 async def test_reopening_items_restores_exact_focused_descendant(focus_id) -> None:
     app = _build_test_app()
@@ -2101,6 +2144,7 @@ async def test_reopening_items_restores_exact_focused_descendant(focus_id) -> No
         assert screen.focused is screen.query_one(f"#{focus_id}")
 
 
+@pytest.mark.bootstrap_profile
 async def test_items_anchor_is_abandoned_once_when_query_context_changes(
     monkeypatch,
 ) -> None:
@@ -2136,6 +2180,7 @@ async def test_items_anchor_is_abandoned_once_when_query_context_changes(
         assert 0.01 not in scheduled
 
 
+@pytest.mark.bootstrap_profile
 async def test_management_scope_invalidates_reader_return_to_read_failure_is_honest():
     """A failed return never relabels rows parked under the prior scope."""
     app = _build_test_app()
@@ -2186,6 +2231,7 @@ async def test_management_scope_invalidates_reader_return_to_read_failure_is_hon
         assert screen.query_one("#watchlists-content-pane", ContentPane).item is None
 
 
+@pytest.mark.bootstrap_profile
 async def test_reader_retry_copy_renders_hostile_scope_label_literally():
     app = _build_test_app()
     watchlist_id = _seed(app)
@@ -2204,6 +2250,7 @@ async def test_reader_retry_copy_renders_hostile_scope_label_literally():
         assert getattr(rendered, "plain", str(rendered)) == expected
 
 
+@pytest.mark.bootstrap_profile
 async def test_reader_retry_click_successfully_publishes_committed_scope():
     app = _build_test_app()
     watchlist_id = _seed(app)
@@ -2226,6 +2273,7 @@ async def test_reader_retry_click_successfully_publishes_committed_scope():
             screen.query_one("#watchlists-items-retry-state")
 
 
+@pytest.mark.bootstrap_profile
 async def test_reader_retry_repeated_failure_retains_scoped_retry_authority():
     app = _build_test_app()
     watchlist_id = _seed(app)
@@ -2248,6 +2296,7 @@ async def test_reader_retry_repeated_failure_retains_scoped_retry_authority():
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_reader_retry_rapid_presses_coalesce_around_one_producer():
     app = _build_test_app()
     watchlist_id = _seed(app)
@@ -2287,6 +2336,7 @@ async def test_reader_retry_rapid_presses_coalesce_around_one_producer():
             screen.query_one("#watchlists-items-retry-state")
 
 
+@pytest.mark.bootstrap_profile
 async def test_reader_retry_scheduling_failure_keeps_retry_available(monkeypatch):
     app = _build_test_app()
     watchlist_id = _seed(app)
@@ -2315,6 +2365,7 @@ async def test_reader_retry_scheduling_failure_keeps_retry_available(monkeypatch
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_layout_persist_scheduler_and_thread_handoff_failures_are_retryable(
     monkeypatch,
 ) -> None:
@@ -2359,6 +2410,7 @@ async def test_layout_persist_scheduler_and_thread_handoff_failures_are_retryabl
         assert screen._layout_persist_draining is False
 
 
+@pytest.mark.bootstrap_profile
 async def test_management_expansion_failure_preserves_parked_feed_preference(
     monkeypatch,
 ) -> None:
@@ -2419,6 +2471,7 @@ async def test_management_expansion_failure_preserves_parked_feed_preference(
         assert screen.query("#wl-region-left_rail")
 
 
+@pytest.mark.bootstrap_profile
 async def test_section_factory_failure_rolls_back_mode_and_can_retry(
     monkeypatch,
 ) -> None:

@@ -83,6 +83,7 @@ async def _sources_pane(pilot, host):
     return screen, pane
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clicking_a_source_row_selects_that_row():
     app = _build_test_app()
@@ -111,6 +112,7 @@ async def test_clicking_a_source_row_selects_that_row():
         assert not pane.query_one("#sources-check-now-button", Button).disabled
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_check_now_acts_on_the_clicked_source():
     """The whole point: a click must make Check now run against THAT source."""
@@ -142,6 +144,7 @@ async def test_check_now_acts_on_the_clicked_source():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_preview_acts_on_the_clicked_source():
     app = _build_test_app()
@@ -170,6 +173,7 @@ async def test_preview_acts_on_the_clicked_source():
         assert calls[0] == SECOND["id"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delete_acts_on_the_clicked_source():
     """`Delete` lives on the Inspector, which is fed by the same selection."""
@@ -188,6 +192,7 @@ async def test_delete_acts_on_the_clicked_source():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_keyboard_cursor_movement_selects_the_row_it_lands_on():
     """AC#4: arrowing onto a row selects it the same way a click does."""
@@ -211,6 +216,7 @@ async def test_keyboard_cursor_movement_selects_the_row_it_lands_on():
         assert pane.selected_source["id"] == SOURCES[0]["id"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_focused_table_keeps_click_metadata_on_its_last_row():
     """The root cause, asserted directly.

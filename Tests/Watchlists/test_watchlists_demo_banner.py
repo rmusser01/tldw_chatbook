@@ -46,6 +46,7 @@ async def _open(app, *, size=(180, 50)):
         yield screen, pilot
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_banner_mounts_when_no_schedule_exists():
     app = _build_test_app(configured_default="watchlists_collections")
@@ -53,6 +54,7 @@ async def test_banner_mounts_when_no_schedule_exists():
         assert screen.query_one("#watchlists-daily-report-banner")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_banner_absent_when_a_schedule_exists():
     app = _build_test_app(configured_default="watchlists_collections")
@@ -63,6 +65,7 @@ async def test_banner_absent_when_a_schedule_exists():
         assert not screen.query("#watchlists-daily-report-banner")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dismiss_persists_and_removes_banner():
     app = _build_test_app(configured_default="watchlists_collections")
@@ -77,6 +80,7 @@ async def test_dismiss_persists_and_removes_banner():
         assert data["scheduling"]["daily_report_demo_banner_dismissed"] is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dismiss_after_worker_removed_banner_does_not_raise():
     """A Dismiss press queued just before demo-worker completion dispatches
@@ -101,6 +105,7 @@ async def test_dismiss_after_worker_removed_banner_does_not_raise():
         assert data["scheduling"]["daily_report_demo_banner_dismissed"] is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_demo_cta_starts_the_detached_demo_and_takes_banner_down():
     """Qodo #10: the banner CTA starts the service-owned demo task (never
@@ -128,6 +133,7 @@ async def test_demo_cta_starts_the_detached_demo_and_takes_banner_down():
         assert not screen.query("#watchlists-daily-report-banner")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_demo_cta_refused_start_keeps_banner():
     """Qodo #10/#11: when the service refuses a second start (a demo is

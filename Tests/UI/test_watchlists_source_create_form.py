@@ -207,6 +207,7 @@ def _option_pairs(select: Select) -> list[tuple[str, object]]:
     return [(str(label), value) for label, value in select._options]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_backend_switch_preserves_the_complete_open_create_draft():
     app = _build_test_app()
@@ -275,6 +276,7 @@ async def test_backend_switch_preserves_the_complete_open_create_draft():
         assert pane.query_one("#sources-create-watchlist", Select).value == watchlist_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.asyncio
 async def test_create_form_focuses_its_first_field_when_it_opens(size):
@@ -294,6 +296,7 @@ async def test_create_form_focuses_its_first_field_when_it_opens(size):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_sources_reload_interleaving_the_open_does_not_lose_focus():
     """TASK-1345: force the exact interleave the recompose/focus race needs.
@@ -372,6 +375,7 @@ async def test_a_sources_reload_interleaving_the_open_does_not_lose_focus():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_external_rebuild_does_not_yank_focus_back_to_the_first_field():
     """TASK-1345 regression guard for case 2 in `SourcesPane.recompose`.
@@ -429,6 +433,7 @@ async def test_an_external_rebuild_does_not_yank_focus_back_to_the_first_field()
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_external_rebuild_does_not_yank_focus_to_a_stale_pending_target():
     """TASK-1345 Qodo follow-up: FIX A's `recompose` ordering.
@@ -488,6 +493,7 @@ async def test_an_external_rebuild_does_not_yank_focus_to_a_stale_pending_target
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_confirm_create_focus_gives_up_after_max_attempts():
     """TASK-1345 Qodo follow-up: FIX B's bound on `_confirm_create_focus`.
@@ -541,6 +547,7 @@ async def test_confirm_create_focus_gives_up_after_max_attempts():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_confirm_create_focus_clears_on_any_in_form_field_not_only_target():
     """TASK-1345 Qodo follow-up: FIX B's any-in-form clear.
@@ -590,6 +597,7 @@ async def test_confirm_create_focus_clears_on_any_in_form_field_not_only_target(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.asyncio
 async def test_typing_straight_after_opening_the_form_lands_in_name(size):
@@ -607,6 +615,7 @@ async def test_typing_straight_after_opening_the_form_lands_in_name(size):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.parametrize(
     "runtime_backend,source_type,field_order",
@@ -661,6 +670,7 @@ async def test_tab_walks_the_create_form_in_visual_order(
             previous = (region.y, region.x)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.asyncio
 async def test_create_and_cancel_sit_side_by_side_like_the_dialog(size):
@@ -690,6 +700,7 @@ async def test_create_and_cancel_sit_side_by_side_like_the_dialog(size):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.parametrize(
     "runtime_backend,source_type,field_order",
@@ -745,6 +756,7 @@ async def test_the_whole_create_form_fits_inside_the_sources_pane(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.asyncio
 async def test_a_source_can_be_created_end_to_end_through_the_form(size):
@@ -803,6 +815,7 @@ async def test_a_source_can_be_created_end_to_end_through_the_form(size):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_submission_backend_governs_creation_filing_and_confirmation():
     app = _build_test_app()
@@ -888,6 +901,7 @@ async def test_submission_backend_governs_creation_filing_and_confirmation():
         assert reload_backends[-1] == "server"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_existing_source_is_filed_without_claiming_it_was_created():
     app = _build_test_app()
@@ -930,6 +944,7 @@ async def test_existing_source_is_filed_without_claiming_it_was_created():
     assert "created" not in notices[0].casefold()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unrelated_create_failure_keeps_the_generic_error_copy():
     host = _watchlists_host()
@@ -957,6 +972,7 @@ async def test_unrelated_create_failure_keeps_the_generic_error_copy():
         assert notices == [("Failed to create source.", "error")]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.asyncio
 async def test_clicking_any_row_of_the_name_input_focuses_it(size):
@@ -992,6 +1008,7 @@ async def test_clicking_any_row_of_the_name_input_focuses_it(size):
             await pilot.pause(0.05)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_creating_a_source_refreshes_the_table_and_the_tree_counts():
     """TASK-1040: creation only refreshed the view that read the data directly.
@@ -1068,6 +1085,7 @@ async def test_creating_a_source_refreshes_the_table_and_the_tree_counts():
 # be satisfied by a screen-level rebuild papering over an empty pane.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_background_refresh_does_not_tear_down_an_open_create_form():
     """AC#1: a half-typed create form survives a background load landing.
@@ -1119,6 +1137,7 @@ async def test_a_background_refresh_does_not_tear_down_an_open_create_form():
         assert pane.query("#sources-create-form"), "the form must still be open"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.asyncio
 async def test_closing_the_create_form_repopulates_the_same_pane(size):

@@ -52,6 +52,7 @@ async def _open_form(pilot, host):
     return screen, pane
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.asyncio
 async def test_frequency_control_is_on_screen_and_sized(size):
@@ -75,6 +76,7 @@ async def test_frequency_control_is_on_screen_and_sized(size):
         assert select.region.bottom <= size[1]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", SIZES)
 @pytest.mark.asyncio
 async def test_frequency_options_are_reachable_when_expanded(size):

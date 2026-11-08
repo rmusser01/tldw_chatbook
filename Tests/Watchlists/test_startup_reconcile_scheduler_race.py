@@ -74,6 +74,7 @@ def _run_rows(db: SubscriptionsDB) -> list[dict]:
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_startup_sweep_spares_a_run_the_scheduler_just_launched(
     tmp_path, monkeypatch
@@ -145,6 +146,7 @@ async def test_the_startup_sweep_spares_a_run_the_scheduler_just_launched(
             pass
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_sweep_still_fails_a_run_the_previous_process_stranded(
     tmp_path, monkeypatch
@@ -217,6 +219,7 @@ async def test_the_sweep_still_fails_a_run_the_previous_process_stranded(
             pass
 
 
+@pytest.mark.bootstrap_profile
 def test_the_app_captures_the_boundary_before_any_loop_exists():
     """Pins the fix where a reordering of `on_mount` cannot reach it.
 

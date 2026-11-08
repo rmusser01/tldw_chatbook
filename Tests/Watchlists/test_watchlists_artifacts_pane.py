@@ -403,6 +403,7 @@ def _assert_on_screen(widget, *, size, context: str) -> None:
 # --- 1. The section exists, and it does not drag CONTENT in with it -------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_artifacts_is_a_section_and_opening_it_leaves_content_unmounted():
     assert ("artifacts", "Artifacts") in SECTIONS, "the strip must offer Artifacts"
@@ -441,6 +442,7 @@ async def test_artifacts_is_a_section_and_opening_it_leaves_content_unmounted():
         assert screen.query_one("#watchlists-detail-title", Static)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_artifacts_says_it_is_local_like_the_notifications_inbox():
     """Parity with the one sibling section that has no server half.
@@ -466,6 +468,7 @@ async def test_artifacts_says_it_is_local_like_the_notifications_inbox():
         assert screen.query_one("#watchlists-backend-select").disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_picker_toolbar_selects_each_carry_a_visible_label():
     """TASK-2310: UAT read this strip as "Auto + featured / App default /
@@ -498,6 +501,7 @@ async def test_picker_toolbar_selects_each_carry_a_visible_label():
 # --- 2. Generate writes a briefing, and its body renders inert -------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_generate_records_a_complete_briefing_and_renders_its_body(monkeypatch):
     app = _build_test_app()
@@ -558,6 +562,7 @@ async def test_generate_records_a_complete_briefing_and_renders_its_body(monkeyp
         assert "evil.test/steal" in _painted(screen, detail.region)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_generation_refresh_cannot_overwrite_newer_artifacts_refresh(monkeypatch):
     """Generation reconciliation and manual refresh share one load group."""
@@ -635,6 +640,7 @@ async def test_generation_refresh_cannot_overwrite_newer_artifacts_refresh(monke
         assert pane.briefings == newest_snapshot
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_generation_refresh_selects_the_generated_briefing(monkeypatch):
     app = _build_test_app()
@@ -658,6 +664,7 @@ async def test_generation_refresh_selects_the_generated_briefing(monkeypatch):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_detached_cast_does_not_request_artifacts_refresh(monkeypatch):
     app = _build_test_app()
@@ -676,6 +683,7 @@ async def test_detached_cast_does_not_request_artifacts_refresh(monkeypatch):
     screen._request_briefings_refresh.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_detached_audio_does_not_request_artifacts_refresh(monkeypatch):
     app = _build_test_app()
@@ -694,6 +702,7 @@ async def test_detached_audio_does_not_request_artifacts_refresh(monkeypatch):
     screen._request_briefings_refresh.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 async def test_leaving_artifacts_stops_following_but_generation_continues(monkeypatch):
     app = _build_test_app()
     app.notify = Mock()
@@ -740,6 +749,7 @@ async def test_leaving_artifacts_stops_following_but_generation_continues(monkey
 # --- 3. A stuck `generating` row is recovered, and says so -----------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_stuck_generating_row_is_refused_then_recovered(monkeypatch):
     """The Generate path's OWN recovery-then-refuse-then-recover sequence.
@@ -826,6 +836,7 @@ async def test_a_stuck_generating_row_is_refused_then_recovered(monkeypatch):
         ), "the second press must have written a real briefing"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_zombie_generating_row_is_recovered_on_a_plain_artifacts_load():
     """Whole-branch review fix 3: the spec says a `generating` row not
@@ -865,6 +876,7 @@ async def test_a_zombie_generating_row_is_recovered_on_a_plain_artifacts_load():
         assert "This briefing is being written now." not in plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_live_in_flight_row_is_not_failed_by_a_concurrent_load():
     """The other half of fix 3's guard: a row THIS screen's own worker is
@@ -896,6 +908,7 @@ async def test_a_live_in_flight_row_is_not_failed_by_a_concurrent_load():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_claimed_watchlist_survives_an_artifacts_open():
     """Phase 4 Task 1, survey finding (a): the sibling of the test above,
@@ -933,6 +946,7 @@ async def test_a_claimed_watchlist_survives_an_artifacts_open():
         assert db.get_briefing(live_id)["error"] == "interrupted"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_generate_during_a_claimed_watchlist_refuses_without_falsifying_the_row(
     monkeypatch,
@@ -979,6 +993,7 @@ async def test_generate_during_a_claimed_watchlist_refuses_without_falsifying_th
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_generate_in_flight_race_toasts_the_specific_message_not_a_db_error(
     monkeypatch,
@@ -1028,6 +1043,7 @@ async def test_generate_in_flight_race_toasts_the_specific_message_not_a_db_erro
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_the_briefings_list_read_runs_off_the_event_loop_thread():
@@ -1070,6 +1086,7 @@ async def test_the_briefings_list_read_runs_off_the_event_loop_thread():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_refusal_toast_names_the_watchlist_actually_generating():
     """Whole-branch review fix 4: `_briefing_in_flight` is deliberately
@@ -1108,6 +1125,7 @@ async def test_the_refusal_toast_names_the_watchlist_actually_generating():
 # --- The guard is claimed at dispatch, not inside the worker ---------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_two_fast_presses_generate_exactly_once(monkeypatch):
     """Outcome half: hammering Generate must produce one briefing, not two.
@@ -1145,6 +1163,7 @@ async def test_two_fast_presses_generate_exactly_once(monkeypatch):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_guard_is_claimed_before_the_worker_runs(monkeypatch):
     """Mechanism half, and the deterministic one.
@@ -1190,6 +1209,7 @@ async def test_the_guard_is_claimed_before_the_worker_runs(monkeypatch):
 # --- 4. A database error is reported, not fatal ----------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_database_error_during_generation_does_not_exit_the_app(monkeypatch):
     app = _build_test_app()
@@ -1238,6 +1258,7 @@ async def test_a_database_error_during_generation_does_not_exit_the_app(monkeypa
 # --- TASK-2311: a failed generation surfaces its reason proactively --------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_failed_generation_toasts_its_reason_without_row_selection(monkeypatch):
     """UAT: Generate with no provider configured produced a bare "failed"
@@ -1296,6 +1317,7 @@ async def test_a_failed_generation_toasts_its_reason_without_row_selection(monke
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_failed_generation_toast_bounds_a_long_or_multiline_provider_reason(
     monkeypatch,
@@ -1369,6 +1391,7 @@ async def test_a_failed_generation_toast_bounds_a_long_or_multiline_provider_rea
         assert "…" in message, "a truncated reason must carry its own marker"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_provider_is_visible_before_generating():
     """TASK-2311, AC#3: the provider Generate will use must be visible
@@ -1390,6 +1413,7 @@ async def test_the_provider_is_visible_before_generating():
 # --- Every status has a body of its own ------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_and_empty_briefings_explain_themselves():
     """No status renders as a blank pane.
@@ -1428,6 +1452,7 @@ async def test_failed_and_empty_briefings_explain_themselves():
         assert "nothing new arrived" in plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_only_a_focused_tables_highlight_selects(monkeypatch):
     """The `has_focus` gate, asserted rather than assumed (fix round 1, 5e).
@@ -1468,6 +1493,7 @@ async def test_only_a_focused_tables_highlight_selects(monkeypatch):
         assert pane.selected_briefing["id"] == db.list_briefings(watchlist_id)[1]["id"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_bracket_shaped_watchlist_name_paints_instead_of_exploding():
     """`Static` parses Rich markup by default, and the scope line names a
@@ -1498,6 +1524,7 @@ async def test_a_bracket_shaped_watchlist_name_paints_instead_of_exploding():
         assert "\x1b[1;31m" not in ansi, "and `[bold red]` must not be applied"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_moving_the_tree_scope_moves_what_artifacts_is_about():
     """A briefing belongs to exactly one watchlist, so the pane follows the tree.
@@ -1538,6 +1565,7 @@ async def test_moving_the_tree_scope_moves_what_artifacts_is_about():
 # --- 5. Geometry, under the production stylesheet --------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(160, 42), (180, 50)])
 @pytest.mark.asyncio
 async def test_the_list_the_button_and_the_body_are_all_on_screen(size, monkeypatch):
@@ -1666,6 +1694,7 @@ async def _press_generate_button_and_wait_for_a_call(
 # takes, so it cannot flake on host speed the way a deadline can.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_toolbar_pickers_render_only_when_a_watchlist_is_in_scope():
     """The mode/preset/cadence `Select`s and the `Presets…` `Button` have
@@ -1705,6 +1734,7 @@ async def test_toolbar_pickers_render_only_when_a_watchlist_is_in_scope():
         assert pane.query_one("#artifacts-generate-button", Button)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mode_select_shows_the_watchlists_stored_mode_on_load():
     """The read-path pin: Task 1's writer sets `curated` before Artifacts
@@ -1725,6 +1755,7 @@ async def test_mode_select_shows_the_watchlists_stored_mode_on_load():
         assert select.value == "curated"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_changing_mode_writes_off_loop_and_does_not_rebuild_the_screen():
     """Thread-identity pin (the established `asyncio.to_thread` pattern) plus
@@ -1775,6 +1806,7 @@ async def test_changing_mode_writes_off_loop_and_does_not_rebuild_the_screen():
         assert screen._briefing_selection_mode == "curated"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_preset_select_lists_presets_and_persists_a_choice():
     """The default-preset picker offers "App default" (`None`) plus every
@@ -1820,6 +1852,7 @@ async def test_preset_select_lists_presets_and_persists_a_choice():
         assert screen._briefing_default_preset_id == preset_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_generate_casts_the_die_with_the_stored_default_preset(monkeypatch):
     """With a default preset stored, Generate invokes `generate_briefing`
@@ -1844,6 +1877,7 @@ async def test_generate_casts_the_die_with_the_stored_default_preset(monkeypatch
     assert calls[-1].get("preset_id") == preset_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_generate_casts_the_die_with_no_default_preset(monkeypatch):
     """With no default preset stored, Generate invokes `generate_briefing`
@@ -1863,6 +1897,7 @@ async def test_generate_casts_the_die_with_no_default_preset(monkeypatch):
     assert calls[-1].get("preset_id") is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_setting_curated_via_the_picker_then_generating_records_it_on_the_row(
     monkeypatch,
@@ -1899,6 +1934,7 @@ async def test_setting_curated_via_the_picker_then_generating_records_it_on_the_
     assert rows[0]["selection_mode"] == "curated"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_presets_button_opens_the_preset_manager(monkeypatch):
     """The toolbar's "Presets…" button calls Task 3's existing opener,
@@ -1939,6 +1975,7 @@ async def test_presets_button_opens_the_preset_manager(monkeypatch):
 # Generate press for a DIFFERENT watchlist the wrong preset.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_switching_watchlists_mid_write_does_not_let_the_stale_write_clobber_the_new_one():
     """Deterministic control over exactly when `set_watchlist_briefing_
@@ -2035,6 +2072,7 @@ async def test_switching_watchlists_mid_write_does_not_let_the_stale_write_clobb
 # recompose) exactly, and the scope label test pins the honesty fix.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cadence_select_shows_the_watchlists_stored_cadence_on_load():
     """The read-path pin: Task 2's writer sets a cadence before Artifacts
@@ -2055,6 +2093,7 @@ async def test_cadence_select_shows_the_watchlists_stored_cadence_on_load():
         assert select.value == 43_200
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_changing_cadence_writes_off_loop_and_does_not_rebuild_the_screen():
     """Thread-identity pin (the established `asyncio.to_thread` pattern) plus
@@ -2118,6 +2157,7 @@ async def test_changing_cadence_writes_off_loop_and_does_not_rebuild_the_screen(
         assert "while the app is open" in pane.automation_receipt
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rapid_cadence_changes_commit_and_publish_in_dispatch_order():
     """A slow earlier write cannot land after the user's latest choice."""
@@ -2162,6 +2202,7 @@ async def test_rapid_cadence_changes_commit_and_publish_in_dispatch_order():
         assert pane.briefing_cadence_seconds == 86_400
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_choosing_off_clears_the_stored_cadence():
     """`Off` maps to `None`, and picking it must clear `briefing_cadence_
@@ -2198,6 +2239,7 @@ async def test_choosing_off_clears_the_stored_cadence():
         assert pane.briefing_cadence_seconds is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_scope_label_states_on_request_or_the_actual_schedule_honestly():
     """The honesty fix this task exists to ship: `_briefing_scope_label`
@@ -2230,6 +2272,7 @@ async def test_the_scope_label_states_on_request_or_the_actual_schedule_honestly
         assert "on request" not in pane.scope_label
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_out_of_catalog_cadence_gets_a_synthetic_select_option_and_an_honest_scope_label():
     """Review round 1, Important #1: the out-of-catalog fallbacks are
@@ -2283,6 +2326,7 @@ async def test_an_out_of_catalog_cadence_gets_a_synthetic_select_option_and_an_h
 # same review round asked for (AC #2).
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_kill_switch_off_disables_the_cadence_select_and_states_scheduling_is_off(
     monkeypatch,
@@ -2334,6 +2378,7 @@ async def test_the_kill_switch_off_disables_the_cadence_select_and_states_schedu
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_kill_switch_on_leaves_the_cadence_picker_unchanged(monkeypatch):
     """The other direction: with the flag on (the default), behavior must
@@ -2364,6 +2409,7 @@ async def test_the_kill_switch_on_leaves_the_cadence_picker_unchanged(monkeypatc
         assert "off for this app" not in pane.scope_label
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_cadence_pickers_tooltip_states_immediate_reload_and_app_open_scope():
     """The picker describes the immediate reload and app-open limitation."""
@@ -2381,6 +2427,7 @@ async def test_the_cadence_pickers_tooltip_states_immediate_reload_and_app_open_
         assert "while the app is open" in tooltip
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("receipt_state", "attention_copy"),
     (
@@ -2480,6 +2527,7 @@ def test_cadence_scope_phrase_states_scheduling_is_off_when_the_kill_switch_is_o
 # is the real service and a real `SubscriptionsDB`.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_casting_a_complete_briefing_writes_a_script_row_and_the_table_shows_it(
     monkeypatch,
@@ -2516,6 +2564,7 @@ async def test_casting_a_complete_briefing_writes_a_script_row_and_the_table_sho
         assert "complete" in painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_script_turns_render_as_speaker_labelled_text_never_markup(monkeypatch):
     """The mandatory literal-paint test: a turn containing `[bold red]x[/]`
@@ -2551,6 +2600,7 @@ async def test_script_turns_render_as_speaker_labelled_text_never_markup(monkeyp
         assert "Narrator" in plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_more_than_200_turns_are_capped_with_an_honest_count(monkeypatch):
     """Spec ethos: never a silent truncation. A script with more than 200
@@ -2580,6 +2630,7 @@ async def test_more_than_200_turns_are_capped_with_an_honest_count(monkeypatch):
         assert "10 more turns" in plain, "the overflow must be stated, not silent"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_casting_a_non_complete_briefing_refuses_naming_the_status():
     app = _build_test_app()
@@ -2612,6 +2663,7 @@ async def test_casting_a_non_complete_briefing_refuses_naming_the_status():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_casting_with_presets_but_no_default_refuses_with_actionable_copy(
     monkeypatch,
@@ -2663,6 +2715,7 @@ async def test_casting_with_presets_but_no_default_refuses_with_actionable_copy(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_casting_refuses_before_dispatch_when_the_default_preset_is_dangling(
     monkeypatch,
@@ -2737,6 +2790,7 @@ async def test_casting_refuses_before_dispatch_when_the_default_preset_is_dangli
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_second_cast_while_in_flight_refuses_naming_the_running_one():
     """Sibling of `test_the_refusal_toast_names_the_watchlist_actually_
@@ -2771,6 +2825,7 @@ async def test_second_cast_while_in_flight_refuses_naming_the_running_one():
         assert kwargs.get("markup") is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_cast_press_during_a_claimed_briefing_refuses_not_run_concurrently(
     monkeypatch,
@@ -2826,6 +2881,7 @@ async def test_a_cast_press_during_a_claimed_briefing_refuses_not_run_concurrent
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_cast_guard_is_claimed_before_the_worker_runs(monkeypatch):
     """Mechanism half, the deterministic sibling of `test_the_guard_is_
@@ -2867,6 +2923,7 @@ async def test_the_cast_guard_is_claimed_before_the_worker_runs(monkeypatch):
         assert len(cast_chat.calls) == 1, "exactly one cast must have run"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_zombie_generating_script_is_recovered_on_a_plain_artifacts_load(
     monkeypatch,
@@ -2932,6 +2989,7 @@ async def test_a_zombie_generating_script_is_recovered_on_a_plain_artifacts_load
         assert "This script is being written now." not in plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_casting_recovers_a_zombie_script_via_its_own_sweep(monkeypatch):
     """Cast-path seam, pinned SEPARATELY from the load-path test above: the
@@ -2997,6 +3055,7 @@ async def test_casting_recovers_a_zombie_script_via_its_own_sweep(monkeypatch):
         ), "the same press must also have cast a real script"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_failed_script_renders_its_error_string(monkeypatch):
     app = _build_test_app()
@@ -3022,6 +3081,7 @@ async def test_a_failed_script_renders_its_error_string(monkeypatch):
         assert rows[0]["error"] in plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_failed_cast_leaves_the_briefing_detail_unchanged(monkeypatch):
     """Spec §Error-handling ethos: a script's outcome never touches the
@@ -3057,6 +3117,7 @@ async def test_a_failed_cast_leaves_the_briefing_detail_unchanged(monkeypatch):
         assert "Acme shipped a thing" in plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cast_is_disabled_until_a_preset_exists():
     """`Cast` starts disabled with a tooltip when there is no default
@@ -3088,6 +3149,7 @@ async def test_cast_is_disabled_until_a_preset_exists():
         assert cast_button.disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_briefings_table_keeps_at_least_three_usable_rows(monkeypatch):
     """Fix round 1, ruling 1: no existing test pinned the briefings table's
@@ -3125,6 +3187,7 @@ async def test_the_briefings_table_keeps_at_least_three_usable_rows(monkeypatch)
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_switching_the_selected_briefing_clears_stale_scripts_before_the_reload_lands(
     monkeypatch,
@@ -3230,6 +3293,7 @@ async def test_switching_the_selected_briefing_clears_stale_scripts_before_the_r
 # screen handler; nothing about the screen-side wiring is faked.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_complete_briefings_citations_table_lists_each_cited_id_with_its_title(
     monkeypatch,
@@ -3285,6 +3349,7 @@ async def test_a_complete_briefings_citations_table_lists_each_cited_id_with_its
         assert "Available" in painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_citation_to_a_pruned_item_degrades(monkeypatch):
     """The plan's second named invariant: **citation-to-pruned-item-
@@ -3350,6 +3415,7 @@ async def test_a_citation_to_a_pruned_item_degrades(monkeypatch):
         assert str(pruned_id) in str(toast_call.args[0])
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_activating_an_available_citation_opens_it_in_the_reader_and_marks_it_read(
     monkeypatch,
@@ -3430,6 +3496,7 @@ async def test_activating_an_available_citation_opens_it_in_the_reader_and_marks
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_keyboard_browsing_the_citations_table_does_not_activate_a_row(
     monkeypatch,
@@ -3498,6 +3565,7 @@ async def test_keyboard_browsing_the_citations_table_does_not_activate_a_row(
         assert db.get_item_status(rows[1]["id"]) == "new"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_enter_on_a_citation_activates_it_through_the_real_table(
     monkeypatch,
@@ -3562,6 +3630,7 @@ async def test_pressing_enter_on_a_citation_activates_it_through_the_real_table(
         assert db.get_item_status(cited["id"]) == "reviewed"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_citations_do_not_shrink_the_briefings_table_below_its_pinned_minimum(
     monkeypatch,
@@ -3815,6 +3884,7 @@ async def _press_synthesize(screen, pilot, app, script_id, *, timeout: float = 2
             return
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_synthesizing_a_complete_script_writes_an_audio_row_and_the_detail_shows_it(
     monkeypatch, tmp_path
@@ -3852,6 +3922,7 @@ async def test_synthesizing_a_complete_script_writes_an_audio_row_and_the_detail
         assert "12.3s" in plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_synthesizing_a_non_complete_script_refuses_naming_the_status():
     """Deliberately does NOT fake `generate_script_audio`: the REAL
@@ -3895,6 +3966,7 @@ async def test_synthesizing_a_non_complete_script_refuses_naming_the_status():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_second_synthesis_while_in_flight_refuses_naming_the_running_one():
     """Sibling of `test_second_cast_while_in_flight_refuses_naming_the_
@@ -3924,6 +3996,7 @@ async def test_second_synthesis_while_in_flight_refuses_naming_the_running_one()
         assert kwargs.get("markup") is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_synthesis_press_during_a_claimed_script_refuses_not_run_concurrently(
     monkeypatch,
@@ -3981,6 +4054,7 @@ async def test_a_synthesis_press_during_a_claimed_script_refuses_not_run_concurr
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_blocking_toast_never_names_a_crash_zombie_sharing_the_live_claims_script(
     monkeypatch,
@@ -4050,6 +4124,7 @@ async def test_the_blocking_toast_never_names_a_crash_zombie_sharing_the_live_cl
         assert db.get_briefing_audio(zombie_id)["error"] == "interrupted"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_audio_guard_is_claimed_before_the_worker_runs(monkeypatch):
     """Mechanism half, the deterministic sibling of `test_the_cast_guard_
@@ -4090,6 +4165,7 @@ async def test_the_audio_guard_is_claimed_before_the_worker_runs(monkeypatch):
         assert len(fake_audio.calls) == 1, "exactly one synthesis must have run"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_database_error_during_synthesis_does_not_exit_the_app(monkeypatch):
     """Sibling of `test_a_database_error_during_generation_does_not_exit_
@@ -4154,6 +4230,7 @@ async def test_a_database_error_during_synthesis_does_not_exit_the_app(monkeypat
         ), "and must have left a finished audio row behind"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_zombie_generating_audio_row_is_recovered_on_a_plain_artifacts_load(
     monkeypatch,
@@ -4211,6 +4288,7 @@ async def test_a_zombie_generating_audio_row_is_recovered_on_a_plain_artifacts_l
         assert "This audio is being synthesized now." not in plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_synthesizing_recovers_a_zombie_audio_row_via_its_own_sweep(monkeypatch):
     """Synthesize-path seam, pinned SEPARATELY from the load-path test
@@ -4263,6 +4341,7 @@ async def test_synthesizing_recovers_a_zombie_audio_row_via_its_own_sweep(monkey
         ), "the same press must also have synthesized real audio"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_scripts_table_shows_an_audio_indicator_for_every_row_with_a_render():
     """Review round 1, Minor #4: before this fix, a user had to select
@@ -4414,6 +4493,7 @@ async def _load_scripts_table(app, watchlist_id, script_states) -> DataTable:
 _AUDIO_COLUMN_INDEX = 3  # "Preset", "Status", "Created", "Audio"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_complete_audio_row_shows_the_note_glyph_alone():
     """`STATUS_COMPLETE` -> the note glyph, and nothing else -- no failure
@@ -4432,6 +4512,7 @@ async def test_a_complete_audio_row_shows_the_note_glyph_alone():
     assert "\x1b[1;31m" not in ansi, "a complete render must carry no red mark at all"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_failed_audio_row_shows_the_note_glyph_and_a_red_x():
     """`STATUS_FAILED` -> the note glyph PLUS a red `✗` -- the owner's own
@@ -4461,6 +4542,7 @@ async def test_a_failed_audio_row_shows_the_note_glyph_and_a_red_x():
     assert "\x1b[1;31m" in ansi, "the ✗ must carry an explicit red style"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_script_with_no_audio_row_renders_a_blank_audio_cell():
     """No `briefing_audio` row at all -> an empty cell -- never a bare
@@ -4478,6 +4560,7 @@ async def test_a_script_with_no_audio_row_renders_a_blank_audio_cell():
     assert cell.plain == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_failed_audio_row_renders_its_error_text(monkeypatch):
     app = _build_test_app()
@@ -4509,6 +4592,7 @@ async def test_a_failed_audio_row_renders_its_error_text(monkeypatch):
         assert rows[0]["error"] in plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_failed_audio_rows_error_text_paints_literally_never_as_markup(
     monkeypatch,
@@ -4549,6 +4633,7 @@ async def test_a_failed_audio_rows_error_text_paints_literally_never_as_markup(
         assert "\x1b[1;31m" not in ansi, "and `[bold red]` must not be applied"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_play_calls_the_player_with_the_rows_path_and_stop_stops_it(
     monkeypatch, tmp_path
@@ -4601,6 +4686,7 @@ async def test_play_calls_the_player_with_the_rows_path_and_stop_stops_it(
         assert fake_player.stopped is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stop_does_not_silence_a_different_currently_playing_file(monkeypatch):
     """Trap #3 (`tts_events.stop_audio_playback_if_current`'s own
@@ -4637,6 +4723,7 @@ async def test_stop_does_not_silence_a_different_currently_playing_file(monkeypa
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_play_is_disabled_when_the_file_is_null_or_missing(monkeypatch, tmp_path):
     """The spec's honest-degradation rule: an artifact whose file was
@@ -4824,6 +4911,7 @@ def test_audio_file_is_playable_true_for_a_real_in_dir_file(
     assert _audio_file_is_playable(row) is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_handle_play_audio_requested_refuses_an_unsafe_path_with_no_probe_or_playback(
     monkeypatch, tmp_path
@@ -4861,6 +4949,7 @@ async def test_handle_play_audio_requested_refuses_an_unsafe_path_with_no_probe_
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_handle_play_audio_requested_still_plays_a_normal_in_dir_path(
     monkeypatch, tmp_path
@@ -4921,6 +5010,7 @@ def _seed_complete_briefing(app, watchlist_id: int, *, body: str = "Body text") 
     return briefing_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_export_button_is_disabled_without_a_complete_selection():
     """Export starts disabled with nothing selected, stays disabled for a
@@ -4956,6 +5046,7 @@ async def test_export_button_is_disabled_without_a_complete_selection():
         assert pane.query_one("#artifacts-export-button", Button).disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_export_pushes_a_file_save_dialog_seeded_with_the_default_filename(
     monkeypatch,
@@ -5006,6 +5097,7 @@ async def test_pressing_export_pushes_a_file_save_dialog_seeded_with_the_default
     assert callable(kwargs.get("callback"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("resolve_via", ["a real path", "cancel"])
 async def test_a_second_export_press_while_the_dialog_is_open_is_refused_then_rearms(
@@ -5090,6 +5182,7 @@ async def test_a_second_export_press_while_the_dialog_is_open_is_refused_then_re
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_write_briefing_export_file_writes_the_document_and_toasts_success(
     tmp_path,
@@ -5119,6 +5212,7 @@ async def test_write_briefing_export_file_writes_the_document_and_toasts_success
     assert kwargs.get("markup") is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_write_briefing_export_file_cancelled_writes_nothing():
     """A `None` path (the user cancelled the dialog) writes nothing and
@@ -5142,6 +5236,7 @@ async def test_write_briefing_export_file_cancelled_writes_nothing():
     assert kwargs.get("severity") == "information"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_write_briefing_export_file_rejects_an_invalid_path(
     monkeypatch, tmp_path
@@ -5174,6 +5269,7 @@ async def test_write_briefing_export_file_rejects_an_invalid_path(
     assert kwargs.get("markup") is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_write_briefing_export_file_write_failure_toasts_the_exception_type(
     monkeypatch, tmp_path
@@ -5206,6 +5302,7 @@ async def test_write_briefing_export_file_write_failure_toasts_the_exception_typ
     assert kwargs.get("markup") is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_write_briefing_export_file_unicode_encode_error_toasts_the_exception_type(
     monkeypatch, tmp_path
@@ -5242,6 +5339,7 @@ async def test_write_briefing_export_file_unicode_encode_error_toasts_the_except
     assert kwargs.get("markup") is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_write_briefing_export_file_cancelled_error_propagates_uncaught(
     monkeypatch, tmp_path
@@ -5321,6 +5419,7 @@ def _seed_exportable_audio_episode(
     return briefing_id, script_id, audio_id, audio_file
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_export_feed_button_is_disabled_without_any_complete_audio_episode(
     monkeypatch, tmp_path
@@ -5366,6 +5465,7 @@ async def test_export_feed_button_is_disabled_without_any_complete_audio_episode
         assert pane.query_one("#artifacts-export-feed-button", Button).disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_export_feed_button_is_visible_and_enabled_with_no_script_selected(
     monkeypatch, tmp_path
@@ -5401,6 +5501,7 @@ async def test_export_feed_button_is_visible_and_enabled_with_no_script_selected
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_workbench_rebuild_does_not_reset_has_audio_episodes(
     monkeypatch, tmp_path
@@ -5439,6 +5540,7 @@ async def test_a_workbench_rebuild_does_not_reset_has_audio_episodes(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_export_feed_pushes_a_select_directory_dialog(
     monkeypatch, tmp_path
@@ -5478,6 +5580,7 @@ async def test_pressing_export_feed_pushes_a_select_directory_dialog(
     assert callable(kwargs.get("callback"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("resolve_via", ["a real path", "cancel"])
 async def test_a_second_export_feed_press_while_the_dialog_is_open_is_refused_then_rearms(
@@ -5555,6 +5658,7 @@ async def test_a_second_export_feed_press_while_the_dialog_is_open_is_refused_th
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_export_feed_directory_writes_episodes_and_toasts_the_count(
     monkeypatch, tmp_path
@@ -5592,6 +5696,7 @@ async def test_export_feed_directory_writes_episodes_and_toasts_the_count(
     assert kwargs.get("markup") is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_export_feed_directory_cancelled_writes_nothing(monkeypatch, tmp_path):
     """A `None` path (the user cancelled the dialog) writes nothing and
@@ -5615,6 +5720,7 @@ async def test_export_feed_directory_cancelled_writes_nothing(monkeypatch, tmp_p
     assert kwargs.get("severity") == "information"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_export_feed_directory_partial_export_toasts_the_honest_count(
     monkeypatch, tmp_path
@@ -5672,6 +5778,7 @@ async def test_export_feed_directory_partial_export_toasts_the_honest_count(
     assert kwargs.get("markup") is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_export_feed_directory_partial_export_caps_inlined_reasons(
     monkeypatch, tmp_path
@@ -5727,6 +5834,7 @@ async def test_export_feed_directory_partial_export_caps_inlined_reasons(
     assert kwargs.get("markup") is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_export_feed_directory_rejects_an_invalid_destination(
     monkeypatch, tmp_path
@@ -5758,6 +5866,7 @@ async def test_export_feed_directory_rejects_an_invalid_destination(
     assert kwargs.get("markup") is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_export_feed_press_survives_an_os_error_from_the_service(
     monkeypatch, tmp_path
@@ -5823,6 +5932,7 @@ async def test_export_feed_press_survives_an_os_error_from_the_service(
     assert screen._feed_export_in_flight is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_export_feed_directory_cancelled_error_propagates_uncaught(
     monkeypatch, tmp_path
@@ -5867,6 +5977,7 @@ async def test_export_feed_directory_cancelled_error_propagates_uncaught(
 # real server (proven with one real `httpx` round trip, not a mock).
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_serve_starts_disabled_and_stop_is_absent_with_nothing_exported_or_running(
     monkeypatch, tmp_path
@@ -5899,6 +6010,7 @@ async def test_serve_starts_disabled_and_stop_is_absent_with_nothing_exported_or
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_serve_enables_once_a_feed_has_been_exported(monkeypatch, tmp_path):
     _patch_audio_dir(monkeypatch, tmp_path)
@@ -5922,6 +6034,7 @@ async def test_serve_enables_once_a_feed_has_been_exported(monkeypatch, tmp_path
         assert not pane.query("#artifacts-stop-feed-button")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 # task-15111 network guard: this test starts a REAL local server and
 # round-trips through a genuine socket — exactly the case the guard's
@@ -5989,6 +6102,7 @@ async def test_pressing_serve_then_stop_round_trips_through_a_real_server(
             httpx.get(url + "feed.xml", timeout=5.0)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.allow_network
 async def test_screen_teardown_stops_a_still_running_feed_server(monkeypatch, tmp_path):
@@ -6023,6 +6137,7 @@ async def test_screen_teardown_stops_a_still_running_feed_server(monkeypatch, tm
         httpx.get(served_url + "feed.xml", timeout=5.0)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_second_serve_while_one_is_running_is_refused_naming_the_running_url(
     tmp_path,
@@ -6058,6 +6173,7 @@ async def test_a_second_serve_while_one_is_running_is_refused_naming_the_running
             screen._feed_server.stop()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stop_when_nothing_is_serving_toasts_a_refusal(tmp_path):
     app = _build_test_app()
@@ -6074,6 +6190,7 @@ async def test_stop_when_nothing_is_serving_toasts_a_refusal(tmp_path):
     assert kwargs.get("severity") == "warning"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_serve_reads_bind_and_port_from_configured_bind_and_port(
     monkeypatch, tmp_path
@@ -6125,6 +6242,7 @@ def _chachanotes_db(tmp_path) -> CharactersRAGDB:
     return CharactersRAGDB(tmp_path / "chacha.sqlite", client_id="artifacts-pane-test")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_keep_button_disabled_without_a_complete_selection_or_chachanotes(
     tmp_path,
@@ -6180,6 +6298,7 @@ async def test_keep_button_disabled_without_a_complete_selection_or_chachanotes(
             chacha_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_keep_creates_a_kept_row_and_toasts_created_with_scripts(
     tmp_path,
@@ -6234,6 +6353,7 @@ async def test_pressing_keep_creates_a_kept_row_and_toasts_created_with_scripts(
         chacha_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_keep_again_reports_already_kept_and_the_new_count(tmp_path):
     """The additive re-keep, surfaced honestly (the design spec's own
@@ -6294,6 +6414,7 @@ async def test_pressing_keep_again_reports_already_kept_and_the_new_count(tmp_pa
         chacha_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_keep_guard_is_claimed_before_the_worker_runs(tmp_path):
     """Mechanism half, the deterministic sibling of `test_the_guard_is_
@@ -6365,6 +6486,7 @@ async def test_the_keep_guard_is_claimed_before_the_worker_runs(tmp_path):
         chacha_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_keep_guard_rearms_after_a_database_error(monkeypatch, tmp_path):
     """A database error during keep must not wedge the guard shut forever
@@ -6407,6 +6529,7 @@ async def test_keep_guard_rearms_after_a_database_error(monkeypatch, tmp_path):
         chacha_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_kept_briefings_button_disabled_without_chachanotes():
     """No ChaChaNotes handle at all -> disabled, regardless of scope --
@@ -6421,6 +6544,7 @@ async def test_kept_briefings_button_disabled_without_chachanotes():
         assert button.compact
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_kept_briefings_button_enabled_regardless_of_watchlist_scope(tmp_path):
     """The design spec's own named requirement: "Kept Briefings…" is
@@ -6443,6 +6567,7 @@ async def test_kept_briefings_button_enabled_regardless_of_watchlist_scope(tmp_p
         chacha_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_kept_briefings_button_opens_the_modal(monkeypatch, tmp_path):
     """The toolbar's "Kept Briefings…" button calls the screen's opener,
@@ -6476,6 +6601,7 @@ async def test_kept_briefings_button_opens_the_modal(monkeypatch, tmp_path):
         chacha_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_kept_briefings_button_notifies_when_chachanotes_missing_at_press_time():
     """Re-checked at dispatch, exactly like every other button on this

@@ -217,6 +217,7 @@ async def test_inspector_snapshot_actions_post_existing_request(
         assert request.which == which
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_screen_keeps_previous_snapshot_modal_handler(monkeypatch) -> None:
     app = _build_test_app()
@@ -247,6 +248,7 @@ async def test_screen_keeps_previous_snapshot_modal_handler(monkeypatch) -> None
         assert modal._content == "before"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_preview_source_handler_calls_controller(fake_controller):
     async with _open_screen(fake_controller) as (screen, pilot):
@@ -258,6 +260,7 @@ async def test_preview_source_handler_calls_controller(fake_controller):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_check_now_source_handler_calls_controller(fake_controller):
     async with _open_screen(fake_controller) as (screen, pilot):
@@ -269,6 +272,7 @@ async def test_check_now_source_handler_calls_controller(fake_controller):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_check_now_failure_toast_uses_validated_copy_and_action(fake_controller):
     from unittest.mock import Mock
@@ -301,6 +305,7 @@ async def test_check_now_failure_toast_uses_validated_copy_and_action(fake_contr
         assert "TAMPERED" not in failure_toasts[0]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_import_opml_handler_calls_controller(fake_controller):
     async with _open_screen(fake_controller) as (screen, pilot):
@@ -320,6 +325,7 @@ async def test_import_opml_handler_calls_controller(fake_controller):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_export_opml_handler_calls_controller(fake_controller):
     async with _open_screen(fake_controller) as (screen, pilot):
@@ -335,6 +341,7 @@ async def test_export_opml_handler_calls_controller(fake_controller):
 # (and its `#watchlists-list-pane`) is gone entirely.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_read_tab_is_the_default_section():
     """The screen lands on Read: `active_section` defaults to "items" (the
@@ -350,6 +357,7 @@ async def test_the_read_tab_is_the_default_section():
         assert screen.query_one("#watchlists-items-pane")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pre_mount_server_read_is_query_free_and_enters_recovery(
     monkeypatch,
@@ -402,6 +410,7 @@ async def test_pre_mount_server_read_is_query_free_and_enters_recovery(
             assert spy.call_count == 0, name
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_digit_1_switches_to_read_and_7_to_overview():
     """The digit bindings follow the new tab order: Read first, Overview last."""
@@ -424,6 +433,7 @@ async def test_digit_1_switches_to_read_and_7_to_overview():
         assert screen.active_section == "sources"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_tab_strip_is_mounted_on_the_read_and_sources_tabs():
     """`#wl-tabs` lives in the centre header (`_build_centre_status_header`),
@@ -445,6 +455,7 @@ async def test_the_tab_strip_is_mounted_on_the_read_and_sources_tabs():
         assert screen.query_one("#wl-centre-status")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "size",
@@ -507,6 +518,7 @@ async def test_read_snapshot_count_and_arrivals_fit_the_feed_items_pane(size):
         assert composited_text(pill).strip() == "3 new items"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_list_pane_is_gone_on_every_tab():
     """The FEEDS region's `#watchlists-list-pane` died with the region -- no
@@ -526,6 +538,7 @@ async def test_the_list_pane_is_gone_on_every_tab():
             assert not screen.query("#wl-header-feeds"), section
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_server_backed_read_recovers_through_the_normal_local_load_path(
     monkeypatch,
@@ -671,6 +684,7 @@ async def test_server_backed_read_recovers_through_the_normal_local_load_path(
         assert screen._selected_content_item is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_switch_to_local_retries_the_normal_load_path() -> None:
     controller = _controller_double()
@@ -763,6 +777,7 @@ async def test_failed_switch_to_local_retries_the_normal_load_path() -> None:
         assert screen._selected_content_item is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_same_tab_switch_to_server_replaces_local_reader_without_queries(
     monkeypatch,
@@ -890,6 +905,7 @@ async def test_same_tab_switch_to_server_replaces_local_reader_without_queries(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_entering_server_read_hides_local_reader_navigation_without_queries(
     monkeypatch,
@@ -1096,6 +1112,7 @@ async def test_entering_server_read_hides_local_reader_navigation_without_querie
 # exact rather than escape-hatched.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scoped_source_rows_narrows_by_watchlist_and_unassigned():
     app = _build_test_app()
@@ -1140,6 +1157,7 @@ async def test_scoped_source_rows_narrows_by_watchlist_and_unassigned():
         assert [row["id"] for row in screen.scoped_source_rows()] == [b]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_header_summary_names_the_scope_with_a_live_count():
     # Seeded *before* the screen mounts (unlike the narrowing test above,
@@ -1560,6 +1578,7 @@ async def _wait_for_items(pilot, pane, attempts: int = 60) -> None:
             return
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_items_reload_scopes_to_watchlist():
     """A watchlist scope shows only its member sources' items."""
@@ -1593,6 +1612,7 @@ async def test_items_reload_scopes_to_watchlist():
         assert {item["source_id"] for item in screen._loaded_items} == {member}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_items_reload_scopes_to_unassigned():
     """The Unassigned scope shows only items of sources in no watchlist."""
@@ -1622,6 +1642,7 @@ async def test_items_reload_scopes_to_unassigned():
         assert {item["source_id"] for item in screen._loaded_items} == {loose}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_items_reload_scopes_to_source():
     """A source scope collapses to that one source's items, even inside a
@@ -1655,6 +1676,7 @@ async def test_items_reload_scopes_to_source():
         assert {item["source_id"] for item in screen._loaded_items} == {krebs}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_items_reload_scopes_to_starred():
     """TASK-3072 plan task 6: the Starred smart feed lists flagged items from
@@ -1693,6 +1715,7 @@ async def test_items_reload_scopes_to_starred():
 # --- TASK-3791 plan task 4: All Unread + Today scopes --------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_items_reload_scopes_to_all_unread():
     """All Unread: every source's unread items, membership irrelevant."""
@@ -1722,6 +1745,7 @@ async def test_items_reload_scopes_to_all_unread():
         }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_all_unread_scope_wins_over_the_all_filter():
     """The node is the stronger statement: All Unread + the pane's "All"
@@ -1750,6 +1774,7 @@ async def test_all_unread_scope_wins_over_the_all_filter():
         assert [item["title"] for item in screen._loaded_items] == ["Still unread"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_items_reload_scopes_to_today():
     """Today: effective date at/after local midnight, across every source."""
@@ -1783,6 +1808,7 @@ async def test_items_reload_scopes_to_today():
         assert [item["title"] for item in screen._loaded_items] == ["Fresh today"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tree_move_requests_atomic_scope_on_read_tab():
     """Read navigation uses the pending request path, not the watcher."""
@@ -1821,6 +1847,7 @@ async def test_tree_move_requests_atomic_scope_on_read_tab():
 # rail-focus and typing-guard facts have their own regression tests below.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_m_toggles_read_state_on_open_item():
     """`m` flips the open item new -> reviewed -> new (and the open itself
@@ -1868,6 +1895,7 @@ async def test_m_toggles_read_state_on_open_item():
         ], "`m` on an unread item must mark it read"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_last_unread_item_keeps_contextual_feed_and_reader_pinned():
     app = _build_test_app()
@@ -1945,6 +1973,7 @@ async def test_last_unread_item_keeps_contextual_feed_and_reader_pinned():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_m_refuses_on_ingested_item():
     """`m` is a read/unread verb only: an ingested item is a deliberate
@@ -1993,6 +2022,7 @@ def _flagged_value(db, item_id: int) -> int:
     return int(row[0]) if row else -1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_s_toggles_star_on_the_open_item():
     """`s` stars, then unstars, the open item through the service; the row's
@@ -2055,6 +2085,7 @@ async def test_s_toggles_star_on_the_open_item():
         assert str(screen.query_one("#content-star-button", Button).label) == "☆ Star"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_s_with_no_open_item_is_a_noop():
     """`s` with nothing open writes nothing and raises nothing."""
@@ -2076,6 +2107,7 @@ async def test_s_with_no_open_item_is_a_noop():
         assert _flagged_value(db, item_id) == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_star_toggle_requested_toggles_the_same_path():
     """The reader's Star button and the `s` key share one handler."""
@@ -2141,6 +2173,7 @@ def _successful_browser_recorder(opened: list[str]):
     return record
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_o_opens_the_open_items_url(monkeypatch):
     """`o` hands the open item's http URL to the system browser."""
@@ -2165,6 +2198,7 @@ async def test_o_opens_the_open_items_url(monkeypatch):
         app.notify.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_o_refuses_a_non_http_url(monkeypatch):
     """A `javascript:`/`file:`/empty URL is a remote-derived string reaching
@@ -2195,6 +2229,7 @@ async def test_o_refuses_a_non_http_url(monkeypatch):
         assert kwargs.get("severity") == "warning"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_o_strips_control_bytes_from_the_url_before_opening(monkeypatch):
     """A feed URL is remote-derived text: control bytes are stripped before
@@ -2220,6 +2255,7 @@ async def test_o_strips_control_bytes_from_the_url_before_opening(monkeypatch):
         app.notify.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_o_with_no_open_item_is_a_noop(monkeypatch):
     opened: list[str] = []
@@ -2243,6 +2279,7 @@ async def test_o_with_no_open_item_is_a_noop(monkeypatch):
         assert opened == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_open_in_browser_requested_takes_the_same_path(monkeypatch):
     """The reader's Open button and the `o` key share one handler."""
@@ -2271,6 +2308,7 @@ async def test_open_in_browser_requested_takes_the_same_path(monkeypatch):
         app.notify.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("activation", ["keyboard", "button"])
 @pytest.mark.asyncio
 async def test_open_validates_on_ui_thread_then_opens_in_worker(
@@ -2326,6 +2364,7 @@ async def test_open_validates_on_ui_thread_then_opens_in_worker(
 # --- TASK-3072 plan task 9: the reader's position footer ----------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_reader_footer_numbers_the_open_item():
     """ "N of M": M is the displayed list, N the open item's 1-based place in
@@ -2369,6 +2408,7 @@ async def test_the_reader_footer_numbers_the_open_item():
         ), "the footer must walk with the reader"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_reader_footer_is_empty_with_nothing_open():
     """Nothing open: no footer at all, and definitely not "0 of 0"."""
@@ -2381,6 +2421,7 @@ async def test_the_reader_footer_is_empty_with_nothing_open():
         assert not screen.query("#content-position")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_next_unread_footer_button_opens_the_next_unread():
     """The footer's Next Unread control drives the same handler `space` does."""
@@ -2424,6 +2465,7 @@ async def test_the_next_unread_footer_button_opens_the_next_unread():
 # --- TASK-3072 plan task 10: the hostile-HTML end-to-end pin ------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_hostile_item_stars_queues_and_still_renders_inert():
     """The phase-2 DoD, end to end: an item whose title and body carry
@@ -2524,6 +2566,7 @@ async def test_a_hostile_item_stars_queues_and_still_renders_inert():
         assert int(queued[0]) == 1, "the queue flag survives a re-persist"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_space_opens_next_unread():
     """`space` walks to the next UNREAD item, skipping reviewed rows."""
@@ -2568,6 +2611,7 @@ async def test_space_opens_next_unread():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_space_at_end_notifies_all_caught_up():
     """No unread row below the current one: `space` says so, moves nothing."""
@@ -2602,6 +2646,7 @@ async def test_space_at_end_notifies_all_caught_up():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_space_with_rail_focused_does_not_navigate():
     """Regression: `space` is pane-bound, so the rail never triggers it.
@@ -2631,6 +2676,7 @@ async def test_space_with_rail_focused_does_not_navigate():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_space_in_items_search_input_still_types():
     """Typing spaces in the items search box is typing, not navigation.
@@ -2666,6 +2712,7 @@ async def test_space_in_items_search_input_still_types():
         assert screen._selected_content_item is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_typing_in_sources_search_survives_the_recompose():
     """Typing in the sources search box keeps focus and value, end to end.
@@ -2711,6 +2758,7 @@ async def test_typing_in_sources_search_survives_the_recompose():
         assert search.has_focus, "typing must not lose the sources search box"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_create_form_open_focuses_first_field_over_search():
     """Opening the create form focuses its first field even when search had focus.
@@ -2744,6 +2792,7 @@ async def test_create_form_open_focuses_first_field_over_search():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_all_read_then_undo_roundtrip():
     """`a` catches the scope up and `u` restores it — the two-key loop."""
@@ -2789,6 +2838,7 @@ async def test_mark_all_read_then_undo_roundtrip():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_undo_failure_keeps_the_batch_for_retry(monkeypatch):
     """Qodo review (PR #1383): a failing restore must not consume the only
@@ -2853,6 +2903,7 @@ async def test_undo_failure_keeps_the_batch_for_retry(monkeypatch):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_all_read_scoped_to_watchlist():
     """`a` catches up the rail's current scope only — sources outside the
@@ -2905,6 +2956,7 @@ async def test_mark_all_read_scoped_to_watchlist():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_verbs_noop_off_read_tab():
     """m/a/u are Read-tab verbs: on any other tab they change nothing."""
@@ -2934,6 +2986,7 @@ async def test_verbs_noop_off_read_tab():
 # --- Fix round 1, Finding 2: a pane-row click must not discard the tree scope
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selecting_a_pane_row_keeps_the_header_summary_on_the_tree_scope():
     """Finding 2's exact reproduction: click a watchlist in the tree, then
@@ -2995,6 +3048,7 @@ async def test_selecting_a_pane_row_keeps_the_header_summary_on_the_tree_scope()
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pane_row_selection_still_claims_no_inspector_ancestry():
     """The half of Task 5 fix round 2 that must NOT regress while Finding 2
@@ -3036,6 +3090,7 @@ async def test_pane_row_selection_still_claims_no_inspector_ancestry():
 # --- Fix round 1, Finding 1: staging follows the tree scope ----------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_staged_console_payload_follows_the_tree_scope():
     """The Console handoff must send the scope the user navigated to.
@@ -3081,6 +3136,7 @@ async def test_staged_console_payload_follows_the_tree_scope():
     assert metadata["source_titles"] == ["ArXiv"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_all_scope_summary_is_a_single_line_in_the_header():
     """Finding 1's headline symptom was the unscoped staging block printing
@@ -3115,6 +3171,7 @@ async def test_the_all_scope_summary_is_a_single_line_in_the_header():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_header_summary_escapes_an_untrusted_source_name():
     """The `source` scope takes its summary label from `rows[0]["name"]` --
@@ -3158,6 +3215,7 @@ async def test_the_header_summary_escapes_an_untrusted_source_name():
         assert "[bold red]Not Actually Bold[/bold red]" in summary
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_centre_header_summary_follows_the_tree_scope_off_the_read_tab():
     """task-1344 fix wave (Qodo correctness), kept current by task-2513:
@@ -3214,6 +3272,7 @@ async def test_centre_header_summary_follows_the_tree_scope_off_the_read_tab():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_centre_header_summary_follows_the_tree_scope_on_the_read_tab_too():
     """TASK-2312: before this task, `watch_tree_scope` refreshed the centre
@@ -3292,6 +3351,7 @@ async def test_centre_header_summary_follows_the_tree_scope_on_the_read_tab_too(
 # `expanded`.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_breadcrumb_promotion_moves_the_tree_highlight_same_as_a_click():
     # Seeded *before* the screen mounts, like
@@ -3331,6 +3391,7 @@ async def test_breadcrumb_promotion_moves_the_tree_highlight_same_as_a_click():
         ).has_class("is-active")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tree_highlight_survives_a_section_switch_and_a_rail_toggle():
     """Both a section switch (`watch_active_section`) and a rail toggle
@@ -3374,6 +3435,7 @@ async def test_tree_highlight_survives_a_section_switch_and_a_rail_toggle():
         ).has_class("is-active"), "the highlight must survive a rail toggle"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_load_tree_data_failure_notifies_the_user():
     """A real database failure in `_load_tree_data` must not render
@@ -3401,6 +3463,7 @@ async def test_load_tree_data_failure_notifies_the_user():
         assert screen.query_one("#wl-tree-node-unassigned", Button)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tree_snapshot_owns_complete_aggregate_rows_not_management_cache(
     monkeypatch,
@@ -3452,6 +3515,7 @@ async def test_tree_snapshot_owns_complete_aggregate_rows_not_management_cache(
             assert spy.call_count == 1, name
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_root_and_watchlist_expansion_persist_independently_across_rebuilds() -> (
     None
@@ -3480,6 +3544,7 @@ async def test_root_and_watchlist_expansion_persist_independently_across_rebuild
         assert screen._tree_expanded_watchlist_ids == frozenset({watchlist["id"]})
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tree_snapshot_acquisition_runs_off_the_textual_event_loop(
     monkeypatch,
@@ -3503,6 +3568,7 @@ async def test_tree_snapshot_acquisition_runs_off_the_textual_event_loop(
     assert all(thread_id != caller_thread for thread_id in acquisition_threads)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_slow_tree_refresh_cannot_overwrite_a_newer_snapshot(monkeypatch) -> None:
     app = _build_test_app()
@@ -3539,6 +3605,7 @@ async def test_slow_tree_refresh_cannot_overwrite_a_newer_snapshot(monkeypatch) 
         assert [row["name"] for row in screen._tree_all_source_rows] == ["Fresh"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tree_branch_failure_retains_last_snapshot_and_notifies_once_per_episode(
     monkeypatch,
@@ -3625,6 +3692,7 @@ def _label_plain(widget) -> str:
     return raw
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_creating_a_watchlist_from_the_tree_shows_it_without_a_refresh():
     """AC #1. The rail must show the new watchlist on its own -- the whole
@@ -3654,6 +3722,7 @@ async def test_creating_a_watchlist_from_the_tree_shows_it_without_a_refresh():
         ), "the new watchlist must appear in the rail with no manual refresh"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_empty_name_is_rejected_with_a_visible_reason():
     """AC #7. Not a silent no-op: the dialog stays open and says why."""
@@ -3678,6 +3747,7 @@ async def test_an_empty_name_is_rejected_with_a_visible_reason():
         assert app.watchlist_bundle_service.list_watchlists() == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_duplicate_name_is_rejected_and_the_reason_escapes_the_name():
     """AC #7, both halves at once.
@@ -3714,6 +3784,7 @@ async def test_a_duplicate_name_is_rejected_and_the_reason_escapes_the_name():
         assert len(app.watchlist_bundle_service.list_watchlists()) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_renaming_a_watchlist_updates_the_rail():
     """AC #2, rename half."""
@@ -3796,6 +3867,7 @@ async def test_renaming_a_watchlist_updates_the_rail():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_deleting_a_watchlist_says_what_happens_to_its_sources_first():
     """AC #2, delete half: the count and the destination are stated before
@@ -3841,6 +3913,7 @@ async def test_deleting_a_watchlist_says_what_happens_to_its_sources_first():
         assert len(service.list_watchlists()) == 1, "Cancel must not delete anything"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_deleting_a_watchlist_never_orphans_its_sources_into_invisibility():
     """AC #3. Deleting cascades only the membership rows, so the sources
@@ -3890,6 +3963,7 @@ async def test_deleting_a_watchlist_never_orphans_its_sources_into_invisibility(
         assert not screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_adding_a_source_to_a_watchlist_from_the_tree():
     """AC #4, add half. The picker offers only sources that are not already
@@ -3934,6 +4008,7 @@ async def test_adding_a_source_to_a_watchlist_from_the_tree():
         assert service.list_unassigned_source_rows() == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_removing_a_source_from_a_watchlist_keeps_the_source():
     """AC #4, remove half -- and the other side of AC #3: a removed source
@@ -3987,6 +4062,7 @@ async def test_removing_a_source_from_a_watchlist_keeps_the_source():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_server_backend_disables_all_five_verbs_with_a_stated_reason():
     """AC #5. Not cosmetic hiding: `SourceUpdateRequest` carries no
@@ -4032,6 +4108,7 @@ async def test_the_server_backend_disables_all_five_verbs_with_a_stated_reason()
         assert "Switch the backend to Local" in _label_plain(note)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_verbs_are_disabled_when_the_bundle_service_is_missing():
     """The same degrade-don't-crash contract every other caller of
@@ -4162,6 +4239,7 @@ def test_every_watchlist_bundle_service_method_has_a_production_caller():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_failed_tree_write_start_does_not_wedge_later_writes():
     """Qodo #3 on PR #989: `_tree_write_active` could stick True forever.
@@ -4205,6 +4283,7 @@ async def test_a_failed_tree_write_start_does_not_wedge_later_writes():
 # --- TASK-3791 plan task 3: `/` and the corpus-wide search --------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_slash_focuses_the_items_search_box():
     """`/` on the Read tab puts the caret in the search input."""
@@ -4223,6 +4302,7 @@ async def test_slash_focuses_the_items_search_box():
         assert isinstance(focused, Input) and focused.id == "items-search-input"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_slash_types_literally_once_the_search_box_has_focus():
     """The verb guard: once an Input has focus, `/` is text, not a verb."""
@@ -4242,6 +4322,7 @@ async def test_slash_types_literally_once_the_search_box_has_focus():
         assert search.value == "/", "a second `/` must type into the box"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_search_reaches_beyond_the_first_page():
     """The corpus-wide path: an item past the newest-50 page still surfaces."""
@@ -4289,6 +4370,7 @@ async def test_a_search_reaches_beyond_the_first_page():
         assert found, "a corpus-wide search must surface items beyond the page"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clearing_the_search_restores_the_unsearched_page():
     from textual.widgets import Input
@@ -4350,6 +4432,7 @@ async def test_clearing_the_search_restores_the_unsearched_page():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_search_keeps_the_open_item_pinned():
     """The pin is unconditional since TASK-3072: searching away from the open
@@ -4421,6 +4504,7 @@ async def _screen_with_sources(pilot, host):
     return screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_r_checks_every_active_source_once_and_aggregates():
     """`r` launches a check per ACTIVE source (paused are skipped), then
@@ -4481,6 +4565,7 @@ async def test_r_checks_every_active_source_once_and_aggregates():
         assert pane.new_items_note == "2 new items"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_refresh_all_pill_uses_arrivals_not_the_unread_delta():
     """Reading an old row during a check cannot hide a new arrival."""
@@ -4534,6 +4619,7 @@ async def test_refresh_all_pill_uses_arrivals_not_the_unread_delta():
         assert screen._items_snapshot_count == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_arrivals_respect_scope_and_stay_outside_the_cached_snapshot():
     app = _build_test_app()
@@ -4611,6 +4697,7 @@ async def test_arrivals_respect_scope_and_stay_outside_the_cached_snapshot():
         assert screen._items_snapshot_count == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_r_with_no_eligible_sources_notifies_and_dispatches_nothing():
     from unittest.mock import Mock
@@ -4641,6 +4728,7 @@ async def test_r_with_no_eligible_sources_notifies_and_dispatches_nothing():
         assert "Nothing to check" in str(app.notify.call_args.args[0])
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_r_during_a_batch_is_a_noop():
     """One batch at a time: a second `r` while checks are in flight does
@@ -4687,6 +4775,7 @@ async def test_r_during_a_batch_is_a_noop():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_r_names_a_failed_source_and_finishes_the_batch():
     from unittest.mock import Mock
@@ -4744,6 +4833,7 @@ async def test_r_names_a_failed_source_and_finishes_the_batch():
 # --- TASK-3791 plan task 6: the hostile-search end-to-end pin ------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_hostile_search_query_renders_inert_and_never_raises():
     """An FTS5-syntax attack typed into the reader's search box: the corpus

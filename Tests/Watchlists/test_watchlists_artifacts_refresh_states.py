@@ -378,6 +378,7 @@ async def test_downstream_disclosure_actions_survive_live_state_updates():
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_refresh_failure_preserves_screen_owned_last_good_content(monkeypatch):
     """A failed database refresh must not turn the pane into an empty state."""
@@ -426,6 +427,7 @@ async def test_refresh_failure_preserves_screen_owned_last_good_content(monkeypa
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_generation_failure_preserves_last_good_content_and_has_own_state(
     monkeypatch,
@@ -472,6 +474,7 @@ async def test_generation_failure_preserves_last_good_content_and_has_own_state(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_generation_receipt_does_not_replace_readable_selection(
     monkeypatch,
@@ -522,6 +525,7 @@ async def test_failed_generation_receipt_does_not_replace_readable_selection(
         assert pane.view_state == "failed"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_durable_receipt_mismatch_retains_last_good_content(monkeypatch):
     """Only a durable expected ID missing from a successful reload is mismatch."""
@@ -558,6 +562,7 @@ async def test_durable_receipt_mismatch_retains_last_good_content(monkeypatch):
         assert pane.query_one("#artifacts-inspect-runs-button", Button).display is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(160, 42), (220, 52)])
 @pytest.mark.parametrize("coordinated", [False, True])
@@ -642,6 +647,7 @@ async def test_accepted_missing_receipt_retries_its_exact_id(
         assert pane.selected_briefing["id"] == accepted_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_coordinated_briefing_follow_releases_ui_when_receipt_stays_generating(
     monkeypatch,
@@ -710,6 +716,7 @@ async def test_coordinated_briefing_follow_releases_ui_when_receipt_stays_genera
         assert reload_groups == ["wl-briefings-load"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_coordinated_failed_receipt_shows_the_generation_failed_state(
     monkeypatch,
@@ -756,6 +763,7 @@ async def test_coordinated_failed_receipt_shows_the_generation_failed_state(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("coordinated", [False, True])
 async def test_generation_completion_does_not_publish_into_a_new_watchlist_scope(
@@ -852,6 +860,7 @@ async def test_generation_completion_does_not_publish_into_a_new_watchlist_scope
         assert screen._artifacts_view_state == "idle"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scope_change_does_not_suppress_generation_cancellation(monkeypatch):
     """Skipping an old-scope repaint must still propagate worker cancellation."""
@@ -892,6 +901,7 @@ async def test_scope_change_does_not_suppress_generation_cancellation(monkeypatc
             await task
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_citation_resolution_failure_retains_last_good_citations(monkeypatch):
     """A resolver outage is not evidence that every cited item was deleted."""

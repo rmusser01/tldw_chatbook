@@ -91,6 +91,7 @@ def _label(widget) -> str:
 # --- AC#1: one verb per operation, everywhere -------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_rail_and_the_pane_do_not_share_a_verb():
     """AC#1: the two labels the UAT confused, read off the live screen."""
@@ -125,6 +126,7 @@ async def test_the_rail_and_the_pane_do_not_share_a_verb():
         assert assign.lower() != create.lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_empty_state_create_button_uses_the_create_verb():
     """AC#1: the centre's own create affordance, which said "Create source".
@@ -144,6 +146,7 @@ async def test_the_empty_state_create_button_uses_the_create_verb():
         assert _label(button) == CREATE_LABEL
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_assign_affordances_agree_with_each_other():
     """AC#1/#2: rail and Inspector name the same operation the same way."""
@@ -172,6 +175,7 @@ async def test_the_assign_affordances_agree_with_each_other():
 # --- AC#2: the Inspector can assign -----------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_selected_source_can_be_filed_from_its_inspector():
     """AC#2 + the data actually lands.
@@ -237,6 +241,7 @@ async def test_a_selected_source_can_be_filed_from_its_inspector():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_watchlist_inspector_opens_the_source_picker():
     """AC#2, the watchlist-first direction, driven by a real press.
@@ -266,6 +271,7 @@ async def test_the_watchlist_inspector_opens_the_source_picker():
         assert dialog.watchlist_name == "Reading"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_neither_assign_path_writes_on_a_backend_that_cannot_take_it():
     """Review wave, I1. The rail has refused this since task-895; the two
@@ -363,6 +369,7 @@ async def test_neither_assign_path_writes_on_a_backend_that_cannot_take_it():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_both_inspector_assign_buttons_read_the_same_backend_gate():
     """Review wave, M6. One write, one condition, one tooltip.
@@ -439,6 +446,7 @@ async def test_both_inspector_assign_buttons_read_the_same_backend_gate():
         assert notices, "the handler refusal must still explain itself"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_inspector_offers_no_assign_action_for_a_server_source():
     """AC#2's guard: membership rows key on a LOCAL subscription id.
@@ -483,6 +491,7 @@ async def test_the_inspector_offers_no_assign_action_for_a_server_source():
 # --- AC#3: the modals explain themselves ------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_both_pickers_state_what_a_row_does_and_that_nothing_is_created():
     """AC#3, on both directions of the same write.
@@ -527,6 +536,7 @@ async def test_both_pickers_state_what_a_row_does_and_that_nothing_is_created():
             await pilot.pause(0.1)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_watchlist_picker_does_not_claim_membership_that_cannot_exist():
     """Review wave, M2. An empty candidate list has two causes.
@@ -570,6 +580,7 @@ async def test_the_watchlist_picker_does_not_claim_membership_that_cannot_exist(
 # --- AC#4: guidance names labels that exist ---------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_first_run_guidance_names_the_button_that_is_on_screen():
     """AC#4. The copy and the button are read in the same run, so a rename

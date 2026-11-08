@@ -77,6 +77,7 @@ def _rail_label(screen, node_id: str) -> str:
 # --- AC#3: what the number counts ------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_rail_says_what_its_numbers_count():
     """AC#3. Legible without hovering, and again on hover."""
@@ -107,6 +108,7 @@ def test_the_unread_phrase_covers_zero_one_and_many():
 # --- AC#1: the counts move --------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_check_that_produces_items_updates_the_rail_counts():
     """AC#1. The UAT's exact sequence: assign, check, read the rail.
@@ -171,6 +173,7 @@ async def test_a_check_that_produces_items_updates_the_rail_counts():
         ), "the rail node itself must show the new count"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ingesting_an_item_updates_the_rail_counts():
     """AC#1. Triage moves items out of the unread bucket the rail counts."""
@@ -220,6 +223,7 @@ async def test_ingesting_an_item_updates_the_rail_counts():
 # --- AC#2: the table and the header agree -----------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selecting_a_watchlist_scope_narrows_the_sources_table():
     """AC#2. The UAT's F16, driven through the real scope change."""
@@ -255,6 +259,7 @@ async def test_selecting_a_watchlist_scope_narrows_the_sources_table():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_unassigned_scope_excludes_assigned_sources():
     """AC#2's other direction, and the exact row the UAT saw leak through."""
@@ -277,6 +282,7 @@ async def test_the_unassigned_scope_excludes_assigned_sources():
         assert len(screen.scoped_source_rows()) == len(pane.sources)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_source_reload_under_a_scope_stays_scoped():
     """AC#2. The reload path is the other way the table can re-widen.
@@ -306,6 +312,7 @@ async def test_a_source_reload_under_a_scope_stays_scoped():
         assert len(screen._loaded_sources) == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_assigning_a_source_fills_the_scoped_table_it_now_belongs_to():
     """AC#2, found in live verification and not by the rest of this suite.
@@ -349,6 +356,7 @@ async def test_assigning_a_source_fills_the_scoped_table_it_now_belongs_to():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_workbench_rebuild_under_a_scope_stays_scoped():
     """AC#2. And the third way: a region toggle rebuilding the pane."""
@@ -373,6 +381,7 @@ async def test_a_workbench_rebuild_under_a_scope_stays_scoped():
         assert {row["source_id"] for row in pane.sources} == {assigned_id}
 
 
+@pytest.mark.bootstrap_profile
 def test_the_all_scope_costs_no_extra_query():
     """`scoped_loaded_sources` must not pay for a scope that filters nothing.
 
@@ -405,6 +414,7 @@ def test_unassigned_bucket_ids_are_the_ones_the_rail_reads():
 # --- review wave minors -----------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_scoped_table_is_left_alone_on_the_server_backend():
     """Review wave, Minor 3. Scoping is a LOCAL-only fact, and says so.
@@ -441,6 +451,7 @@ async def test_the_scoped_table_is_left_alone_on_the_server_backend():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_source_scope_shows_exactly_that_source():
     """Review wave, Minor 5. `source` scope was untouched by any test.
@@ -473,6 +484,7 @@ async def test_a_source_scope_shows_exactly_that_source():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_opening_items_refreshes_the_rail_once_the_user_pauses():
     """Review wave, Minor 6. The legend must not out-promise the number.
@@ -529,6 +541,7 @@ async def test_opening_items_refreshes_the_rail_once_the_user_pauses():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_check_that_is_only_queued_does_not_re_read_the_counts():
     """Review wave, Minor 4. Don't report a number the action has not reached.
@@ -579,6 +592,7 @@ async def test_a_check_that_is_only_queued_does_not_re_read_the_counts():
 # --- TASK-3072 plan task 6: the Starred root's badge -------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_starred_root_badge_counts_flagged_items():
     """The Starred root's badge is `get_flagged_items_count` -- global and
@@ -618,6 +632,7 @@ async def test_starred_root_badge_counts_flagged_items():
         assert _rail_label(screen, "wl-tree-node-starred") == "★ Starred  2"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_all_unread_and_today_badges_count_their_own_facts():
     """TASK-3791 plan task 4: All Unread reuses the All-sources unread count

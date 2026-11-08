@@ -68,6 +68,7 @@ async def _resize_to(screen, pilot, width_box, width: int) -> None:
     await pilot.pause(0.05)
 
 
+@pytest.mark.bootstrap_profile
 async def test_one_cell_resize_oscillation_at_the_boundary_causes_no_churn():
     """+/-1-cell oscillation at the RIGHT_RAIL boundary: after the first
     legitimate collapse, zero further factory builds and zero

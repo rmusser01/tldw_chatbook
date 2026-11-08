@@ -401,6 +401,7 @@ def test_content_is_not_a_preferred_collapsible_region():
     assert Region.CONTENT not in layout.collapsed
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selecting_an_item_renders_it_in_the_content_region():
     """Selection must reach the reader through the real screen wiring.
@@ -458,6 +459,7 @@ async def test_selecting_an_item_renders_it_in_the_content_region():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_content_region_is_gated_to_the_items_read_tab():
     """Fix round 1 (coordinator review): per the approved design spec
@@ -608,6 +610,7 @@ async def _mount_items_screen(pilot, host, expected_count: int = 3):
     return screen, pane
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_j_and_k_move_to_the_next_and_previous_item_and_update_the_reader():
     """The core Task 6 behaviour: `j` moves forward, `k` moves back, and
@@ -677,6 +680,7 @@ async def test_j_and_k_move_to_the_next_and_previous_item_and_update_the_reader(
         assert items[1]["title"] in str(body.renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_j_and_k_do_not_raise_at_the_list_boundaries():
     """`k` at the first item and `j` at the last item must be a no-op, not
@@ -723,6 +727,7 @@ async def test_j_and_k_do_not_raise_at_the_list_boundaries():
         assert last_item["title"] in str(body.renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_typing_j_in_the_search_input_does_not_navigate():
     """A user typing "j" into the items search box must get the character,
@@ -764,6 +769,7 @@ async def test_typing_j_in_the_search_input_does_not_navigate():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_navigate_item_is_a_noop_when_a_text_input_has_focus():
     """Pins `_navigate_item`'s own defensive branch, isolated from `Input`'s
@@ -817,6 +823,7 @@ async def test_navigate_item_is_a_noop_when_a_text_input_has_focus():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_j_skips_items_hidden_by_a_filter_and_does_not_mark_them_read():
     """Task 6 fix round 1, Important #1.
@@ -918,6 +925,7 @@ async def test_j_skips_items_hidden_by_a_filter_and_does_not_mark_them_read():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_j_keeps_the_reader_the_pane_selection_and_the_cursor_in_sync():
     """Task 6 fix round 1, Important #2.
@@ -985,6 +993,7 @@ async def test_j_keeps_the_reader_the_pane_selection_and_the_cursor_in_sync():
         assert items[0]["title"] in str(body.renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_j_navigation_does_not_recompose_the_screen():
     """Task 6 must reuse the Task 5 fix, not reintroduce the reload.
@@ -1034,6 +1043,7 @@ async def test_j_navigation_does_not_recompose_the_screen():
 # --- Whole-branch review fixes ---------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_j_and_k_move_forward_and_back_under_a_status_filter():
     """CRITICAL. A seam between Task 5 and Task 6, present in neither alone.
@@ -1098,6 +1108,7 @@ async def test_j_and_k_move_forward_and_back_under_a_status_filter():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_open_item_survives_a_same_page_rebuild():
     """A same-page rebuild pins the open item in `_filtered_items`.
@@ -1137,6 +1148,7 @@ async def test_the_open_item_survives_a_same_page_rebuild():
         assert screen._selected_content_item["id"] == open_item["id"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_k_with_nothing_open_goes_to_the_last_item_not_nowhere():
     """ "The current item is not in the list" is its own case, not index -1.
@@ -1170,6 +1182,7 @@ async def test_k_with_nothing_open_goes_to_the_last_item_not_nowhere():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_opening_an_item_repaints_its_row_in_the_list():
     """The Items list never showed what you had read.
@@ -1226,6 +1239,7 @@ async def test_opening_an_item_repaints_its_row_in_the_list():
         assert screen.query_one("#watchlists-items-pane", ArticleListPane) is pane
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_opening_an_item_does_not_cancel_unrelated_background_work():
     """`run_worker(exclusive=True)` with no `group=` lands in the default
@@ -1267,6 +1281,7 @@ async def test_opening_an_item_does_not_cancel_unrelated_background_work():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_article_focus_is_refused_off_read_without_changing_layout():
     """The permanent Reader exists only on Read, and its focus mode is local."""
@@ -1299,6 +1314,7 @@ async def test_article_focus_is_refused_off_read_without_changing_layout():
         assert not screen._effective_region_layout.is_collapsed(Region.CONTENT)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_workbench_rebuild_keeps_the_items_filter_search_and_selection():
     """`_build_detail_pane` seeded only `.items`, unlike the sibling Sources,
@@ -1360,6 +1376,7 @@ async def test_a_workbench_rebuild_keeps_the_items_filter_search_and_selection()
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_unread_refuses_to_overwrite_an_item_ingested_by_the_real_gesture():
     """Data loss, driven end to end through the gestures a user actually makes.
@@ -1455,6 +1472,7 @@ async def test_mark_unread_refuses_to_overwrite_an_item_ingested_by_the_real_ges
         }, "the ingested item must not have been pushed back to new"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_unread_still_works_on_an_item_that_is_merely_read():
     """The other side of the guard: the normal case must not be refused.
@@ -1501,6 +1519,7 @@ async def test_mark_unread_still_works_on_an_item_that_is_merely_read():
         }, "Mark unread must still work on an item that is simply read"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_unread_fails_closed_when_the_status_cannot_be_confirmed():
     """An unanswerable question must not resolve in favour of the destructive
@@ -1557,6 +1576,7 @@ async def test_mark_unread_fails_closed_when_the_status_cannot_be_confirmed():
         }, "the write must be refused, not attempted, when it cannot be checked"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_persisted_body_reaches_the_reader_end_to_end():
     """Task 1's entire reason for existing, finally pinned.
@@ -1632,6 +1652,7 @@ async def test_the_mark_unread_button_is_compact():
 _LEGACY_STATUS_LOOKUP_LIMIT = 500
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_unread_refuses_an_ingest_that_sits_beyond_a_lookup_page():
     """PR #1091 review, F1: the guard must not be defeated by a page size.
@@ -1781,6 +1802,7 @@ async def test_mark_unread_refuses_an_ingest_that_sits_beyond_a_lookup_page():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_article_focus_is_transient_and_the_reader_stays_permanent():
     """Article Focus hides side panes without changing preferred state."""
@@ -1820,6 +1842,7 @@ async def test_article_focus_is_transient_and_the_reader_stays_permanent():
         assert screen.query("#wl-region-items")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_article_focus_off_read_does_not_change_preferred_or_effective_state():
     """Management tabs reject Article Focus and retain their canvas."""
@@ -2079,6 +2102,7 @@ async def _select_first_item_with_inspector(pilot, screen, pane):
     return screen.query_one("#watchlists-entity-inspector", InspectorPane)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_full_page_button_opens_the_newest_snapshot_in_a_modal():
     """The screen's handler must resolve `"full_page"` to the newest
@@ -2132,6 +2156,7 @@ async def test_full_page_button_opens_the_newest_snapshot_in_a_modal():
         assert not isinstance(host.screen_stack[-1], SnapshotViewModal)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_previous_snapshot_button_opens_the_second_newest_snapshot():
     """`"previous"` must resolve to the SECOND-newest row, not the newest --
@@ -2182,6 +2207,7 @@ async def test_previous_snapshot_button_opens_the_second_newest_snapshot():
         await pilot.pause(0.3)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_previous_snapshot_with_only_one_stored_degrades_to_an_honest_toast():
     """AC#2: no previous snapshot exists yet (only one check has ever run)
@@ -2233,6 +2259,7 @@ async def test_previous_snapshot_with_only_one_stored_degrades_to_an_honest_toas
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_snapshot_modal_renders_remote_markup_as_literal_text():
     """AC#3: `extracted_content` is scraped from a page this app does not
@@ -2393,6 +2420,7 @@ def test_a_non_html_body_is_left_alone_apart_from_control_bytes():
     assert "1 < 2 and 2 < 3, plainly written, no markup at all." in out
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selecting_an_html_item_shows_readable_prose_in_the_mounted_reader():
     """End to end through the real screen wiring (not a direct renderer

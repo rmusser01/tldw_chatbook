@@ -141,6 +141,7 @@ def test_the_filter_speaks_the_readers_vocabulary():
 # --- data layers -----------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_get_new_items_with_no_status_returns_every_status():
     """AC#1, at the layer that made it impossible."""
     app = _build_test_app()
@@ -152,6 +153,7 @@ def test_get_new_items_with_no_status_returns_every_status():
     assert {row["status"] for row in rows} == set(SEEDED)
 
 
+@pytest.mark.bootstrap_profile
 def test_get_new_items_still_defaults_to_new_only():
     """The default is load-bearing: `briefing_selection` and the smoke suite
     both call this with no status and mean "the unread bucket"."""
@@ -162,6 +164,7 @@ def test_get_new_items_still_defaults_to_new_only():
     assert {row["status"] for row in db.get_new_items(limit=50)} == {"new"}
 
 
+@pytest.mark.bootstrap_profile
 def test_get_new_items_scoped_to_one_subscription_still_filters_by_status():
     """Both predicates are independent; neither may swallow the other."""
     app = _build_test_app()
@@ -180,6 +183,7 @@ def test_get_new_items_scoped_to_one_subscription_still_filters_by_status():
     assert {row["status"] for row in scoped_one} == {"ingested"}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_list_items_no_longer_collapses_none_to_new():
     """The service layer stopped rewriting the caller's intent."""
@@ -195,6 +199,7 @@ async def test_list_items_no_longer_collapses_none_to_new():
 # --- the pane --------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_every_reader_status_appears_in_the_list_and_is_distinguishable():
     """AC#1, reader vocabulary. The reader set is present under "All", each
@@ -230,6 +235,7 @@ async def test_every_reader_status_appears_in_the_list_and_is_distinguishable():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_triaged_item_is_findable_under_the_readers_filters():
     """AC#4. The regression test the task asks for, stated as the user's
@@ -270,6 +276,7 @@ async def test_a_triaged_item_is_findable_under_the_readers_filters():
 # --- the user gesture ------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ingest_repaints_the_live_row_instead_of_removing_it():
     """AC#2 and AC#3, pinned on the immediate push rather than the reload.
@@ -315,6 +322,7 @@ async def test_ingest_repaints_the_live_row_instead_of_removing_it():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ingest_feedback_toast_never_parses_markup():
     """AC#3's other half. The toast is app-authored today, but it is the
@@ -352,6 +360,7 @@ async def test_ingest_feedback_toast_never_parses_markup():
         assert all(kwargs.get("markup") is False for kwargs in matching)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_ingested_item_survives_the_reload_that_follows():
     """AC#2 end to end, with the real reload in place."""
@@ -436,6 +445,7 @@ def _seed_many(db, *, ingested: int, new: int) -> tuple[int, list[str]]:
     return source_id, unread_titles
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unread_items_past_the_newest_page_are_still_reachable():
     """Review wave, I2. The filter must narrow the QUERY, not just the page.
@@ -484,6 +494,7 @@ async def test_unread_items_past_the_newest_page_are_still_reachable():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_search_keystroke_does_not_re_page():
     """The reload is gated on the STATUS moving, not on any filter message.
@@ -528,6 +539,7 @@ async def test_a_search_keystroke_does_not_re_page():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_delete_gesture_on_an_item_says_and_does_ignore():
     """Review wave, Minor 2. The affordance now matches the write.
@@ -573,6 +585,7 @@ async def test_the_delete_gesture_on_an_item_says_and_does_ignore():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_open_item_survives_a_reload_under_a_narrow_filter():
     """Round 2, O2. The pin's guarantee must survive query-side filtering.
@@ -635,6 +648,7 @@ async def test_the_open_item_survives_a_reload_under_a_narrow_filter():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_carried_open_item_keeps_the_pages_ordering():
     """Round 2, O2. Carried, not prepended.

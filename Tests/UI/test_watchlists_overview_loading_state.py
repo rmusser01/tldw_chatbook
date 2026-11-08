@@ -63,6 +63,7 @@ def test_profile_state_names_all_three_states():
     assert OverviewPane.profile_is_empty({"total_sources": 3}) is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_overview_shows_a_loading_state_while_the_request_is_in_flight():
     """AC#1 and AC#3, with a deliberately slow backend (AC#5)."""
@@ -145,6 +146,7 @@ async def _wait_for_watchlists_tab(screen, pilot, section: str) -> None:
     pytest.fail(f"Watchlists tab {section!r} did not mount")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_inspector_follows_the_same_three_states():
     """AC#4: the two regions answer one question, so they cannot disagree."""
@@ -193,6 +195,7 @@ async def test_the_inspector_follows_the_same_three_states():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_user_with_sources_never_flashes_first_run_copy():
     """AC#2, the regression the guard was protecting: sample every frame

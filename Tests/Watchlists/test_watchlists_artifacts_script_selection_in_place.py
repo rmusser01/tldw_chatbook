@@ -97,6 +97,7 @@ async def _select_briefing_and_settle(pane, pilot, host, briefing_id) -> None:
     await _settle(pilot, host)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_second_arrow_key_immediately_after_selecting_a_script_still_moves_the_selection():
     """The AC's concrete symptom, one level down: down, then down again.
@@ -137,6 +138,7 @@ async def test_a_second_arrow_key_immediately_after_selecting_a_script_still_mov
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selecting_a_script_keeps_the_table_widget_and_its_focus():
     """The mechanism behind the symptom: the scripts table widget must
@@ -167,6 +169,7 @@ async def test_selecting_a_script_keeps_the_table_widget_and_its_focus():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selecting_a_script_preserves_the_tables_scroll_position():
     """Deep in a long scripts list, a selection must not throw the
@@ -210,6 +213,7 @@ async def test_selecting_a_script_preserves_the_tables_scroll_position():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_script_row_highlight_moves_in_place_as_the_selection_moves():
     """The selected row's `reverse bold` must arrive -- and LEAVE -- without
@@ -248,6 +252,7 @@ async def test_the_script_row_highlight_moves_in_place_as_the_selection_moves():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_script_detail_updates_while_the_scripts_table_content_stands_still():
     """The other half of the bargain: the script detail must still follow
@@ -288,6 +293,7 @@ async def test_the_script_detail_updates_while_the_scripts_table_content_stands_
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_scripts_with_audio_change_patches_the_audio_cell_without_rebuilding_the_table():
     """Review fix, task-16852: a first synthesis for the SELECTED script is

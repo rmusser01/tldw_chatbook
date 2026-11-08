@@ -106,6 +106,7 @@ async def _wait_until(pilot, predicate: Callable[[], bool]) -> None:
     assert predicate(), "condition did not become true"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_first_page_uses_typed_reader_query_without_cursor_or_watermark():
     controller = AsyncMock()
@@ -130,6 +131,7 @@ async def test_first_page_uses_typed_reader_query_without_cursor_or_watermark():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_next_uses_committed_watermark_and_cursor_and_deduplicates():
     controller = AsyncMock()
@@ -168,6 +170,7 @@ async def test_next_uses_committed_watermark_and_cursor_and_deduplicates():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_previous_and_cached_forward_present_without_io():
     controller = AsyncMock()
@@ -190,6 +193,7 @@ async def test_previous_and_cached_forward_present_without_io():
         assert [row["item_id"] for row in screen._loaded_items] == [2, 1]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("interruption", ["failure", "cancel"])
 async def test_interrupted_next_keeps_committed_page_reader_and_snapshot(interruption):
@@ -234,6 +238,7 @@ async def test_interrupted_next_keeps_committed_page_reader_and_snapshot(interru
         assert content.item is open_item
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_next_presentation_rolls_back_rows_and_snapshot(monkeypatch):
     controller = AsyncMock()
@@ -263,6 +268,7 @@ async def test_failed_next_presentation_rolls_back_rows_and_snapshot(monkeypatch
         assert screen._items_page_index == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_repeated_next_while_loading_coalesces_to_one_request():
     controller = AsyncMock()
@@ -292,6 +298,7 @@ async def test_repeated_next_while_loading_coalesces_to_one_request():
         assert await second is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_duplicate_only_continuations_are_bounded_and_not_cached_blank():
     controller = AsyncMock()
@@ -311,6 +318,7 @@ async def test_duplicate_only_continuations_are_bounded_and_not_cached_blank():
         assert [row["item_id"] for row in screen._loaded_items] == [3]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_late_continuation_from_superseded_query_cannot_append():
     controller = AsyncMock()
@@ -345,6 +353,7 @@ async def test_late_continuation_from_superseded_query_cannot_append():
         assert [row["item_id"] for row in screen._loaded_items] == [9]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_refresh_requests_a_new_first_page_and_preserves_reader():
     controller = AsyncMock()
@@ -378,6 +387,7 @@ async def test_refresh_requests_a_new_first_page_and_preserves_reader():
         assert [row["item_id"] for row in screen._loaded_items] == [9]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_arrivals_use_the_committed_query_and_only_update_the_pill():
     controller = AsyncMock()
@@ -420,6 +430,7 @@ async def test_arrivals_use_the_committed_query_and_only_update_the_pill():
         assert pane.new_items_note == "3 new items"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stale_arrivals_result_cannot_cross_snapshot_replacement():
     controller = AsyncMock()
@@ -451,6 +462,7 @@ async def test_stale_arrivals_result_cannot_cross_snapshot_replacement():
         assert screen._items_pending_arrivals == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_only_the_latest_arrivals_reconciliation_can_publish():
     controller = AsyncMock()
@@ -484,6 +496,7 @@ async def test_only_the_latest_arrivals_reconciliation_can_publish():
         assert screen._items_pending_arrivals == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("state_name", "replacement"),
@@ -516,6 +529,7 @@ async def test_arrivals_cannot_publish_after_section_or_backend_changes(
         assert screen._items_pending_arrivals == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_refresh_failure_keeps_arrival_notice_and_success_clears_it():
     controller = AsyncMock()
@@ -548,6 +562,7 @@ async def test_refresh_failure_keeps_arrival_notice_and_success_clears_it():
         assert pane.new_items_note == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("outcome", ["failure", "cancel", "success"])
 async def test_refresh_preserves_search_authority_until_transactional_outcome(
@@ -609,6 +624,7 @@ async def test_refresh_preserves_search_authority_until_transactional_outcome(
         assert [row["item_id"] for row in pane._filtered_items()] == [expected_id]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("status_filter", "search", "reason"),
@@ -664,6 +680,7 @@ async def test_query_replacement_keeps_old_rows_and_reader_until_commit(
         assert open_item in screen._loaded_items, "filter/search pins the open article"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("reason", ["filter", "search"])
 async def test_query_pin_is_cached_and_deduplicated_across_page_replay(reason):
@@ -705,6 +722,7 @@ async def test_query_pin_is_cached_and_deduplicated_across_page_replay(reason):
         assert controller.list_reader_items_page.await_count == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("reason", ["filter", "search"])
 async def test_full_query_pin_caches_displaced_terminal_row(reason):
@@ -748,6 +766,7 @@ async def test_full_query_pin_caches_displaced_terminal_row(reason):
         assert controller.list_reader_items_page.await_count == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("reason", ["filter", "search"])
 async def test_query_pin_merges_displaced_row_with_service_continuation(reason):
@@ -781,6 +800,7 @@ async def test_query_pin_merges_displaced_row_with_service_continuation(reason):
         assert controller.list_reader_items_page.await_count == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_all_read_rebuilds_multi_page_unread_snapshot():
     controller = AsyncMock()
@@ -810,6 +830,7 @@ async def test_mark_all_read_rebuilds_multi_page_unread_snapshot():
         assert await screen._load_next_items_page() is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_all_read_closes_uncached_tail_when_rebuild_fails():
     controller = AsyncMock()
@@ -836,6 +857,7 @@ async def test_mark_all_read_closes_uncached_tail_when_rebuild_fails():
         assert await screen._load_next_items_page() is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_query_replacement_keeps_committed_query_rows_and_reader():
     controller = AsyncMock()
@@ -859,6 +881,7 @@ async def test_failed_query_replacement_keeps_committed_query_rows_and_reader():
         assert screen._selected_content_item is open_item
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_same_query_pane_rebuild_uses_cache_and_preserves_selected_article():
     controller = AsyncMock()
@@ -889,6 +912,7 @@ async def test_same_query_pane_rebuild_uses_cache_and_preserves_selected_article
         assert replacement.new_items_note == "3 new items"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_explicit_refresh_removes_an_out_of_predicate_pinned_row():
     controller = AsyncMock()
@@ -911,6 +935,7 @@ async def test_explicit_refresh_removes_an_out_of_predicate_pinned_row():
         assert screen._selected_content_item is pinned
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selection_records_committed_query_while_detail_fetch_is_pending():
     controller = AsyncMock()
@@ -942,6 +967,7 @@ async def test_selection_records_committed_query_while_detail_fetch_is_pending()
         assert screen._selected_content_page_key == committed_query.context_key
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_detail_result_cannot_select_from_replaced_snapshot():
     controller = AsyncMock()
@@ -986,6 +1012,7 @@ async def test_detail_result_cannot_select_from_replaced_snapshot():
         screen._mark_item_read_on_open.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_one_mutation_path_patches_every_cached_projection_without_query():
     controller = AsyncMock()
@@ -1103,6 +1130,7 @@ def test_production_has_no_legacy_items_loader_or_offset_reader_calls():
     assert "list_reader_items_page" in source
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_atomic_scope_keeps_committed_reader_until_first_page_mounts(
     monkeypatch,
@@ -1226,6 +1254,7 @@ async def test_atomic_scope_keeps_committed_reader_until_first_page_mounts(
         assert pane.status_filter_disabled_reason is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pending_scope_failure_retains_committed_scope_and_names_both():
     controller = AsyncMock()
@@ -1323,6 +1352,7 @@ async def test_pending_scope_failure_retains_committed_scope_and_names_both():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pending_scope_presentation_failure_does_not_commit(monkeypatch):
     controller = AsyncMock()
@@ -1365,6 +1395,7 @@ async def test_pending_scope_presentation_failure_does_not_commit(monkeypatch):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_non_scope_replacement_supersedes_orphaned_pending_scope():
     controller = AsyncMock()
@@ -1381,6 +1412,7 @@ async def test_non_scope_replacement_supersedes_orphaned_pending_scope():
         assert screen._pending_tree_scope is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_management_scope_invalidates_reader_without_hidden_item_io():
     controller = AsyncMock()
@@ -1420,6 +1452,7 @@ async def test_management_scope_invalidates_reader_without_hidden_item_io():
         assert content.item is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pending_scope_only_newest_request_can_publish():
     controller = AsyncMock()

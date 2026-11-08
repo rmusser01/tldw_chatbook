@@ -64,6 +64,7 @@ def _seed_one_new_item(db, *, content_hash: str = "hash-read-status"):
     return source_id, item_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_opening_an_item_marks_it_read():
     """Selecting an item in the reader -- with no other action -- must move
@@ -106,6 +107,7 @@ async def test_opening_an_item_marks_it_read():
     assert db.get_new_items(status="new", limit=10) == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_unread_toggle_restores_unread():
     """Marking read destroys the unread list, so this must be reversible.
@@ -156,6 +158,7 @@ async def test_the_unread_toggle_restores_unread():
     assert db.get_new_items(status="reviewed", limit=10) == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_read_status_is_global_across_watchlists():
     """The same item read from 'All sources' is read everywhere.
@@ -258,6 +261,7 @@ async def test_read_status_is_global_across_watchlists():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selecting_an_item_does_not_break_keyboard_navigation():
     """Fix round 1, CRITICAL regression.
@@ -358,6 +362,7 @@ async def test_selecting_an_item_does_not_break_keyboard_navigation():
         assert str(pane.selected_item.get("id")) == selected_row.item_id_key
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_cancelled_mark_read_still_leaves_the_cached_dict_coherent():
     """TASK-1541, Qodo redesign -- desired-status coalescing, not cancellation.
@@ -496,6 +501,7 @@ async def test_a_cancelled_mark_read_still_leaves_the_cached_dict_coherent():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_read_on_open_does_not_overwrite_an_item_ingested_behind_the_cache():
     """TASK-1541, Qodo redesign -- the inside-drain gate re-check.
@@ -578,6 +584,7 @@ async def test_mark_read_on_open_does_not_overwrite_an_item_ingested_behind_the_
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_failed_item_status_write_toasts_an_error_and_leaves_the_cache_untouched():
     """TASK-1541, Qodo redesign.

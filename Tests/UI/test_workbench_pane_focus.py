@@ -119,6 +119,7 @@ async def _wait_for_focused_id(app, pilot, widget_id: str) -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_f6_cycles_wraps_backward_and_targets_expand_when_collapsed():
     app = _build_test_app()
@@ -165,6 +166,7 @@ async def test_console_f6_cycles_wraps_backward_and_targets_expand_when_collapse
         assert console.query_one("#console-native-composer").can_focus is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_personas_f6_cycles_between_workbench_panes_from_text_input():
     app = _build_test_app()
@@ -426,6 +428,7 @@ def test_workbench_screens_expose_f6_bindings_without_ctrl_arrow_conflicts():
         assert "ctrl+right" not in keys
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workbench_focus_lands_on_a_scrolled_out_preferred_target_and_reveals_it():
     """TASK-34000.8 fix round 1 (review I-1): a preferred control that is
@@ -467,6 +470,7 @@ async def test_workbench_focus_lands_on_a_scrolled_out_preferred_target_and_reve
         assert widget_has_visible_region(first)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workbench_focus_passes_over_a_control_clipped_by_a_non_scrollable_pane():
     """TASK-34000.8 AC#3: a preferred control laid out past the edge of a
@@ -501,6 +505,7 @@ async def test_workbench_focus_passes_over_a_control_clipped_by_a_non_scrollable
         await _wait_for_focused_id(app, pilot, "near")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workbench_focus_passes_over_a_scrolled_out_control_whose_pane_is_itself_clipped():
     """PR #3055 review (Important 2): a control scrolled out of a scrollable
@@ -546,6 +551,7 @@ async def test_workbench_focus_passes_over_a_scrolled_out_control_whose_pane_is_
         await _wait_for_focused_id(app, pilot, "seen")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workbench_focus_skips_missing_and_non_focusable_preferred_targets():
     app = _build_test_app()
