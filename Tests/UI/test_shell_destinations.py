@@ -72,6 +72,8 @@ def test_tab_display_labels_use_roleplay_for_personas_and_ccp_tabs():
 
 @private_profile_test
 def test_legacy_routes_resolve_to_master_destinations(request):
+    from tldw_chatbook.UI.Navigation.shell_destinations import LEGACY_ROUTE_NAV_CONTEXTS
+
     expectations = {
         "chat": ("console", "chat"),
         "home": ("home", "home"),
@@ -92,7 +94,8 @@ def test_legacy_routes_resolve_to_master_destinations(request):
         "conversations_characters_prompts": ("personas", "personas"),
         "roleplay": ("personas", "personas"),
         "subscriptions": ("watchlists_collections", "subscriptions"),
-        "tools_settings": ("mcp", "tools_settings"),
+        "mcp": ("settings", "settings"),
+        "tools_settings": ("settings", "settings"),
         "settings": ("settings", "settings"),
         # Logs is a top-level destination again; its route resolves to itself.
         "logs": ("logs", "logs"),
@@ -109,6 +112,8 @@ def test_legacy_routes_resolve_to_master_destinations(request):
     for route, expected in expectations.items():
         resolved = resolve_shell_route(route)
         assert (resolved.destination_id, resolved.canonical_route) == expected
+    for route in ("mcp", "tools_settings"):
+        assert LEGACY_ROUTE_NAV_CONTEXTS[route] == {"category": "tools"}
 
 
 def test_research_destination_owns_workspace_and_preserves_runs_route():

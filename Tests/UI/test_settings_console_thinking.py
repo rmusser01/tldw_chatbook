@@ -13,18 +13,23 @@ import tldw_chatbook.UI.Screens.settings_screen as settings_module
 
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-@pytest.mark.parametrize("setting", ["show_thinking"])
+@pytest.mark.parametrize("setting", ["show_model_thinking"])
 async def test_thinking_default_on_saves_off_and_reopens_off(monkeypatch, setting):
     app = _build_test_app()
     app.app_config["console"] = {}
-    saved = []
+    writes = []
+    mutations = []
+    apply_mutation = settings_module.apply_settings_mutation_to_cli_config
 
-    class Adapter:
-        def save_sections(self, values):
-            saved.append(values)
-            return True
+    def record_mutation(values):
+        writes.append(values)
+        result = apply_mutation(values)
+        mutations.append(result)
+        return result
 
-    monkeypatch.setattr(settings_module, "SettingsConfigAdapter", Adapter)
+    monkeypatch.setattr(
+        settings_module, "apply_settings_mutation_to_cli_config", record_mutation
+    )
     host = DestinationHarness(app, "settings")
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-console-behavior")
@@ -35,13 +40,15 @@ async def test_thinking_default_on_saves_off_and_reopens_off(monkeypatch, settin
         assert toggle.value is True
         toggle.focus()
         await pilot.press("space")
-        await pilot.click("#settings-save-category")
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
-        assert saved == [{"console": {setting: False}}]
+        assert settings_module.get_cli_setting("console", setting) is False
         assert app.app_config["console"][setting] is False
         screen._sync_console_behavior_widgets()
         assert toggle.value is False
+
+    assert writes == [{"console": {setting: False}}]
+    assert len(mutations) == 1 and mutations[0].fully_applied
 
 
 @pytest.mark.bootstrap_profile
