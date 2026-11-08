@@ -238,9 +238,8 @@ class ConsoleWorkflowSetup(SafeModalDismissMixin, ModalScreen):
         except WORKFLOW_VIEW_ERRORS as error:
             self._sending = False
             event.button.disabled = False
-            self.query_one("#workflow-notice").update(
-                workflow_view_error("Prepare plan", error)
-            )
+            for notice in self.query("#workflow-notice"):
+                notice.update(workflow_view_error("Prepare plan", error))
 
     async def _submit(self, setup, generation):
         try:

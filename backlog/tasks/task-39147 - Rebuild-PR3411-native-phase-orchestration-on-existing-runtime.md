@@ -18,7 +18,7 @@ documentation:
 - backlog/decisions/356-native-phase-orchestration-runtime-ownership.md
 - Docs/superpowers/specs/2026-11-07-native-phase-orchestration-rebuild-design.md
 - Docs/superpowers/plans/2026-11-07-native-phase-orchestration-rebuild.md
-updated_date: 2026-11-07 23:19
+updated_date: 2026-11-08 01:51
 ---
 
 ## Description
@@ -141,6 +141,16 @@ Reason: make existing mounted fixtures use their actual runtime custody and stre
 2. Seed interrupt projection through existing native precapture/admission/wait APIs so cold skill preparation has its actual original runtime record. Preserve cold/custom-source custody refusals.
 3. Preserve the Resend test's original assertion and 0.65-second observation; assert its timer survives the held admission read and include real poll/state diagnostics. Do not turn an isolated local pass into a claimed CI fix or increase waits.
 4. Rerun targeted mounted/native-custody controls, retain failures/limits, update task/evidence and preservation, and publish only task changes before dispatching one exact-head workflow.
+
+
+Fifth CI follow-up (aggregate gate, authorized task scope):
+ADR required: no new ADR
+ADR path: backlog/decisions/356-native-phase-orchestration-runtime-ownership.md
+Reason: direct worker-refusal presentation and diagnostic-record corrections; inherited baseline repairs require separate scope approval.
+1. Reconstruct task scope from d5d10f866b versus e08627a after temporary evidence loss; capture fresh full real-index/HEAD/status and 375 path-state preservation before edits.
+2. Retain the actual aggregate log and attribute each failure against immutable baseline source. Do not call the workflow green because its 15 test jobs passed.
+3. Cover worker refusal after notice removal, then make its presentation tolerate the absent widget. Review the added constant-only native-child diagnostic and update only its owned inventory row.
+4. Run targeted regression and static attribution checks, preserve remaining inherited failures honestly, self-review and publish only authorized task changes. Baseline-only fixes remain pending explicit scope approval; no budgets, assertions, resource/revision/recovery gates or test selections may be relaxed.
 
 <!-- SECTION:PLAN:END -->
 
@@ -419,6 +429,25 @@ report. No production source changes in this fourth batch, no implementation
 attestation restored, no weakened assertion/deadline/budget, and zero new Ruff
 findings. Task status and AC #8 remain open for the next exact-head CI. The real
 dev HEAD, complete index and all 375 preserved path states remain unchanged.
+
+
+Fifth CI aggregate follow-up (2026-11-08): d5d10f866b passes all 15 test jobs,
+but aggregate 128681770614 fails four static checks. Immutable e08627a controls
+reproduce the inherited diagnostic, index-plan, worker-census and Console Undo
+markup failures. The task adds one worker-refusal lookup and one constant-only
+native-child warning. Added removed-notice regression: 1 failed/1 passed in
+3.73s; corrected worker-refusal handling: 2 passed in 3.74s. The exact AgentService
+diagnostic owner row is reviewed/refreshed; other stale baseline rows are retained.
+Both changed Python files format cleanly, add zero Ruff findings, and diff checks
+pass. Source/count attribution and exact packets are in the UAT report. No identity
+attestation or relaxed check/budget was introduced; existing ADR356 applies.
+Temporary state loss required reconstruction from d5d10f866b's 96-path baseline
+diff and a fresh full-index/status/HEAD plus 375-state preservation capture before
+edits. The fresh audit passes; lost historical snapshot bytes cannot be recreated.
+Scope approval for minimal inherited baseline gate repairs is pending; no knowingly
+redundant selected CI run is dispatched. AC #8 remains open and status In Progress.
+Later user authorization covers task-only commits/pushes; merge and newer-dev
+integration remain excluded. No full local suite or additional live UAT is claimed.
 
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 

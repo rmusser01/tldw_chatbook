@@ -25141,3 +25141,21 @@ The stricter feedback check also caught a stale-layout trap: calling
 so the newly wrapped last line painted behind the docked footer despite passing
 the geometric clip check. Defer that scroll until layout refresh and assert the
 whole feedback text in painted cells, not just the widget's bounds.
+
+
+## Git-source test overlays must invalidate pytest's cached bytecode (TASK-39147, 2026-11-08)
+
+**Incident.** Reconstructing a lost in-memory Git-source harness during the
+TASK-39147 aggregate repair, two narrow invocations reported one passing case
+although the candidate contained a new two-case parameterization. Patching source
+reads and setting `dont_write_bytecode` did not prevent pytest from **reading**
+a previously valid cache for the unchanged real file. Those passes tested the old
+single-case test and were discarded. Disabling cached pytest-bytecode reads in the
+private harness made both candidate nodes collect; the new removed-notice case
+failed with `NoMatches` before the fix (1 failed, 1 passed in 3.73s), then both
+passed after it (3.74s). No repository source or cache was deleted.
+
+**What to do.** When loading Git source over an unchanged checkout, verify the
+expected candidate node IDs/count, not only the exit code or a source-read hook.
+Prevent stale cache reads as well as writes. Preserve the exact executable tree
+and keep this partial local evidence distinct from the actual CI filesystem run.

@@ -535,3 +535,68 @@ applies; no new architecture decision or production authority change. Dev HEAD,
 full real index/status and all 375 recorded dirty/untracked states remain intact.
 The next workflow must verify the actual new pushed head; old-head successes do
 not close AC #8 or certify the absence of intermittent bugs.
+
+
+## Fifth CI follow-up — aggregate attribution and task-only repair
+
+[Run 42456510388](https://github.com/rmusser01/tldw_chatbook/actions/runs/42456510388)
+on `d5d10f866bff7c85d409953dc48ea99149d5de7f` passed **all 15 test jobs**, including
+UI lanes 1, 4 and 10. The workflow is nevertheless **not green**: aggregate job
+`128681770614` failed its diagnostic inventory, index-plan census, Textual worker
+and markup checks. Its actual log is `/tmp/pr39147-ci-job-128681770614.log`.
+The unrelated merge-queue tick was not cancelled.
+
+Immutable baseline `e08627ac38392fb890984169376b1c242c3a2f3e` reproduces all four
+aggregate failure classes with the unmodified checkers. Git-source baseline
+packet: `/tmp/pr39147-ci-round5-baseline-controls.txt`; per-source attribution:
+`/tmp/pr39147-ci-round5-static-attribution.txt`. Both use in-memory Git blobs,
+not the dirty checkout as the reference. This is local static evidence, not a
+second baseline Linux workflow run.
+
+- All three missing workflow indexes already exist in baseline schema/migrations.
+  No index definition was added by TASK-39147.
+- All seven flagged workflow UI functions are already absent from the baseline
+  DOM census. Setup's button handler grows from six flagged lookups to seven in
+  this task; the other counts are unchanged.
+- Console Undo's three markup notifications and its entire `chat_screen.py` are
+  byte-identical to baseline.
+- All nine stale diagnostic owner rows are already stale on baseline.
+  TASK-39147 adds one constant-only warning, `could not persist native child
+  failure`, in AgentService, with no interpolated user input or new disk sink.
+
+The task-owned correction makes worker-refusal presentation query surviving
+notice widgets rather than requiring a removed widget. Existing retry state,
+submitted objective and callable worker admission remain checked. The native-child
+owner inventory row is updated after statement review; the other inherited rows
+are deliberately retained. No census allowance, assertion, wait, resource fence,
+revision check or recovery protection is weakened.
+
+Targeted regression on tree `6cc6cdc64cdc010e777d9d29dceb7dd8e866f4d1`:
+**1 failed, 1 passed in 3.73s**. The removed-notice case raises `NoMatches` from
+the original error handler. Corrected executable tree
+`3d1611e6b22d40744e438d75e2fec406c6324d6f`: **2 passed in 3.74s**,
+`/tmp/pr39147-ci-round5-worker-green.txt`. RED packet:
+`/tmp/pr39147-ci-round5-worker-red-verified-source.txt`. Two preliminary harness
+runs accidentally reused a cached single-case test module; their one-case passes
+are not candidate evidence. The rebuilt harness disables cached pytest bytecode
+reads and confirms both parameterized nodes execute from the Git source.
+
+`/tmp/pr39147-ci-round5-verification.txt` records zero new Ruff findings in both
+changed Python files, clean formatting, `git diff --check`, and restoration of
+Setup's flagged lookup count to the baseline six. This resolves the task delta,
+not the inherited worker census failure. No full local sweep, external provider,
+other-platform UAT, newer-dev integration or merge is certified.
+
+Earlier temporary snapshots/harness files disappeared between wakes. Per the
+preservation requirement, scope was reconstructed from the current branch's 96-path
+diff against baseline, and fresh evidence was captured **before editing**:
+`/tmp/pr39147-ci-round5-preservation-start.json`. It covers dev HEAD e08627a,
+the complete real index/status and all 375 current dirty/untracked path states.
+The new audit proves those states unchanged since that capture; it cannot recreate
+missing earlier snapshot bytes. Only private Git objects/index were edited.
+
+The user was asked whether the minimal inherited baseline repairs may be included,
+because the standing authorization excludes unrelated file changes. That scope
+answer remains pending. AC #8 stays open. A new full selected CI dispatch is held
+until those known aggregate blockers can be addressed, avoiding a knowingly
+redundant run; no active run or unrelated automation is changed.
