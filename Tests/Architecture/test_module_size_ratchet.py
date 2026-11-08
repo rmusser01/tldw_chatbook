@@ -838,7 +838,10 @@ _BUDGETS: dict[str, int] = {
     # through the DB-layer port.
     # 2026-11-08, TASK-36949.4: 25863 -> 24870 (-993), chat-sync methods moved
     # to Sync_Interop/chat_sync_source.py; tombstone hashing via the DB port.
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22519,
+    # 2026-11-08, TASK-36949.4 fix round 1 (coordinator-directed re-pin):
+    # 24870 -> 24908 (+38), the two validators and coordinate_semantic_mutation
+    # became documented public seams for Sync_Interop and the dispatch repo.
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22557,
     #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
     #: The OS notification defaults add 12 lines; pin the exact measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.

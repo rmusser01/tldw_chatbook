@@ -17489,12 +17489,9 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         has_durable_evidence = self._generation_has_durable_evidence(
             current
         ) or self._generation_has_durable_evidence(variant)
-        from tldw_chatbook.Sync_Interop.chat_sync_source import chat_sync_source_for
-        chat_sync_source = chat_sync_source_for(getattr(self.persistence, "db", None))
-        committed_source_available = (
-            callable(reconcile)
-            and chat_sync_source is not None
-            and getattr(producer, "source", None) == chat_sync_source
+        from tldw_chatbook.Sync_Interop.chat_sync_source import is_chat_sync_source_over
+        committed_source_available = callable(reconcile) and is_chat_sync_source_over(
+            getattr(producer, "source", None), getattr(self.persistence, "db", None)
         )
         if sync_configured and has_durable_evidence and not committed_source_available:
             raise RuntimeError(
@@ -21000,7 +20997,10 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         payload_hash: str,
     ) -> ContinuationDurabilityResult:
         """Require exact local intent durability and configured portable projection."""
-        from tldw_chatbook.Sync_Interop.chat_sync_source import chat_sync_source_for
+        from tldw_chatbook.Sync_Interop.chat_sync_source import (
+            chat_sync_source_for,
+            is_chat_sync_source_over,
+        )
         source = chat_sync_source_for(getattr(self.persistence, "db", None))
         if source is None:
             return ContinuationDurabilityResult(
@@ -21032,7 +21032,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 False,
                 "Portable sync needs a file-backed state repository; configure one and retry.",
             )
-        if getattr(producer, "source", None) != source:
+        if not is_chat_sync_source_over(getattr(producer, "source", None), source.db):
             return ContinuationDurabilityResult(
                 False,
                 "Portable sync source does not match local continuation storage.",

@@ -694,6 +694,15 @@ def main() -> None:
         verify_disposable_source(args.corpus, args.source_receipt)
     root = reserve_root(args.root)
     _bootstrap(root)
+    # This CLI is its own composition root: install the DB-layer ports
+    # (TASK-36949.3/.4) only after the source and import guards have passed.
+    from tldw_chatbook.Chat.console_semantic_revision import (
+        install_semantic_coordination,
+    )
+    from tldw_chatbook.Sync_Interop.chat_sync_source import install_chat_sync_hashing
+
+    install_semantic_coordination()
+    install_chat_sync_hashing()
     from loguru import logger
 
     logger.remove()

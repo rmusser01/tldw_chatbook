@@ -152,13 +152,28 @@ class ChatRecordHashingNotInstalledError(RuntimeError):
 
 
 def install_chat_record_hasher(hasher: Callable[[Any], str]) -> None:
-    """Install ``hasher(row) -> payload hash`` for this process. Idempotent."""
+    """Install the process-wide chat-record hasher. Idempotent.
+
+    Args:
+        hasher: ``hasher(row) -> "sha256:<hex>"`` over one live message row.
+    """
     global _chat_record_hasher
     _chat_record_hasher = hasher
 
 
 def chat_record_hash(row: Any) -> str:
-    """Return the Sync record hash of one live message row or raise if not installed."""
+    """Hash one live message row with the installed hasher.
+
+    Args:
+        row: The message row a tombstone writer is about to delete.
+
+    Returns:
+        The row's Sync record hash.
+
+    Raises:
+        ChatRecordHashingNotInstalledError: No composition root installed the
+            hasher; raised inside the caller's transaction, which rolls back.
+    """
     hasher = _chat_record_hasher  # read once, like semantic_coordinator_for
     if hasher is None:
         raise ChatRecordHashingNotInstalledError(
