@@ -75,4 +75,15 @@ The shared helper is Textual's own `App.push_screen_wait`, which awaits the same
 
 **Lane cost** (serial, 3 runs, load 43-58): `test_no_unshielded_dismiss_waits` 4.2-6.8 s (it parses the package files that name `push_screen`), `test_unshielded_dismiss_wait_forms_are_flagged` 0.7-1.2 s. The Architecture guard contracts step ran 403 passed in 408 s at load 45-60.
 
+
+**Review r12p-rev1 M4 (2026-11-08).** The guard flagged only a `push_screen(..., wait_for_dismiss=...)` awaited directly. It missed:
+- a stored future awaited later (`fut = app.push_screen(...); await fut`);
+- `await asyncio.wait_for(app.push_screen(..., wait_for_dismiss=True), 5)`;
+- a `**{"wait_for_dismiss": True}` splat.
+
+It now flags any `push_screen` call that may pass a non-False `wait_for_dismiss` (keyword, third positional argument, a `**` dict literal, or an unprovable `**` splat, which fails closed), unless the call is the direct argument of `asyncio.shield(...)`. `UNSHIELDED_DISMISS_WAIT_ALLOWLIST` holds the one deliberate site, `confirmation_dialog.py::await_quit_prompt` (it waits with `asyncio.wait`), with a staleness check.
+- The package scan still finds no other production site.
+- The forms test flags lines `[2, 3, 7, 8, 10, 11, 12]`; cebb6681b1's scanner flagged only `[2, 3, 7]` on the same source.
+- Negative control: with the allowlist entry renamed, the guard went red on `confirmation_dialog.py:339`.
+
 Files: the six product modules above, `UI/Screens/personas_screen.py`, the four test files, `Tests/Architecture/test_worker_exclusive_group_inventory.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
