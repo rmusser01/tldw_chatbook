@@ -137,6 +137,11 @@ ADR required: no new ADR. Existing ADR121/235 and required-lane isolation contra
 4. Require executable owner membership, reject mounted nodes in the sandboxed command and reject comment-only entries. Retain genuine missing-membership RED and comment-parser RED, plus earlier pre-placement receipts without relabeling them as final.
 5. Prove exact original prefixes and all other queue-contract AST/workflow bytes unchanged except these nine target appends. Preserve 180/300-second test limits, job limits, flags, dependencies and required aggregation. Run only critical/queue-pressure metadata contracts and focused static checks; no App, full sweep or physical qualification claim.
 
+
+### AC4 private headless received-source diagnostic (pre-code)
+
+Follow Docs/superpowers/plans/2026-11-07-console-approval-initial-source-diagnostic.md#private-real-app-headless-source-diagnostic-before-code. Prepare one private real TldwCli/headless adapter with unchanged V5/fixture/source-profile-network guards; fresh single diagnostic only, original received custody, no decision/collect, close monitoring before real owner teardown, preserve primary errors and finite300/60 bounds. Synthetic contract controls and independent review precede fresh Root freeze/START. This observes source-currentness only; no native/browser qualification or completion claim. AC4 and all physical gates remain open. Existing ADR235 applies; no new ADR or product/dependency/authority change.
+
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
