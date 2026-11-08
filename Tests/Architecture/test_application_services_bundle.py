@@ -260,10 +260,6 @@ EXCLUDED: dict[str, str] = {
         "(app_collections_wiring.py, `self.local_library_collections_db = database` in "
         "_wire_collections_capture_services); Notes-sync wiring re-runs on a source switch",
     ),
-    **dict.fromkeys(
-        ("server_outputs_scope_service", "server_sharing_scope_service"),
-        "legacy fallback names no app attribute carries (getattr default None)",
-    ),
 }
 
 

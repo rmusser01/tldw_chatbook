@@ -138,7 +138,9 @@ _BUDGETS: dict[str, int] = {
     # moved from on_mount to the entry points.
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
     # 5686 -> 5687 (+1), TASK-38600 keeps a test-read import under noqa.
-    "tldw_chatbook/app.py": 5687,
+    # 2026-11-08, TASK-36947.2 (owner rule: a size ratchet raises the row with a
+    # dated comment): 5687 -> 5688 (+1), composition publishes app.services once.
+    "tldw_chatbook/app.py": 5688,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
