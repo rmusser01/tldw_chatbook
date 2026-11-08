@@ -41,8 +41,9 @@ async def test_partial_console_resize_preserves_transition_until_complete(
             previous_settings = deepcopy(app.app_config.get("console", {}))
             console._last_console_workspace_width_band = None
 
-            console._adapt_console_workspace_to_width(
-                Resize(Size(80, 40), Size(80, 40))
+            # Exercise the missing-widget guard before config retries can outlive it.
+            console._adapt_console_workspace_to_width.__wrapped__(
+                console, Resize(Size(80, 40), Size(80, 40))
             )
 
             assert console._last_console_workspace_width_band is None

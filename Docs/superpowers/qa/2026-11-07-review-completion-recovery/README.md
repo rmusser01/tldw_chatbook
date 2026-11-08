@@ -618,3 +618,44 @@ a passing hosted result or repository closeout. Tool Recovery, Perf Guard, Lint
 and Merge Queue passed on the preceding head. No new ADR is needed for this
 platform compatibility correction; ADR-281/063/131 remain applicable. No further
 live requests or product children were used; cumulative usage remains 250/19.
+
+## Synthetic resize boundary and remaining UI CI evidence — 2026-11-08
+
+On `dd84aa97`, preflight passed with the pinned runner. Tool Recovery, Perf
+Guard, Lint and Merge Queue also passed. Derived Artifacts subsequently reported
+two failures: [UI Fast Lane 3](https://github.com/rmusser01/tldw_chatbook/actions/runs/42492912034/job/128773237213)
+observed three FULL entries in the malformed-config idle window, and the
+[admission-sensitive lane](https://github.com/rmusser01/tldw_chatbook/actions/runs/42492912034/job/128773236833)
+found the left rail still displayed after the partial-composition resize test.
+Both nodes passed unchanged in isolation.
+
+The resize test injects an 80-column event while the real terminal is still 160
+columns. A controlled busy-config probe made its decorated call defer: the
+native missing-widget guard was never entered, but the initial assertions
+passed. That queued synthetic event outlived the partial DOM and reproduced the
+exact final left-rail assertion. The test now calls the synchronous body only
+for this synthetic missing-widget phase. The subsequent real terminal resize
+still follows normal decorated handling; every assertion and deadline remains.
+Under the same control, the guard ran once without adding a synthetic retry,
+and the final assertions passed. All five missing-selector cases pass. Moving
+band consumption before the missing-widget guard still fails the original
+band assertion. Ruff lint, formatting and whitespace checks pass. This corrects
+the test boundary; it does not establish a general production resize repair.
+
+The malformed-config failure has no claimed fix. Its entry counter does not
+prove that initial work completed before the sampled window. A two-second
+native-tab delay did not reproduce it. A separate call-through probe delaying
+only actual TOML parse failures by 150 ms reproduced the config-lock starvation
+path already recorded by TASK-38967: 17 core-triggered replay requests, no core
+or identity entry within the existing ten-second deadline, and four later FULL
+entries. That corroborates the known path without proving the hosted 3/1/0
+sequence's exact cause. Its source, assertions and time bounds remain unchanged;
+fresh normal CI must still pass it. No speculative CI rerun was requested.
+
+Private logs, probe sources, observations and validation receipts are retained
+under `recovered-final60-20261108/ui-ci-diagnosis-20261108/` in the durable evidence
+root. The first positive probe mistakenly assumed no pre-existing native resize
+retry; the corrected probe verifies that the existing 160-column retry is
+unchanged and no synthetic 80-column retry is added. No new ADR is required for
+this test-only correction under ADR-281/063/131. Application source is unchanged;
+no additional live requests or product children were used (cumulative 250/19).

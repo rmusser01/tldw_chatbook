@@ -24830,3 +24830,19 @@ Checkpoint summaries must distinguish the actor's accepted decisions from host
 capacity gaps. Those host failures explain missing context and illegal guidance;
 they do not prove why a model chose a particular false narrative. Evidence:
 `Docs/superpowers/qa/2026-11-07-review-completion-recovery/README.md`.
+
+## A decorated synthetic event can outlive the state its test meant to exercise
+
+**Incident (PR #3473, 2026-11-08).** The partial-Console resize test removed a
+widget, injected an 80-column event at a real width of 160, checked unchanged
+state, and recomposed. A busy-config control showed the decorator queued that
+event without entering the missing-widget guard. The first assertions passed
+vacuously; replay after recomposition reproduced the hosted visible-left-rail
+failure. Calling the synchronous body for that synthetic guard phase fixed the
+control and all five cases; the later real resize still used the decorator.
+Moving band consumption before the guard still failed the original assertion.
+
+**What to do.** When testing an immediate guard through a deferring decorator,
+prove the body ran while the guarded state existed. Test that synchronous
+boundary directly when appropriate, then retain separate native event coverage.
+An unchanged state after the decorated call can mean the call has not run yet.
