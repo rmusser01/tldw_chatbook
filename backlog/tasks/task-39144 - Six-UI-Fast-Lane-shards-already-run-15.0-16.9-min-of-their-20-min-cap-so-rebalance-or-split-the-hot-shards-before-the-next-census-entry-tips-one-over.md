@@ -4,7 +4,7 @@ title: "Six UI Fast Lane shards already run 15.0-16.9 min of their 20 min cap, s
 status: In Progress
 assignee: ['@claude']
 created_date: 2026-11-07 02:28
-updated_date: 2026-11-07 22:25
+updated_date: 2026-11-08 00:45
 labels:
 - follow-up
 - ci
@@ -71,8 +71,8 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f and aga
 - 106 entries no log timed (round 11's 61 tail entries, merged without a CI run, and this round's 45) are charged at their serial seconds here with the UI step's command, at load 50-155. Twelve already-timed entries run in the same local run took 0.51-0.99 times as long in CI as here (median 0.73), so 1.0 times local is the upper end. Charged total: 34.7 min.
 - Model check. Replayed pytest minutes plus 1.7 min (the median of job minutes minus logged file seconds over all 704 shard jobs; p90 1.87) against each shard's slowest measured job: shard 5 18.51 vs 18.63, shard 3 17.84 vs 17.65; the measured minus the model runs from -2.16 (shard 30) to +0.85 min (shard 29), median about -0.6: the worst-case-per-entry sum leans high.
 - Floor. The census carries 448 worst-case pytest minutes: 13.9 min a shard at 32 shards, about 15.6 min a job, so no order of 32 keeps every job 5 min under the cap. The whole-census swap search reached 14.0 at 32, 13.6 at 33, and 13.2 at 34 (44 swaps); 35 would reach 12.7.
-- Tool. `scripts/ui_lane_shard_replay.py` gained `--rebalance MINUTES` (swap entries between shards, fewest swaps, until no shard's replay passes MINUTES; `--write` moves each entry with the comment lines right above it, leaving blank lines and block-opening entries in place) and `--charge ENTRY=SECONDS`. Dealing stays the checker's own `read_census`/`shard`, which `shard_loads` now calls too. Two `Tests/CI/test_ui_lane_shard_replay.py` tests pin the swap search and the rewrite; red under a temporary edit that skipped the target check and the comment walk.
-- Applied: `--shards 34 --rebalance 13.2 --write`, with the matrix at 34 shards and every shard-count statement updated (workflow, census, checker, replay usage, ADR-103: 44 eligible jobs). `max-parallel` stays 17, so peak runners do not change.
+- Tool. `scripts/ui_lane_shard_replay.py` gained `--rebalance MINUTES` (a greedy search that swaps entries between shards until no shard's replay passes MINUTES; `--write` moves each entry with the comment lines right above it, leaving blank lines and block-opening entries in place) and `--charge ENTRY=SECONDS`. Dealing stays the checker's own `read_census`/`shard`, which `shard_loads` now calls too. Two `Tests/CI/test_ui_lane_shard_replay.py` tests pin the swap search and the rewrite; red under a temporary edit that skipped the target check and the comment walk.
+- Applied: `--shards 34 --rebalance 13.2 --write` (44 swaps; see the review note below for the final deal), with the matrix at 34 shards and every shard-count statement updated (workflow, census, checker, replay usage, ADR-103: 44 eligible jobs). `max-parallel` stays 17, so peak runners do not change.
 
 **Per shard, minutes (AC#1's before; after is projected):**
 
@@ -124,3 +124,5 @@ The after column is 14.87-14.90 on every shard with the untimed entries at 1.0 t
 **AC#4.** The census header now says how a new tail entry keeps the margin: charge it at its local serial time, replay, and run `--rebalance 13.3 --write` if a shard passes 13.3 pytest min.
 
 **Files.** `scripts/ui_lane_shard_replay.py`, `Tests/CI/test_ui_lane_shard_replay.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/CI/test_derived_artifacts_workflow.py`, `backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md`, `backlog/docs/lessons-testing-evidence.md`.
+
+**Review r12l-rev1 (2026-11-08).** Sixteen more entries joined the tail (the inspector focus carriers file by node and the Console full config preparation file whole, out of the recovered-suites job), and the census now carries 452 worst-case pytest min (122 untimed entries charged at their local serial seconds). The floor at 34 shards is 13.29 pytest min; `--rebalance 13.3 --write` took 35 more swaps (79 in all) and projects 14.99-15.00 min a job on every shard, about 14.7 at the median CI-to-local ratio. That meets the 5-min margin with almost no headroom; 35 shards would project about 14.6. Floor 1870. The census header and `--charge`'s help now agree (local serial time), and the header calls the search greedy. Spot checks in lane order: shard 20, 107 passed in 955 s; shard 34, 109 passed in 895 s (load 36-58). `Tests/CI` at `-n 4`: 1228 passed, 1 skipped; preflight passed; census checker OK at 1870.

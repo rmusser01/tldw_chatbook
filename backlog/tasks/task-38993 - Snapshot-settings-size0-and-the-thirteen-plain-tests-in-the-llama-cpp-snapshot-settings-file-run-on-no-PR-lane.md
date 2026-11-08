@@ -4,7 +4,7 @@ title: "Snapshot settings [size0] and the thirteen plain tests in the llama.cpp 
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-06 01:42
-updated_date: 2026-11-07 08:10
+updated_date: 2026-11-08 00:45
 labels:
 - follow-up
 - tests
@@ -76,3 +76,5 @@ Laning exposed two pause-based waits, now waits on state:
 - `[size0]` keyboard Save: the category Save skips the snapshot draft: 1 failed.
 
 **Files.** `Tests/UI/test_llamacpp_snapshot_settings.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py` (floor). The census commit is shared with TASK-39144, which re-dealt the census after these entries joined.
+
+**Review r12l-rev1 (2026-11-08).** `test_f9_stale_snapshot_draft_requires_revert_before_save` was still vacuous: it waited `pilot.pause(0.2)` and checked for "Revert", which the draft's own copy shows before any Save. It now waits for the save worker to settle and asserts the refusal's "changed elsewhere" copy. With the conflict branch's copy removed from `settings_screen.py` (temporary edit, reverted), the new body failed and the old body passed; green without the edit.

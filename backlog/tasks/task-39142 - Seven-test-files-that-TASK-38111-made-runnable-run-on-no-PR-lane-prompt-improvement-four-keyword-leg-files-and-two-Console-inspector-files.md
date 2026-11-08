@@ -4,7 +4,7 @@ title: "Seven test files that TASK-38111 made runnable run on no PR lane: prompt
 status: In Progress
 assignee: ['@claude']
 created_date: 2026-11-07 02:03
-updated_date: 2026-11-07 22:20
+updated_date: 2026-11-08 00:45
 labels:
 - follow-up
 - ci
@@ -62,7 +62,7 @@ None is in the census or any PR workflow. The fifth keyword-leg file, `test_keyw
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 The owner decides the lane for the five non-UI files (a new derived-artifacts job or an existing one); the decision is recorded
-- [ ] #2 Each of the seven files runs on a PR lane, never the fast PR contract; the two Tests/UI files use UI census tail entries of about 30 s each, split by node where needed
+- [x] #2 Each of the seven files runs on a PR lane, never the fast PR contract; the two Tests/UI files use UI census tail entries of about 30 s each, split by node where needed
 - [ ] #3 Every step touched is timed 3 times with its exact command, with the load, and the CI job times of every touched lane are quoted before and after
 - [x] #4 Any target added to the Dreams boundary step passes under `--storage-lease-guard`, sits after the pinned storage-pausing targets, and leaves the job under its 20 min cap with the margin recorded; all lane pins are updated
 - [x] #5 The keyword-leg files end on one lane together with TASK-39049's `test_keyword_leg_db_resolution`, or the notes say why not
@@ -83,9 +83,10 @@ None is in the census or any PR workflow. The fifth keyword-leg file, `test_keyw
 
 **Guard findings, fixed in test code.** Under `--storage-lease-guard` 33 keyword-leg tests failed at teardown: their `RAGService` was never closed, so the FTS5 pool thread kept a `tldw_cli_media_v2.db` lease. `Tests/RAG_Search/conftest.py` now retires every pool (`close_all_pools()`) after each test in a `test_keyword_leg_*` file. Red: 33 lease errors in the step's first run; green: 0.
 
-**The two Tests/UI files (AC#2, not met as written).**
-- `test_console_inspector_workflow.py` (sandboxed) is on the UI census tail: one entry per test, 18 entries, 1.6-12.3 s each serially at load 50-155 (69 s whole).
-- `test_console_inspector_focus_carriers.py` has a module `pytestmark = pytest.mark.bootstrap_profile` (TASK-38111). The census may not hold bootstrap_profile entries: their enrollment can poison the sandboxed tests sharing a shard (ledger R11, TASK-32873; the checker's history moved such nodes out three times). So it runs at the end of the recovered-suites step instead, guard-clean, 15 passed, about 160 s serially at load 50-160. AC#2 asks for census entries, so it stays unticked until the coordinator or owner accepts this lane.
+**The two Tests/UI files (AC#2).**
+- `test_console_inspector_workflow.py` is on the UI census tail: one entry per test, 18 entries, 1.6-12.3 s each serially at load 50-155 (69 s whole).
+- `test_console_inspector_focus_carriers.py` (module `pytestmark = pytest.mark.bootstrap_profile`, TASK-38111) is on the census tail by node, 15 entries. Each node, serially with the UI step's command in two runs (load 50-155 and about 160): 0.9-20.1 s and 0.0-27.5 s; the heaviest, `test_every_rail_tab_stop_changes_what_it_paints_on_focus[size1]`, 18.7 and 27.5 s. It first ran in the recovered-suites step because I wrongly read the census as unable to hold bootstrap_profile files; review r12l-rev1 corrected that (512 census entries already were).
+- Spot checks of the new deal in lane order: UI shard 20 (holds the heaviest focus-carriers node) 107 passed in 955 s at load 39-58; shard 34 (holds the full config file) 109 passed in 895 s at load 36-58.
 
 **AC#3 (timings met, after times open).**
 
@@ -96,3 +97,5 @@ The keyword-leg files alone, serially under the guard: 339 passed with the two p
 **AC#4.** No target of this task went to the Dreams step. The recovered-suites step also runs under `--storage-lease-guard` and holds no storage-pausing target; its margin is above.
 
 **Files.** `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/CI/test_derived_artifacts_workflow.py`, `Tests/CI/test_ui_lane_shard_count_statements.py`, `Tests/RAG_Search/conftest.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, ADR-103.
+
+**Review r12l-rev1 (2026-11-08).** The two bootstrap_profile Tests/UI files left the recovered-suites step for the UI census (the census does hold bootstrap_profile files: 512 entries already, and TASK-36478 restores the shared bootstrap config after each test; my earlier "may not hold" was wrong). TASK-39124's built-in pixel buddy file joined the step last. The final step, 13 targets, `jobstep.sh fu-r12-lanes "Run the recovered suites"`, 3 runs: 363.3 s (load 38 falling to 21), 742.9 s (load 21-50), 467.1 s (load 50-43); each 715 passed, 1 skipped, 2 failed (TASK-39140's pin, fixed on fu/r12-ctlr), no lease finding. The slowest run plus about 1.5 min of setup is about 13.9 min, 6.1 under the cap.

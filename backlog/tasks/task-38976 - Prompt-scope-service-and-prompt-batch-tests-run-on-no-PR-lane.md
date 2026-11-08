@@ -4,7 +4,7 @@ title: "Prompt scope-service and prompt batch tests run on no PR lane"
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-06 01:42
-updated_date: 2026-11-07 22:20
+updated_date: 2026-11-08 00:45
 labels:
 - follow-up
 - ci
@@ -79,3 +79,5 @@ Load 42-52 on 18 CPUs (the task's 16 s total was at load 5.5-5.8).
 So AC#3 holds on the slowest measured run (about 13.2 of 20 min, locally).
 
 **Files.** `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/CI/test_derived_artifacts_workflow.py`, `Tests/CI/test_ui_lane_shard_count_statements.py`, `backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md`, `Tests/Prompt_Management/test_prompt_scope_service.py`, `Tests/Prompts_DB/test_prompts_db_batch_mutations.py`.
+
+**Review r12l-rev1 (2026-11-08).** The two bootstrap_profile Tests/UI files left the recovered-suites step for the UI census (the census does hold bootstrap_profile files: 512 entries already, and TASK-36478 restores the shared bootstrap config after each test; my earlier "may not hold" was wrong). TASK-39124's built-in pixel buddy file joined the step last. The final step, 13 targets, `jobstep.sh fu-r12-lanes "Run the recovered suites"`, 3 runs: 363.3 s (load 38 falling to 21), 742.9 s (load 21-50), 467.1 s (load 50-43); each 715 passed, 1 skipped, 2 failed (TASK-39140's pin, fixed on fu/r12-ctlr), no lease finding. The slowest run plus about 1.5 min of setup is about 13.9 min, 6.1 under the cap.

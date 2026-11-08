@@ -4,7 +4,7 @@ title: "The storage fixes' tests in four files run on no PR lane: sync-log reten
 status: In Progress
 assignee: ['@claude']
 created_date: 2026-11-06 10:09
-updated_date: 2026-11-07 22:20
+updated_date: 2026-11-08 00:45
 labels:
 - follow-up
 - ci
@@ -143,4 +143,5 @@ I did not fix the leases: that alone does not let the file join, and the leases 
 CI after times need a PR run of this branch.
 
 **Files (round 12).** `Tests/Library/test_library_ingest_runner.py`, `Tests/RAG_Search/conftest.py`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/CI/test_derived_artifacts_workflow.py`, ADR-103.
+**Review r12l-rev1 (2026-11-08).** The two bootstrap_profile Tests/UI files left the recovered-suites step for the UI census (the census does hold bootstrap_profile files: 512 entries already, and TASK-36478 restores the shared bootstrap config after each test; my earlier "may not hold" was wrong). TASK-39124's built-in pixel buddy file joined the step last. The final step, 13 targets, `jobstep.sh fu-r12-lanes "Run the recovered suites"`, 3 runs: 363.3 s (load 38 falling to 21), 742.9 s (load 21-50), 467.1 s (load 50-43); each 715 passed, 1 skipped, 2 failed (TASK-39140's pin, fixed on fu/r12-ctlr), no lease finding. The slowest run plus about 1.5 min of setup is about 13.9 min, 6.1 under the cap. Review r12l-rev1 also found that `_make_db`'s store list stayed populated all session when `Tests/integration/test_library_ingest_flow.py` imports `_make_db`; the list now exists only while this module's closing fixture runs.
 <!-- SECTION:NOTES:END -->
