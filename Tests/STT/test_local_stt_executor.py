@@ -4,6 +4,7 @@ import os
 import pickle
 import subprocess
 import sys
+import tempfile
 import textwrap
 import threading
 import time
@@ -846,20 +847,25 @@ def test_worker_passes_each_buffer_requests_current_provenance_metadata(
             return False
 
     connection = _Connection()
-    monkeypatch.setattr(
-        "tldw_chatbook.STT.executor_worker.enter_worker_containment",
-        lambda: SimpleNamespace(pid=1),
-    )
-
-    _run_executor_worker(
-        connection,  # type: ignore[arg-type]
-        _Event(),
-        _Event(),
-        1,
-        str(tmp_path),
-        provider_builder=provider_builder,
-        parse_job=lambda *_args, **_kwargs: {},
-    )
+    with monkeypatch.context() as worker:
+        worker.setattr(tempfile, "tempdir", tempfile.tempdir)
+        worker.setattr(
+            "tldw_chatbook.Local_Ingestion.ingest_parse_worker.silence_ingest_worker_import_noise",
+            lambda: None,
+        )
+        worker.setattr(
+            "tldw_chatbook.STT.executor_worker.enter_worker_containment",
+            lambda: SimpleNamespace(pid=1),
+        )
+        _run_executor_worker(
+            connection,  # type: ignore[arg-type]
+            _Event(),
+            _Event(),
+            1,
+            str(tmp_path),
+            provider_builder=provider_builder,
+            parse_job=lambda *_args, **_kwargs: {},
+        )
 
     assert received == [
         {
@@ -2087,25 +2093,31 @@ def test_external_dependency_failure_keeps_stable_worker_taxonomy(
             return False
 
     connection = _Connection()
-    monkeypatch.setattr(
-        "tldw_chatbook.STT.executor_worker.enter_worker_containment",
-        lambda: SimpleNamespace(pid=1),
-    )
-    try:
-        _run_executor_worker(
-            connection,  # type: ignore[arg-type]
-            _Event(),
-            _Event(),
-            1,
-            str(tmp_path),
-            provider_builder=lambda *_args: (_ for _ in ()).throw(
-                AssertionError("invalid dependency reached native load")
-            ),
-            parse_job=lambda *_args, **_kwargs: {},
+    with monkeypatch.context() as worker:
+        worker.setattr(tempfile, "tempdir", tempfile.tempdir)
+        worker.setattr(
+            "tldw_chatbook.Local_Ingestion.ingest_parse_worker.silence_ingest_worker_import_noise",
+            lambda: None,
         )
-    finally:
-        if lease is not None:
-            lease.release()
+        worker.setattr(
+            "tldw_chatbook.STT.executor_worker.enter_worker_containment",
+            lambda: SimpleNamespace(pid=1),
+        )
+        try:
+            _run_executor_worker(
+                connection,  # type: ignore[arg-type]
+                _Event(),
+                _Event(),
+                1,
+                str(tmp_path),
+                provider_builder=lambda *_args: (_ for _ in ()).throw(
+                    AssertionError("invalid dependency reached native load")
+                ),
+                parse_job=lambda *_args, **_kwargs: {},
+            )
+        finally:
+            if lease is not None:
+                lease.release()
 
     failures = [item for item in connection.sent if type(item) is ExecutorFailure]
     assert len(failures) == 1
