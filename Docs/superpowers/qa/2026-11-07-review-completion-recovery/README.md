@@ -730,3 +730,31 @@ applicable. No new ADR is needed under ADR-281/063/131. No additional live
 requests or product children were used, and qualification was not rerun;
 cumulative recovery usage remains 250/19. Historical missing payloads, unknown
 accounting and the bounded fixture's reviewer-quality limits remain unchanged.
+
+## Manual Library navigation wait — 2026-11-08
+
+The documentation head `2d31a9fc` failed UI19 job `128880578284` in normal
+Derived Artifacts run `42528967829`: the imported-JSON recovery test read archive
+scope `active` instead of `all` at line 549. The screen becomes visible while
+`archive-recovery-library` still awaits its mount; that worker applies the scope
+after navigation returns. The unchanged isolated case passed (1 / 10.20 s).
+A call-through two-second delay in the real Library `on_mount` reproduced the
+same assertion (1 failure / 11.27 s). This establishes the ordering defect; the
+hosted log does not timestamp the exact mount/worker interleaving.
+
+The existing bounded screen-type wait now also requires that navigation worker
+to finish. Every other executable statement and assertion, the wait deadline,
+cleanup and production code are unchanged. The delayed-mount control passes
+(1 / 10.59 s), while a control that lets the worker finish with the wrong scope
+still fails the original assertion (1 failure / 10.81 s). The affected case and
+adjacent native preview/restore journey pass together (2 / 23.97 s). Formatting
+and whitespace pass. Ruff reports the same three pre-existing findings on both
+versions (two ASYNC240 and one ASYNC110), with no new finding.
+
+Private sources/logs and validation are retained in
+`recovered-final60-20261108/archive-navigation-20261108/`. This test correction
+requires independent delta review and fresh normal CI before queue admission;
+the failed documentation-head run is not green. The earlier successful CI and
+review receipts remain historical evidence. No production/workflow/deadline
+change, manual CI rerun, new ADR or live qualification; additional live requests
+and product children remain zero.
