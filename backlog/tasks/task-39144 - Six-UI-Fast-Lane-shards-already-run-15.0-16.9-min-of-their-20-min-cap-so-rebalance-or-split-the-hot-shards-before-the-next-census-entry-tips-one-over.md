@@ -4,7 +4,7 @@ title: "Six UI Fast Lane shards already run 15.0-16.9 min of their 20 min cap, s
 status: In Progress
 assignee: ['@claude']
 created_date: 2026-11-07 02:28
-updated_date: 2026-11-08 00:45
+updated_date: 2026-11-08 01:20
 labels:
 - follow-up
 - ci
@@ -126,3 +126,5 @@ The after column is 14.87-14.90 on every shard with the untimed entries at 1.0 t
 **Files.** `scripts/ui_lane_shard_replay.py`, `Tests/CI/test_ui_lane_shard_replay.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/CI/test_derived_artifacts_workflow.py`, `backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md`, `backlog/docs/lessons-testing-evidence.md`.
 
 **Review r12l-rev1 (2026-11-08).** Sixteen more entries joined the tail (the inspector focus carriers file by node and the Console full config preparation file whole, out of the recovered-suites job), and the census now carries 452 worst-case pytest min (122 untimed entries charged at their local serial seconds). The floor at 34 shards is 13.29 pytest min; `--rebalance 13.3 --write` took 35 more swaps (79 in all) and projects 14.99-15.00 min a job on every shard, about 14.7 at the median CI-to-local ratio. That meets the 5-min margin with almost no headroom; 35 shards would project about 14.6. Floor 1870. The census header and `--charge`'s help now agree (local serial time), and the header calls the search greedy. Spot checks in lane order: shard 20, 107 passed in 955 s; shard 34, 109 passed in 895 s (load 36-58). `Tests/CI` at `-n 4`: 1228 passed, 1 skipped; preflight passed; census checker OK at 1870.
+
+**Owner decision (2026-11-07):** "36 shards, 18 at once". The reason given to the owner: once the other round-12 branches' tail entries join (about 27), the census carries about 465 worst-case pytest min, so 34 shards project about 15.3 min a job and no re-deal reaches the 15-min margin; 36 at `max-parallel: 18` keeps two waves (no PR wall-clock change), projects about 14.6 min, and costs one more peak runner. Applied on this branch: matrix 36 shards, `max-parallel: 18`, and every pinned statement (workflow comment, census header, checker, replay usage, `Tests/CI` pins, ADR-103: 46 eligible jobs, 28 test runners in parallel and 29 with perf-guard on this branch, which has no other branch's added job). `--rebalance 13.3 --write` at 36 took 22 swaps from the re-dealt order (as listed at 36 the heaviest shard replayed 21.4 min, because a new count re-deals every entry). On this branch's census (1870 entries, 452 worst-case pytest min) that projects 13.28-14.98 min a job, about 12.9-14.7 at the median CI-to-local ratio. The target only stops the search at 13.3 pytest min, so the spread stays uneven: from this order, `--rebalance 12.9` would take 7 more swaps to 14.6 min a job everywhere, and `--rebalance 12.6` 22 more to 14.3. The coordinator re-deals again on the stacked tip.
