@@ -20586,34 +20586,44 @@ DELETE FROM keywords
     #: Agent_Lessons seed retirement's precedent
     #: (``NotesOrganizationRepository``).
     #:
-    #: Re-review 3 (I-1, m-1): EXCEPT a pending link TOMBSTONE whose
-    #: predecessor is acknowledged or absent -- its base is the server's head,
-    #: so it is the user's unlink of a link the server holds, and review R0
-    #: m-2's "a pending server-side delete must still propagate" keeps it. It
-    #: names only the link's identity (no title or text), stays dispatchable,
-    #: and its acknowledgement finds it, so the head moves to the tombstone
-    #: (a copied tombstone always qualifies: the drain copies a successor only
-    #: once its predecessor is acknowledged). Still cancelled: every upsert,
-    #: copied or not -- a copied one's outbox row is discarded after the
-    #: purge (``discard_sync_v2_note_history``), and keeping its intent would
-    #: let every later drain copy it again -- and every tombstone with no
-    #: acknowledged state behind it, which the server never had a link for.
-    #: Rows chained after a kept tombstone go with it, so no kept row's
-    #: ``predecessor_intent_id`` names a deleted one (a kept tombstone's
-    #: predecessor is acknowledged, and an acknowledged row's predecessor is
-    #: too). Acknowledged rows stay as lineage under the publication
-    #: tombstone's payload rule, ``'{}'``. ``notes.keyword`` resource intents
-    #: are never touched: the keyword outlives the note. Parameters:
-    #: (note_id,).
+    #: Re-review 3 (I-1, m-1) and 4 (I-A, m-A): EXCEPT the user's unlink of a
+    #: link the server holds -- review R0 m-2's "a pending server-side delete
+    #: must still propagate". That is a pending link TOMBSTONE that is the
+    #: link's LATEST intent (a removal the user then undid is not sent: the
+    #: server already has the link the user ended with), and whose
+    #: predecessor is acknowledged, or absent with a base bound to the
+    #: server's head (no head: the server never had the link). A COPIED
+    #: tombstone is kept whatever follows it: its outbox row stays and is
+    #: pushed, so its acknowledgement must find it and move the head. A kept
+    #: tombstone names only the link's identity (no title or text) and stays
+    #: dispatchable. Still cancelled: every upsert, copied or not -- a copied
+    #: one's outbox row is discarded after the purge
+    #: (``discard_sync_v2_note_history``), and keeping its intent would let
+    #: every later drain copy it again -- and every other tombstone. Rows
+    #: chained after a kept tombstone are unacknowledged and go, so no kept
+    #: row's ``predecessor_intent_id`` names a deleted one (a kept tombstone's
+    #: predecessor is acknowledged or absent -- the drain copies a successor
+    #: only once its predecessor is acknowledged -- and an acknowledged row's
+    #: predecessor is too). Acknowledged rows stay as lineage under the
+    #: publication tombstone's payload rule, ``'{}'``. ``notes.keyword``
+    #: resource intents are never touched: the keyword outlives the note.
+    #: Parameters: (note_id,).
     _NOTE_PURGE_ORGANIZATION_SQL: tuple[str, ...] = (
         "DELETE FROM notes_organization_sync_intents AS intent "
         "WHERE intent.acknowledged_at IS NULL "
         f"AND ({_NOTE_ORGANIZATION_SUBJECT_SQL}) = ? "
         "AND NOT (intent.operation = 'tombstone' AND ("
-        "intent.predecessor_intent_id IS NULL OR EXISTS ("
+        "intent.copied_at IS NOT NULL OR (("
+        "(intent.predecessor_intent_id IS NULL "
+        "AND intent.base_object_revision IS NOT NULL) OR EXISTS ("
         "SELECT 1 FROM notes_organization_sync_intents AS predecessor "
         "WHERE predecessor.intent_id = intent.predecessor_intent_id "
-        "AND predecessor.acknowledged_at IS NOT NULL)))",
+        "AND predecessor.acknowledged_at IS NOT NULL)) AND ("
+        "SELECT latest.operation FROM notes_organization_sync_intents AS latest "
+        "WHERE latest.server_profile_id = intent.server_profile_id "
+        "AND latest.dataset_id = intent.dataset_id "
+        "AND latest.domain = intent.domain AND latest.object_id = intent.object_id "
+        "ORDER BY latest.intent_sequence DESC LIMIT 1) = 'tombstone')))",
         "UPDATE notes_organization_sync_intents SET payload_json = '{}' "
         f"WHERE acknowledged_at IS NOT NULL AND ({_NOTE_ORGANIZATION_SUBJECT_SQL}) = ?",
     )
@@ -20631,10 +20641,10 @@ DELETE FROM keywords
         their receipt ids non-replayable
         (``_NOTE_PURGE_PUBLICATION_TOMBSTONE_SQL``); its unacknowledged Sync
         v2 organization link intents are cancelled -- except an unlink of a
-        link the server holds, which still goes -- and its acknowledged ones
-        scrubbed (``_NOTE_PURGE_ORGANIZATION_SQL``); then the tombstone
-        itself -- whose
-        ``AFTER DELETE`` triggers drop its ``notes`` sync-log rows
+        link the server holds, not undone since, which still goes -- and its
+        acknowledged ones scrubbed (``_NOTE_PURGE_ORGANIZATION_SQL``); then
+        the tombstone itself -- whose ``AFTER DELETE`` triggers drop its
+        ``notes`` sync-log rows
         (``sync_log_prune_notes_hard``, v46) and its FTS entry (``notes_ad``).
         Nothing is committed unless all of it is.
 
