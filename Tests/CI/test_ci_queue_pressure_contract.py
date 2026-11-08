@@ -1334,6 +1334,7 @@ def test_console_p0_gate_runs_three_serial_minimal_python_312_profiles() -> None
         ".",
         "pytest",
         "pytest-asyncio",
+        "pytest-mock",
         "pytest-timeout",
         "packaging",
         "aiohttp-jinja2",
