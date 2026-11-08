@@ -427,13 +427,15 @@ def _allow_test_external_root(app: _IngestRunnerHarness, root: Path) -> None:
     service._descriptor_for = descriptor
 
 
-#: Every Media DB ``_make_db`` opened in the running test (TASK-39049).
-_OPENED_MEDIA_DBS: list[MediaDatabase] = []
+#: The Media DBs ``_make_db`` opened in the running test of this module, or
+#: None outside one (another module that imports ``_make_db`` keeps none).
+_OPENED_MEDIA_DBS: list[MediaDatabase] | None = None
 
 
 def _make_db(tmp_path: Path, name: str = "library_ingest.db") -> MediaDatabase:
     db = MediaDatabase(tmp_path / name, client_id="f3-runner-test")
-    _OPENED_MEDIA_DBS.append(db)
+    if _OPENED_MEDIA_DBS is not None:
+        _OPENED_MEDIA_DBS.append(db)
     return db
 
 
@@ -456,6 +458,8 @@ def _close_the_stores_each_test_opens(monkeypatch):
     thread: SQLite refuses to close it from another thread, so a closer kept
     in that thread's locals closes it when the loop retires the thread.
     """
+    global _OPENED_MEDIA_DBS
+    _OPENED_MEDIA_DBS = []
     closers = threading.local()
     opened = WorkspaceDB._on_connection_opened
 
@@ -465,8 +469,9 @@ def _close_the_stores_each_test_opens(monkeypatch):
 
     monkeypatch.setattr(WorkspaceDB, "_on_connection_opened", record)
     yield
-    while _OPENED_MEDIA_DBS:
-        _OPENED_MEDIA_DBS.pop().close_idle_connections()
+    stores, _OPENED_MEDIA_DBS = _OPENED_MEDIA_DBS, None
+    for store in stores:
+        store.close_idle_connections()
     closers.__dict__.clear()
 
 
