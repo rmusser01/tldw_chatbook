@@ -76,6 +76,9 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-1
   - `Tests/Chat/test_console_fleet_wake.py::test_a_failed_wake_reply_is_saved_as_failed`: the provider raises, and `messages` must hold `('', 0, 'failed')`. Red: `[]`.
   - `Tests/Chat/test_console_goal_dispatch.py::test_a_failed_goal_iteration_reply_is_saved_as_failed`: the same for a goal iteration. Red (I1 product files reverted): `[]`.
 - Covering run at `-n 4` (the mix-in suites, wake, goal dispatch, chat start, progress wakes, goal light surface, viewless hooks, chat fork, retry accounting): 806 passed, 1 failed. The failure was `test_repeated_start_cannot_reprovision_an_accepted_attempt`, which waits 3 s for the provider. It passed alone on head and base, and the whole goal-dispatch file passed 3 of 3 at `-n 4` on head (load 37-43). The pre-provider save adds one owned DB write before that 3 s window.
+- **Inventories.**
+  - The new `logger.warning` (a constant message, no interpolation) was reviewed with `check_persistent_diagnostic_inventory.py --statements` and pinned with `--write`.
+  - `save_pending_reply`'s `to_json` has an owner row in `backlog/docs/backup-recovery-owner-inventory.md`, beside `accept_attempt`'s.
 - Size rows raised under the owner waiver (2026-11-08): `console_chat_store.py` 22445 -> 22454, `chat_persistence_service.py` 4239 -> 4258, `console_chat_controller.py` 29182 -> 29185.
 
 **Lanes (for the lanes stream; workflows not edited).** These TASK-39119 nodes run in no PR lane (their files are laned only in `pr-fast-lane`, which takes no additions):

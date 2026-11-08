@@ -3579,6 +3579,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Chat/console_dispatch_repository.py | ConsoleDispatchRepository.insert_with_messages | to_json | 2 | memory | to_json value serialization; no-independent-file |
 | tldw_chatbook/Chat/console_native_commit.py | _store_settle_dispatch_recovery | to_json | 3 | memory | to_json value serialization; no-independent-file |
 | tldw_chatbook/Chat/console_prompt_mixin_service.py | ConsolePromptMixinService.accept_attempt | to_json | 1 | memory | to_json value serialization; no-independent-file |
+| tldw_chatbook/Chat/console_prompt_mixin_service.py | ConsolePromptMixinService.save_pending_reply | to_json | 1 | memory | to_json value serialization; no-independent-file |
 | tldw_chatbook/Chat/console_provider_gateway.py | _flight_capture | to_json | 1 | memory | to_json value serialization; no-independent-file |
 | tldw_chatbook/Chat/console_speculative_voice_session.py | create_console_speculative_voice_session.promote_winner | to_json | 1 | memory | to_json value serialization; no-independent-file |
 | tldw_chatbook/Chat/console_trace_native_reader.py | _normalized_usage_json | to_json | 1 | memory | to_json value serialization; no-independent-file |
