@@ -39,6 +39,7 @@ import pytest
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
+from tldw_chatbook.Sync_Interop.chat_sync_source import CharactersRAGDBChatSyncSource
 
 
 @pytest.fixture()
@@ -295,7 +296,7 @@ def test_retention_does_not_break_the_committed_intent_readers(db: CharactersRAG
     ).fetchone()
     assert row["version"] == 3
 
-    record = db.read_committed_chat_sync_intent(
+    record = CharactersRAGDBChatSyncSource(db).read_committed_chat_sync_intent(
         message_id=message_id,
         message_version=3,
         payload_hash=_chat_envelope_payload_hash("third", row["role"]),
@@ -310,7 +311,7 @@ def test_retention_does_not_break_the_committed_intent_readers(db: CharactersRAG
     )
 
     # And a restore-time reconcile still sees the conversation's intents.
-    intents = db.list_current_committed_chat_sync_intents(conversation_id)
+    intents = CharactersRAGDBChatSyncSource(db).list_current_committed_chat_sync_intents(conversation_id)
     assert [intent["message_id"] for intent in intents] == [message_id]
     assert intents[0]["message_version"] == 3
 
@@ -357,12 +358,12 @@ def test_pruning_cannot_flip_the_single_intent_ambiguity_check(db: CharactersRAG
         ).fetchone()[0]
 
     assert count_at_current() == 2
-    assert db.list_current_committed_chat_sync_intents(conversation_id) == []
+    assert CharactersRAGDBChatSyncSource(db).list_current_committed_chat_sync_intents(conversation_id) == []
 
     db.prune_sync_log()
 
     assert count_at_current() == 2, "the frontier's row count must be untouched"
-    assert db.list_current_committed_chat_sync_intents(conversation_id) == []
+    assert CharactersRAGDBChatSyncSource(db).list_current_committed_chat_sync_intents(conversation_id) == []
 
 
 def test_a_tombstoned_message_still_proves_its_delete_intent(db: CharactersRAGDB):
@@ -372,7 +373,7 @@ def test_a_tombstoned_message_still_proves_its_delete_intent(db: CharactersRAGDB
     )
     db.soft_delete_message(message_id, expected_version=1)
 
-    record = db.read_committed_chat_delete_intent(
+    record = CharactersRAGDBChatSyncSource(db).read_committed_chat_delete_intent(
         message_id=message_id,
         message_version=2,
         payload_hash=canonical_payload_hash({"deleted": True}),

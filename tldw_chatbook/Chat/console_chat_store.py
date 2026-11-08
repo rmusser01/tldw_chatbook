@@ -4503,14 +4503,12 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         """Project exact current unbridged Chat intents during normal restore."""
         if self.sync_v2_server_profile_id is None or self.sync_v2_chat_producer is None:
             return
-        database = getattr(self.persistence, "db", None) if self.persistence else None
-        enumerate_intents = getattr(
-            database, "list_current_committed_chat_sync_intents", None
-        )
-        if not callable(enumerate_intents):
+        from tldw_chatbook.Sync_Interop.chat_sync_source import chat_sync_source_for
+        source = chat_sync_source_for(getattr(self.persistence, "db", None))
+        if source is None:
             return
         try:
-            intents = enumerate_intents(conversation_id)
+            intents = source.list_current_committed_chat_sync_intents(conversation_id)
         except Exception:
             logger.warning("Console continuation sync reconciliation was unavailable.")
             return
@@ -17541,15 +17539,12 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         has_durable_evidence = self._generation_has_durable_evidence(
             current
         ) or self._generation_has_durable_evidence(variant)
-        persistence_db = getattr(self.persistence, "db", None)
-        producer_source = getattr(producer, "source", None)
+        from tldw_chatbook.Sync_Interop.chat_sync_source import chat_sync_source_for
+        chat_sync_source = chat_sync_source_for(getattr(self.persistence, "db", None))
         committed_source_available = (
             callable(reconcile)
-            and producer_source is persistence_db
-            and callable(
-                getattr(producer_source, "read_committed_chat_sync_intent", None)
-            )
-            and callable(getattr(producer_source, "get_message_by_id", None))
+            and chat_sync_source is not None
+            and getattr(producer, "source", None) == chat_sync_source
         )
         if sync_configured and has_durable_evidence and not committed_source_available:
             raise RuntimeError(
@@ -20777,14 +20772,14 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         payload_hash: str,
     ) -> ContinuationDurabilityResult:
         """Require exact local intent durability and configured portable projection."""
-        source_db = self.persistence.db if self.persistence is not None else None
-        reader = getattr(source_db, "read_committed_chat_sync_intent", None)
-        if not callable(reader):
+        from tldw_chatbook.Sync_Interop.chat_sync_source import chat_sync_source_for
+        source = chat_sync_source_for(getattr(self.persistence, "db", None))
+        if source is None:
             return ContinuationDurabilityResult(
                 False,
                 "Local continuation storage is unavailable; save the message and retry.",
             )
-        source_record = reader(
+        source_record = source.read_committed_chat_sync_intent(
             message_id=message_id,
             message_version=message_version,
             payload_hash=payload_hash,
@@ -20809,7 +20804,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 False,
                 "Portable sync needs a file-backed state repository; configure one and retry.",
             )
-        if getattr(producer, "source", None) is not source_db:
+        if getattr(producer, "source", None) != source:
             return ContinuationDurabilityResult(
                 False,
                 "Portable sync source does not match local continuation storage.",

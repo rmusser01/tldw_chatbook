@@ -675,20 +675,30 @@ def _lazy_real_semantic_coordinator(db):
     return SemanticRevisionCoordinator(db)
 
 
+def _lazy_real_chat_record_hash(row):
+    """The real chat-record hasher, imported on first use (TASK-36949.4)."""
+    from tldw_chatbook.Sync_Interop.chat_sync_source import chat_record_payload_hash
+
+    return chat_record_payload_hash(row)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def semantic_coordination_installed() -> None:
-    """Install the DB layer's semantic-coordination port for the whole session.
+    """Install the DB layer's semantic and chat-record hashing ports for the session.
 
-    Production composition roots install it at startup (TASK-36949.3); tests
-    construct databases directly, so the suite installs the real coordinator.
-    Session scope sets it up before any module- or class-scoped fixture that
-    writes a message; tests that clear the port do so through monkeypatch.
+    Production composition roots install them at startup (TASK-36949.3,
+    TASK-36949.4); tests construct databases directly, so the suite installs
+    the real implementations. Session scope sets them up before any module- or
+    class-scoped fixture that writes or deletes a message; tests that clear a
+    port do so through monkeypatch.
     """
     from tldw_chatbook.DB.transaction_observer import (
+        install_chat_record_hasher,
         install_semantic_coordinator_factory,
     )
 
     install_semantic_coordinator_factory(_lazy_real_semantic_coordinator)
+    install_chat_record_hasher(_lazy_real_chat_record_hash)
 
 
 @pytest.fixture(scope="session", autouse=True)

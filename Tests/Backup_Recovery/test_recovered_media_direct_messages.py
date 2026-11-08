@@ -22,6 +22,7 @@ from tldw_chatbook.Backup_Recovery.chat_source_participants import build_persona
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import remove_message_from_conversation
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.console_semantic_revision import install_semantic_coordination;install_semantic_coordination()
+from tldw_chatbook.Sync_Interop.chat_sync_source import install_chat_sync_hashing;install_chat_sync_hashing()
 from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError
 from loguru import logger
 root=Path(os.environ['FIXTURE_ROOT'])

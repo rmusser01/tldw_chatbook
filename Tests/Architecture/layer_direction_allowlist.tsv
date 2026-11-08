@@ -36,8 +36,6 @@ tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Chat.console_library_policy	lazy
 tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Library.library_artifacts_state	lazy
 tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Provider_Contract.provider_continuation	lazy
 tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Provider_Contract.thinking_blocks	lazy
-tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Sync_Interop.chat_outbox_producer	lazy
-tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.Sync_Interop.hashing	lazy
 tldw_chatbook.DB.ChaChaNotes_DB	tldw_chatbook.model_capabilities	lazy
 tldw_chatbook.DB.Chunking_Lab_DB	tldw_chatbook.Chunking.lab_recovery	top
 tldw_chatbook.DB.Chunking_Lab_DB	tldw_chatbook.Chunking.lab_state	top

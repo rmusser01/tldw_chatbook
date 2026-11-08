@@ -20,6 +20,7 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError, Inpu
 from tldw_chatbook.Research_Interop.chat_handoff import (
     insert_research_completion_message,
 )
+from tldw_chatbook.Sync_Interop.chat_sync_source import CharactersRAGDBChatSyncSource
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 
 
@@ -794,14 +795,15 @@ def test_sync_update_creates_successor_and_tombstone_preserves_it(
         "content": "before",
         "role": "user",
     }
-    db.append_chat_message(stable_key, initial, canonical_payload_hash(initial))
+    sync_store = CharactersRAGDBChatSyncSource(db)
+    sync_store.append_chat_message(stable_key, initial, canonical_payload_hash(initial))
     updated = dict(initial, content="after")
 
-    db.append_chat_message(stable_key, updated, canonical_payload_hash(updated))
+    sync_store.append_chat_message(stable_key, updated, canonical_payload_hash(updated))
     before_delete = [tuple(row) for row in _revision_rows(db, "sync-message")]
     before_bytes = _semantic_bytes(db, "sync-message")
 
-    db.delete_chat_message(
+    sync_store.delete_chat_message(
         stable_key,
         canonical_payload_hash({"deleted": True}),
     )
