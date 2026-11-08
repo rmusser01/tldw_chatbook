@@ -245,7 +245,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-07, TASK-39119 (owner size waiver): +2, a wake or goal iteration
     # takes no mix-in anchor from an earlier turn's USER row.
     # 2026-11-08, TASK-39119 review (owner size waiver): +3, an anchorless wake or goal iteration saves its reply row first.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29185,
+    # 2026-11-08, round-12 restack (owner size waiver): TASK-39138's +4 and
+    # TASK-39119's +5 stacked on dev; exact measurement.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29189,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
@@ -264,8 +266,10 @@ _BUDGETS: dict[str, int] = {
     # and takes late-joining owners without waiting, the managed seal runs
     # outside the owner scope with a recheck (a purge mid-seal refuses), and
     # the owner-scope nesting order is documented: 22,445, the exact measurement.
-    # 2026-11-07, TASK-39139 (owner size waiver): +4, a prompt mix-in attempt
-    # that creates the active leaf's row writes the durable cursor through.
+    # 2026-11-07, TASK-39139 (owner size waiver): a prompt mix-in attempt that
+    # creates the active leaf's row writes the durable cursor through; on the
+    # round-12 restack that write lives in ``_adopt_saved_pending_assistant``
+    # (TASK-39119), so it adds no lines of its own here.
     # 2026-11-08, TASK-39119 review (owner size waiver): +9, the store adopts a reply row saved before provider entry.
     # 2026-11-08, TASK-39119 review r12p-rev2 (owner size waiver): +10, the
     # adopted reply row writes the durable active-leaf cursor and legacy mix-in state.
