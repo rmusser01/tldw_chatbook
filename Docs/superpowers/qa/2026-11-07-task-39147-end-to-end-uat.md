@@ -473,3 +473,65 @@ CI failure remains unqualified until the new pushed head is tested. No full loca
 suite, external-provider or other-platform run; newer-dev integration and merging
 remain outside scope. The complete real index, dev HEAD and 375 preserved path
 states remain unchanged. Existing ADR356 covers this direct Stop/lifetime fix.
+
+
+## Fourth CI follow-up — native fixture custody and poll evidence
+
+All 15 test jobs on [3a2f2a4](https://github.com/rmusser01/tldw_chatbook/actions/runs/42450072567)
+finished: **12 passed, 3 failed**. The only queued job afterward was the redundant
+aggregate. Normal then force cancellation stopped only that old failed task run;
+its completed test evidence is retained. The Stop repair is published separately
+as `591fcd64b1ec073dcacfc70fcb73e3cc54572ea4` and has not yet received a CI verdict.
+
+Besides the Space case already documented, the actual remaining logs show:
+
+- UI lane 1: **239 passed, 1 failed in 826.31s**,
+  `/tmp/pr39147-ci-job-128637182834.log`. Resend's incremental content is already
+  in the store, but the UI assertion after the existing 0.65-second observation
+  still sees Preparing. No timeout or content assertion is changed to hide this.
+- UI lane 10: **157 passed, 1 failed in 778.01s**,
+  `/tmp/pr39147-ci-job-128637182863.log`. The interrupt fixture's direct controller
+  seed reaches cold skill capture without a matching runtime request record and
+  correctly refuses with `Original skill preparation custody changed; send again.`
+
+The interrupt fixture now follows the existing mounted producer: native
+precapture, `_admit_console_turn_to_runtime` and `runtime.wait_for_turn`. It retains
+the actual request/task custody required by cold skill preparation. The production
+custody and selected-source checks are unchanged. Warm-catalog local passes of the
+old direct seed did not certify the cold route.
+
+The Resend test is strengthened to assert that the exact existing timer survives
+its held admission callback. It adds actual run state, timer presence, sync flags
+and in-flight/custody counts to failure output. It retains its original content
+assertion and 0.65-second observation. No production Resend change or latency fix
+is claimed. An unchanged-head local control passes that Resend case in 19.31s;
+its companion interrupt test fails with a **different** Textual message-pump
+`WaitForScreenTimeout`: **1 passed, 1 failed in 118.69s**,
+`/tmp/pr39147-ci-round4-mounted-controls.txt`. That is retained as a failure rather
+than relabeled as reproduction of the CI custody error.
+
+Final candidate tree `9d0f7ba3ce6912d656707ede2657da35239414be`:
+
+- Strengthened Resend and the complete six-journey interrupt projection fixture:
+  **2 passed in 193.17s**, `/tmp/pr39147-ci-round4-fixture-controls.txt`.
+  Individual calls: Resend 26.39s, interrupt journeys 159.73s. Original waits,
+  process/UI limits, assertions and real cleanup remain in place.
+- Supported native skill capture, prepared-skills-without-selected-source refusal
+  and unknown cold-source refusal: **3 passed in 5.03s**,
+  `/tmp/pr39147-ci-round4-skill-source-controls.txt`.
+- Ruff comparison over all branch-changed Python files has **zero new findings**,
+  `/tmp/pr39147-ci-round4-lint.txt`. Changed lines format cleanly; the pre-existing
+  unrelated assertion formatting in the interrupt file is retained. Diff checks
+  and exact preservation auditing pass.
+
+The controller's broad size pin already exceeds its ceiling on the baseline
+(29648 lines versus the 29184-line pin). The Stop repair measures 29598 lines and
+changes no pin; this inherited whole-module debt is outside the selected CI size
+checks. It is not called a passing full-suite result or repaired by raising a
+budget. No full local suite, external-provider or other-platform UAT was run.
+
+This batch changes fixture tests, task notes and QA evidence only. Existing ADR356
+applies; no new architecture decision or production authority change. Dev HEAD,
+full real index/status and all 375 recorded dirty/untracked states remain intact.
+The next workflow must verify the actual new pushed head; old-head successes do
+not close AC #8 or certify the absence of intermittent bugs.

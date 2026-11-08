@@ -133,6 +133,15 @@ Reason: correct existing ordinary Stop and physical-read ownership behavior with
 2. Add a deterministic concurrent native-read/stream Stop regression, including app/session attribution, repeated Stop and physical-read retirement. Correct only reproduced control-flow defects; retain native settlement and live-resource protection.
 3. Run targeted Stop/read/dispatch controls and mounted Space/Enter checks, update exact task/UAT evidence and preservation, then commit/push only task fixes and rerun after all active task CI jobs finish.
 
+
+CI repair follow-up 4 (2026-11-08), before implementation:
+ADR required: no. ADR path: backlog/decisions/356-native-phase-orchestration-runtime-ownership.md.
+Reason: make existing mounted fixtures use their actual runtime custody and strengthen poll-lifetime evidence without weakening resource or recovery fences.
+1. Retain all three completed old-head failures (12 test jobs pass, 3 fail), including exact Space/Resend/skill-custody logs; cancel only that run's redundant queued aggregate after all tests finish.
+2. Seed interrupt projection through existing native precapture/admission/wait APIs so cold skill preparation has its actual original runtime record. Preserve cold/custom-source custody refusals.
+3. Preserve the Resend test's original assertion and 0.65-second observation; assert its timer survives the held admission read and include real poll/state diagnostics. Do not turn an isolated local pass into a claimed CI fix or increase waits.
+4. Rerun targeted mounted/native-custody controls, retain failures/limits, update task/evidence and preservation, and publish only task changes before dispatching one exact-head workflow.
+
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -386,6 +395,30 @@ source trees and the original CI qualification are in the UAT report. The task
 remains In Progress with AC #8 open for exact-head CI. Existing ADR356 applies;
 no new ADR is required. Dev HEAD, full real index and all 375 dirty/untracked
 states remain preserved; changes use only the private Git index and objects.
+
+
+Fourth CI follow-up (2026-11-08): all test jobs on `3a2f2a4` completed with
+12 successes and 3 failures. The saved failures are focused Space Stop, Resend
+incremental publication and the interrupt journey's cold skill-custody refusal.
+Only the redundant queued aggregate was cancelled after every test job finished.
+The separate Stop correction is published as `591fcd64b1`; it still requires CI.
+
+The interrupt fixture now seeds through the existing native precapture, runtime
+admission and wait APIs. Cold skill preparation keeps its actual original request
+record instead of relying on a warm catalog during direct controller submission;
+the source/custody refusal itself remains unchanged. The Resend test now requires
+its exact poll timer to survive the held admission callback and reports real
+state/poll diagnostics on failure. Its original content assertion and 0.65-second
+observation are retained; no latency fix is claimed from isolated local passes.
+
+Final mounted Resend and all six interrupt projection journeys pass 2 cases in
+193.17s (individual calls 26.39s and 159.73s). Supported skill capture and existing
+missing/custom-source refusal controls pass 3 cases in 5.03s. The original CI
+failures and the separate local message-pump timeout remain qualified in the UAT
+report. No production source changes in this fourth batch, no implementation
+attestation restored, no weakened assertion/deadline/budget, and zero new Ruff
+findings. Task status and AC #8 remain open for the next exact-head CI. The real
+dev HEAD, complete index and all 375 preserved path states remain unchanged.
 
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 

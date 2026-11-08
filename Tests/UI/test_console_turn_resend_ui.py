@@ -783,8 +783,9 @@ async def test_resend_poll_survives_initial_hook_admission_read(request, monkeyp
                 for worker in console.workers
             )
             timer = console._console_transcript_sync_timer
-            if timer is not None:
-                await timer._callback()
+            assert timer is not None
+            await timer._callback()
+            assert console._console_transcript_sync_timer is timer
             hook_release.set()
             await asyncio.wait_for(gateway.streaming.wait(), 5)
             await pilot.pause(0.65)
@@ -792,7 +793,14 @@ async def test_resend_poll_survives_initial_hook_admission_read(request, monkeyp
                 "probe incremental reply" in row.content
                 for row in _session_rows(console)
             )
-            assert "probe incremental reply" in _visible_text(console)
+            assert "probe incremental reply" in _visible_text(console), (
+                controller.run_state,
+                console._console_transcript_sync_timer is not None,
+                console._console_sync_in_progress,
+                console._console_sync_requested,
+                controller.in_flight_run_count(),
+                console._console_runtime().has_custodied_turns(),
+            )
         finally:
             hook_release.set()
             gateway.release.set()
