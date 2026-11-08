@@ -18,10 +18,7 @@ from typing import Any, Mapping, Optional
 from urllib.parse import quote, unquote, urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-# (task-21102) RAG_Search.chunking_service (the full Chunking shim + vendored
-# engine, ~15k LOC) is deliberately NOT imported at module scope: this module
-# is on the app's boot-import path via ``Media/__init__``, and only
-# ``_chunk_text`` needs the service. It is imported there, on first real use.
+# Import chunking_service only in _chunk_text to keep its engine off the boot path.
 from tldw_chatbook.STT.persistence import (
     load_transcription_provenance_document,
 )
@@ -6911,35 +6908,4 @@ class LocalMediaReadingService:
             )
 
 
-# Original Library read interfaces; unknown replacements require OPAQUE custody.
-from types import FunctionType as _LibraryFunction
-
 _NATIVE_ORDINARY_LIBRARY_CLASS = LocalMediaReadingService
-_NATIVE_ORDINARY_LIBRARY_METHODS = tuple(
-    (name, value)
-    for name, value in vars(LocalMediaReadingService).items()
-    if isinstance(value, (_LibraryFunction, staticmethod, classmethod, property))
-)
-_NATIVE_ORDINARY_LIBRARY_FUNCTIONS = tuple(
-    (
-        function,
-        function.__code__,
-        function.__defaults__,
-        function.__kwdefaults__,
-        tuple((function.__kwdefaults__ or {}).items()),
-        function.__closure__,
-        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
-    )
-    for function in (
-        *(
-            value
-            for value in tuple(globals().values())
-            if type(value) is _LibraryFunction and value.__module__ == __name__
-        ),
-        *(
-            value.__func__ if isinstance(value, (staticmethod, classmethod)) else value
-            for _name, value in _NATIVE_ORDINARY_LIBRARY_METHODS
-            if not isinstance(value, property)
-        ),
-    )
-)

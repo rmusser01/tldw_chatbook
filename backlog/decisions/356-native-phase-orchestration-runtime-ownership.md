@@ -144,3 +144,16 @@ qualification remains tied to its original source and does not certify shipped
 current-dev25 recovery. Existing reviewed native resource, permission, revision
 and history fences remain mandatory. This amends the existing additive storage
 allocation decision; it introduces no new executor, service or trust boundary.
+
+
+The integration also retains the pre-integration standalone workflow25–30
+lineages required by existing-history compatibility. Their exact frozen catalogs,
+not their colliding numeric version alone, select one explicit additive bridge.
+It adds the shipped review-boundary fields/table, applies only absent later
+workflow DDL and appends current26–31 audit rows in one FULL transaction. It never
+updates old audit rows, discards history, infers recovery review or recreates
+launch authority. Unknown or mixed catalogs refuse. Constructor and bounded
+archive recovery use the same installed bridge; every intermediate native
+permission, row, quota, resource and cancellation fence still applies. Both shipped
+dev25 physical layouts remain independently qualified. This is schema/resource
+identity, not Python implementation identity.

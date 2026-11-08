@@ -2235,66 +2235,26 @@ PathIntent = Literal['read', 'write', 'list']
 _INTENT_VERBS: dict[str, str] = {'read': 'read', 'write': 'written', 'list': 'listed'}
 
 def resolve_workspace_path(path: str, workspace_root: Path, *, intent: PathIntent='read', context: SensitivePathContext | None=None) -> Path:
-    """Resolve ``path`` against ``workspace_root``, confined and denylisted.
+    """Resolve a supplied path within its workspace and sensitive-path denylist.
 
-    The single choke point for this tool family: every ``fs_*`` and
-    ``git_*`` core function resolves a model-supplied path here (the git
-    ones one hop away, via ``prepare_repository``/``_prepare_for_path``/
-    ``_repo_relative_path``), so both path checks are enforced in ONE place
-    rather than re-implemented per tool — which is exactly how the denylist
-    came to be missing from all seven ``fs_*`` tools (TASK-19551). It
-    governs the path a caller PASSES; it does not filter what a tool
-    returns (see the module docstring for where that distinction bites).
-
-    Two checks, in order:
-
-    1. **Confinement** (``validate_path``). Hidden components (``.github/``,
-       ``.gitignore``) are allowed under the root, per ADR-300: a coding
-       agent that cannot read a repository's dotfile configuration is
-       useless, and the ADR adopted ``allow_hidden`` for exactly this
-       family. That parameter is deliberately KEPT — dotted names are how
-       ``~/.ssh``/``~/.aws`` are spelled, but "starts with a dot" is a name
-       heuristic, not a security boundary, and check 2 is the one designed
-       to answer that question (by resolved ancestry, so a symlink or a
-       ``~/.sshfoo`` lookalike cannot game it).
-    2. **The sensitive-path denylist** (``is_sensitive_path``), matching
-       what ``Tools/file_operation_tools.py``'s ``ReadFileTool``/
-       ``WriteFileTool``/``ListDirectoryTool`` already do for the other
-       file-tool family, message shape included, so agent-facing refusals
-       stay consistent across the two.
-
-    For ``intent="write"`` the denylist check is additionally applied to
-    every not-yet-existing ancestor of the target
-    (``refuses_new_directory_chain``), the same guard ``WriteFileTool``
-    consults before ``mkdir(parents=True)``. No tool in this family creates
-    directories today (a write target's parent must already exist), so this
-    normally short-circuits on the first existing ancestor; it is here so
-    that a future ``create_directories``-style option cannot reintroduce
-    TASK-849's shadow-directory denial of service by forgetting it.
+    All fs_* and git_* inputs use this choke point (TASK-19551). Confinement runs
+    before resolved-ancestry deny checks. Hidden names are allowed by ADR-300;
+    name heuristics never substitute for credential, gate-state or app-state denial.
+    Writes also check each absent ancestor to prevent shadow-directory denial of
+    service (TASK-849). These checks govern input paths; enumerators filter outputs.
 
     Args:
-        path: The user/model-supplied path, absolute or relative to
-            ``workspace_root``.
-        workspace_root: The confinement root the resolved path must stay
-            within.
-        intent: What the caller is about to do with the path — selects the
-            refusal verb and enables the new-directory-chain guard for
-            writes. Never weakens a check.
-        context: Optional pre-resolved ``SensitivePathContext``. Callers
-            that check many paths in one tool invocation (the enumerating
-            tools, ``patch_files``' multi-file loop) resolve one with
-            ``Utils.sensitive_paths.resolve_sensitive_context()`` and pass
-            it through, so the ~11 config accessors behind the denylist are
-            resolved once per CALL rather than once per path. ``None``
-            resolves it fresh — that still enforces the denylist.
+        path: Absolute or workspace-relative user/model input.
+        workspace_root: Confinement root the resolved target must remain within.
+        intent: Refusal verb and write-ancestor policy; never weakens validation.
+        context: Optional shared SensitivePathContext for a multi-path invocation.
+            None resolves fresh deny policy; sharing avoids repeated config reads.
 
     Returns:
-        The validated absolute ``Path`` inside ``workspace_root``.
+        The validated absolute Path inside workspace_root.
 
     Raises:
-        LocalToolError: If the path resolves outside ``workspace_root``, or
-            is a protected credential/gate-state/app-state path.
-    """
+        LocalToolError: Outside-root or protected credential/gate/app-state path."""
     try:
         resolved = validate_path(path, workspace_root, redact_paths=True, allow_hidden=True)
     except ValueError as exc:
@@ -2357,14 +2317,16 @@ def _list_relative_directory(relative: Path, *, workspace: Path, max_entries: in
         raise LocalToolError(f'not a directory: {display_path or relative}')
     scanned: list[Path] = []
     scan_capped = False
-    for index, entry in enumerate(target.iterdir()):
-        if index >= MAX_SCAN_ENTRIES:
-            scan_capped = True
-            break
-        entry_relative = _workspace_relative_path(entry, workspace)
-        if not _relative_target_is_safe(entry_relative, workspace, sensitive_exclusions, is_directory=entry.is_dir(), resolved_workspace=resolved_workspace, folded_exclusions=folded):
-            continue
-        scanned.append(entry)
+    with os.scandir(target) as directory:
+        for index, native_entry in enumerate(directory):
+            if index >= MAX_SCAN_ENTRIES:
+                scan_capped = True
+                break
+            entry = Path(native_entry.path)
+            entry_relative = _workspace_relative_path(entry, workspace)
+            if not _relative_target_is_safe(entry_relative, workspace, sensitive_exclusions, is_directory=entry.is_dir(), resolved_workspace=resolved_workspace, folded_exclusions=folded):
+                continue
+            scanned.append(entry)
     entries = sorted(scanned, key=lambda p: (p.is_file(), p.name.lower()))
     lines = []
     for entry in entries[:max_entries]:
@@ -2392,45 +2354,67 @@ def read_file(path: str, *, workspace_root: Path, offset: int=1, limit: int | No
     root = resolve_workspace_path(path, workspace_root, intent='read')
     return _read_relative_file(root.relative_to(Path(workspace_root).resolve()), workspace=Path(workspace_root).resolve(), offset=offset, limit=limit, sensitive_exclusions=sensitive_exclusions_under(Path(workspace_root).resolve()), display_path=path)
 
-def _read_relative_file(relative: Path, *, workspace: Path, offset: int, limit: int | None, sensitive_exclusions: tuple[SensitiveExclusion, ...], display_path: str | None=None, content_stamps: bool=False) -> str:
-    """Read a pinned-root-relative text file without reopening its resolved path.
+def _read_bounded_bytes(target: Path) -> bytes:
+    """Read one unchanged regular file, bounding both metadata and actual bytes.
 
-    The file is opened exactly ONCE and fully read as bytes: the binary
-    sniff, the decoded text, and (when ``content_stamps`` is set) the
-    CAS stamp digest all come from that single read, so the rendered
-    content and its sha256/size stamps can never be a torn pair under
-    concurrent modification. (``str.splitlines`` splits untranslated
-    ``\\r``/``\\r\\n`` exactly where the old universal-newline
-    ``read_text`` translation produced splits, so the output is
-    byte-identical to the previous two-open implementation.)
+    The nonblocking, no-follow descriptor prevents a replacement FIFO or symlink
+    from turning a bounded read into an unbounded effect. Compare the descriptor
+    and path before and after reading; never stamp a changed or replaced file.
+    """
+    before = target.stat(follow_symlinks=False)
+    if not stat_module.S_ISREG(before.st_mode):
+        raise LocalToolError(f'file changed or is not regular: {target.name}')
+    if before.st_size > MAX_READ_FILE_BYTES:
+        raise LocalToolError(f"'{target.name}' is too large to read")
+
+    def version(info: os.stat_result) -> tuple[int, ...]:
+        return (info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+    flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
+    descriptor = os.open(target, flags)
+    try:
+        if version(os.fstat(descriptor)) != version(before):
+            raise LocalToolError(f'file changed while opening: {target.name}')
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(1 << 20, MAX_READ_FILE_BYTES - total + 1))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_READ_FILE_BYTES:
+                raise LocalToolError(f"'{target.name}' is too large to read")
+            chunks.append(chunk)
+        if total != before.st_size or version(os.fstat(descriptor)) != version(before) or version(target.stat(follow_symlinks=False)) != version(before):
+            raise LocalToolError(f'file changed while reading: {target.name}')
+        return b''.join(chunks)
+    finally:
+        os.close(descriptor)
+
+def _read_relative_file(relative: Path, *, workspace: Path, offset: int, limit: int | None, sensitive_exclusions: tuple[SensitiveExclusion, ...], display_path: str | None=None, content_stamps: bool=False) -> str:
+    """Read one confined text file; derive display and optional CAS stamps from the same bytes.
+
+    The bounded, no-follow read rejects replacement, mutation, oversized and binary
+    files. Newline splitting preserves the prior rendered output. Content and digest
+    never come from separate opens.
 
     Args:
-        relative: Root-relative target, already safety-checked.
-        workspace: The confinement root ``relative`` resolves against.
-        offset: 1-based first line to render.
-        limit: Optional cap on the rendered line count.
-        sensitive_exclusions: Deny rules applied to the target.
-        display_path: Caller-facing path for error messages.
-        content_stamps: Append the worker-reported CAS tail
-            (``\\nsha256: <hex>\\nsize: <n>``) computed from the same
-            read — the pinned dispatch path sets this; the plain local
-            ``read_file`` surface does not.
+        relative: Previously checked root-relative target.
+        workspace: Confinement root.
+        offset: 1-based first line.
+        limit: Optional rendered-line limit.
+        sensitive_exclusions: Target deny rules.
+        display_path: Optional caller-facing error path.
+        content_stamps: Append the pinned dispatch's same-read sha256/size tail.
 
     Returns:
-        The numbered (or notice) body, plus the stamp tail when
-        requested.
+        Numbered body or notice, with optional CAS tail.
 
     Raises:
-        LocalToolError: If the target is missing/protected, oversized,
-            or binary.
-    """
+        LocalToolError: Missing, protected, oversized, changed or binary target."""
     target = workspace / relative
     if not _relative_target_is_safe(relative, workspace, sensitive_exclusions, is_directory=False) or not target.is_file():
         raise LocalToolError(f'file not found: {display_path or relative}')
-    file_size = target.stat().st_size
-    if file_size > MAX_READ_FILE_BYTES:
-        raise LocalToolError(f"'{display_path or relative}' is too large to read ({file_size} bytes; maximum {MAX_READ_FILE_BYTES})")
-    data = target.read_bytes()
+    data = _read_bounded_bytes(target)
     if b'\x00' in data[:8192]:
         raise LocalToolError(f"'{display_path or relative}' appears to be binary; fs_read only reads text files")
     lines = data.decode('utf-8', errors='replace').splitlines()
@@ -4882,20 +4866,14 @@ def patch_files(diff_text: str, *, workspace_root: Path, dry_run: bool=False) ->
     return '\n'.join(summaries)
 
 def patch_validated_files(plans: tuple[PatchFile, ...], *, root: PinnedWorkspaceRoot, dry_run: bool=False, content_stamps: bool=False) -> str:
-    """Apply parent-admitted plans through one retained workspace root pin.
+    """Apply ordered parent-admitted patches through one retained root pin.
 
     Args:
-        plans: Parent-admitted patch plans, in order.
-        root: The retained workspace root pin every target resolves through.
-        dry_run: Preview only; nothing is written and no stamp lines are
-            appended.
-        content_stamps: Append one worker-reported CAS stamp line per
-            written target (``sha256 <relpath>: <64 hex> size: <n>``,
-            Task 16 write-path parity with fs_read/fs_write/fs_edit).
-            A patch may touch MANY targets, so unlike the single-path
-            tools each stamp line names its target; the digest is the
-            exact in-memory ``data`` each target's atomic write received,
-            never a post-write re-read.
+        plans: Admitted patch plans in application order.
+        root: Retained workspace root pin for every target.
+        dry_run: Preview without writes or stamp lines.
+        content_stamps: Append each written path's sha256 and byte count from
+            its exact atomic-write input, never a post-write reread.
     """
     summaries: list[str] = []
     stamp_lines: list[str] = []
@@ -5871,4 +5849,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("031dd750a624f2c86eb50d78678b7ef9e7bc22eb41be9d4a1afe0b59ecb4c36c")
+BUNDLE_SHA256 = _enter_worker_exchange("6ee03d93f1905684ef06a39553baf84bd19cfea81e0d139524c67c690b31f9b7")

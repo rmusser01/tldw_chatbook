@@ -5701,13 +5701,3 @@ if __name__ == "__main__":
 #
 # End of app.py
 #######################################################################################################################
-
-
-# Defining callbacks for checked stock Console preparation; no IO.
-_CONSOLE_SKILL_APP_SOURCE = (
-    TldwCli,
-    globals(),
-    TldwCli._create_deferred_startup_task,
-    TldwCli._create_deferred_startup_task.__code__,
-    ConsoleRuntime,
-)

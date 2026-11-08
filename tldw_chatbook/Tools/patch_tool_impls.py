@@ -542,20 +542,14 @@ def patch_validated_files(
     dry_run: bool = False,
     content_stamps: bool = False,
 ) -> str:
-    """Apply parent-admitted plans through one retained workspace root pin.
+    """Apply ordered parent-admitted patches through one retained root pin.
 
     Args:
-        plans: Parent-admitted patch plans, in order.
-        root: The retained workspace root pin every target resolves through.
-        dry_run: Preview only; nothing is written and no stamp lines are
-            appended.
-        content_stamps: Append one worker-reported CAS stamp line per
-            written target (``sha256 <relpath>: <64 hex> size: <n>``,
-            Task 16 write-path parity with fs_read/fs_write/fs_edit).
-            A patch may touch MANY targets, so unlike the single-path
-            tools each stamp line names its target; the digest is the
-            exact in-memory ``data`` each target's atomic write received,
-            never a post-write re-read.
+        plans: Admitted patch plans in application order.
+        root: Retained workspace root pin for every target.
+        dry_run: Preview without writes or stamp lines.
+        content_stamps: Append each written path's sha256 and byte count from
+            its exact atomic-write input, never a post-write reread.
     """
     summaries: list[str] = []
     stamp_lines: list[str] = []

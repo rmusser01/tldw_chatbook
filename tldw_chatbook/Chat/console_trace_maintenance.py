@@ -2149,3 +2149,44 @@ __all__ = [
     "TraceGCMark",
     "TraceGCResult",
 ]
+
+
+def runtime_provider_active(self) -> bool:
+    controller = self._chat_controller
+    tasks = getattr(controller, "_active_stream_tasks", None)
+    return bool(tasks)
+
+
+class MaintenanceReturnUnknown(RuntimeError):
+    """Cancellation of a DB proxy does not prove its worker returned."""
+
+
+async def call_owned_maintenance(_source, database, operation, *args, **kwargs):
+    # Retain this exact finite coroutine through its original worker and
+    # operation/connection exits. Cancellation must not cancel its proxy.
+    worker = _source.asyncio.create_task(
+        _source.run_owned_db_call(database, operation, *args, **kwargs)
+    )
+    cancelled = False
+    while not worker.done():
+        try:
+            await _source.asyncio.shield(worker)
+        except _source.asyncio.CancelledError:
+            cancelled = True
+        except Exception:  # noqa: BLE001 - inspect the original result below.
+            break
+    if worker.cancelled():
+        raise MaintenanceReturnUnknown("maintenance worker return is unknown")
+    result = worker.result()  # Callback AND native connection-close errors.
+    if cancelled:
+        raise _source.asyncio.CancelledError
+    return result
+
+
+def maintenance_error_must_propagate(runtime, source, error=None):
+    """A stopped owner or unknown physical return must bypass retry handling."""
+    return (
+        runtime._disposed
+        or source.asyncio.current_task().cancelling()
+        or isinstance(error, MaintenanceReturnUnknown)
+    )

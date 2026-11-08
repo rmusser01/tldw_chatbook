@@ -50,7 +50,10 @@ async def test_region_recovery_callbacks_read_live_screen_and_preserve_order(
     events = []
     hold = [object()]
     held = SimpleNamespace(
-        preparation_id="p", executed_draft="held draft", session_id="held"
+        preparation_id="p",
+        executed_draft="held draft",
+        session_id="held",
+        input_draft_revision=7,
     )
 
     def preparation():
@@ -61,8 +64,18 @@ async def test_region_recovery_callbacks_read_live_screen_and_preserve_order(
         events.append("hold")
         return hold[0]
 
+    read_sessions = []
+    original_inputs = SimpleNamespace(draft_revision=7)
+
+    def session_inputs(session_id):
+        read_sessions.append(session_id)
+        assert session_id == "held"
+        return original_inputs
+
     store = SimpleNamespace(
-        active_session_id="held", preparation_by_id=lambda _id: held
+        active_session_id="held",
+        preparation_by_id=lambda _id: held,
+        session_input_snapshot=session_inputs,
     )
     message = object()
     controller = SimpleNamespace(
@@ -98,7 +111,14 @@ async def test_region_recovery_callbacks_read_live_screen_and_preserve_order(
         events.append("dispatch")
         assert actual_controller is controller
         assert (actual_action, preparation_id) == (action, "p")
-        assert kwargs == {"on_started": started, "on_finished": finished}
+        on_result = kwargs.pop("on_result")
+        assert callable(on_result)
+        assert kwargs == {
+            "on_started": started,
+            "on_finished": finished,
+            "restore_draft": True,
+        }
+        on_result(result)
         if cleared:
             hold[0] = None
         # The conversation the composer shows when the action ends.
@@ -109,6 +129,7 @@ async def test_region_recovery_callbacks_read_live_screen_and_preserve_order(
     monkeypatch.setattr(chat_screen, "dispatch_trace_call_recovery_action", dispatch)
     assert await callback(action, "p") is result
     assert events[:4] == ["held", "hold", "dispatch", "composer"]
+    assert read_sessions == ["held"]
     assert loaded == (
         ["held draft"]
         if action == "cancel" and cleared and not draft and shown == "held"

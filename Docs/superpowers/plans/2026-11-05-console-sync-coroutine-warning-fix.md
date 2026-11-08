@@ -1,6 +1,6 @@
 # Fix the unawaited native Console UI synchronization coroutine
 
-Task: TASK-38614.
+Task: TASK-39435.
 Goal: identify and fix the original allocation/scheduling cause while preserving refresh, coalescing, cancellation and teardown semantics.
 ADR required: no
 ADR path: N/A

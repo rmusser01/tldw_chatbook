@@ -1,19 +1,11 @@
 """Workspace and conversation-browser ownership for the Console.
 
-`ConsoleWorkspaceController` owns 57 non-DOM methods covering Workspace
-policy and lifecycle, scope selection, persisted-conversation resume, the
-named-workspace Tree projection, and the flat Default/unassigned browser.
-Workspaces and Conversations own independent search attempts; page generations
-are scoped per workspace. Legacy Workspace row and scalar names are
-compatibility aliases over the flat lane.
-
-The Textual screen retains only framework and DOM edges. Its bounded search
-handler extracts plain query/disabled values and delegates the transition;
-the Clear button delegates the complete clear transition. Browser services
-and sibling-owned data enter through explicit late-bound constructor
-callables so replacements remain observable and moved methods never query the
-DOM or reach through sibling controllers.
-"""
+ConsoleWorkspaceController owns policy, scope selection, saved-conversation
+resume, the Workspace Tree and the flat Default/unassigned browser. Independent
+search attempts and page generations retain their workspace scope; legacy row
+and scalar names remain compatibility aliases over the flat lane.
+The screen owns framework and DOM edges. It passes plain query/disabled values
+and late-bound dependencies; moved methods never query DOM or sibling controllers."""
 
 from __future__ import annotations
 

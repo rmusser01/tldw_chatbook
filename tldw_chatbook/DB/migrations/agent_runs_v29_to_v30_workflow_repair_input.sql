@@ -5,5 +5,5 @@ CREATE TRIGGER workflow_repair_input_immutable
 BEFORE UPDATE OF id,workflow_id,plan_revision,phase_id,purpose,command_id,native_attempt_id,repair_instruction_sha256 ON workflow_phase_attempts
 WHEN OLD.repair_instruction_sha256 IS NOT NULL OR NEW.repair_instruction_sha256 IS NOT NULL
 BEGIN SELECT RAISE(ABORT, 'workflow repair input is immutable'); END;
-INSERT INTO schema_version(version) VALUES (29);
+INSERT INTO schema_version(version) VALUES (30);
 COMMIT;

@@ -192,66 +192,26 @@ def resolve_workspace_path(
     intent: PathIntent = "read",
     context: SensitivePathContext | None = None,
 ) -> Path:
-    """Resolve ``path`` against ``workspace_root``, confined and denylisted.
+    """Resolve a supplied path within its workspace and sensitive-path denylist.
 
-    The single choke point for this tool family: every ``fs_*`` and
-    ``git_*`` core function resolves a model-supplied path here (the git
-    ones one hop away, via ``prepare_repository``/``_prepare_for_path``/
-    ``_repo_relative_path``), so both path checks are enforced in ONE place
-    rather than re-implemented per tool — which is exactly how the denylist
-    came to be missing from all seven ``fs_*`` tools (TASK-19551). It
-    governs the path a caller PASSES; it does not filter what a tool
-    returns (see the module docstring for where that distinction bites).
-
-    Two checks, in order:
-
-    1. **Confinement** (``validate_path``). Hidden components (``.github/``,
-       ``.gitignore``) are allowed under the root, per ADR-300: a coding
-       agent that cannot read a repository's dotfile configuration is
-       useless, and the ADR adopted ``allow_hidden`` for exactly this
-       family. That parameter is deliberately KEPT — dotted names are how
-       ``~/.ssh``/``~/.aws`` are spelled, but "starts with a dot" is a name
-       heuristic, not a security boundary, and check 2 is the one designed
-       to answer that question (by resolved ancestry, so a symlink or a
-       ``~/.sshfoo`` lookalike cannot game it).
-    2. **The sensitive-path denylist** (``is_sensitive_path``), matching
-       what ``Tools/file_operation_tools.py``'s ``ReadFileTool``/
-       ``WriteFileTool``/``ListDirectoryTool`` already do for the other
-       file-tool family, message shape included, so agent-facing refusals
-       stay consistent across the two.
-
-    For ``intent="write"`` the denylist check is additionally applied to
-    every not-yet-existing ancestor of the target
-    (``refuses_new_directory_chain``), the same guard ``WriteFileTool``
-    consults before ``mkdir(parents=True)``. No tool in this family creates
-    directories today (a write target's parent must already exist), so this
-    normally short-circuits on the first existing ancestor; it is here so
-    that a future ``create_directories``-style option cannot reintroduce
-    TASK-849's shadow-directory denial of service by forgetting it.
+    All fs_* and git_* inputs use this choke point (TASK-19551). Confinement runs
+    before resolved-ancestry deny checks. Hidden names are allowed by ADR-300;
+    name heuristics never substitute for credential, gate-state or app-state denial.
+    Writes also check each absent ancestor to prevent shadow-directory denial of
+    service (TASK-849). These checks govern input paths; enumerators filter outputs.
 
     Args:
-        path: The user/model-supplied path, absolute or relative to
-            ``workspace_root``.
-        workspace_root: The confinement root the resolved path must stay
-            within.
-        intent: What the caller is about to do with the path — selects the
-            refusal verb and enables the new-directory-chain guard for
-            writes. Never weakens a check.
-        context: Optional pre-resolved ``SensitivePathContext``. Callers
-            that check many paths in one tool invocation (the enumerating
-            tools, ``patch_files``' multi-file loop) resolve one with
-            ``Utils.sensitive_paths.resolve_sensitive_context()`` and pass
-            it through, so the ~11 config accessors behind the denylist are
-            resolved once per CALL rather than once per path. ``None``
-            resolves it fresh — that still enforces the denylist.
+        path: Absolute or workspace-relative user/model input.
+        workspace_root: Confinement root the resolved target must remain within.
+        intent: Refusal verb and write-ancestor policy; never weakens validation.
+        context: Optional shared SensitivePathContext for a multi-path invocation.
+            None resolves fresh deny policy; sharing avoids repeated config reads.
 
     Returns:
-        The validated absolute ``Path`` inside ``workspace_root``.
+        The validated absolute Path inside workspace_root.
 
     Raises:
-        LocalToolError: If the path resolves outside ``workspace_root``, or
-            is a protected credential/gate-state/app-state path.
-    """
+        LocalToolError: Outside-root or protected credential/gate/app-state path."""
     try:
         # `redact_paths=True` (TASK-19558): `path` here is MODEL-supplied and
         # `validate_path` otherwise echoes it, and its resolved form, into a
@@ -504,37 +464,26 @@ def _read_relative_file(
     display_path: str | None = None,
     content_stamps: bool = False,
 ) -> str:
-    """Read a pinned-root-relative text file without reopening its resolved path.
+    """Read one confined text file; derive display and optional CAS stamps from the same bytes.
 
-    The file is opened exactly ONCE and fully read as bytes: the binary
-    sniff, the decoded text, and (when ``content_stamps`` is set) the
-    CAS stamp digest all come from that single read, so the rendered
-    content and its sha256/size stamps can never be a torn pair under
-    concurrent modification. (``str.splitlines`` splits untranslated
-    ``\\r``/``\\r\\n`` exactly where the old universal-newline
-    ``read_text`` translation produced splits, so the output is
-    byte-identical to the previous two-open implementation.)
+    The bounded, no-follow read rejects replacement, mutation, oversized and binary
+    files. Newline splitting preserves the prior rendered output. Content and digest
+    never come from separate opens.
 
     Args:
-        relative: Root-relative target, already safety-checked.
-        workspace: The confinement root ``relative`` resolves against.
-        offset: 1-based first line to render.
-        limit: Optional cap on the rendered line count.
-        sensitive_exclusions: Deny rules applied to the target.
-        display_path: Caller-facing path for error messages.
-        content_stamps: Append the worker-reported CAS tail
-            (``\\nsha256: <hex>\\nsize: <n>``) computed from the same
-            read — the pinned dispatch path sets this; the plain local
-            ``read_file`` surface does not.
+        relative: Previously checked root-relative target.
+        workspace: Confinement root.
+        offset: 1-based first line.
+        limit: Optional rendered-line limit.
+        sensitive_exclusions: Target deny rules.
+        display_path: Optional caller-facing error path.
+        content_stamps: Append the pinned dispatch's same-read sha256/size tail.
 
     Returns:
-        The numbered (or notice) body, plus the stamp tail when
-        requested.
+        Numbered body or notice, with optional CAS tail.
 
     Raises:
-        LocalToolError: If the target is missing/protected, oversized,
-            or binary.
-    """
+        LocalToolError: Missing, protected, oversized, changed or binary target."""
     target = workspace / relative
     if (
         not _relative_target_is_safe(
@@ -1957,23 +1906,3 @@ def _is_relative_sensitive_path(
 
 
 # Finite original local read receivers for native workflow planning.
-_NATIVE_PLANNING_READERS = tuple(
-    (
-        name,
-        (
-            function,
-            function.__code__,
-            function.__defaults__,
-            function.__kwdefaults__,
-            tuple((function.__kwdefaults__ or {}).items()),
-            function.__closure__,
-            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
-        ),
-    )
-    for name, function in (
-        ("resolve_workspace_path", resolve_workspace_path),
-        ("_read_bounded_bytes", _read_bounded_bytes),
-        ("_read_relative_file", _read_relative_file),
-        ("_list_relative_directory", _list_relative_directory),
-    )
-)

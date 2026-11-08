@@ -887,7 +887,15 @@ class _OrdinaryTurn:
 
 
 async def admit_ordinary_turn(
-    controller, session, configuration, origin, text, candidates, *, agent_eligible
+    controller,
+    session,
+    configuration,
+    origin,
+    text,
+    candidates,
+    *,
+    agent_eligible,
+    hook_read=None,
 ):
     """Select original sources before acquiring the complete ordinary footprint."""
     from tldw_chatbook.Agents.activation import worker_guard
@@ -947,7 +955,7 @@ async def admit_ordinary_turn(
             )
             tree.reference.capture_authority()
             tree.reference.ordinary_tree = tree
-        footprint = _capture_maximum(tree)
+        footprint = _capture_maximum(tree, hook_read=hook_read)
         tree.check_local_sources()
         tree.admit(footprint)
         return tree
@@ -1230,7 +1238,7 @@ def _permission_payload(tree):
     return permission.load()
 
 
-def _capture_maximum(tree):
+def _capture_maximum(tree, *, hook_read=None):
     """Project stock declared effects; live composition may only narrow them."""
     from tldw_chatbook.Agents.persona_policy import (
         evaluate_tool_policy,
@@ -1325,7 +1333,14 @@ def _capture_maximum(tree):
     if permissions is not None:
         from tldw_chatbook.Agents.run_hooks import load_hooks_config
 
-        review, _targets = permissions.v2_configuration()
+        from .console_hook_preparation import attempt_v2_configuration_for
+
+        # This selects only a footprint. Hook preparation/launch still owns
+        # its own checks, and a later recapture does not carry a Send read.
+        shared = attempt_v2_configuration_for(permissions, tree.session.id, hook_read)
+        review, _targets = (
+            shared if shared is not None else permissions.v2_configuration()
+        )
         hooks = load_hooks_config(
             {"hooks": review.config.section} if review.config.section_present else {}
         )

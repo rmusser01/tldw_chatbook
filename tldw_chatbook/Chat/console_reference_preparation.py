@@ -373,7 +373,7 @@ class _ReferenceRead:
                     raise
                 self.owner, self.operation, self.claim = owner, operation, claim
 
-    def expand(self):
+    def expand(self, excluded_candidate=None):
         from . import console_references as refs
 
         with self.activate():
@@ -391,8 +391,16 @@ class _ReferenceRead:
                         for c in self.candidates
                     ],
                 )
+            candidates = refs.find_reference_candidates(self.text)
+            if excluded_candidate is not None:
+                candidates = [
+                    candidate
+                    for candidate in candidates
+                    if (candidate.start, candidate.raw) != excluded_candidate
+                ]
             result = refs.expand_references(
                 self.text,
+                candidates=candidates,
                 resolve=refs.build_console_reference_resolver(authority=self.authority),
                 git_runner=refs.build_console_git_runner(
                     authority=self.authority, producer=self if self.native else None
@@ -412,7 +420,9 @@ class _ReferenceRead:
 
 
 @asynccontextmanager
-async def prepare_reference_expansion(controller, session, origin, text, candidates):
+async def prepare_reference_expansion(
+    controller, session, origin, text, candidates, *, excluded_candidate=None
+):
     """Retain the original worker and native operation through host assignment."""
     from .console_ordinary_tree import current_ordinary_tree
 
@@ -452,7 +462,7 @@ async def prepare_reference_expansion(controller, session, origin, text, candida
 
     try:
         await run(request.prepare)
-        result = await run(request.expand)
+        result = await run(lambda: request.expand(excluded_candidate))
         request.check_memory()
         yield result
         request.check_memory()

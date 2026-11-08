@@ -825,3 +825,20 @@ Three mounted Undo and one mounted provider local app-construction refusals are
 reproduced on the respective unchanged parents; selected CI does not erase them.
 Inherited whole-module formatting/lint/size debt remains. Earlier timing/setup/CSS
 failures and their qualified source versions remain in the report above.
+
+## PR #3480 current-dev rebase verification (2026-11-08)
+
+Target dev: `36a21dc4d270940e3576b49487a71b37c78896f8`. The private replay retained 101 non-equivalent source commits and two plan/ADR commits; three equivalent patches were omitted. This is a new integration, separate from the standalone Linux result on `2d4241b78e51bb59f3808fa805bfca0f51ac4e2f`.
+
+| Scope | Actual local evidence |
+| --- | --- |
+| Installed and legacy AgentRuns migration | 45 passed on executable tree `a52a36c3a959355865f617cbb69545293406dbaa`. Real SQLite shipped review v25, workflow v26–31, exact historical v25–30, cancellation after DDL return, mixed-catalog refusal and rollback. |
+| Send hook ownership | 36 passed on `a52a36c3a959355865f617cbb69545293406dbaa` with directory fixtures and repository-root metadata restored. Warm reads, foreign/stale owner, final revocation, actual approved launch and retained plugin requirements. Diagnostic tracing identified the extra footprint read; no tracing was used for the pass. |
+| Current review dispatch/check boundaries | Both review modules' 90 cases passed on `a52a36c3a959355865f617cbb69545293406dbaa` with normal directory fixtures. Three accompanying child-scope controls aborted before child behavior on the `raw_source_selection_changed` fixture boundary; this is not a passing whole-cohort claim. |
+| Plugin references | Eight initial, injected-body, selector and resumed controls passed using real files under an admitted private workspace and the original resolver. The paused preparation uses a fresh pending plugin ID without replacing its frozen requirement ceiling or rereading the file. |
+| Source builders and ceilings | On `b855d4004e65f4bf53413553dd18d1526511f889`, 201 size checks pass, 15 tracked CSS outputs equal builder bytes, and the remote worker builder equality test passes. Six size pins only decreased; the worker remains below the original pin. Configured Ruff introduces zero findings relative to the two source origins; 261 existing findings remain. Changed Python ranges were formatted with AST parity. |
+| Workflow and static gates | Preflight runner regression failed on `e1748510635709ce1db6dfa8462c7fef9a62876c` and passed after relocating the supported Ubuntu runner. Parsed YAML matches current dev except the preflight runner. The immutable-source static run passes diagnostic inventory, index plans, worker/DOM, timestamp writers, markup, schema, ADR, backlog files and UI census. The three reported task-ID conflicts were resolved by moving only unmerged claimants, leaving their landed twins unchanged. |
+
+Local source overlays supply immutable executable bytes and targeted resources. They do not establish full filesystem, bare-interpreter or Linux PR qualification. The three planning uncertainty assertions also fail on unchanged standalone `3184178ac0849a72546b0c1abb54b4a4664e2751`; production retirement logic is unchanged. The mixed-tree backup probe (restored child loaded old schema81 rather than the candidate's86) is excluded. A broad RawCLI/SSH/first-send local batch was stopped after recorded failures and cleanup timeouts, so no pass is claimed for that batch. A macOS owned-MCP fixture refused `root_boot_identity_unavailable` before its behavior. The actual Linux preflight will run the full Mermaid build and PR selector checks. No full local sweep, external provider or additional platform UAT.
+
+Real checkout HEAD, whole index, status and 375 captured path states were independently reverified against the preservation capture. This evidence applies from that capture only. No checkout, worktree, stash, source export or unrelated ref change was used. Actual PR-head CI and the review/thread checks remain pending at publication.

@@ -25194,3 +25194,7 @@ initializer. Keep action-time checks while making display reads passive, and tes
 both an installed controller and its absence. The broader recovery controls also
 hit an app-construction refusal that reproduced unchanged; preserve that separate
 limit rather than treating focused passing cases as whole-module qualification.
+
+## Preserve fixture and process boundaries when testing immutable sources
+
+During TASK-39147's PR #3480 integration, the first immutable-source test runner left subprocesses on the preserved checkout. A restored child later opened a candidate schema86 database with the checkout's schema81 code. Virtual modules parented directly to the session also missed directory-scoped fixtures; a virtual root lookup misclassified the real hook working directory. Those results did not qualify the candidate. Keep directory collectors in the pytest parent chain, provide the same immutable source to every relevant child, and make filesystem-only checks run in real CI. Keep mixed-source, bootstrap and bare-interpreter claims separate.

@@ -258,7 +258,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-08, TASK-39119 review (owner size waiver): +3, an anchorless wake or goal iteration saves its reply row first.
     # 2026-11-09, round-12 restack onto dev 3a6498ae14 (owner size waiver):
     # dev's 29,167 plus TASK-39138's +4 and TASK-39119's +5.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29176,
+    "tldw_chatbook/Chat/console_chat_controller.py": 28804,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
@@ -284,7 +284,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-08, TASK-39119 review (owner size waiver): +9, the store adopts a reply row saved before provider entry.
     # 2026-11-08, TASK-39119 review r12p-rev2 (owner size waiver): +10, the
     # adopted reply row writes the durable active-leaf cursor and legacy mix-in state.
-    "tldw_chatbook/Chat/console_chat_store.py": 22464,
+    "tldw_chatbook/Chat/console_chat_store.py": 22249,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).
@@ -810,7 +810,7 @@ _BUDGETS: dict[str, int] = {
     # Provider '!' after Model hides -> 975.
     "tldw_chatbook/UI/Wizards/first_run_model_step.py": 975,
     "tldw_chatbook/UI/Screens/llm_screen.py": 5143,
-    "tldw_chatbook/UI/Screens/change_review_screen.py": 4216,
+    "tldw_chatbook/UI/Screens/change_review_screen.py": 4138,
     # TASK-36942.1 (architecture review 2026-10-25, F16): every module of
     # 4,000+ lines that had no row in any of the three size ratchets, each
     # pinned at its measured size on dev 2b296e60b3. The review filed 40
@@ -857,7 +857,7 @@ _BUDGETS: dict[str, int] = {
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
     # the storage provider reaches the per-run BuiltinToolProvider (+8 on 12,091).
-    "tldw_chatbook/Chat/console_agent_bridge.py": 12084,
+    "tldw_chatbook/Chat/console_agent_bridge.py": 10084,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # TASK-36944.2, 2026-11-03: +6 for the public `setting` Console reads.
@@ -933,7 +933,7 @@ _BUDGETS: dict[str, int] = {
     # credential/readiness repair, exact integrated measurement (8181 -> 8183).
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
-    "tldw_chatbook/Chat/console_provider_gateway.py": 8493,  # 2026-11-06: +6, QwenCloud reads a schemeless loopback session endpoint as http:// (TASK-39042 review C1) and aphrodite, koboldcpp, oobabooga and tabbyapi get the pinned base (review r11g-rev2) (owner waiver)
+    "tldw_chatbook/Chat/console_provider_gateway.py": 8364,  # 2026-11-06: +6, QwenCloud reads a schemeless loopback session endpoint as http:// (TASK-39042 review C1) and aphrodite, koboldcpp, oobabooga and tabbyapi get the pinned base (review r11g-rev2) (owner waiver)
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
@@ -1023,7 +1023,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-02, TASK-37655 (owner rule: a fix over a size ratchet raises the
     # row with a dated comment): dev 88af9f9379's 5,851 + 3 = 5,854. The remote
     # preflight mirror folds Unicode normalization like the worker.
-    "tldw_chatbook/Agents/local_tool_provider.py": 5846,
+    "tldw_chatbook/Agents/local_tool_provider.py": 5558,
     # 2026-11-02, TASK-37655 (owner rule: a fix over a size ratchet raises the
     # row with a dated comment): dev 88af9f9379's bundle measures 5,705 (its row says
     # 5,706); this branch's fold changes -- the bundled fold_path_part, git

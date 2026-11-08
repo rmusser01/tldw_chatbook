@@ -1,4 +1,4 @@
-"""Frozen v25 workflow catalog and private staging validation (ADR-285)."""
+"""Frozen v26 workflow catalog and private staging validation (ADR-285)."""
 
 import sqlite3
 
@@ -74,12 +74,12 @@ WORKFLOW_TRIGGERS = frozenset(
 
 WORKFLOW_MIGRATION = (
     *sorted(WORKFLOW_OBJECTS, key=lambda sql: not sql.startswith("CREATE TABLE")),
-    "INSERT INTO schema_version(version) VALUES (25)",
+    "INSERT INTO schema_version(version) VALUES (26)",
 )
 
 
 def workflow_catalog(catalog: tuple[str, ...]) -> tuple[str, ...]:
-    """Append only the captured, constructor-qualified v24-to-v25 delta."""
+    """Append only the captured, constructor-qualified v25-to-v26 delta."""
     import re
 
     def key(sql):
@@ -91,7 +91,9 @@ def workflow_catalog(catalog: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(sorted((*catalog, *WORKFLOW_OBJECTS), key=key))
 
 
-def validate_workflow_rows(connection: sqlite3.Connection) -> tuple[str, ...]:
+def validate_workflow_rows(
+    connection: sqlite3.Connection, *, schema_version: int | None = None
+) -> tuple[str, ...]:
     """Validate passive rows and exact ownership without probing any captured path."""
     import hashlib
     import json
@@ -108,10 +110,12 @@ def validate_workflow_rows(connection: sqlite3.Connection) -> tuple[str, ...]:
 
     from .workflow_runs import WorkflowRunsStore
 
-    if (
-        connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-        >= 30
-    ):
+    if schema_version is None:
+        schema_version = connection.execute(
+            "SELECT MAX(version) FROM schema_version"
+        ).fetchone()[0]
+
+    if schema_version >= 31:
         for reviewed, revision, status in connection.execute(
             "SELECT recovery_reviewed_revision,control_revision,status FROM workflow_runs"
         ):
@@ -123,10 +127,7 @@ def validate_workflow_rows(connection: sqlite3.Connection) -> tuple[str, ...]:
             ):
                 return ("invalid_workflow_recovery_review",)
 
-    if (
-        connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-        >= 29
-    ):
+    if schema_version >= 30:
         for digest, purpose, revision in connection.execute(
             "SELECT repair_instruction_sha256,purpose,plan_revision FROM workflow_phase_attempts"
         ):
@@ -140,18 +141,12 @@ def validate_workflow_rows(connection: sqlite3.Connection) -> tuple[str, ...]:
             ):
                 return ("invalid_workflow_repair_input",)
 
-    if (
-        connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-        >= 28
-    ):
+    if schema_version >= 29:
         issues = _validate_workflow_windows(connection)
         if issues:
             return issues
 
-    if (
-        connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-        >= 27
-    ):
+    if schema_version >= 28:
         from tldw_chatbook.Agents.workflow_models import WorkflowCheckpoint
 
         for attempt_id, workflow_id, payload_hash, payload in connection.execute(
@@ -185,15 +180,12 @@ def validate_workflow_rows(connection: sqlite3.Connection) -> tuple[str, ...]:
             except (ValueError, TypeError):
                 return ("invalid_workflow_checkpoint",)
 
-    if connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] < 25:
+    if schema_version < 26:
         return ()
     previous = connection.row_factory
     connection.row_factory = sqlite3.Row
     try:
-        if (
-            connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-            >= 26
-        ):
+        if schema_version >= 27:
             invalid = connection.execute(
                 "SELECT 1 FROM automatic_wake_attempts a LEFT JOIN workflow_phase_attempts p ON p.native_attempt_id=a.id "
                 "WHERE a.attempt_kind='workflow_phase' AND (p.id IS NULL OR p.command_id IS NULL OR p.control_revision IS NULL) "
@@ -336,7 +328,7 @@ def validate_workflow_rows(connection: sqlite3.Connection) -> tuple[str, ...]:
     return ()
 
 
-# The v25 catalog above remains frozen for existing backup recognition.
+# The v26 catalog above remains frozen for existing backup recognition.
 WORKFLOW_PHASE_V26 = (
     next(
         sql
@@ -381,17 +373,17 @@ WORKFLOW_ADMISSION_MIGRATION = (
     "ALTER TABLE automatic_wake_attempts ADD COLUMN attempt_kind TEXT NOT NULL DEFAULT 'fleet_wake' CHECK (attempt_kind IN ('fleet_wake', 'goal_iteration', 'workflow_phase'))",
     "UPDATE automatic_wake_attempts SET attempt_kind=old_attempt_kind",
     "ALTER TABLE automatic_wake_attempts DROP COLUMN old_attempt_kind",
-    "ALTER TABLE workflow_phase_attempts RENAME TO workflow_phase_attempts_v25",
+    "ALTER TABLE workflow_phase_attempts RENAME TO workflow_phase_attempts_v26",
     WORKFLOW_PHASE_V26,
-    "INSERT INTO workflow_phase_attempts (id,workflow_id,plan_revision,phase_id,ordinal,native_attempt_id,status,retirement) SELECT id,workflow_id,plan_revision,phase_id,ordinal,native_attempt_id,status,retirement FROM workflow_phase_attempts_v25",
-    "DROP TABLE workflow_phase_attempts_v25",
+    "INSERT INTO workflow_phase_attempts (id,workflow_id,plan_revision,phase_id,ordinal,native_attempt_id,status,retirement) SELECT id,workflow_id,plan_revision,phase_id,ordinal,native_attempt_id,status,retirement FROM workflow_phase_attempts_v26",
+    "DROP TABLE workflow_phase_attempts_v26",
     WORKFLOW_TASK_CLAIMS_V26,
     *(
         "ALTER TABLE workflow_active_intervals ADD COLUMN " + column
         for column in WORKFLOW_INTERVAL_COLUMNS
     ),
     *WORKFLOW_ADMISSION_INDEXES,
-    "INSERT INTO schema_version(version) VALUES (26)",
+    "INSERT INTO schema_version(version) VALUES (27)",
 )
 
 
@@ -418,7 +410,7 @@ WORKFLOW_CHECKPOINT_OBJECTS = (
 )
 WORKFLOW_CHECKPOINT_MIGRATION = (
     *WORKFLOW_CHECKPOINT_OBJECTS,
-    "INSERT INTO schema_version(version) VALUES (27)",
+    "INSERT INTO schema_version(version) VALUES (28)",
 )
 
 
@@ -442,12 +434,12 @@ WORKFLOW_WINDOW_MIGRATION = (
     "CREATE TABLE workflow_change_window_refs (\n    window_id TEXT NOT NULL REFERENCES workflow_change_windows(id),\n    snapshot_id INTEGER NOT NULL UNIQUE REFERENCES change_snapshots(id),\n    PRIMARY KEY(window_id,snapshot_id)\n)",
     "CREATE TRIGGER workflow_change_window_identity\nBEFORE UPDATE OF id,workflow_id,phase_attempt_id,ordinal ON workflow_change_windows\nBEGIN SELECT RAISE(ABORT, 'workflow window identity is immutable'); END",
     "CREATE TRIGGER workflow_change_window_anchor\nBEFORE UPDATE OF anchor_attempt_id ON workflow_change_windows\nWHEN OLD.anchor_attempt_id IS NOT NULL AND NEW.anchor_attempt_id IS NOT OLD.anchor_attempt_id\nBEGIN SELECT RAISE(ABORT, 'workflow window anchor is immutable'); END",
-    "INSERT INTO schema_version(version) VALUES (28)",
+    "INSERT INTO schema_version(version) VALUES (29)",
 )
 
 
 def workflow_window_catalog(catalog):
-    """Apply the exact additive v28 catalog without opening captured paths."""
+    """Apply the exact additive v29 catalog without opening captured paths."""
     with sqlite3.connect(":memory:") as conn:
         for sql in sorted(catalog, key=lambda sql: not sql.startswith("CREATE TABLE")):
             if not sql.startswith("CREATE TABLE sqlite_sequence"):
@@ -548,12 +540,12 @@ def _validate_workflow_windows(conn):
 WORKFLOW_REPAIR_INPUT_MIGRATION = (
     "ALTER TABLE workflow_phase_attempts ADD COLUMN repair_instruction_sha256 TEXT CHECK(repair_instruction_sha256 IS NULL OR (typeof(repair_instruction_sha256)='text' AND length(CAST(repair_instruction_sha256 AS BLOB))=64 AND repair_instruction_sha256 NOT GLOB '*[^0-9a-f]*' AND purpose='planning' AND plan_revision IS NOT NULL))",
     "CREATE TRIGGER workflow_repair_input_immutable\nBEFORE UPDATE OF id,workflow_id,plan_revision,phase_id,purpose,command_id,native_attempt_id,repair_instruction_sha256 ON workflow_phase_attempts\nWHEN OLD.repair_instruction_sha256 IS NOT NULL OR NEW.repair_instruction_sha256 IS NOT NULL\nBEGIN SELECT RAISE(ABORT, 'workflow repair input is immutable'); END",
-    "INSERT INTO schema_version(version) VALUES (29)",
+    "INSERT INTO schema_version(version) VALUES (30)",
 )
 
 
 def workflow_repair_input_catalog(catalog):
-    """Apply exact v29 command-equality metadata without reconstructing authority."""
+    """Apply exact v30 command-equality metadata without reconstructing authority."""
     with sqlite3.connect(":memory:") as conn:
         for sql in sorted(catalog, key=lambda sql: not sql.startswith("CREATE TABLE")):
             if not sql.startswith("CREATE TABLE sqlite_sequence"):
@@ -571,12 +563,12 @@ def workflow_repair_input_catalog(catalog):
 WORKFLOW_RECOVERY_REVIEW_MIGRATION = (
     "ALTER TABLE workflow_runs ADD COLUMN recovery_reviewed_revision INTEGER NOT NULL DEFAULT 0 CHECK(typeof(recovery_reviewed_revision)='integer' AND recovery_reviewed_revision>=0 AND recovery_reviewed_revision<=control_revision AND (recovery_reviewed_revision=0 OR status IN ('closed','removed')))",
     "CREATE TRIGGER workflow_recovery_review_immutable\nBEFORE UPDATE OF recovery_reviewed_revision ON workflow_runs\nWHEN OLD.recovery_reviewed_revision>0 AND NEW.recovery_reviewed_revision!=OLD.recovery_reviewed_revision\nBEGIN SELECT RAISE(ABORT, 'workflow recovery review is immutable'); END",
-    "INSERT INTO schema_version(version) VALUES (30)",
+    "INSERT INTO schema_version(version) VALUES (31)",
 )
 
 
 def workflow_recovery_review_catalog(catalog):
-    """Append fixed v30 DDL without opening SQLite while importing declarations."""
+    """Append fixed v31 DDL without opening SQLite while importing declarations."""
     import re
 
     column = WORKFLOW_RECOVERY_REVIEW_MIGRATION[0].partition(" ADD COLUMN ")[2]

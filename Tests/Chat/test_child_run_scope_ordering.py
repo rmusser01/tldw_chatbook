@@ -179,10 +179,18 @@ def test_raise_path_row_not_terminal_at_scope_exit_settles_via_run_child_finally
     be terminal yet on this path."""
     original_persist = AgentService._persist
 
-    def raising_persist(self, run_id, outcome, durable_handles=None):
+    def raising_persist(
+        self, run_id, outcome, durable_handles=None, *, budget_tokens_known=True
+    ):
         if threading.current_thread().name.startswith("fleet-"):
             raise RuntimeError("induced: _run_one unwinds past _persist")
-        return original_persist(self, run_id, outcome, durable_handles)
+        return original_persist(
+            self,
+            run_id,
+            outcome,
+            durable_handles,
+            budget_tokens_known=budget_tokens_known,
+        )
 
     monkeypatch.setattr(AgentService, "_persist", raising_persist)
 

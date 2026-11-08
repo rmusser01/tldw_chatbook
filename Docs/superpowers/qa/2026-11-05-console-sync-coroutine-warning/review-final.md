@@ -1,4 +1,4 @@
-# TASK-38614 scoped fix-round review
+# TASK-39435 scoped fix-round review
 
 **Spec compliance: Approved for the reviewed fix. Quality: Approved.** I1 is resolved. New findings: **0 Critical / 0 Important / 0 Minor / 0 new CannotVerify**. CV1 and CV2 remain two explicit historical evidence qualifications, with the dispositions below; neither is an unresolved product finding.
 

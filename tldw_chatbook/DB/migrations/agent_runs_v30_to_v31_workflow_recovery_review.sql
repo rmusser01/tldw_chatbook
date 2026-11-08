@@ -5,5 +5,5 @@ CREATE TRIGGER workflow_recovery_review_immutable
 BEFORE UPDATE OF recovery_reviewed_revision ON workflow_runs
 WHEN OLD.recovery_reviewed_revision>0 AND NEW.recovery_reviewed_revision!=OLD.recovery_reviewed_revision
 BEGIN SELECT RAISE(ABORT, 'workflow recovery review is immutable'); END;
-INSERT INTO schema_version(version) VALUES (30);
+INSERT INTO schema_version(version) VALUES (31);
 COMMIT;

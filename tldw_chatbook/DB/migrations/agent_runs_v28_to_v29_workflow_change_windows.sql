@@ -31,4 +31,4 @@ CREATE TRIGGER workflow_change_window_anchor
 BEFORE UPDATE OF anchor_attempt_id ON workflow_change_windows
 WHEN OLD.anchor_attempt_id IS NOT NULL AND NEW.anchor_attempt_id IS NOT OLD.anchor_attempt_id
 BEGIN SELECT RAISE(ABORT, 'workflow window anchor is immutable'); END;
-INSERT INTO schema_version(version) VALUES (28);
+INSERT INTO schema_version(version) VALUES (29);

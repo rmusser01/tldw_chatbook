@@ -40,6 +40,11 @@ def capture_model_raw_cli(registry, name):
         or type(selection[1]._runtime) is not RawCliRuntime
     ):
         return None
+    from ..Tools.raw_cli_executor import RawShellExecutor
+
+    if type(selection[1]._runtime._executor_or_default()) is not RawShellExecutor:
+        # Additional process custody belongs only to the stock executor.
+        return None
     return _ModelRawCliCall(registry, name, selection)
 
 

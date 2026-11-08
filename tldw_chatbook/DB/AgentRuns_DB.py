@@ -334,7 +334,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
     # to v21 and chains after v20. The guarded ALTERs below are idempotent
     # either way, and the from-now-on contract only requires the constant to
     # equal the HIGHEST recorded version.
-    _CURRENT_SCHEMA_VERSION = 30
+    _CURRENT_SCHEMA_VERSION = 31
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: BaseDB-provenance (ADR-353): connections open through BaseDB's
@@ -429,6 +429,34 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
 
     def _initialize_schema(self) -> None:
         with self.connection() as conn:
+            tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_schema WHERE type='table'"
+                )
+            }
+            if (
+                "workflow_runs" in tables
+                and "automatic_review_boundary_claims" not in tables
+            ):
+                from .recovery_operations import _legacy_workflow_upgrade
+
+                bridge = _legacy_workflow_upgrade(conn)
+                if bridge is None:
+                    raise sqlite3.DatabaseError("unsupported legacy workflow schema")
+                previous_sync = int(conn.execute("PRAGMA synchronous").fetchone()[0])
+                conn.execute("PRAGMA foreign_keys=ON")
+                conn.execute("PRAGMA synchronous=FULL")
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    for statement in bridge[1]:
+                        conn.execute(statement)
+                    conn.commit()
+                except BaseException:
+                    conn.rollback()
+                    raise
+                finally:
+                    conn.execute(f"PRAGMA synchronous={previous_sync}")
             conn.executescript(
                 """
                 PRAGMA foreign_keys = ON;
@@ -886,9 +914,24 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                     "ALTER TABLE automatic_wake_attempts ADD COLUMN attempt_kind TEXT NOT NULL DEFAULT 'fleet_wake' CHECK (attempt_kind IN ('fleet_wake', 'goal_iteration'))"
                 )
             conn.executescript(_GOAL_RUNS_SCHEMA)
-            conn.executescript(_WORKFLOW_RUNS_SCHEMA)
             if not conn.execute(
                 "SELECT 1 FROM schema_version WHERE version=26"
+            ).fetchone():
+                previous_sync = int(conn.execute("PRAGMA synchronous").fetchone()[0])
+                conn.execute("PRAGMA synchronous=FULL")
+                try:
+                    conn.executescript(
+                        "BEGIN IMMEDIATE;\n"
+                        + _WORKFLOW_RUNS_SCHEMA
+                        + "\nINSERT INTO schema_version(version) VALUES (26);\nCOMMIT;"
+                    )
+                except BaseException:
+                    conn.rollback()
+                    raise
+                finally:
+                    conn.execute(f"PRAGMA synchronous={previous_sync}")
+            if not conn.execute(
+                "SELECT 1 FROM schema_version WHERE version=27"
             ).fetchone():
                 from .recovery_workflow_schema import WORKFLOW_ADMISSION_MIGRATION
 
@@ -906,7 +949,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                     conn.execute(f"PRAGMA synchronous={previous_sync}")
 
             if not conn.execute(
-                "SELECT 1 FROM schema_version WHERE version=27"
+                "SELECT 1 FROM schema_version WHERE version=28"
             ).fetchone():
                 from .recovery_workflow_schema import WORKFLOW_CHECKPOINT_MIGRATION
 
@@ -924,7 +967,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                     conn.execute(f"PRAGMA synchronous={previous_sync}")
 
             if not conn.execute(
-                "SELECT 1 FROM schema_version WHERE version=28"
+                "SELECT 1 FROM schema_version WHERE version=29"
             ).fetchone():
                 from .recovery_workflow_schema import WORKFLOW_WINDOW_MIGRATION
 
@@ -942,7 +985,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                     conn.execute(f"PRAGMA synchronous={previous_sync}")
 
             if not conn.execute(
-                "SELECT 1 FROM schema_version WHERE version=29"
+                "SELECT 1 FROM schema_version WHERE version=30"
             ).fetchone():
                 from .recovery_workflow_schema import WORKFLOW_REPAIR_INPUT_MIGRATION
 
@@ -960,7 +1003,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                     conn.execute(f"PRAGMA synchronous={previous_sync}")
 
             if not conn.execute(
-                "SELECT 1 FROM schema_version WHERE version=30"
+                "SELECT 1 FROM schema_version WHERE version=31"
             ).fetchone():
                 from .recovery_workflow_schema import WORKFLOW_RECOVERY_REVIEW_MIGRATION
 

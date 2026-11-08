@@ -1,6 +1,6 @@
 # Rulings I made
 
-Complete chronological rulings for TASK-38614, with original reasons and costs retained. Context and distinct verification limits remain in [the full ledger](ledger.md) and [evidence overview](README.md).
+Complete chronological rulings for TASK-39435, with original reasons and costs retained. Context and distinct verification limits remain in [the full ledger](ledger.md) and [evidence overview](README.md).
 
 1. Ruling: use the requested same worktree, one writer with a root-cause evidence gate followed by independent review of the complete small fix — the request is a bounded existing-behavior bug, not another workflow design or whole-feature review — cost if wrong: missed sibling scheduling paths; the reviewer must assess connected exact-coroutine callers and actual native lifecycle evidence.
 

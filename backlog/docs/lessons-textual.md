@@ -2572,7 +2572,7 @@ The fix patches nothing of Textual's.
 **What to do.** A retire or close that may run before the modal mounts must not drop its dismissal. Queue it to run after mount (`self.call_later(self.retire)`: the Callback message is handled after `_pre_process` sets `_is_mounted`), rather than gating on `is_mounted`. To test the window, hold `on_mount` on the class (Textual dispatches it from `cls.__dict__`), wait with plain `asyncio.wait(..., timeout=...)` rather than Pilot, and dismiss a leftover modal in the cleanup so a red case still ends.
 
 
-## Trace the coroutine allocation and follow stored refresh aliases (TASK-38614, 2026-11-05)
+## Trace the coroutine allocation and follow stored refresh aliases (TASK-39435, 2026-11-05)
 
 The native mounted workflow warning printed textual/cache.py, but coroutine
 origin tracking and tracemalloc identified ChatScreen's finally replay as the

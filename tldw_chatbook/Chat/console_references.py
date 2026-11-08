@@ -64,6 +64,7 @@ class ReferenceRecord:
 class ReferenceExpansion:
     expanded_text: str
     records: List[ReferenceRecord] = field(default_factory=list)
+    offsets: tuple[tuple[int, int], ...] = ()
 
 
 def _native_reference_candidates(text: str) -> List[ReferenceCandidate]:
@@ -122,6 +123,7 @@ def expand_references(
     *,
     resolve: Resolver,
     git_runner: GitRunner,
+    candidates: Iterable[ReferenceCandidate] | None = None,
 ) -> ReferenceExpansion:
     """Expand references in ``text`` before send.
 
@@ -131,7 +133,9 @@ def expand_references(
     literal text. Returns the rewritten text plus a record per expansion.
     """
     records: List[ReferenceRecord] = []
-    candidates = find_reference_candidates(text)
+    candidates = list(
+        find_reference_candidates(text) if candidates is None else candidates
+    )
     if not candidates:
         return ReferenceExpansion(expanded_text=text, records=[])
 
@@ -185,7 +189,13 @@ def expand_references(
         cursor = cand.end
 
     pieces.append(text[cursor:])
-    return ReferenceExpansion(expanded_text="".join(pieces), records=records)
+    offsets = tuple(
+        (candidate.end, len(pieces[2 * index + 1]) - len(candidate.raw))
+        for index, candidate in enumerate(candidates)
+    )
+    return ReferenceExpansion(
+        expanded_text="".join(pieces), records=records, offsets=offsets
+    )
 
 
 # --- impure resolver: reuses the file tools' allowed-roots + sensitive-path

@@ -21,7 +21,6 @@ from .console_dispatch_checkpoint import ConsoleLibraryItemScopeSnapshot
 from .console_turn_context import (
     ConsoleCharacterAuthoritySnapshot,
     ConsoleTurnConfigurationSnapshot,
-    read_session_change_review_admission,
     capture_change_review_metadata,
 )
 

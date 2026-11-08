@@ -12,7 +12,7 @@
 
 **Decision:** [ADR-244](../../../backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md)
 
-**Planning task:** [TASK-36729](../../../backlog/tasks/task-36729%20-%20Plan-shared-served-Console-ownership-and-mobile-supervision-implementation.md)
+**Planning task:** [TASK-39434](../../../backlog/tasks/task-39434%20-%20Plan-shared-served-Console-ownership-and-mobile-supervision-implementation.md)
 
 **Baseline:** `8dbf79077b10d5671dabd4f9cbe06ea9c2ee8c15`. This commit contains the approved specification and overflow correction; product implementation has not started. Re-check symbols and schema ceilings after rebasing.
 

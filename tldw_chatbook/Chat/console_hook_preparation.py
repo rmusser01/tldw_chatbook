@@ -483,3 +483,23 @@ def hooks_v2_context_key(self, session_id: str):
     # Retirement can run callbacks; refuse a redirected result afterwards too.
     require_current()
     return result
+
+
+def attempt_v2_configuration_for(permissions, session_id, hook_read):
+    """Project only a standing read from the same Send and consent owner."""
+    shared = None
+    authority = (
+        hook_read.authority_for(permissions, session_id)
+        if hook_read is not None
+        else None
+    )
+    if authority is not None:
+        from tldw_chatbook.Agents.hook_permissions import HookPermissions
+
+        # A replaced reader keeps its original call (ADR-230 decision 8).
+        if (
+            "v2_configuration" not in vars(permissions)
+            and type(permissions).v2_configuration is HookPermissions.v2_configuration
+        ):
+            shared = permissions.attempt_v2_configuration(authority)
+    return shared

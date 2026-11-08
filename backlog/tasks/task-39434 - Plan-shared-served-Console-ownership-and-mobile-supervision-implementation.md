@@ -1,10 +1,10 @@
 ---
-id: TASK-36729
+id: TASK-39434
 title: Plan shared served Console ownership and mobile supervision implementation
 status: Done
 created_date: 2026-10-25 17:28
 dependencies:
-- TASK-36728
+- TASK-39433
 assignee:
 - '@codex'
 labels:
@@ -66,3 +66,7 @@ Repository-wide ID validation reports existing duplicate IDs 34991 and 35028, ea
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Renumbering provenance
+
+Originally TASK-36729, introduced by `1bb7c507236a5a194eaf21de3c8371897b30c8f9`. Renumbered while rebasing PR #3480 because current dev `36a21dc4d270940e3576b49487a71b37c78896f8` already carries the distinct task “Keep Study navigation responsive while shell Start quiz awaits the server” at that ID. The landed task keeps its ID. This move preserves the incoming task's status, criteria and history and updates its inbound references.

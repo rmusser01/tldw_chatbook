@@ -1,22 +1,9 @@
-"""TldwCli's service composition: ``ServiceWiringMixin`` and its helpers.
+"""TldwCli service composition through ServiceWiringMixin.
 
-Moved verbatim from ``app.py`` (TASK-33011, PR-D): the lazy service
-properties and builders (cluster C), the ``_wire_*`` service composition that
-``TldwCli.__init__`` runs (cluster E), and the misc wiring (cluster O: the
-Notes-sync start observer, the watchlists command service, the briefing
-schedules and the llama.cpp snapshot service), plus the module-level
-Notes-sync and Collections-capture composition helpers they call.
-``TldwCli`` mixes the class in before ``App``, and ``tldw_chatbook.app``
-re-exports the helpers callers import from it.
-
-Patch the names this code reads (``get_cli_setting``, ``get_user_data_dir``,
-the ``get_*_db_path`` helpers, the service classes and so on) HERE: the bodies
-resolve free names through this module's globals, so a patch on
-``tldw_chatbook.app`` alone no longer reaches them. Where ``app.py`` still
-reads the same name, patch both modules.
-``Tests/Architecture/test_app_extracted_patch_targets.py`` fails on an
-app-module patch that can only have been meant for code that moved out.
-"""
+Service builders, lazy properties and wiring resolve names in this module.
+Patch defining helpers and service classes here; patch app.py too when it reads
+the same name. TldwCli mixes this class before App and re-exports public helpers.
+Tests/Architecture/test_app_extracted_patch_targets.py guards moved patch targets."""
 
 from . import app_skill_wiring as _skill_wiring
 from . import app_collections_wiring as _collections_wiring
@@ -3712,10 +3699,3 @@ import sys as _defining_sys
 
 _skill_wiring._install_skill_source(_defining_sys.modules[__name__])
 _collections_wiring._install_collections_source(_defining_sys.modules[__name__])
-
-_NATIVE_RAW_CLI_PERMISSION_READER = (
-    _read_app_raw_cli_permitted,
-    _read_app_raw_cli_permitted.__code__,
-    _read_app_raw_cli_permitted.__defaults__,
-    _read_app_raw_cli_permitted.__kwdefaults__,
-)

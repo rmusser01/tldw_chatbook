@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any
+from typing import Any, Callable
+from functools import partial
 
 
 async def run_legacy_trace_maintenance(
@@ -13,44 +13,20 @@ async def run_legacy_trace_maintenance(
     *,
     _source: Any,
 ) -> None:
-    def provider_active() -> bool:
-        controller = self._chat_controller
-        tasks = getattr(controller, "_active_stream_tasks", None)
-        return bool(tasks)
-
-    class MaintenanceReturnUnknown(RuntimeError):
-        """Cancellation of a DB proxy does not prove its worker returned."""
-
-    async def call_maintenance(operation, *args, **kwargs):
-        # Retain this exact finite coroutine through its original worker and
-        # operation/connection exits. Cancellation must not cancel its proxy.
-        worker = _source.asyncio.create_task(
-            _source.run_owned_db_call(database, operation, *args, **kwargs)
-        )
-        cancelled = False
-        while not worker.done():
-            try:
-                await _source.asyncio.shield(worker)
-            except _source.asyncio.CancelledError:
-                cancelled = True
-            except Exception:  # noqa: BLE001 - inspect the original result below.
-                break
-        if worker.cancelled():
-            raise MaintenanceReturnUnknown("maintenance worker return is unknown")
-        result = worker.result()  # Callback AND native connection-close errors.
-        if cancelled:
-            raise _source.asyncio.CancelledError
-        return result
-
 
     from tldw_chatbook.Chat.console_trace_maintenance import (
+        maintenance_error_must_propagate,
+        call_owned_maintenance,
+        runtime_provider_active,
         LegacyTraceMaintenance,
     )
+
+    call_maintenance = partial(call_owned_maintenance, _source, database)
 
     maintenance = LegacyTraceMaintenance(
         database,
         normalizer=normalizer_factory(),
-        provider_active=provider_active,
+        provider_active=partial(runtime_provider_active, self),
     )
     from tldw_chatbook.Chat.chat_persistence_service import (
         trace_maintenance_work_generation,
@@ -60,14 +36,9 @@ async def run_legacy_trace_maintenance(
     last_physical_attempt = 0.0
     last_collected_epoch: int | None = None
     pending_gc_result: Any | None = None
-    # PERF-10 (TASK-33269): once a pass finds nothing to normalize and
-    # the GC interval has not elapsed, park. Parked, the loop does no
-    # database work (each run_batch was a write transaction, an
-    # admission and a helper-spawning connection, once a second
-    # forever). It wakes when an exchange row is written, and once per
-    # GC interval regardless: trace-call state, retention roots,
-    # semantic revisions and other processes advance the graph epoch
-    # without signalling, and a failed GC attempt must be retried.
+    # Park after a no-work pass to avoid repeated write transactions and helpers.
+    # Wake on exchange writes or the GC interval: roots, revisions and other
+    # processes can advance graph state without a signal; failed GC must retry.
     parked = False
     seen_work = trace_maintenance_work_generation()
     while not self._disposed:
@@ -91,8 +62,7 @@ async def run_legacy_trace_maintenance(
         try:
             result = await call_maintenance(maintenance.run_batch)
         except Exception as exc:  # noqa: BLE001 - retry remains restart-safe
-            if (self._disposed or _source.asyncio.current_task().cancelling()
-                    or isinstance(exc, MaintenanceReturnUnknown)):
+            if maintenance_error_must_propagate(self, _source, exc):
                 raise
             _source.logger.warning(  # noqa: PLE1205 -- live Loguru owner uses brace formatting
                 "legacy trace maintenance paused after {}",
@@ -104,7 +74,7 @@ async def run_legacy_trace_maintenance(
             continue
         if result.logical_complete:
             now = _source.time.monotonic()
-            if provider_active():
+            if runtime_provider_active(self):
                 last_provider_activity = now
                 await _source.asyncio.sleep(1.0)
                 continue
@@ -150,8 +120,7 @@ async def run_legacy_trace_maintenance(
                     None,
                 )
                 collector = TraceGarbageCollector(database)
-                current_epoch = await call_maintenance(collector.current_graph_epoch
-                )
+                current_epoch = await call_maintenance(collector.current_graph_epoch)
                 if (
                     pending_gc_result is not None
                     and getattr(pending_gc_result, "marked_epoch", None)
@@ -164,7 +133,8 @@ async def run_legacy_trace_maintenance(
                     if current_epoch == last_collected_epoch:
                         await _source.asyncio.sleep(1.0)
                         continue
-                    pending_gc_result = await call_maintenance(collector.collect,
+                    pending_gc_result = await call_maintenance(
+                        collector.collect,
                         request_id=f"auto-{new_opaque_id()}",
                     )
                     last_collected_epoch = int(
@@ -177,7 +147,7 @@ async def run_legacy_trace_maintenance(
                 compactor = PhysicalTraceCompactor(
                     database,
                     policy=resolve_trace_compaction_policy(console_config),
-                    provider_active=provider_active,
+                    provider_active=partial(runtime_provider_active, self),
                     idle_seconds=(
                         controller_idle
                         if callable(controller_idle)
@@ -189,7 +159,8 @@ async def run_legacy_trace_maintenance(
                     resume_dispatch=resume,
                     cancel_requested=lambda: self._disposed,
                 )
-                outcome = await call_maintenance(compactor.run_after_gc,
+                outcome = await call_maintenance(
+                    compactor.run_after_gc,
                     pending_gc_result,
                 )
                 if outcome.reason_code == "logical_gc_unavailable":
@@ -201,13 +172,12 @@ async def run_legacy_trace_maintenance(
                 ):
                     pending_gc_result = None
             except ImportError:
-                if self._disposed or _source.asyncio.current_task().cancelling():
+                if maintenance_error_must_propagate(self, _source):
                     raise
                 # Narrow test doubles may provide only the legacy worker.
                 pass
             except Exception as exc:  # noqa: BLE001 - durable retry state
-                if (self._disposed or _source.asyncio.current_task().cancelling()
-                        or isinstance(exc, MaintenanceReturnUnknown)):
+                if maintenance_error_must_propagate(self, _source, exc):
                     raise
                 _source.logger.warning(  # noqa: PLE1205 -- live Loguru owner uses brace formatting
                     "trace physical maintenance paused after {}",

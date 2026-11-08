@@ -1,13 +1,9 @@
-"""Agent reply orchestration for the existing Console controller.
-
-The caller retains identity, state, and public entry points. Original module
-bindings are read live through host, including after awaits and in callbacks.
-"""
+"""Agent replies on the existing Console owner; host bindings stay live across awaits."""
 
 from __future__ import annotations
 
 from . import console_chat_controller as host
-from .console_ordinary_tree import run_ordinary_preparation
+from .console_ordinary_tree import run_ordinary_preparation as prepare
 
 
 async def _run_agent_reply(
@@ -257,7 +253,7 @@ async def _run_agent_reply(
                     )
                 )
             else:
-                startup_candidate = await run_ordinary_preparation(self, host.functools.partial(
+                startup_preparation = host.functools.partial(
                     host.ProjectInstructionResolver().resolve_startup,
                     binding_id=project_selection.binding.binding_id,
                     binding_root=project_selection.root,
@@ -275,7 +271,8 @@ async def _run_agent_reply(
                     excluded_dirs=host._project_instruction_excluded_dirs(
                         project_selection
                     ),
-                ))
+                )
+                startup_candidate = await prepare(self, startup_preparation)
             from .console_project_dispatch import build_project_dispatch_callbacks
 
             (
@@ -683,7 +680,7 @@ async def _run_agent_reply(
         )
         profile_provider = None
         if personal_context_service is not None and session is not None:
-            profile_provider = await run_ordinary_preparation(self, host.functools.partial(
+            profile_preparation = host.functools.partial(
                 host._compose_profile_tool_provider,
                 personal_context_service,
                 workspace_id=session.workspace_id,
@@ -694,7 +691,8 @@ async def _run_agent_reply(
                 kill_switch=(
                     self._console_tool_kill_switch_reader() or (lambda: False)
                 ),
-            ))
+            )
+            profile_provider = await prepare(self, profile_preparation)
         canvas_provider = None
         canvas_authority = None
         canvas_controller = getattr(self.store, "canvas_turn_controller", None)

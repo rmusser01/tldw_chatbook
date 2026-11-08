@@ -4,7 +4,7 @@ ALTER TABLE automatic_wake_attempts RENAME COLUMN attempt_kind TO old_attempt_ki
 ALTER TABLE automatic_wake_attempts ADD COLUMN attempt_kind TEXT NOT NULL DEFAULT 'fleet_wake' CHECK (attempt_kind IN ('fleet_wake', 'goal_iteration', 'workflow_phase'));
 UPDATE automatic_wake_attempts SET attempt_kind=old_attempt_kind;
 ALTER TABLE automatic_wake_attempts DROP COLUMN old_attempt_kind;
-ALTER TABLE workflow_phase_attempts RENAME TO workflow_phase_attempts_v25;
+ALTER TABLE workflow_phase_attempts RENAME TO workflow_phase_attempts_v26;
 CREATE TABLE workflow_phase_attempts (
     id TEXT PRIMARY KEY,
     workflow_id TEXT NOT NULL REFERENCES workflow_runs(id),
@@ -23,8 +23,8 @@ CREATE TABLE workflow_phase_attempts (
     UNIQUE(workflow_id, plan_revision, phase_id, ordinal),
     FOREIGN KEY(workflow_id, plan_revision, phase_id) REFERENCES workflow_phases(workflow_id, plan_revision, phase_id)
 );
-INSERT INTO workflow_phase_attempts (id,workflow_id,plan_revision,phase_id,ordinal,native_attempt_id,status,retirement) SELECT id,workflow_id,plan_revision,phase_id,ordinal,native_attempt_id,status,retirement FROM workflow_phase_attempts_v25;
-DROP TABLE workflow_phase_attempts_v25;
+INSERT INTO workflow_phase_attempts (id,workflow_id,plan_revision,phase_id,ordinal,native_attempt_id,status,retirement) SELECT id,workflow_id,plan_revision,phase_id,ordinal,native_attempt_id,status,retirement FROM workflow_phase_attempts_v26;
+DROP TABLE workflow_phase_attempts_v26;
 CREATE TABLE workflow_task_claims (
     task_attempt_id TEXT PRIMARY KEY REFERENCES workflow_task_attempts(id),
     phase_attempt_id TEXT NOT NULL REFERENCES workflow_phase_attempts(id),
@@ -36,5 +36,5 @@ ALTER TABLE workflow_active_intervals ADD COLUMN started_monotonic REAL;
 ALTER TABLE workflow_active_intervals ADD COLUMN observed_monotonic REAL;
 CREATE UNIQUE INDEX idx_workflow_open_interval ON workflow_active_intervals(workflow_id) WHERE ended_at IS NULL;
 CREATE INDEX idx_workflow_task_phase ON workflow_task_claims(phase_attempt_id);
-INSERT INTO schema_version(version) VALUES (26);
+INSERT INTO schema_version(version) VALUES (27);
 COMMIT;

@@ -12567,3 +12567,47 @@ def test_builtin_child_binds_its_own_native_continuation_under_custom_parent():
     assert gateway.prepared_target == target
     assert response.provider_continuation.selected_provider == "deepseek"
     assert response.provider_continuation.provider == "deepseek"
+
+
+@pytest.mark.parametrize(
+    "argument",
+    ["recovery_provider", "code_review_provider", "on_tool_surface_selected"],
+)
+def test_shared_native_preparation_keeps_current_dev_resources(
+    tmp_path, monkeypatch, argument
+):
+    from types import SimpleNamespace
+    from tldw_chatbook.Agents.agent_models import RunOutcome
+
+    from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+
+    db = AgentRunsDB(tmp_path / "forwarding.db", client_id="forwarding")
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    aid = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    ).id
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=_ChunkGateway([["unused"]]),
+        registry=ToolCatalogRegistry(),
+        app_config=_SPAWN_TEST_APP_CONFIG,
+    )
+    resource = (
+        (lambda _count: None) if argument == "on_tool_surface_selected" else object()
+    )
+    received = {}
+    expected = RunOutcome(status="done", steps=[])
+
+    @contextlib.contextmanager
+    def native_boundary(**kwargs):
+        received.update(kwargs)
+        yield SimpleNamespace(run_primary=lambda: ("native-run", expected))
+
+    monkeypatch.setattr(bridge, "_prepare_native_reply", native_boundary)
+    assert (
+        _run(bridge, store, session, aid, work_chain_id=None, **{argument: resource})
+        is expected
+    )
+    assert received.get(argument) is resource

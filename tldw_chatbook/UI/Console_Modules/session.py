@@ -38,22 +38,8 @@ Tab selection and character/persona Start Chat handoffs call it before UI
 publication so resume reconciliation sees the selected conversation's scope.
 `ChatScreen` still calls its own controllers directly.
 
-Moved: every `ChatScreen` method matching `*session*` whose body touched
-only session-lifecycle state (or one of the callables above) and no DOM --
-27 methods, plus the first-chat handoff family (eight methods and its
-notification-revision state), and four small module-level pure helpers only
-those methods (or
-this cluster's own remaining screen-side callers) use:
-`_has_selected_text`/`_is_empty_select_value` (Select-value predicates
-`_default_console_session_settings` needs; `ChatScreen` imports both back --
-`_is_empty_select_value` has its own independent `@on(Select.Changed)`
-consumer, `_has_selected_text` a dozen more, none of them session-shaped),
-and the character-handoff quintet `_canonical_card_character_id`/
-`_canonical_character_id_text`/`_character_session_identity_from_handoff`/
-`_character_session_prompt_seed`/`_SERVER_CHARACTER_AUTHORITY_PATTERN`
-(`_start_character_console_session`'s own dependencies; the character
-controller imports the card-id and prompt-seed helpers for its picker and
-session-choice policy).
+Session lifecycle and first-chat handoffs live here. Shared Select predicates and
+character handoff helpers remain exported for their existing screen/controller callers.
 
 `_console_active_session_is_ephemeral` is the one exception to "moved for
 real": its IMPLEMENTATION lives here, but `ChatScreen` keeps a one-line

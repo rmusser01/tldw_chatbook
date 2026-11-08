@@ -111,5 +111,5 @@ BEGIN SELECT RAISE(ABORT, 'workflow decision is immutable'); END;
 CREATE TRIGGER IF NOT EXISTS workflow_result_immutable
 BEFORE UPDATE ON workflow_results
 BEGIN SELECT RAISE(ABORT, 'workflow result is immutable'); END;
-INSERT OR IGNORE INTO schema_version(version) VALUES (25);
+INSERT OR IGNORE INTO schema_version(version) VALUES (26);
 COMMIT;

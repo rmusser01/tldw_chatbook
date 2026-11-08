@@ -35,7 +35,6 @@ from textual.widgets import Button, OptionList, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI import pump_probe
-from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.test_console_dictation import FakeDictationSession
 from Tests.UI.test_console_native_chat_flow import (
     _build_console_send_test_app,

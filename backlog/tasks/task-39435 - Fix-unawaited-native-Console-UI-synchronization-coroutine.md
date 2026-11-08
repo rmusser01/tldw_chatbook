@@ -1,5 +1,5 @@
 ---
-id: TASK-38614
+id: TASK-39435
 title: Fix unawaited native Console UI synchronization coroutine
 status: Done
 created_date: 2026-11-05 15:12
@@ -66,3 +66,7 @@ The native Console synchronization warning is corrected and independently review
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Renumbering provenance
+
+Originally TASK-38614, introduced by `e08627ac38392fb890984169376b1c242c3a2f3e`. Renumbered while rebasing PR #3480 because current dev `36a21dc4d270940e3576b49487a71b37c78896f8` already carries the distinct task “One time guarded FTS rebuild for media databases with historical overwrite drift” at that ID. The landed task keeps its ID. This move preserves the incoming task's status, criteria and history and updates its inbound references.

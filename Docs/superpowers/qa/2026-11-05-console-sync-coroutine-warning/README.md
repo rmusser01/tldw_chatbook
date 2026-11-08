@@ -1,6 +1,6 @@
 # Native Console refresh coroutine warning
 
-Task: TASK-38614. Code:5f03c716fe plus followup98e8035315, in the existing shared dev worktree. Independent whole-fix review plus scoped correction approved spec compliance and quality, with no remaining product findings.
+Task: TASK-39435. Code:5f03c716fe plus followup98e8035315, in the existing shared dev worktree. Independent whole-fix review plus scoped correction approved spec compliance and quality, with no remaining product findings.
 
 ## Cause and correction
 

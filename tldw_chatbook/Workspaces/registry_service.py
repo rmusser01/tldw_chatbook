@@ -674,37 +674,17 @@ class LocalWorkspaceRegistryService:
 
     @property
     def mutation_generation(self) -> int:
-        """Monotonic count of registry display-read mutations (TASK-21118).
+        """Monotonic version for in-process registry display caches.
 
-        Bumped by every mutator that can change what a workspace-record
-        read (``get_active_workspace``, ``get_workspace``,
-        ``list_workspaces``) returns: create, rename, archive, unarchive,
-        set-active, clear-active, and the built-in Default restore.
-        ``ensure_default_workspace`` bumps through those same legs when
-        (and only when) it actually changed something. TASK-22201 widened
-        the contract to the Console context build's whole display read set:
-        runtime-binding mutators (``save_runtime_binding`` — which
-        ``add_folder_binding`` and ``set_folder_binding_access`` route
-        through — ``remove_runtime_binding``, and the Default stale-binding
-        repair) and ``link_membership`` now bump too, so
-        ``list_runtime_bindings`` / ``list_workspace_memberships`` results
-        are also safe to cache against this value.
-        ``set_workspace_scope`` / ``set_change_review_enabled`` write
-        tables outside that read set and deliberately do not bump.
+        Workspace record changes, active/default selection, runtime binding
+        writes/repairs and membership links bump it (TASK-21118/22201).
+        An unchanged Default ensure, scope writes and Change Review consent
+        writes do not affect this display read set.
 
-        This is the invalidation subscription point for read caches: the
-        Console keystroke path memoizes its active-workspace resolution
-        against this value instead of re-reading SQLite ~1.25x per key,
-        and the Console run tick serves its registry display reads from a
-        generation-keyed view instead of ~80 SQLite round-trips per 0.2 s
-        tick (TASK-22201).
-        Every UI seam that changes the active workspace (Console switcher,
-        browser-row open, session switch, Settings "Set active", Library's
-        create modal, archive flows) funnels through these mutators on the
-        one app-level service instance, so comparing generations is
-        equivalent to subscribing to all of them. In-memory only: a
-        different process writing the same registry file is out of scope,
-        as for every other in-process cache over this database.
+        Console keystrokes and run ticks use it to reuse workspace, binding
+        and membership reads instead of repeating SQLite queries. All UI
+        selection changes go through this app-owned service. A different
+        process writing the registry is outside this in-memory cache contract.
         """
         return self._mutation_generation
 

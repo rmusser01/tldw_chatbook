@@ -861,11 +861,11 @@ class _Restrictions:
                         action == sqlite3.SQLITE_CREATE_TABLE
                         and first in {"workflow_phase_attempts", "workflow_task_claims"}
                         or action == sqlite3.SQLITE_DROP_TABLE
-                        and first == "workflow_phase_attempts_v25"
+                        and first == "workflow_phase_attempts_v26"
                         or action == sqlite3.SQLITE_INSERT
                         and first in {"workflow_phase_attempts", "sqlite_master"}
                         or action == sqlite3.SQLITE_DELETE
-                        and first in {"workflow_phase_attempts_v25", "sqlite_master"}
+                        and first in {"workflow_phase_attempts_v26", "sqlite_master"}
                         or action == sqlite3.SQLITE_UPDATE
                         and first == "sqlite_sequence"
                         and second == "name"
@@ -1504,9 +1504,19 @@ def _validate_candidate(
                             for start, end, sql in policy.migration_steps
                             if start == version and end > start
                         ]
-                        if len(choices) != 1:
+                        bridge = None
+                        if installed.owner_id == "db.agent_runs":
+                            from tldw_chatbook.DB.recovery_operations import (
+                                _legacy_workflow_upgrade,
+                            )
+
+                            bridge = _legacy_workflow_upgrade(connection)
+                        if bridge is not None:
+                            expected, statements = bridge
+                        elif len(choices) == 1:
+                            expected, statements = choices[0]
+                        else:
                             return (("unsupported_schema_migration",), None)
-                        expected, statements = choices[0]
                         # Fixed installed DDL reparses other tables' CHECKs.
                         # Authenticate the complete pre-step catalog, reuse its
                         # pure Canvas scope, then retire it before validation.
@@ -1603,7 +1613,8 @@ def _validate_candidate(
                                         raise InterruptedError
                                     restrictions.dropping_workflow_phase = (
                                         installed.owner_id == "db.agent_runs"
-                                        and statement == "DROP TABLE workflow_phase_attempts_v25"
+                                        and statement
+                                        == "DROP TABLE workflow_phase_attempts_v26"
                                     )
                                     try:
                                         connection.execute(statement)

@@ -1,5 +1,5 @@
 ---
-id: TASK-36728
+id: TASK-39433
 title: Design shared Console ownership and mobile agent supervision
 status: Done
 created_date: 2026-10-25 16:01
@@ -71,3 +71,7 @@ ADR required: yes; backlog/decisions/244-shared-console-ownership-and-mobile-sup
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Renumbering provenance
+
+Originally TASK-36728, introduced by `2d7d5175e12e2fe47be6f5c69d1fc9a06d1f7c8a`. Renumbered while rebasing PR #3480 because current dev `36a21dc4d270940e3576b49487a71b37c78896f8` already carries the distinct task “Keep inline reminder edits independent across reminder identities” at that ID. The landed task keeps its ID. This move preserves the incoming task's status, criteria and history and updates its inbound references.
