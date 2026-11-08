@@ -75,7 +75,6 @@ tldw_chatbook.Character_Chat.world_info_regex
 tldw_chatbook.Chat
 tldw_chatbook.Chat.Chat_Functions
 tldw_chatbook.Chat.answer_citations
-tldw_chatbook.Chat.assistant_generation_state
 tldw_chatbook.Chat.chat_conversation_scope_service
 tldw_chatbook.Chat.chat_conversation_service
 tldw_chatbook.Chat.chat_handoff_models
@@ -164,6 +163,7 @@ tldw_chatbook.DB.Prompts_DB
 tldw_chatbook.DB.Subscriptions_DB
 tldw_chatbook.DB.VisualIdentity_DB
 tldw_chatbook.DB.Workspace_DB
+tldw_chatbook.DB.assistant_generation_state
 tldw_chatbook.DB.base_db
 tldw_chatbook.DB.canvas_payload_validation
 tldw_chatbook.DB.keyword_store

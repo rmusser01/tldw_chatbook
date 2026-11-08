@@ -96,8 +96,10 @@ from tldw_chatbook.Utils.sensitive_config_keys import (
 )
 
 if TYPE_CHECKING:
-    from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
-    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.DB.ChaChaNotes_DB import (
+        CharactersRAGDB,
+        ConsoleLibraryMigrationSeed,
+    )
 #
 #######################################################################################################################
 #
@@ -8230,7 +8232,7 @@ def load_console_library_migration_seed(
     Returns:
         The strict typed seed required by a legacy database migration.
     """
-    from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
+    from tldw_chatbook.DB.ChaChaNotes_DB import ConsoleLibraryMigrationSeed
 
     selected = (
         load_cli_config_and_ensure_existence() if app_config is None else app_config

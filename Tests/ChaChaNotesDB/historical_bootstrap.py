@@ -40,7 +40,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from unittest.mock import patch
 
-from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
+from tldw_chatbook.DB.ChaChaNotes_DB import ConsoleLibraryMigrationSeed
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 SCHEMA_NAME = CharactersRAGDB._SCHEMA_NAME

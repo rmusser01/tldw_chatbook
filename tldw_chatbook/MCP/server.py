@@ -1169,10 +1169,12 @@ async def main() -> int:
 
     from ..Chat.console_semantic_revision import install_semantic_coordination
     from ..Sync_Interop.chat_sync_source import install_chat_sync_hashing
+    from ..Chat.console_exchange_capture import install_safe_capture_trimming
 
     apply_config_eager_flags()
     install_semantic_coordination()  # DB-layer port; composition root
     install_chat_sync_hashing()  # DB-layer port; composition root
+    install_safe_capture_trimming()  # DB-layer port; composition root
     server = TldwMCPServer()
     try:
         return await server.run("stdio")

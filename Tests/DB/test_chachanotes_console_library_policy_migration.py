@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
+from tldw_chatbook.DB.ChaChaNotes_DB import ConsoleLibraryMigrationSeed
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
     SchemaError,

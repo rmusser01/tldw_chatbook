@@ -8,7 +8,7 @@ from tldw_chatbook.Provider_Contract.provider_continuation import (
     dump_provider_continuation_json,
     read_provider_continuation_json,
 )
-from tldw_chatbook.Chat.assistant_generation_state import (
+from tldw_chatbook.DB.assistant_generation_state import (
     AssistantGenerationState,
     normalize_assistant_generation_state,
 )

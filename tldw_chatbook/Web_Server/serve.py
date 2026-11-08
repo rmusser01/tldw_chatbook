@@ -2562,9 +2562,11 @@ def run_web_server(
 
     from tldw_chatbook.Chat.console_semantic_revision import install_semantic_coordination
     from tldw_chatbook.Sync_Interop.chat_sync_source import install_chat_sync_hashing
+    from tldw_chatbook.Chat.console_exchange_capture import install_safe_capture_trimming
 
     install_semantic_coordination()  # DB-layer port; composition root
     install_chat_sync_hashing()  # DB-layer port; composition root
+    install_safe_capture_trimming()  # DB-layer port; composition root
 
     # Load settings from config with defaults
     web_config = get_cli_setting("web_server", default={})

@@ -1,6 +1,6 @@
 """Process-local completion callbacks for managed SQLite transactions, and the
-semantic-revision coordination and chat-record hashing ports CharactersRAGDB
-calls inside them."""
+semantic-revision coordination, chat-record hashing and Safe-capture trimming
+ports CharactersRAGDB calls inside them."""
 
 from __future__ import annotations
 
@@ -182,3 +182,48 @@ def chat_record_hash(row: Any) -> str:
             "once at process startup (the composition root) before deleting messages."
         )
     return hasher(row)
+
+
+# --- Safe-capture trimming port (TASK-36949.6) ------------------------------
+# The v52->v53 migration rewrites each stored Safe exchange capture with the
+# Console capture codec (decode, compact the history copy, re-encode through
+# the credential sanitizer). The codec belongs to Chat, which imports the DB,
+# so the DB holds only this slot. ``Chat.console_exchange_capture`` installs it
+# on import, and every composition root installs it at startup. Fail closed:
+# the migration reaches the slot only for a stored Safe blob, and with nothing
+# installed it raises inside its transaction, which rolls the step back and
+# leaves the database at v52 for a composed process to upgrade.
+
+_safe_capture_trimmer: Callable[[bytes], bytes | None] | None = None
+
+
+class SafeCaptureTrimmingNotInstalledError(RuntimeError):
+    """The v52->v53 migration met a Safe capture before any root installed the port."""
+
+
+class UnreadableCaptureBlobError(ValueError):
+    """A stored capture blob the trimmer cannot decode; the migration leaves it as-is."""
+
+
+def install_safe_capture_trimmer(trimmer: Callable[[bytes], bytes | None]) -> None:
+    """Install ``trimmer(blob) -> compacted blob or None`` for this process. Idempotent."""
+    global _safe_capture_trimmer
+    _safe_capture_trimmer = trimmer
+
+
+def trim_stored_safe_capture(blob: bytes) -> bytes | None:
+    """Return the compacted blob, or None when unchanged; raise if not installed.
+
+    Raises:
+        UnreadableCaptureBlobError: The installed trimmer cannot decode ``blob``.
+        SafeCaptureTrimmingNotInstalledError: Nothing installed the port.
+    """
+    trimmer = _safe_capture_trimmer  # read once, like semantic_coordinator_for
+    if trimmer is None:
+        raise SafeCaptureTrimmingNotInstalledError(
+            "Safe-capture trimming is not installed. Call "
+            "tldw_chatbook.Chat.console_exchange_capture.install_safe_capture_trimming() "
+            "once at process startup (the composition root) before opening a "
+            "database older than schema v53."
+        )
+    return trimmer(blob)

@@ -1016,7 +1016,7 @@ import sqlite3
 expected_target = Path(os.environ["EXPECTED_TARGET"]).resolve(strict=True)
 
 import tldw_chatbook
-from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
+from tldw_chatbook.DB.ChaChaNotes_DB import ConsoleLibraryMigrationSeed
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Utils.path_validation import validate_path
 

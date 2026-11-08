@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tldw_chatbook.Chat.assistant_generation_state import (
+from tldw_chatbook.DB.assistant_generation_state import (
     AssistantGenerationState,
     normalize_assistant_generation_state,
     unresolved_imported_generation_state_copy,

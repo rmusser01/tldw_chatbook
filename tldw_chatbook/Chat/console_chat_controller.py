@@ -239,7 +239,7 @@ from tldw_chatbook.Chat.console_context_repository import (
     may_hold_branch_memory,
     persisted_attachment_digest,
 )
-from tldw_chatbook.Chat.assistant_generation_state import (
+from tldw_chatbook.DB.assistant_generation_state import (
     assistant_state_allows_provider_history,
 )
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (

@@ -28,7 +28,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from loguru import logger
 
 from ..Canvas.archive import export_canvas_archive, validate_exported_canvas_origins
-from ..Chat.assistant_generation_state import normalize_assistant_generation_state
+from ..DB.assistant_generation_state import normalize_assistant_generation_state
 from ..Chat.citation_service_factory import (
     build_local_citation_conversation_service,
 )
