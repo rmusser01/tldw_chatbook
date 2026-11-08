@@ -97,6 +97,12 @@ class _AppStub:
     def notify(self, message, *, severity="information", **_kwargs):
         self.notifications.append((threading.current_thread().name, message, severity))
 
+    def call_from_thread(self, fn, *args, **kwargs):
+        """Invoke directly. A real app has this method; the Console host's
+        "is there an app" checks read it (TASK-36947.4), so without it a
+        controller bound to this stub would run as if it had no app."""
+        return fn(*args, **kwargs)
+
 
 def _drain(conversation_id="conv-att", children=()):
     return FleetDrained(conversation_id=conversation_id, children=tuple(children))
