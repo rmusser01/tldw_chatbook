@@ -17,7 +17,6 @@ from threading import Lock, RLock, get_ident
 from types import MappingProxyType
 from typing import Any, cast
 
-from tldw_chatbook.DB import private_sqlite_files
 from tldw_chatbook.DB.private_sqlite_values import (
     SQLiteTargetKind,
     SQLitePrivacyUnverifiedWarning,

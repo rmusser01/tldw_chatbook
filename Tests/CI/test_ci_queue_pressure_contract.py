@@ -345,6 +345,11 @@ FAST_LANE_TARGETS = (
     "Tests/MCP/test_control_plane_permissions.py::test_remember_exact_inputs_writer_failure_preserves_error_and_stale_rule",
     "Tests/MCP/test_unified_control_plane_service.py::test_remember_exact_inputs_persistence_failure_keeps_current_call",
     "Tests/Canvas/test_canvas_kill_switch.py",
+    # PR3345 incoming audio, native BaseDB and MCP timeout/custody regressions.
+    "Tests/TTS/test_audio_player.py",
+    "Tests/DB/test_base_db_connection_lifecycle.py",
+    "Tests/MCP/test_stdio_request_timeout.py",
+    "Tests/MCP/test_stdio_settlement_hardening.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.

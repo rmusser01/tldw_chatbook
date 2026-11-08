@@ -92,7 +92,7 @@ def hand_off(file_path: Path) -> bool:
     `hand_off_refusal`; a refused or unresolvable path is never opened.
 
     Args:
-        file_path: The clip to open, passed to `os.startfile` unchanged.
+        file_path: The clip whose validated resolved target is opened.
 
     Returns:
         True when the default app was asked to open the clip.
@@ -111,7 +111,7 @@ def hand_off(file_path: Path) -> bool:
         logger.warning("Windows audio hand-off refused: not a local audio file")
         return False
     try:
-        os.startfile(os.fspath(file_path))  # type: ignore[attr-defined]  # nosec B606
+        os.startfile(os.fspath(resolved))  # type: ignore[attr-defined]  # nosec B606
     except OSError as exc:
         logger.warning("Windows audio hand-off failed ({})", type(exc).__name__)
         return False

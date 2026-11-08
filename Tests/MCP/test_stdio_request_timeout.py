@@ -1,7 +1,7 @@
 """TASK-38582: stdio session deadlines honor the configured tool-call timeout.
 
-A wire deadline with a healthy transport must fail only the timed-out
-request; teardown stays reserved for transport uncertainty. The configured
+An expired admitted request retains custody until native work settles.
+Proven pre-write refusals leave the live session reusable. The configured
 ``[mcp] tool_call_timeout_seconds`` must reach the session construction
 through ``MCPClient.connect_to_server``.
 """
@@ -33,8 +33,8 @@ async def _spawn_fixture() -> asyncio.subprocess.Process:
 
 
 @pytest.mark.asyncio
-async def test_slow_tool_deadline_fails_only_that_call_and_keeps_session():
-    """A deadline with a live transport is a typed timeout, not a teardown."""
+async def test_slow_tool_deadline_settles_child_before_returning():
+    """Configured deadlines retain the original native retirement contract."""
     from tldw_chatbook.MCP.client import _StdioJSONRPCConnection
 
     process = await _spawn_fixture()
@@ -42,16 +42,26 @@ async def test_slow_tool_deadline_fails_only_that_call_and_keeps_session():
         process, client_name="deadline-client", request_timeout_seconds=0.5
     )
     try:
-        slow = await connection.call_tool("slow", {"seconds": 3})
-
-        assert slow.transport_error == "mcp_tool_timeout"
-        assert process.returncode is None, "deadline must not kill the server"
-        assert not connection._reader_unavailable
-        assert not connection._cleanup_complete
-
         fast = await connection.call_tool("fast", {})
         assert fast.transport_error is None
         assert fast.content[0]["text"] == "fast final"
+        with pytest.raises(TypeError):
+            await connection.request(
+                "tools/call", {"name": "fast", "arguments": {"bad": object()}}
+            )
+        assert process.returncode is None
+        fast = await connection.call_tool("fast", {})
+        assert fast.transport_error is None
+        assert fast.content[0]["text"] == "fast final"
+
+        slow = await connection.call_tool("slow", {"seconds": 3})
+
+        assert slow.transport_error == "mcp_transport_unavailable"
+        assert process.returncode is not None, "expired call still owns native work"
+        assert connection._reader_unavailable
+        assert connection._cleanup_complete
+        closed = await connection.call_tool("fast", {})
+        assert closed.transport_error == "mcp_transport_unavailable"
     finally:
         await connection.close()
         if process.returncode is None:

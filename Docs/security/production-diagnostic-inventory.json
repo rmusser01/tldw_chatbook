@@ -1898,8 +1898,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 57,
-      "diagnostic_digest": "3121c563197ede5a954a",
+      "call_count": 54,
+      "diagnostic_digest": "7a45353cbd2629df7ad9",
       "owner": "TASK-492",
       "path": "tldw_chatbook/MCP/client.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"

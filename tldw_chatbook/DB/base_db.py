@@ -20,7 +20,7 @@ import threading
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any, Union
 from weakref import WeakValueDictionary
@@ -1220,26 +1220,22 @@ class BaseDB(ABC):
         """
         # TASK-38606: same all-paths close as vacuum() -- a raised
         # sqlite3.Error mid-check used to leak the connection until GC.
-        conn = None
         try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute("PRAGMA integrity_check")
-            result = cursor.fetchone()
+            with closing(self._get_connection()) as conn:
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA integrity_check")
+                result = cursor.fetchone()
 
-            is_ok = result and result[0] == "ok"
-            if is_ok:
-                logger.info(f"Database integrity check passed: {self.db_path_str}")
-            else:
-                logger.error(f"Database integrity check failed: {self.db_path_str}")
+                is_ok = result and result[0] == "ok"
+                if is_ok:
+                    logger.info(f"Database integrity check passed: {self.db_path_str}")
+                else:
+                    logger.error(f"Database integrity check failed: {self.db_path_str}")
 
-            return is_ok
+                return is_ok
         except Exception as e:
             logger.error(f"Failed to check database integrity: {e}")
             return False
-        finally:
-            if conn is not None:
-                conn.close()
 
 
 # Defining callbacks consumed by the optional finite Character display only.
