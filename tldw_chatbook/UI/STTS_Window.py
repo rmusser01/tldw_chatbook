@@ -1529,6 +1529,12 @@ def _seed_axis_defaults(
     """
     missing = object()
     try:
+        if global_preferences is not None:
+            return SpeechPlaygroundPane._project_axis_defaults(
+                studio_preferences,
+                global_preferences,
+            )
+
         defaults: dict[str, str] = {}
 
         provider_id = get_cli_setting("app_tts", "default_provider", missing)
@@ -1561,12 +1567,6 @@ def _seed_axis_defaults(
         voice_id = get_cli_setting("app_tts", "default_voice", missing)
         if voice_mode == "exact" and isinstance(voice_id, str) and voice_id:
             defaults["tts-voice-select"] = voice_id
-
-        if global_preferences is not None:
-            return SpeechPlaygroundPane._project_axis_defaults(
-                studio_preferences,
-                global_preferences,
-            )
 
         if studio_preferences is not None:
             selection = studio_preferences.selection

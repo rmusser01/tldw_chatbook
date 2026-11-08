@@ -1870,6 +1870,7 @@ async def test_unverified_exact_voice_blocks_until_server_default_is_selected(
         assert str(voice_select.query_one(SelectCurrent).label) == "Server default"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_fresh_install_seeds_no_axis_defaults_and_paints_no_markers(
     faked_service: FakeTTSService,
