@@ -5,7 +5,7 @@ import tomllib
 import pytest
 
 from Tests.private_profile import private_profile_test
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, Static
 
 from Tests.UI.test_console_provider_apply_defaults_flow import (
     _console_app,
@@ -344,6 +344,34 @@ async def test_llamacpp_default_recovery_blocks_other_default_until_released(
         recovery_button = screen.query_one("#settings-vllm-handoff-recovery", Button)
         assert recovery_button.display is True
         assert str(recovery_button.label) == "Retry provider handoff cleanup"
+
+        # Review r12s-rev1 M2: the copy names llama.cpp, also once a pane
+        # rebuild re-composes the row and in the button's notices.
+        def recovery_copy() -> str:
+            status = screen.query_one("#settings-vllm-handoff-recovery-status", Static)
+            return str(status.content)
+
+        assert recovery_copy().startswith("Verified llama.cpp handoff cleanup")
+        for pane_id in ("#settings-detail-pane", "#settings-impact-pane"):
+            await screen.query_one(pane_id).recompose()
+        await pilot.pause()
+        assert recovery_copy().startswith("Verified llama.cpp handoff cleanup")
+        notices: list[str] = []
+        real_notify = pilot.app.notify
+
+        def record_notify(message, *args, **kwargs):
+            notices.append(str(message))
+            return real_notify(message, *args, **kwargs)
+
+        monkeypatch.setattr(pilot.app, "notify", record_notify)
+        screen.query_one("#settings-vllm-handoff-recovery", Button).press()
+        for _ in range(40):
+            if notices:
+                break
+            await pilot.pause(0.05)
+        assert notices and notices[-1].startswith(
+            "Verified llama.cpp handoff cleanup is still blocked"
+        ), notices
         app.pending_handoffs.stage(
             HandoffChannel.VLLM_DEFAULT, VllmDefaultIntent.from_target(vllm_target)
         )

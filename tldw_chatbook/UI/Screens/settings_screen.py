@@ -482,6 +482,7 @@ from ..Navigation.vllm_handoff import (
 )
 
 if TYPE_CHECKING:
+    from textual.widget import Widget
     from ...Widgets.Settings_Widgets.composer_paste_panel import ComposerPasteSettingsPanel
     from ...Agents.hook_permissions import HookReviewSnapshot
     from ...Tool_Packs.service import ToolProfileListing
@@ -988,8 +989,9 @@ SETTINGS_SINGLE_PANE_MAX_WIDTH = 70
 SETTINGS_INSPECTOR_FLOOR_MIN_WIDTH = 42 + SETTINGS_DETAIL_HOLD_WIDTH + 36
 # cubic review of #2937: the detail pane width that fits the widest action row
 # (Library > RAG's built-in profile row, 83 cells). Narrower, the rows stack:
-# at 140 columns the floor above leaves the pane 62, which cut "Open Advanced
-# Config" to "Open Adva" (test_settings_action_rows_keep_every_button_whole).
+# at 140 columns the pane is 64 (the held width above; 62 before TASK-39134),
+# which cut "Open Advanced Config" to "Open Adva" before the rows stacked
+# (test_settings_action_rows_keep_every_button_whole).
 SETTINGS_ACTION_ROWS_INLINE_MIN_WIDTH = 84
 PROVIDER_ENDPOINT_KEYS = ("api_base_url", "api_base", "base_url", "api_url", "endpoint")
 PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
@@ -4214,6 +4216,9 @@ class SettingsScreen(BaseAppScreen):
         #: focus survives the rebuild. (`recompose()` still consumes it too,
         #: for the rarer whole-screen rebuild.)
         self._pending_category_focus_value: str | None = None
+        #: TASK-39135: what had focus when that intent was recorded. A swap
+        #: that finds focus elsewhere skips the landing: the user moved it.
+        self._pending_category_focus_from: Widget | None = None
         # TASK-33072: entering Theme lands in its list after the swap,
         # unless an F6 pressed mid-swap claimed the focus first.
         self._theme_list_focus_pending = False
@@ -4770,6 +4775,14 @@ class SettingsScreen(BaseAppScreen):
                 if not getattr(self, "is_mounted", False):
                     return
                 focus_id = self._focused_id_in_category_panes()
+                if (
+                    self._pending_category_focus_value is not None
+                    and self.focused is not self._pending_category_focus_from
+                ):
+                    # TASK-39135: focus moved after the switch recorded its
+                    # landing (checked before the rebuild, which can reset it).
+                    self._pending_category_focus_value = None
+                    self._theme_list_focus_pending = False
                 self.release_mouse_capture_for_teardown()
                 async with self.batch():
                     for pane_id in ("#settings-detail-pane", "#settings-impact-pane"):
@@ -14431,16 +14444,29 @@ class SettingsScreen(BaseAppScreen):
         button.display = recovery is not None
         if recovery is None:
             return
-        llama = recovery.channel is HandoffChannel.LLAMACPP_DEFAULT
-        label = "llama.cpp" if llama else "vLLM"
-        status.update(
-            f"Verified {label} handoff cleanup needs attention. Retry cleanup to "
-            "unlock provider actions."
-            if recovery.automatic_retry_exhausted
-            else f"Verified {label} handoff cleanup is retrying; provider actions "
+        status.update(self._vllm_default_recovery_copy(recovery))
+        button.disabled = False
+
+    @staticmethod
+    def _handoff_provider_label(recovery) -> str:
+        """TASK-39133: the provider whose default handoff release is retained."""
+        llama = (
+            recovery is not None
+            and recovery.channel is HandoffChannel.LLAMACPP_DEFAULT
+        )
+        return "llama.cpp" if llama else "vLLM"
+
+    def _vllm_default_recovery_copy(self, recovery) -> str:
+        label = self._handoff_provider_label(recovery)
+        if recovery is None or recovery.automatic_retry_exhausted:
+            return (
+                f"Verified {label} handoff cleanup needs attention. Retry cleanup "
+                "to unlock provider actions."
+            )
+        return (
+            f"Verified {label} handoff cleanup is retrying; provider actions "
             "remain locked."
         )
-        button.disabled = False
 
     def _restore_vllm_default_presentation(
         self,
@@ -23603,8 +23629,7 @@ class SettingsScreen(BaseAppScreen):
             if summary.category is SettingsCategoryId.PROVIDERS_MODELS:
                 recovery = self._vllm_default_recovery()
                 recovery_status = Static(
-                    "Verified vLLM handoff cleanup needs attention. Retry cleanup "
-                    "to unlock provider actions.",
+                    self._vllm_default_recovery_copy(recovery),
                     id="settings-vllm-handoff-recovery-status",
                     classes="settings-status-row",
                 )
@@ -25893,6 +25918,7 @@ class SettingsScreen(BaseAppScreen):
                 # (task-1338: focus ended up <none>), so record an intent the
                 # swap consumes after the fresh children mount.
                 self._pending_category_focus_value = category_value
+                self._pending_category_focus_from = self.focused
             else:
                 self.call_after_refresh(self._focus_category, category_value)
             if category_value == SettingsCategoryId.THEME.value:
@@ -31263,17 +31289,20 @@ class SettingsScreen(BaseAppScreen):
         """Expose an explicit retry after bounded automatic cleanup fails."""
 
         event.stop()
+        label = self._handoff_provider_label(self._vllm_default_recovery())
         if self.recover_vllm_default_handoff():
             self.app.notify(
-                "Verified vLLM handoff cleanup completed. Provider actions are "
+                f"Verified {label} handoff cleanup completed. Provider actions are "
                 "available again.",
                 severity="information",
+                markup=False,
             )
         else:
             self.app.notify(
-                "Verified vLLM handoff cleanup is still blocked. Retry again or "
+                f"Verified {label} handoff cleanup is still blocked. Retry again or "
                 "reopen Settings.",
                 severity="warning",
+                markup=False,
             )
 
     @on(Button.Pressed, "#settings-briefing-schedules-toggle")
@@ -35592,28 +35621,7 @@ class SettingsScreen(BaseAppScreen):
         self._update_appearance_validation_classes()
         self._update_draft_status_widgets(SettingsCategoryId.APPEARANCE)
 
-    def _withdraw_pending_category_focus(self) -> None:
-        """TASK-39135: the user's own input withdraws a switch's pending landing.
-
-        A pane swap lands the rail focus a real switch recorded, once the panes
-        are rebuilt; a control the user focused in between kept it only when
-        the swap was quicker. Called from the real-input sites, as Library
-        withdraws its stage-pick landing; a switch made by that same input
-        records its focus afterwards.
-        """
-        self._pending_category_focus_value = None
-        self._theme_list_focus_pending = False
-
-    def get_focusable_widget_at(self, x: int, y: int):
-        """TASK-39135: a click is real input before Textual focuses its target."""
-        widget = super().get_focusable_widget_at(x, y)
-        if widget is not None:
-            self._withdraw_pending_category_focus()
-        return widget
-
     def on_key(self, event: Key) -> None:
-        if event.key != "f6":  # F6 queues behind the swap's focus on purpose.
-            self._withdraw_pending_category_focus()
         focused = self._focused_widget()
         is_slash = (
             event.key in {"/", "slash"} or getattr(event, "character", None) == "/"

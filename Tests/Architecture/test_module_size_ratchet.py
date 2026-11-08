@@ -583,7 +583,10 @@ _BUDGETS: dict[str, int] = {
     # (owner waiver): +21, real input withdraws a switch's pending focus.
     # TASK-39134 (owner waiver): +19, the detail pane holds its width
     # until the Scope Inspector has room.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35778,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver)
+    # 2026-11-07, review r12s-rev1 (owner waiver): +8, the swap checks focus
+    # state instead of input events (TASK-39135) and the llama.cpp recovery
+    # copy is composed from one helper (TASK-39133).
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35786,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver)
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

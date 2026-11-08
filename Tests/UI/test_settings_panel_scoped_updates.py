@@ -133,13 +133,15 @@ async def test_category_switch_lands_focus_on_the_selected_rail_button(request):
 
 
 @private_profile_test
-@pytest.mark.parametrize("move", ("none", "key", "click"))
+@pytest.mark.parametrize("move", ("none", "pagedown", "key", "click"))
 async def test_a_focus_the_user_moves_before_the_swap_lands_is_kept(request, move):
-    """TASK-39135: a real switch records a pending rail focus that its pane swap
+    """TASK-39135: a switch records a pending rail focus that its pane swap
     applies once the panes are rebuilt. A control the user focused in between,
     with a real key or click, kept focus only if the swap was quicker. The swap
-    is held on its lock, so the input lands in that window on every run. With
-    no input, the switch still lands focus on the new rail button."""
+    is held on its lock, so the input lands in that window on every run. The
+    switch is the programmatic one a deep link makes, with focus on another
+    rail row, so the landing has to move focus. Input that leaves focus where
+    it was (PageDown) must not cost the landing (review r12s-rev1 I1)."""
     import asyncio
 
     host = DestinationHarness(_build_test_app(), "settings")
@@ -148,16 +150,21 @@ async def test_a_focus_the_user_moves_before_the_swap_lands_is_kept(request, mov
         screen.query_one("#settings-category-storage", Button).focus()
         await _settle(pilot)
 
+        moved = move in ("key", "click")
         await screen._category_swap_lock.acquire()
         try:
-            await pilot.press("enter")
+            screen._select_category("appearance", restore_focus=True)
+            await pilot.pause()
             assert screen._category_pane_swap_pending
-            if move == "key":
+            if move == "pagedown":
+                await pilot.press("pagedown")
+            elif move == "key":
                 await pilot.press("slash")
             elif move == "click":
                 await pilot.click("#settings-category-search")
-            if move != "none":
-                assert getattr(host.focused, "id", None) == "settings-category-search"
+            assert getattr(host.focused, "id", None) == (
+                "settings-category-search" if moved else "settings-category-storage"
+            )
         finally:
             screen._category_swap_lock.release()
         for _ in range(100):
@@ -171,11 +178,10 @@ async def test_a_focus_the_user_moves_before_the_swap_lands_is_kept(request, mov
         host.call_later(landed.set)
         await asyncio.wait_for(landed.wait(), timeout=5)
 
-        assert screen.active_category == "storage"
-        expected = (
-            "settings-category-storage" if move == "none" else "settings-category-search"
+        assert screen.active_category == "appearance"
+        assert getattr(host.focused, "id", None) == (
+            "settings-category-search" if moved else "settings-category-appearance"
         )
-        assert getattr(host.focused, "id", None) == expected
 
 
 @private_profile_test

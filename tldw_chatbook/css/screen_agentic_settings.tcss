@@ -547,11 +547,12 @@ $ds-approval-compact-body-height: 6;
 }
 
 /* Narrow-width compact workbench (task-1342), following the personas
-   precedent (personas-workbench-compact): at <=100 cols the 3:6:2 split
-   leaves slivers, so the category pane becomes a fixed-width sidebar, the
-   inspector pane and its divider drop out, and the detail pane takes the
-   rest. The search help/status rows hide so category rows stay visible at
-   24-row heights. */
+   precedent (personas-workbench-compact): below 127 cols the 3:6:2 split
+   leaves slivers, so the category pane becomes a fixed-width sidebar and the
+   inspector pane and its divider drop out. The detail pane takes the rest up
+   to 100 cols and holds 64 cells from 101 (TASK-39134,
+   .settings-detail-holds). The search help/status rows hide so category rows
+   stay visible at 24-row heights. */
 #settings-workbench.settings-workbench-compact {
     padding: $ds-space-0;
 }
