@@ -1,10 +1,10 @@
 ---
 id: TASK-39117
 title: "The Workspace, Library collections, Agent runs, RAG indexing and notifications stores are not closed idle at quit, so a worker thread's handle and storage lease can outlive the app"
-status: In Progress
+status: Done
 assignee: ['@claude']
 created_date: 2026-11-07 02:03
-updated_date: 2026-11-07 22:47
+updated_date: 2026-11-08 00:26
 labels:
 - follow-up
 - database
@@ -50,8 +50,8 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-1
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 For each named store, a probe measures whether a pool-thread handle leaves a live lease after a real `on_unmount`; the result is recorded per store
-- [ ] #2 Each store that leaks has no live lease on any thread after `on_unmount`, with a test per store that is red on dev
+- [x] #1 For each named store, a probe measures whether a pool-thread handle leaves a live lease after a real `on_unmount`; the result is recorded per store
+- [x] #2 Each store that leaks has no live lease on any thread after `on_unmount`, with a test per store that is red on dev
 - [x] #3 A straggler's write is never aborted and the quit close stays inside its time bound; the TASK-38955 and TASK-39047 quit tests stay green by name
 <!-- AC:END -->
 
@@ -65,35 +65,45 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-1
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-**Probe (AC#1).** Each store got a handle on a kept pool thread (`asyncio.to_thread` with a one-thread default executor that stays alive across the quit), then the real `on_unmount` ran through `_unmount_owner` with the store under its app attribute, and the threads still holding a storage lease on the file were listed (`_lease_threads`). On dev (pre-fix source, this branch's tests):
+**Probe (AC#1).** For each store a handle was opened on a kept pool thread (a one-thread executor that stays alive across the quit). Then the real `on_unmount` ran (`_unmount_owner`), and the test listed the threads still holding a storage lease on the file (`_lease_threads`). On dev (pre-fix source, this branch's tests):
 
-| Store | App holds it as | Left after `on_unmount` on dev | After this change |
+| Store | Owner that closes it at quit | Left on dev | After this change |
 |---|---|---|---|
-| `WorkspaceDB` | `local_workspace_db` | `['MainThread', 'kept_0']` | `[]` |
-| `LibraryCollectionsDB` | `local_library_collections_db` | `['MainThread', 'kept_0']` | `[]` |
-| `ClientNotificationsDB` | `client_notifications_db` | `['kept_0']` (schema is deferred, so the UI thread opened none) | `[]` |
-| `AgentRunsDB` | not held by the app (console runtime `_agent_runs_db` / bridge `runs_db`, plus per-call instances) | `['MainThread', 'kept_0']` (probe instance under an attribute the quit does not know) | unchanged: still leaks |
-| `RAGIndexingDB` | not held by the app (opened per ingestion batch / backfill) | `['MainThread', 'kept_0']` (same probe shape) | unchanged: still leaks |
-| `WorkspaceProjectIndexDB` | project-index service, drained by `close_project_index_service` | not measured: `_unmount_owner` stubs `_shutdown_app_owned_lifecycles`, and a real project-index runtime was out of reach this round | not measured |
+| `WorkspaceDB` | `_close_main_databases` (`local_workspace_db`) | `['MainThread', 'kept_0']` | `[]` |
+| `LibraryCollectionsDB` | `_close_main_databases` (`local_library_collections_db`) | `['MainThread', 'kept_0']` | `[]` |
+| `ClientNotificationsDB` | `_close_main_databases` (`client_notifications_db`) | `['kept_0']` (schema is deferred, so the UI thread opened none) | `[]` |
+| `AgentRunsDB` | the console runtime's dispose, which the quit runs (`dispose_console_runtime`) | `['kept_0']` (a `get_run` on the pool; the dispose closed only its own thread's handle) | `[]` |
+| `RAGIndexingDB` | the RAG ingest worker after each batch, and the backfill for a DB it opened | `['MainThread', 'kept_0']` after one ingest batch whose embedding path read the attached cache store on a pool thread; the worker had closed only its own thread's handle | `[]` |
+| `WorkspaceProjectIndexDB` | `close_project_index_service` | `_unmount_owner` stubs `_shutdown_app_owned_lifecycles`, so the probe called `close_project_index_service` directly. Real service, registry and scanner; `enable`, a `status` on a pool thread, then a `refresh` held at publish. Leases before the close: `[('project-index-writer', 'workspace_project_index.db')]`. After the close: `[]`. | no leak, unchanged |
 
-The AgentRuns and RAG indexing rows come from a temporary parametrization of the new test, removed afterwards. They show only that the quit cannot reach an instance it does not hold; whether the production owners leave pool-thread handles was not measured.
+The project-index probe was a temporary test file, removed after the run.
 
-**Approach (AC#2, partly).** TASK-39047's mechanism, reused for the three stores the app holds:
-- `SQLiteStoreKernel._join_connection_registry(db_path)` (new, one helper) sets the file's `SQLiteConnectionQuiescenceRegistry` for a file-backed store; `:memory:` joins nothing.
-- `WorkspaceDB`, `LibraryCollectionsDB` and `ClientNotificationsDB` call it in `__init__` before their first connection and open with `check_same_thread=False` (the idle close is the one cross-thread call, as for Guardian).
-- `_close_main_databases` (`app_lifecycle.py`) runs the idle close for them after ChaChaNotes, media, Dreams and Guardian; a busy store is skipped and logged as before. An in-memory notifications fallback is skipped (`is_memory_db`).
+**Approach (AC#2).** One mechanism (TASK-39047's), through one kernel helper:
+- `SQLiteStoreKernel._join_connection_registry(db_path)` sets the file's `SQLiteConnectionQuiescenceRegistry` for a file-backed store; `:memory:` joins nothing. The kernel's own opener now passes `check_same_thread=False` once a store has joined (RAG indexing uses it). Stores with their own opener pass it themselves: Workspace, Library Collections, notifications, AgentRuns.
+- `_close_main_databases` (`app_lifecycle.py`) runs the idle close for the three stores the app holds, after ChaChaNotes, media, Dreams and Guardian.
+- `ConsoleRuntime.dispose` runs the AgentRunsDB idle close off the loop (`asyncio.to_thread`) before its existing own-thread `close()`, so agent-worker and receipt-read handles go too.
+- `ingestion_indexing._retire_indexing_db` (idle close, then own-thread close, only for a real `RAGIndexingDB`) replaces the worker's per-batch own-thread close. `backfill_semantic_index` now retires a DB it opened itself in a `finally`. Its body moved unchanged into `_backfill_with`; before, that DB was never closed.
+- A handle in use (transaction, core operation, acquisition) is never closed: the close is skipped and the handle closes with the process.
+- The per-batch idle close also closes other threads' idle handles on the indexing file, for example a concurrent backfill's between statements. Its next call reopens through the getter.
 
-**Red first.** `test_app_unmount_retires_a_worker_thread_handle_of_each_kernel_store[workspace|library_collections|notifications]` (`Tests/DB/test_sync_log_retention.py`): red on the pre-fix source with the leases in the table above; green after. `test_app_unmount_kernel_store_close_never_aborts_a_straggler_write[...]` (AC#3): green before (nothing was closed) and after; red 3 of 3 under TASK-39047's control (both in-use checks removed from `close_if_idle`): `ProgrammingError: Cannot operate on a closed database.`, 0 rows.
+**Red first.**
+- `test_app_unmount_retires_a_worker_thread_handle_of_each_kernel_store[workspace|library_collections|notifications]`: red on dev with the leases above.
+- `test_app_unmount_retires_every_agent_runs_handle_through_the_console_runtime`: `['kept_0'] == []` on dev.
+- `test_rag_ingest_batch_leaves_no_indexing_handle_for_the_quit`: `['MainThread', 'kept_0'] == []` on dev.
+- All green after.
 
-**AC#3.** The close returned in under 1 s in every straggler case (4-36 ms under the control). TASK-38955 and TASK-39047 quit tests pass by name in the same file run (45 passed serially): `test_app_pass_retires_the_handles_it_opens_on_its_worker_thread`, `test_app_unmount_retires_both_stores_on_every_thread`, `test_app_unmount_store_close_never_aborts_a_straggler_write`, `test_app_unmount_store_close_skips_a_busy_store_without_blocking`, `test_app_unmount_ui_close_bounds_its_checkpoint_wait`, `test_app_unmount_retires_a_worker_thread_handle_of_each_store[...]`, `test_app_unmount_store_close_never_aborts_a_straggler_write_in_each_store[...]`, `test_idle_close_refuses_while_a_getter_is_opening_a_handle[...]`, `test_kernel_idle_close_is_a_no_op_for_a_store_without_a_registry`, `test_app_unmount_store_close_skips_a_store_with_a_core_operation_running[...]`.
+**AC#3.**
+- `test_app_unmount_kernel_store_close_never_aborts_a_straggler_write[...]` and `test_owner_idle_close_never_aborts_a_straggler_write[agent_runs|rag_indexing]`: a worker pauses inside a transaction across the close; both rows commit and the close returns in under 1 s. Green before and after; red 3 of 3 and 2 of 2 under TASK-39047's control (both in-use checks removed from `close_if_idle`): `ProgrammingError: Cannot operate on a closed database.`, 0 rows.
+- TASK-38955 and TASK-39047 quit tests pass by name in the same file run: `test_app_pass_retires_the_handles_it_opens_on_its_worker_thread`, `test_app_unmount_retires_both_stores_on_every_thread`, `test_app_unmount_store_close_never_aborts_a_straggler_write`, `test_app_unmount_store_close_skips_a_busy_store_without_blocking`, `test_app_unmount_ui_close_bounds_its_checkpoint_wait`, `test_app_unmount_retires_a_worker_thread_handle_of_each_store[...]`, `test_app_unmount_store_close_never_aborts_a_straggler_write_in_each_store[...]`, `test_idle_close_refuses_while_a_getter_is_opening_a_handle[...]`, `test_kernel_idle_close_is_a_no_op_for_a_store_without_a_registry`, `test_app_unmount_store_close_skips_a_store_with_a_core_operation_running[...]`.
+- The whole file: 49 passed serially.
 
-**Not done (AC#1 project index, AC#2 AgentRuns and RAG indexing).** The quit holds neither an `AgentRunsDB` nor a `RAGIndexingDB`; their owners (the console runtime's dispose, which closes only its own thread's handle; the RAG ingest worker, which closes its handle after each batch on its own thread) would have to run the idle close themselves once those stores join their registries. Proposed as a follow-up with the project-index probe. The task stays In Progress.
+**Lane.** `Tests/DB/test_sync_log_retention.py` is the last target of dreams-boundary "Run Dreams and Guardian boundary contracts" (`--storage-lease-guard`); no pin changed. That step through `jobstep.sh`, three times, with the round's first nodes: 1017 passed each, in 884.0 s, 607.7 s and 422.8 s at 1-minute load 48, 44 and 13. Its last CI run took 7.0 min (dev run 42296831798, job 11.1 min). Re-run once with this task's later nodes (AgentRuns, RAG indexing, the owner straggler cases): 1021 passed in 861.8 s at load 39, with no lease left under the guard.
 
-**Size.** `app_lifecycle.py` 2203 -> 2207 under the owner size waiver (dated row).
+**Covering run.** 78 files (RAG ingestion/backfill/indexing, AgentRuns and Agents, kernel-store, Console runtime ownership and the DB owner files) at `-n 4`: 1901 passed, 173 failed, 4 errors in 27.6 min (load 40-90). Every failing node was rerun per file on base `fu-base-r12`: 170 of 175 fail there too. On a rerun on this branch, 4 of the other 5 pass. The fifth, `test_forced_reindex_replaces_stale_vector_chunks_and_clears_query_cache`, fails on base too when run alone (twice on each tree). The earlier 54-file backup/DB/media run is in TASK-39110's and TASK-39118's notes.
 
-**Lane.** `Tests/DB/test_sync_log_retention.py` is the last target of dreams-boundary "Run Dreams and Guardian boundary contracts" (`--storage-lease-guard`); no pin changed. That step through `jobstep.sh`, three times, with this round's nodes: 1017 passed each, in 884.0 s, 607.7 s and 422.8 s at 1-minute load 48, 44 and 13. Its last CI run took 7.0 min (dev run 42296831798, job 11.1 min). No new node leaked a lease under the guard.
+**Pins and size.**
+- `Tests/DB/test_core_sqlite_owner_privacy.py`'s rag_indexing case expects `check_same_thread=False` now. It is red on dev for another reason: `RAG_Indexing_DB` has no `connect_private_sqlite`.
+- Owner size waiver, dated rows: `app_lifecycle.py` 2203 -> 2207 and `console_runtime.py` 7069 -> 7072.
 
-**Covering run.** 54 files (Backup_Recovery inventory, owner and data-group files, `Tests/UI/test_backup_data_groups.py`, the Workspace / Library Collections / notifications / store-kernel DB tests, `Tests/Media_DB`, the media and quiescence DB tests) at `-n 4` on this branch: 1379 passed, 27 failed, 3 skipped in 13 min (load ~40). Rerun per file on base `fu-base-r12`: 25 of the 27 fail there too. The other two were `test_core_owner_uses_literal_seam_and_preserves_connection_contract[media-first-create|media-harden]`, which pin media's exact connect kwargs; they now include the `factory`, as the ChaChaNotes case already does (TASK-39118). `test_every_durable_installed_adapter_has_a_named_selectable_group` was red on dev on `db.workspace_project_index` (missing from its non-selectable set), so it never reached the Personal Context owners; that row is added with them and the test passes.
-
-**Files.** `tldw_chatbook/DB/store_kernel.py`, `tldw_chatbook/DB/Workspace_DB.py`, `tldw_chatbook/DB/Library_Collections_DB.py`, `tldw_chatbook/Notifications/client_notifications_db.py`, `tldw_chatbook/app_lifecycle.py`, `Tests/DB/test_sync_log_retention.py`, `Tests/Architecture/test_module_size_ratchet.py`.
+**Files.** `tldw_chatbook/DB/store_kernel.py`, `tldw_chatbook/DB/Workspace_DB.py`, `tldw_chatbook/DB/Library_Collections_DB.py`, `tldw_chatbook/Notifications/client_notifications_db.py`, `tldw_chatbook/DB/AgentRuns_DB.py`, `tldw_chatbook/DB/RAG_Indexing_DB.py`, `tldw_chatbook/Chat/console_runtime.py`, `tldw_chatbook/RAG_Search/ingestion_indexing.py`, `tldw_chatbook/app_lifecycle.py`, `Tests/DB/test_sync_log_retention.py`, `Tests/DB/test_core_sqlite_owner_privacy.py`, `Tests/Architecture/test_module_size_ratchet.py`.
 <!-- SECTION:NOTES:END -->
