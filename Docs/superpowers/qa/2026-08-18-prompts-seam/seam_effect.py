@@ -87,7 +87,7 @@ def main() -> int:
 
             # 1. Is the seam AVAILABLE? `(False, [])` and `(True, [])` render
             #    the same downstream; ask the seam directly.
-            seam = LibraryLocalRagSearchService(rt.app)
+            seam = LibraryLocalRagSearchService.from_app(rt.app)
             svc = getattr(rt.app, "prompt_scope_service", None)
             print(f"\nPROBE PROOF: app.prompt_scope_service = {type(svc).__name__}")
             state, rows = rt.run(seam._search_prompts("prompt", K))

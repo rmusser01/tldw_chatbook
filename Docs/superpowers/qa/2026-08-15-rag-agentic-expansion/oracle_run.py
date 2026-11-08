@@ -309,7 +309,7 @@ def build_rag_provider(runtime: Any) -> Any:
         LibraryLocalRagSearchService,
     )
 
-    return LibraryRagToolProvider(LibraryLocalRagSearchService(runtime.app))
+    return LibraryRagToolProvider(LibraryLocalRagSearchService.from_app(runtime.app))
 
 
 def probe_retrieval(
