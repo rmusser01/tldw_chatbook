@@ -40,11 +40,11 @@ def fake_profile(tmp_path, monkeypatch):
 
     The stand-in holds ``existing.txt``, ``ui_state.toml`` and ``sub/``. At
     teardown it drops the refusals about itself and fails the test on any
-    other refusal.
+    other refusal, restoring the real roots before temporary-directory cleanup.
 
     Args:
         tmp_path: The test's temporary directory, which holds the stand-in.
-        monkeypatch: Restores the guard's real roots after the test.
+        monkeypatch: Supplies the fixture-owned root replacement context.
 
     Yields:
         The stand-in profile root, the only path the guard protects meanwhile.
@@ -53,14 +53,17 @@ def fake_profile(tmp_path, monkeypatch):
     (root / "sub").mkdir(parents=True)
     (root / "existing.txt").write_text("keep")
     (root / "ui_state.toml").write_text(OWNER_STATE)
-    monkeypatch.setattr(guard, "_roots", (guard._norm(str(root)),))
-    yield root
-    others = [r for r in guard.take_violations() if not _about(root, r)]
-    if others:
-        pytest.fail(
-            "refusals outside the stand-in profile:\n" + "\n".join(others),
-            pytrace=False,
-        )
+    with monkeypatch.context() as protected:
+        protected.setattr(guard, "_roots", (guard._norm(str(root)),))
+        try:
+            yield root
+        finally:
+            others = [r for r in guard.take_violations() if not _about(root, r)]
+            if others:
+                pytest.fail(
+                    "refusals outside the stand-in profile:\n" + "\n".join(others),
+                    pytrace=False,
+                )
 
 
 def _take_about(root: Path) -> list[str]:

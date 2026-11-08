@@ -1,7 +1,7 @@
 ---
 id: TASK-39403
 title: Preserve ToolResult subclass positional compatibility
-status: In Progress
+status: Done
 created_date: 2026-11-08 22:07
 assignee:
 - '@codex'
@@ -15,7 +15,7 @@ references:
 documentation:
 - backlog/decisions/154-agent-denial-streak-boundary.md
 - backlog/decisions/163-expanded-console-hook-runtime.md
-updated_date: 2026-11-08 22:07
+updated_date: 2026-11-08 22:15
 ---
 
 ## Description
@@ -46,7 +46,7 @@ Reason: compatible optional metadata and dispatch ownership repair; no storage, 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Restored the four-base-positional/subclass contract by making only dispatch_state and termination_reason keyword-only, preserving defaultNone, annotations, field order and authority. The574-constructor audit confirmed metadata callers already use keywords. Original provenance evidence was4passed/1failed; the unchanged13-selector focused scope now passes25 parametrized cases, all setup/call/teardown phases passed, exit0, exact JSON/JUnit identity agreement and natural unforced owned-process retirement. Source stayed unchanged during the run. Exact two-field AST diff and scoped formatting pass. Ruff adds no diagnostics versus five pre-existing unrelated findings. No callers, tests, serialization, permission or resource-owner changes. Existing ADR154/163 apply; no new ADR. Report SHA256:1a13c2e40692205343d89583d00d5596128d8271c15f0f17879c1b8e2b94b392. Final integrated qualification remains open under TASK39402 and Docs/QA/release-0.2.4/BLOCKERS.md. Backlog MCP final-status operation temporarily failed to acquire its project lock; implementation remains reviewable while that operation is retried.
+Restored the four-base-positional/subclass contract by making only dispatch_state and termination_reason keyword-only, preserving defaultNone, annotations, field order and authority. The574-constructor audit confirmed metadata callers already use keywords. Original provenance evidence was4passed/1failed; the unchanged13-selector focused scope now passes25 parametrized cases, all setup/call/teardown phases passed, exit0, exact JSON/JUnit identity agreement and natural unforced owned-process retirement. Source stayed unchanged during the run. Exact two-field AST diff and scoped formatting pass. Ruff adds no diagnostics versus five pre-existing unrelated findings. No callers, tests, serialization, permission or resource-owner changes. Existing ADR154/163 apply; no new ADR. Report SHA256:1a13c2e40692205343d89583d00d5596128d8271c15f0f17879c1b8e2b94b392. Final integrated qualification remains open under TASK39402 and Docs/QA/release-0.2.4/BLOCKERS.md.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

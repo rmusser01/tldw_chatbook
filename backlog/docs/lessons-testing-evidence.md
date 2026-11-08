@@ -1,5 +1,12 @@
 # Lessons: what counts as evidence a change works
 
+## A temporary protected-root replacement must end before pytest cleans tmp_path (TASK-39402.4, 2026-11-08)
+
+**Incident.** The0.2.4 initial full run recorded26 teardown errors in the partition containing real-profile guard tests. Their fake_profile fixture protected a temporary stand-in using the shared monkeypatch fixture; under failed-only tmp retention, pytest deleted a passed test's tmp_path before that shared fixture restored the real roots. The guard therefore refused safe temporary cleanup, and recorded refusals reached later tests. A fixture-owned monkeypatch.context with refusal collection in finally restored the roots first. The unchanged module then exited0 with55passed and2 unavailable-platform xattr skips, no errors and natural process retirement.
+
+**What to do.** A fixture that protects or faults a tmp_path must own that replacement's complete lifetime. Restore it in that fixture before the temporary-directory fixture tears down, even when the body or its refusal assertion raises. Keep the real guard and its incident assertions intact; retaining every temporary directory only hides the ordering defect.
+
+
 ## A census's "gone" row can be a live producer the scanner stopped seeing (TASK-39053, 2026-11-06)
 
 **Incident.** The backup owner inventory reported 194 gone producer rows, and the task that filed it read them as removed or moved code. But 24 of them were live `os.replace` / `os.unlink` calls. Their modules had switched to `from tldw_chatbook.Utils.platform_files import os`, and the census only bound `os` from `import os`. Other reviewed rows looked gone for the same kind of reason:
