@@ -263,6 +263,14 @@ def test_delete_forever_leaves_no_row_that_names_the_note(tmp_path) -> None:
 
     with seed.connect() as connection:
         assert seed.traces(connection) == _ID_ONLY_TOMBSTONES
+        # PR #3423 re-review 4 (m-B): the counts above allow one intent row
+        # naming the note; it must be the kept unlink itself, not another
+        # row -- an unscrubbed acknowledged link counts the same.
+        assert connection.execute(
+            "SELECT intent_id, operation, acknowledged_at "
+            "FROM notes_organization_sync_intents WHERE instr(payload_json, ?) > 0",
+            (seed.note_id,),
+        ).fetchall() == [("org-intent-2", "tombstone", None)]
         # Search and keywords, through the store's own readers.
         assert seed.db.search_notes("plutonium") == []
         assert seed.note_id not in {
