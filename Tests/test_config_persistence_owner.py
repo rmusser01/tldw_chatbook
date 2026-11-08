@@ -505,3 +505,57 @@ def test_an_interval_other_code_sets_inside_a_config_write_is_kept(
 
     assert _write(module, 96, lambda: sys.setswitchinterval(0.002)).fully_applied
     assert sys.getswitchinterval() == pytest.approx(0.002)
+
+
+def test_a_write_waiting_on_another_process_lock_does_not_shorten_the_interval(
+    tmp_path, monkeypatch, default_interval
+):
+    """Review r12s-rev1 M4: while another process holds the config's OS lock,
+    the waiting write must not leave the whole process at the short interval
+    (CPU-bound threads ran 28-47% slower). The write still runs short once it
+    holds the lock."""
+    import threading
+
+    import portalocker
+
+    module = _fresh_config(tmp_path, monkeypatch)
+    lock_path = module._get_effective_config_path()
+    lock_path = lock_path.with_name(f"{lock_path.name}.lock")
+    waits: list[float] = []
+    waiting = threading.Event()
+
+    class _Event:
+        def __init__(self) -> None:
+            self._event = threading.Event()
+
+        def wait(self, timeout=None):
+            waits.append(sys.getswitchinterval())
+            waiting.set()
+            return self._event.wait(timeout)
+
+    class _Threading:
+        Event = _Event
+
+        def __getattr__(self, name):
+            return getattr(threading, name)
+
+    seen = []
+    results = {}
+    with open(lock_path, "a", encoding="utf-8") as other_process:
+        portalocker.lock(other_process, portalocker.LockFlags.EXCLUSIVE)
+        monkeypatch.setattr(module, "_threading", _Threading())
+        writer = threading.Thread(
+            target=lambda: results.update(
+                r=_write(module, 97, lambda: seen.append(sys.getswitchinterval()))
+            )
+        )
+        writer.start()
+        try:
+            assert waiting.wait(10)
+            assert waits[0] == default_interval
+        finally:
+            portalocker.unlock(other_process)
+            writer.join(10)
+    assert results["r"].fully_applied
+    assert seen and seen[0] < _SHORT_INTERVAL
+    assert sys.getswitchinterval() == default_interval

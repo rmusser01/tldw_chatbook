@@ -4550,7 +4550,14 @@ def _bind_config_interprocess_lock(definition):
                         locked = True
                         break
                     except portalocker.exceptions.AlreadyLocked:
-                        _threading.Event().wait(0.05)
+                        # TASK-38987: never wait on another process at a write's
+                        # short switch interval.
+                        from tldw_chatbook.Utils.switch_interval import (
+                            switch_interval_released,
+                        )
+
+                        with switch_interval_released():
+                            _threading.Event().wait(0.05)
                 _config_participants.check_lock_wait(sys.modules[__name__], operation)
                 yield
             finally:
@@ -6136,19 +6143,6 @@ _CONFIG_WRITE_SWITCH_INTERVAL = 0.0001
 
 
 def _apply_literal_settings_transaction_locked(
-    *args: Any, **kwargs: Any
-) -> LiteralConfigMutationResult:
-    """Run one config transaction with a short switch interval (TASK-38987).
-
-    Imported here, not at module level: no config write runs at boot.
-    """
-    from tldw_chatbook.Utils.switch_interval import switch_interval_at_most
-
-    with switch_interval_at_most(_CONFIG_WRITE_SWITCH_INTERVAL):
-        return _apply_literal_settings_transaction_unscoped(*args, **kwargs)
-
-
-def _apply_literal_settings_transaction_unscoped(
     mutation_builder: Callable[
         [AtomicLiteralMutationSnapshot], LiteralSettingsMutation
     ],
@@ -6184,6 +6178,13 @@ def _apply_literal_settings_transaction_unscoped(
         return LiteralConfigMutationResult(False, False, None, "before_replace")
 
     with ExitStack() as locks:
+        # TASK-38987: the whole write, its lock's admission checks included,
+        # runs at a short switch interval; the wait for another process's
+        # lock lifts it (_config_interprocess_lock). Imported here: no config
+        # write runs at boot.
+        from tldw_chatbook.Utils.switch_interval import switch_interval_at_most
+
+        locks.enter_context(switch_interval_at_most(_CONFIG_WRITE_SWITCH_INTERVAL))
         try:
             locks.enter_context(_config_write_lock(config_path))
         except Exception as error:

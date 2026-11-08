@@ -36,6 +36,32 @@ def _install_locked() -> None:
     _saved = (previous, installed) if _open_limits else None
 
 
+_local = threading.local()
+
+
+def _held() -> list[float]:
+    """The limits of the scopes the calling thread has open."""
+    held = getattr(_local, "limits", None)
+    if held is None:
+        held = _local.limits = []
+    return held
+
+
+def _open_locked(limits: list[float]) -> None:
+    global _saved
+    if not _open_limits:
+        current = sys.getswitchinterval()
+        _saved = (current, current)
+    _open_limits.extend(limits)
+    _install_locked()
+
+
+def _close_locked(limits: list[float]) -> None:
+    for limit in limits:
+        _open_limits.remove(limit)
+    _install_locked()
+
+
 @contextmanager
 def switch_interval_at_most(limit: float) -> Iterator[None]:
     """Keep ``sys.getswitchinterval()`` at or below ``limit`` while open.
@@ -48,16 +74,36 @@ def switch_interval_at_most(limit: float) -> Iterator[None]:
         None. On exit, normal or raising, the interval returns to the one in
         force before the first open scope, unless other code changed it.
     """
-    global _saved
     with _LOCK:
-        if not _open_limits:
-            current = sys.getswitchinterval()
-            _saved = (current, current)
-        _open_limits.append(limit)
-        _install_locked()
+        _open_locked([limit])
+    _held().append(limit)
+    try:
+        yield
+    finally:
+        _held().remove(limit)
+        with _LOCK:
+            _close_locked([limit])
+
+
+@contextmanager
+def switch_interval_released() -> Iterator[None]:
+    """Lift the calling thread's scopes while it waits on another process.
+
+    The wait gains nothing from a short interval, and every other thread of
+    the process would pay for it (review r12s-rev1 M4: CPU-bound threads ran
+    28-47% slower while another process held the config lock).
+
+    Yields:
+        None, with this thread's scopes closed; they reopen on exit.
+    """
+    held = list(_held())
+    if not held:
+        yield
+        return
+    with _LOCK:
+        _close_locked(held)
     try:
         yield
     finally:
         with _LOCK:
-            _open_limits.remove(limit)
-            _install_locked()
+            _open_locked(held)

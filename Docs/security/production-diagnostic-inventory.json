@@ -11448,7 +11448,7 @@
           "path_expressions": [
             "config_path"
           ],
-          "scope": "_apply_literal_settings_transaction_unscoped",
+          "scope": "_apply_literal_settings_transaction_locked",
           "status": "legacy_unreviewed"
         },
         {
@@ -11457,7 +11457,7 @@
           "path_expressions": [
             "config_path"
           ],
-          "scope": "_apply_literal_settings_transaction_unscoped",
+          "scope": "_apply_literal_settings_transaction_locked",
           "status": "legacy_unreviewed"
         },
         {
@@ -11466,7 +11466,7 @@
           "path_expressions": [
             "config_path"
           ],
-          "scope": "_apply_literal_settings_transaction_unscoped",
+          "scope": "_apply_literal_settings_transaction_locked",
           "status": "legacy_unreviewed"
         },
         {
@@ -11475,7 +11475,7 @@
           "path_expressions": [
             "config_path"
           ],
-          "scope": "_apply_literal_settings_transaction_unscoped",
+          "scope": "_apply_literal_settings_transaction_locked",
           "status": "legacy_unreviewed"
         },
         {
@@ -11484,7 +11484,7 @@
           "path_expressions": [
             "config_path"
           ],
-          "scope": "_apply_literal_settings_transaction_unscoped",
+          "scope": "_apply_literal_settings_transaction_locked",
           "status": "legacy_unreviewed"
         },
         {
@@ -11493,7 +11493,7 @@
           "path_expressions": [
             "config_path"
           ],
-          "scope": "_apply_literal_settings_transaction_unscoped",
+          "scope": "_apply_literal_settings_transaction_locked",
           "status": "legacy_unreviewed"
         },
         {
@@ -11502,7 +11502,7 @@
           "path_expressions": [
             "config_path"
           ],
-          "scope": "_apply_literal_settings_transaction_unscoped",
+          "scope": "_apply_literal_settings_transaction_locked",
           "status": "legacy_unreviewed"
         },
         {
