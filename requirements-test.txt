@@ -17,7 +17,7 @@ setuptools>=77
 numpy
 transformers
 torch
-chromadb
+chromadb==1.5.8
 sentence-transformers
 lxml
 beautifulsoup4

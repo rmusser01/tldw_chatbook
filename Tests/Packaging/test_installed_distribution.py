@@ -1889,6 +1889,19 @@ def test_built_artifacts_match_distribution_contract(
             for requirement in artifact_metadata.get_all("Requires-Dist") or []
             if requirement.casefold().startswith("tiktoken")
         ] == [TIKTOKEN_REQUIREMENT]
+        assert sorted(
+            requirement
+            for requirement in artifact_metadata.get_all("Requires-Dist") or []
+            if requirement.casefold().startswith("chromadb")
+        ) == [
+            'chromadb==1.5.8; extra == "all-tools"',
+            'chromadb==1.5.8; extra == "embeddings-rag"',
+        ]
+    assert [
+        line.strip()
+        for line in (REPO_ROOT / "requirements-test.txt").read_text().splitlines()
+        if line.strip().casefold().startswith("chromadb")
+    ] == ["chromadb==1.5.8"]
     assert any(name.endswith(".dist-info/licenses/LICENSE") for name in wheel_members)
     assert dict(entry_points["console_scripts"]) == {
         "tldw-cli": "tldw_chatbook.cli:main_cli_runner",

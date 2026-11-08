@@ -118,7 +118,7 @@ embeddings_rag = [
     "numpy",
     "pydantic",
     "transformers",
-    "chromadb>=0.4.0",
+    "chromadb==1.5.8",
     "sentence-transformers",
     "opentelemetry-api",
     "opentelemetry-sdk",
@@ -383,7 +383,7 @@ all-tools = [
     
     # === AI/ML Frameworks ===
     # Embeddings and RAG
-    "chromadb>=0.4.0",
+    "chromadb==1.5.8",
     "torch",
     "numpy",
     "transformers",
