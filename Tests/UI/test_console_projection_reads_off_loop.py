@@ -1373,6 +1373,8 @@ async def test_a_core_push_held_off_by_failing_reads_stops_and_says_so(
                 if timer is not None:
                     timer.stop()
                     config_sync.retry_console_core_push(console)
+                else:  # A silent stop owes none; probe as the next FULL would.
+                    config_sync.sync_console_core_state(console)
             assert pushes == [1], "the first push after a good load did not run"
             assert not notice_visible(), "the notice outlived a good config load"
             assert shown == [True, False]

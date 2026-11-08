@@ -102,4 +102,11 @@ Owner decision (2026-11-07): "Bounded stop + notice: after a bounded wait (a few
   - `test_an_install_landing_at_the_stop_never_leaves_the_notice_up`. On cebb6681b1: red, `the notice outlived the good install that landed at the stop`.
 - **Run:** the whole off-loop file passed at `-n 4` (24 passed, load 47-54).
 
-Files: `tldw_chatbook/UI/Console_Modules/config_sync.py`, `tldw_chatbook/UI/Console_Modules/console_spend_projection.py`, `tldw_chatbook/Widgets/Console/console_status_chips.py`, `Tests/UI/test_console_projection_reads_off_loop.py`, `Docs/User_Guide/console.md`.
+
+**Review r12p-rev2 (2026-11-08).**
+- **I2.** `Tests/Performance/test_console_keystroke_work_census.py`'s `counted_core_state` wrapper took only `screen`, so `retry_console_core_push`'s `sync_console_core_state(screen, retry=True)` raised TypeError, and the typing nodes perf-guard runs failed 7 of 12 node-runs. The wrapper now passes `**kwargs` through and counts only calls without `retry` as full syncs.
+  - Whole file 4 times at `-n 4` (load 57-69): 9 passed, 2 failed each time.
+  - The 2 are `test_console_storage_units_stay_within_their_ratchets[untested|tested]` ("trace GC pass os_opens: 57 > ceiling 54 x 1.05"), which fail the same way on base 8b762b52fa with the same command.
+- **M2.** After a silent stop, no retry timer is owed and FULL syncs are stubbed, so the mounted test's post-load loop could idle. It now calls `sync_console_core_state(console)` itself when no retry is owed.
+
+Files: `tldw_chatbook/UI/Console_Modules/config_sync.py`, `tldw_chatbook/UI/Console_Modules/console_spend_projection.py`, `tldw_chatbook/Widgets/Console/console_status_chips.py`, `Tests/UI/test_console_projection_reads_off_loop.py`, `Tests/Performance/test_console_keystroke_work_census.py`, `Docs/User_Guide/console.md`.

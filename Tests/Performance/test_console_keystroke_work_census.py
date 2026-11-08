@@ -665,11 +665,13 @@ async def _census(
     real_core_state = config_sync.sync_console_core_state
     full_syncs_seen = [0]  # Any phase: the anti-vacuity check before typing.
 
-    def counted_core_state(screen: Any) -> None:
-        full_syncs_seen[0] += 1
-        if counting["on"]:
-            counts["full_syncs"] += 1
-        real_core_state(screen)
+    def counted_core_state(screen: Any, **kwargs: Any) -> None:
+        # TASK-39145: a push-only retry (``retry=True``) is not a full sync.
+        if not kwargs.get("retry"):
+            full_syncs_seen[0] += 1
+            if counting["on"]:
+                counts["full_syncs"] += 1
+        real_core_state(screen, **kwargs)
 
     monkeypatch.setattr(config_sync, "sync_console_core_state", counted_core_state)
 
