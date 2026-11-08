@@ -1,10 +1,10 @@
 ---
 id: TASK-39124
 title: "BuddyLibrary.ensure_builtin reads bundled pixel-migu files without the flat-filename and no-follow checks that the deleted Persona_Visual installer applied"
-status: In Progress
+status: Done
 assignee: ['@claude']
 created_date: 2026-11-07 02:03
-updated_date: 2026-11-07 07:07
+updated_date: 2026-11-08 00:56
 labels:
 - follow-up
 - security
@@ -43,7 +43,7 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-1
 - [x] #1 `ensure_builtin` refuses a non-flat `assets.json` filename (`../escape.png`, an absolute path, `nested/escape.png`) before reading it, and publishes nothing; tests are red before the change
 - [x] #2 `ensure_builtin` refuses a symlinked resource leaf (skipped only where symlinks cannot be created); red before the change
 - [x] #3 The ZIP-traversable seeding case and the installed-wheel packaging probe stay green
-- [ ] #4 The new tests run on a PR lane (never the fast PR contract), with three timings recorded
+- [x] #4 The new tests run on a PR lane (never the fast PR contract), with three timings recorded
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -65,7 +65,11 @@ The installer's `validate_path(filename, target)` check had a publication direct
 
 **AC#3.** `test_buddy_seed_reads_resources_from_zip_traversable` and `Tests/Packaging/test_pixel_migu_distribution.py` (installed-wheel probe) pass: the file plus the probe, 25 passed at `-n 4`. Wider covering run (`Tests/Persona_Buddy/test_buddy_startup.py`, `test_buddy_library.py`, `Tests/Packaging/test_installed_distribution.py`): 253 passed, 3 failed; the same 3 fail on base `fu-base-r12` (`test_buddy_archive_publication_cannot_spoof_import_provenance`, `test_native_archive_review_is_read_only_and_preserves_notices`, `test_installed_wheel_loaders_entry_points_and_assets_are_immutable`).
 
-**AC#4 not met.** No PR lane runs `Tests/Persona_Visual/test_builtin_pixel_migu_buddy.py` (or any Buddy-seeding file), and this round's streams other than lanes do not edit workflows. Listed for the lanes stream. Timings of the four new nodes, serially (`-p no:xdist`, run.sh): 19.4 s, 14.7 s, 15.1 s at load 67-79 (pytest start-up included); the whole file 18 passed in 79.9 s at load ~70.
+**AC#4 (met by the lanes stream).** `Tests/Persona_Visual/test_builtin_pixel_migu_buddy.py` runs last in "Run the recovered suites". That is the new PR lane "PR lane (recovered suites)", not pr-fast-lane, and it lands with `fu/r12-lanes` (76cef8ef30) in the same batch. The lanes stream measured it there, sandboxed and guard-clean:
+- the whole file serially under `--storage-lease-guard`: 14 passed each time, in 171.7 s, 147.0 s and 134.3 s (load 105-117);
+- the step (13 targets) three times with `jobstep.sh`: 363.3 s (load 38->21), 742.9 s (21-50) and 467.1 s (50-43).
+
+Their file predates this branch's four new nodes. Those four, serially through run.sh: 19.4 s, 14.7 s and 15.1 s at load 67-79, pytest start-up included. On this branch the whole file is 18 passed in 79.9 s at load ~70.
 
 **Files.** `tldw_chatbook/Persona_Buddy/library.py`, `Tests/Persona_Visual/test_builtin_pixel_migu_buddy.py`.
 <!-- SECTION:NOTES:END -->
