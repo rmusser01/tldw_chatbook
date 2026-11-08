@@ -274,7 +274,7 @@ def _same_sources(refs: tuple, sources: tuple) -> bool:
     return len(refs) == len(sources) and all(
         (ref is None and source is None)
         or (ref is not None and source is not None and ref() is source)
-        for ref, source in zip(refs, sources)
+        for ref, source in zip(refs, sources, strict=True)
     )
 
 
