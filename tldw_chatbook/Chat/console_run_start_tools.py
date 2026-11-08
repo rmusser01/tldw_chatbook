@@ -29,6 +29,20 @@ before it trusts file stamps), the admission epoch did not move, the servers
 it saw are still in the connection state it saw, and its key is still the one
 it read after its await. Only a plain ``MCPToolProvider`` is reused or kept:
 a subclass (a plugin provider) composes from more than the key covers.
+
+A run start with nothing to reuse (no kept composition, or a run that
+freezes its definition ceiling at composition and so never reuses) takes no
+fingerprint before it composes (TASK-33620.15.38): there it decides nothing
+for the run, and a live Console send always composed after it. Such a run
+over stock sources (the installed stores and the default manifest provider)
+takes an anchor instead -- the store files' stamps, the admission epoch and
+the selected sources, before the composition reads -- and keeps the
+composition as pending; a run over custom readers or a custom manifest
+provider still takes the fingerprint before it composes. The next run start's own fingerprint proves it: the
+same sources, every file still at its anchored stamp and settled before the
+anchor, the epoch unmoved. Only then does that fingerprint's identity become
+the kept identity; anything else refuses the pending composition and the run
+composes from the stores.
 """
 
 from __future__ import annotations
@@ -40,7 +54,7 @@ import sys
 import threading
 import time
 import weakref
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from loguru import logger
@@ -156,12 +170,30 @@ def capture_run_tool_read(controller, session_id, turn_context, project_guard, *
 @dataclass(frozen=True)
 class _Entry:
     service: Any  # weakref.ref to the MCP service
-    identity: tuple  # store and manifest identities, stamps left out
+    identity: tuple | None  # store and manifest identities, stamps left out
     key: tuple  # the provider's own composition inputs
     servers: tuple  # ((profile_id, plugin_owned), ...) the catalog used
     connected: tuple  # their connection state when composed
     engaged: bool  # the kill switch was on: no MCP, no local tools
     composition: tuple | None
+    anchor: "_Anchor | None" = None  # pending (identity None) until proven
+
+
+@dataclass(frozen=True)
+class _Anchor:
+    """What a composition with no fingerprint saw before it read (TASK-33620.15.38).
+
+    The next run start's fingerprint proves the composition only if it read
+    through the same sources, every store file still has the stamp anchored
+    here and was last changed ``SETTLE_NS`` before ``observed_at``, and the
+    admission epoch has not moved: then nothing the composition read changed
+    between its read and that fingerprint's.
+    """
+
+    stamps: tuple  # ((path, stamp or None), ...) as ``_stamps`` orders them
+    observed_at: int
+    epoch: Any
+    sources: tuple  # weak refs, as ``_sources`` orders them
 
 
 _lock = threading.Lock()
@@ -215,6 +247,101 @@ def _admission_epoch() -> Any:
     return getattr(bootstrap, "_admission_epoch", None)
 
 
+def _settled(stamps: tuple, observed_at: int) -> bool:
+    """Every file was last changed ``SETTLE_NS`` before ``observed_at``."""
+    return all(
+        stamp is None or stamp[4] <= observed_at - SETTLE_NS for _path, stamp in stamps
+    )
+
+
+def _sources(service: Any) -> tuple:
+    """The receivers a composition and a fingerprint read through, now.
+
+    The manifest provider is one of them: the fingerprint names the built-in
+    manifest by the default provider's source, so a pending composition is
+    proven only while that provider stays selected.
+    """
+    local = service.local_service
+    return (
+        service.permission_store,
+        local,
+        getattr(local, "store", None),
+        getattr(local, "manifest_provider", None),
+    )
+
+
+def _same_sources(refs: tuple, sources: tuple) -> bool:
+    return len(refs) == len(sources) and all(
+        (ref is None and source is None)
+        or (ref is not None and source is not None and ref() is source)
+        for ref, source in zip(refs, sources)
+    )
+
+
+def _take_anchor(service: Any, observed_at: int, epoch: Any) -> _Anchor | None:
+    """Anchor a composition that runs without a fingerprint (TASK-33620.15.38).
+
+    Only stock sources are anchored: a run with custom readers or a custom
+    manifest provider keeps the fingerprint before its composition. The
+    governance checks the fingerprint makes first are made here too, so a
+    refused listing anchors nothing (the fingerprint route then meets the
+    same refusal). The stamps are two ``stat`` calls, not admission scopes.
+
+    Returns:
+        The anchor, or None to take the fingerprint instead.
+    """
+    from tldw_chatbook.MCP import console_snapshot as snapshot
+
+    try:
+        permission, local, store, _manifest = sources = _sources(service)
+        if not snapshot._stock_fingerprint_sources(service, local, store, permission):
+            return None
+        snapshot._require_listing(local)
+        stamps = tuple(
+            (source.path, _stamp(source.path)) for source in (permission, store)
+        )
+    except Exception:  # noqa: BLE001 -- the fingerprint route decides then
+        return None
+    return _Anchor(
+        stamps=stamps,
+        observed_at=observed_at,
+        epoch=epoch,
+        sources=tuple(weakref.ref(source) for source in sources),
+    )
+
+
+def _proven(entry: _Entry, fingerprint: tuple, service: Any) -> _Entry | None:
+    """The pending ``entry`` with ``fingerprint``'s identity, if it proves it.
+
+    ``fingerprint`` was read after the pending composition; it describes what
+    that composition read only if the same sources were read, every store
+    file kept the stamp anchored before the composition, and no admission or
+    activation record was written in between. (``_keep`` kept the pending
+    composition only if those stamps were settled at the anchor.)
+    """
+    anchor = entry.anchor
+    try:
+        stamps = _stamps(fingerprint, service)
+        sources = _sources(service)
+    except Exception:  # noqa: BLE001 -- an unstamped store proves nothing
+        return None
+    if (
+        stamps != anchor.stamps
+        or _admission_epoch() != anchor.epoch
+        or not _same_sources(anchor.sources, sources)
+    ):
+        return None
+    return replace(entry, identity=_identity(fingerprint), anchor=None)
+
+
+def _settle_pending(entry: _Entry, proven: _Entry | None) -> None:
+    """Replace the pending entry with its proof, or drop it; never a newer one."""
+    global _entry
+    with _lock:
+        if _entry is entry:
+            _entry = proven
+
+
 def _fill(local_read: LocalKillSwitchRead | None, engaged: bool, error=None) -> None:
     if local_read is not None:
         local_read.value, local_read.error, local_read.read = engaged, error, True
@@ -264,9 +391,14 @@ async def compose_run_mcp_provider(
     observed_at = time.time_ns()
     epoch = _admission_epoch()
     plain = type(provider) is MCPToolProvider  # Anything else always composes.
-    fingerprint = None
+    fingerprint = anchor = None
+    if plain and entry is None:
+        # TASK-33620.15.38: nothing to reuse, so no fingerprint decides this
+        # run; the next run start's fingerprint proves the composition.
+        anchor = _take_anchor(service, observed_at, epoch)
     try:
-        fingerprint = await service.run_catalog_fingerprint(servers) if plain else None
+        if plain and anchor is None:
+            fingerprint = await service.run_catalog_fingerprint(servers)
     except Exception as caught:  # noqa: BLE001 -- the reads below meet any refusal
         logger.debug(
             "Console MCP catalog check failed ({}); composing from the stores",
@@ -274,6 +406,10 @@ async def compose_run_mcp_provider(
         )
     _require_current(local_read)
     key = provider.composition_key()
+    if plain and entry is not None and entry.anchor is not None:
+        pending = entry
+        entry = None if fingerprint is None else _proven(pending, fingerprint, service)
+        _settle_pending(pending, entry)
     if (
         entry is not None
         and fingerprint is not None
@@ -357,23 +493,46 @@ async def compose_run_mcp_provider(
             )
             return None
     # The composition read its key after an await: keep it only under that key.
-    if error is None and fingerprint is not None and provider.composition_key() == key:
+    if (
+        error is None
+        and (fingerprint is not None or anchor is not None)
+        and provider.composition_key() == key
+    ):
         try:
-            _keep(service, provider, fingerprint, key, engaged, observed_at, epoch)
+            _keep(
+                service, provider, fingerprint, key, engaged, observed_at, epoch, anchor
+            )
         except Exception as caught:  # noqa: BLE001 -- not keeping is always safe
             logger.debug("Console MCP catalog not kept ({})", type(caught).__name__)
     return None if engaged else provider
 
 
-def _keep(service, provider, fingerprint, key, engaged, observed_at, epoch) -> None:
-    """Keep the composition if it provably read what ``fingerprint`` describes."""
+def _keep(
+    service, provider, fingerprint, key, engaged, observed_at, epoch, anchor=None
+) -> None:
+    """Keep the composition if it provably read what ``fingerprint`` describes.
+
+    With ``anchor`` (no fingerprint before the composition, TASK-33620.15.38)
+    the composition is kept pending: the next run start's fingerprint proves
+    it (``_proven``) or refuses it. What can already refuse it is checked now:
+    a store file not settled at the anchor, a moved admission epoch, another
+    source selected, a refused listing.
+    """
     global _entry
-    stamps = _stamps(fingerprint, service)
-    settled = all(
-        stamp is None or stamp[4] <= observed_at - SETTLE_NS for _path, stamp in stamps
-    )
-    if not settled or any(_stamp(path) != stamp for path, stamp in stamps):
-        return
+    if anchor is None:
+        stamps = _stamps(fingerprint, service)
+        if not _settled(stamps, observed_at) or any(
+            _stamp(path) != stamp for path, stamp in stamps
+        ):
+            return
+    else:
+        from tldw_chatbook.MCP import console_snapshot as snapshot
+
+        if not _settled(anchor.stamps, observed_at) or not _same_sources(
+            anchor.sources, _sources(service)
+        ):
+            return
+        snapshot._require_listing(service.local_service)
     if _admission_epoch() != epoch:
         return
     composed = () if engaged else getattr(provider, "composed_servers", None)
@@ -387,12 +546,13 @@ def _keep(service, provider, fingerprint, key, engaged, observed_at, epoch) -> N
     with _lock:
         _entry = _Entry(
             service=weakref.ref(service),
-            identity=_identity(fingerprint),
+            identity=None if anchor is not None else _identity(fingerprint),
             key=key,
             servers=servers,
             connected=seen,
             engaged=engaged,
             composition=None if engaged else provider.composition(),
+            anchor=anchor,
         )
 
 
