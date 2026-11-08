@@ -123,3 +123,24 @@ The worktree is shared, not an OS sandbox; external writers can invalidate input
 The rebuild remains disabled by default until its acceptance evidence is complete.
 This decision does not certify existing salvage candidates or authorize merging
 or publishing a replacement PR.
+
+
+## Current-dev integration allocation (PR3480, 2026-11-08)
+
+The authorized rebase targets dev36a21dc4d270940e3576b49487a71b37c78896f8.
+That shipped AgentRuns v25 belongs to review-boundary claims and the nullable
+opaque wake-attempt handoff. The older standalone workflow branch reused v25 for
+workflow tables and advanced through v30; it is not the shipped dev25 lineage.
+Preserve the exact dev25 DDL/data, migration and recovery catalogs. Allocate the
+workflow additions after that boundary (v26 onward, ending at v31 for the current
+six-step feature chain), without rewriting an installed version or dropping the
+review-boundary fields/claims. Current constructors, migration order and exact
+recovery catalogs must agree; equal numeric labels are not compatibility proof.
+
+Use real SQLite upgrades from the actual dev25 layout with populated native
+review-boundary/wake data and fresh workflow operations, plus archive/catalog
+controls and interrupted/failed migration checks. Standalone workflow25–30
+qualification remains tied to its original source and does not certify shipped
+current-dev25 recovery. Existing reviewed native resource, permission, revision
+and history fences remain mandatory. This amends the existing additive storage
+allocation decision; it introduces no new executor, service or trust boundary.

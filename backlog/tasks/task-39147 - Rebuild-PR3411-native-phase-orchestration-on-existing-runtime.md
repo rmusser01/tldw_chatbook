@@ -194,9 +194,9 @@ Reason: record already verified behavior/CI and task completion; this closeout c
 3. Verify that only this task and its QA Markdown change, all executable/build inputs equal the green source, task parsing/criteria and links pass, and preservation remains intact.
 4. Commit through the existing private index and commit-tree/CAS, push only the task branch, and create a draft PR against dev. Record its inherited baseline/divergence and leave merge/newer-dev integration unqualified.
 Current-dev rebase and merge follow-up (explicitly authorized 2026-11-08):
-ADR required: no new ADR
-ADR path: backlog/decisions/356-native-phase-orchestration-runtime-ownership.md (existing subsystem ADRs and current merge-queue rules apply)
-Reason: integrate the accepted implementation with current dev and qualify the existing contracts, without a new service/storage/authority design.
+ADR required: existing ADR amendment
+ADR path: backlog/decisions/356-native-phase-orchestration-runtime-ownership.md#current-dev-integration-allocation-pr3480-2026-11-08
+Reason: current dev25 review-boundary data collides with the standalone workflow25 lineage; preserve shipped25 and append workflows after it under the existing ownership contract.
 1. Pin actual PR head3184178 and remote dev36a21dc, retain full checkout/index/375-path preservation, inspect upstream-equivalent commits and all review/queue requirements. Rebase through immutable Git blobs/private indexes without a checkout, worktree or source export.
 2. Replay the commit sequence on current dev, resolving real content/schema/API conflicts against both current callers and ADR356. Keep current-dev features, all resource/permission/revision/recovery fences and unchanged assertion/timeout budgets; never restore implementation-identity authority.
 3. Record conflict decisions and add narrow RED regressions for demonstrated semantic gaps; run targeted tests and unchanged static/asset gates on the integrated candidate. Keep historical standalone CI/UAT evidence separate from new integration results.
