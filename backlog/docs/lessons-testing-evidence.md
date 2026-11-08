@@ -25179,3 +25179,18 @@ require Python3.12.11. The official action manifest offered that build for22.04
 and24.04 only. Pinning the aggregate to24.04 preserves its immutable build; changing
 the Python pin or bypassing artifact validation would change the contract instead.
 A green version-pin shape test alone does not establish runner compatibility.
+
+
+### Force the passive refresh while its competing lock is held (TASK-39147, 2026-11-08)
+
+UI10 on6350ea97c1 failed Stop under a configuration rebuild; the unchanged test
+passed in isolated local execution. Its watchdog stack showed the passive recovery
+refresh initializing the controller and rereading settings behind the held lock.
+Forcing the actual mounted recovery-region refresh before Stop made both held-lock
+variants fail reliably, without widening the1s Stop wait or2s watchdog. Reading the
+installed controller through existing live getters fixed those cases; checking the
+whole region also exposed two provider display builders with the same effectful
+initializer. Keep action-time checks while making display reads passive, and test
+both an installed controller and its absence. The broader recovery controls also
+hit an app-construction refusal that reproduced unchanged; preserve that separate
+limit rather than treating focused passing cases as whole-module qualification.

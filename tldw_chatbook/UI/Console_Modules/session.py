@@ -6959,9 +6959,7 @@ class ConsoleSessionController:
     def _console_trace_recovery_state(self) -> Any:
         """Project the active pre-dispatch pause, with a context hold's numbers.
 
-        A display read: it ensures the controller only when there is none
-        yet (TASK-35444). Ensuring a live one re-reads config on the UI loop,
-        which waits out any config rebuild.
+        Passive display reads only the installed controller and never refreshes settings.
         """
 
         from ...Chat.console_turn_preparation import (
@@ -6969,11 +6967,12 @@ class ConsoleSessionController:
             library_pause_copy,
         )
 
-        controller = (
-            self._current_chat_controller_accessor()
-            or self._ensure_console_chat_controller()
+        controller = self._current_chat_controller_accessor()
+        preparation = (
+            controller.trace_call_recovery_preparation()
+            if controller is not None
+            else None
         )
-        preparation = controller.trace_call_recovery_preparation()
         # TASK-33621.20: only a Library-paused send has a reason to look up
         # and pass on (why its search stopped).
         library: dict[str, str] = {}

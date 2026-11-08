@@ -712,3 +712,58 @@ suite or new live UAT. Prior three mounted Undo profile-setup refusals and other
 qualification limits remain recorded above. Real dev HEAD, full index/status and
 all375 preserved states remain unchanged. Hold the next dispatch until the old
 run including its merge tick completes; never cancel that tick or another run.
+
+
+## Eighth CI follow-up: passive recovery under a configuration rebuild (2026-11-08)
+
+[Run42501214598](https://github.com/rmusser01/tldw_chatbook/actions/runs/42501214598)
+on exact6350ea97c109c074bd1d179f85803aff74236ecc finishes fourteen test jobs green
+and UI10 red. Actual job128794172577 has157 passes and one failure in726.33s:
+`test_rule_phase_events_project_only_the_mounted_current_session[rebuild]`.
+The watchdog captures transcript sync calling passive trace recovery, then
+`_ensure_console_chat_controller`, provider selection, `load_settings` and the held
+configuration lock. Log: `/tmp/pr39147-ci-job-128794172577.log`. The passive method's
+body is identical on e08627a and6350 (attribution packet
+`/tmp/pr39147-ci-round8-attribution.json`); the user-approved minimal inherited
+scope covers this repair. Its unmodified isolated case passes locally in20.01s,
+which is retained as an intermittent reproduction, not evidence of a fix.
+
+The existing response-rule test now explicitly refreshes the real mounted recovery
+region while the configuration lock is held. It retains the1s Stop wait,2s watchdog,
+current-session/other-session assertions and physical cleanup/draft checks. Existing
+live callback tests publish the installed controller and test both provider display
+readers and no-controller projection. The corrected test-only tree
+`1b8e8cd4dd771ab98cdc97cf7ca3e3eddb239c29` gives **7 failed in24.62s**, solely
+expected UI blocking/initializer calls (`/tmp/pr39147-ci-round8-region-red.txt`).
+An earlier read-only-property fixture assignment error is not clean regression
+evidence. Passive trace projection now uses its already injected live getter;
+both provider display builders read the installed screen controller once. None
+produces inert recovery display. Recovery action initialization/dispatch, actual
+preparation/hold/message reads and permission/revision/resource fences are unchanged.
+ADR220 applies without a new ADR or abstraction.
+
+Executable tree `a53cc1078a23f12f043b42ca636550aca25e5fb9`:
+
+- **9 passed in27.60s**: full four-variant held/no-controller response-rule function
+  and five live recovery callback tests (`round8-recovery-green.txt`).
+- Separate trace/provider UI recovery controls: **29 passed,1 failed in19.21s**
+  (`round8-recovery-controls.txt`). The mounted real-screen provider fixture refuses
+  `raw_source_selection_changed` during app construction. Exact unchanged6350
+  reproduces that refusal (**1 failed in9.00s**, `round8-provider-baseline.txt`).
+  No mounted-provider pass or additional baseline fixture repair is claimed.
+- Formatting-only test lines yield tree `051adf8e2b7e363a1521d979fd8b8aae5b580621`,
+  with equal test AST and byte-identical production sources. Every changed Python
+  range formats cleanly with zero new Ruff findings; inherited whole-module format
+  debt remains. Logger AST, recovery action callbacks, initializer and full workflow
+  compare equal (`/tmp/pr39147-ci-round8-verification.txt`); diff check passes.
+
+Self-review traces the full recovery refresh and all three passive readers; no
+assertion, check, inventory allowance, Python pin or timeout was relaxed. The real
+e08627a checkout, full index/status and375 preserved path states audit unchanged.
+Prior mounted Undo failures remain qualified separately. Partial source overlays
+are not actual Linux or full-filesystem/isolated-Python qualification. No full local
+sweep, new external-provider/other-platform UAT, newer-dev integration, PR or merge.
+Subsequent candidate changes are Markdown only. AC22 is checked; task In Progress
+and AC8 open. The existing aggregate and separate queue tick must finish before
+another dispatch; they are not cancelled. Actual overall success on the next
+published head remains required.

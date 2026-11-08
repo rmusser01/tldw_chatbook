@@ -558,6 +558,11 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
                     next_timer=time.monotonic(), count=0
                 )
                 assert not expired.is_set(), "credential timer blocked the UI loop"
+                # Exercise passive recovery even before its periodic refresh fires.
+                region = case.console._console_transcript_region_or_none()
+                assert region is not None
+                region.sync_recovery()
+                assert not expired.is_set(), "passive recovery blocked the UI loop"
                 stop.press()
                 async with asyncio.timeout(1):
                     while case.rules.state(case.session_id).phase != "idle" or (

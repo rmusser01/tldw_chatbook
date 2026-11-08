@@ -50,6 +50,7 @@ Replace PR3411's orchestration implementation with a thin phase coordinator usin
 - [x] #19 The system-prompt editor keeps Apply/Clear/Cancel fully visible and usable at 80×24, including after resizing and Library feedback, with unchanged action results and targeted regression/UAT evidence.
 - [x] #20 The explicitly approved minimal inherited CI repairs pass unchanged diagnostic, query-plan, worker and markup gates, with genuine plan evidence and targeted DOM-loss/literal-rendering regressions.
 - [x] #21 The derived-artifact job selects a runner that provides its unchanged pinned Python build; the immutable artifact-version gate and all existing checks/budgets remain enforced.
+- [x] #22 Passive trace/provider recovery projection reads the currently installed controller without initializing or refreshing configuration, remains responsive during a held configuration rebuild, and yields no recovery state before a controller exists; action-time checks remain unchanged.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -173,6 +174,16 @@ Reason: retain the existing immutable build/runtime contract by selecting a supp
 1. Retain actual aggregate log 128785469019: all 15 test jobs and the four repaired static gates pass, but setup-python cannot provide pinned 3.12.11 on Ubuntu26.04. Verify supported Linux images in the official actions/python-versions manifest.
 2. Strengthen the existing Python-pin workflow regression with its supported runner, observe RED, then pin only the aggregate runner to Ubuntu24.04. Preserve Python3.12.11, asset inputs/output checks, all other jobs, timeout budgets and gates.
 3. Run targeted workflow positive/negative gate controls, lint/diff and preservation checks. Record actual failures/limits, commit-tree/CAS and push only this task branch. Do not dispatch while the existing run's merge-queue tick is active, and never cancel it; dispatch once after it completes and follow exact-head CI.
+
+
+Eighth CI follow-up (passive recovery config-lock stall, before implementation):
+ADR required: no new ADR
+ADR path: backlog/decisions/220-console-human-decision-coordination-ownership.md
+Reason: use the existing injected live-controller read contract for passive display; action dispatch and native admission/resource authority stay in their current owners.
+1. Retain actual UI10 log128794172577 on6350ea97c1. The captured watchdog stack shows transcript sync -> passive trace recovery -> controller initialization/core-state refresh -> blocking settings read under the held config-rebuild lock. The unchanged case passes in local isolation (20.01s), so do not call that a fix or widen its waits.
+2. Force the entire existing recovery-region refresh inside the held-lock response-rule regression, preserving all existing deadlines/assertions and adding a no-controller inert-display control. Publish the actual controller slot in the existing callback fixture. Observe deterministic RED before production edits.
+3. Replace passive trace recovery's initializing accessor with the already injected current-controller accessor and make the two provider-recovery display builders read the installed screen controller once; keep the actual current preparation/context-hold/message projection and leave recovery actions/permission/revision/native cleanup unchanged.
+4. Verify held-lock maintenance/rebuild Stop cases, callback/action order and no-controller behavior plus targeted recovery controls; compare lint/format, diagnostics and diffs without raising ratchets. Record exact evidence, preserve all checkout/index states, commit/push and rerun only after the active run and its queue tick complete. Never cancel unrelated runs or the tick; no merge/full sweep/newer-dev integration.
 
 <!-- SECTION:PLAN:END -->
 
@@ -523,6 +534,53 @@ new dispatch until it completes. AC8/status remain open for actual new-head CI.
 No production/asset/checker changes, relaxed budgets, newer-dev integration or
 merge. Full-index/status/HEAD and375-state preservation passes. ADR124's existing
 immutable build contract applies; no new ADR is needed.
+
+
+
+Eighth CI follow-up (2026-11-08): passive recovery no longer refreshes configuration.
+Actual run42501214598 on6350ea97c1 has fourteen successful test jobs and one UI10
+failure: held-rebuild Stop times out. Job128794172577's captured UI stack reaches
+`load_settings` through transcript sync -> passive trace recovery -> initializing
+controller/core-state refresh. That passive method is byte-identical on e08627a
+and6350 (SHA256 d4530fe564cb3045646c69729e8081b69ce77d307ecd991e506a180b2ae72ec5),
+so this is an approved minimal inherited repair. Local unchanged isolation passes
+in20.01s; it does not establish a fix. The new regression forces the full mounted
+recovery refresh under the existing held lock, retaining the original1s Stop wait,
+2s watchdog and all actual cleanup/current-session/draft assertions. It also covers
+live provider recovery reads and absent-controller display. Test-only tree
+1b8e8cd4dd771ab98cdc97cf7ca3e3eddb239c29 gives **7 failed in24.62s**, all expected
+blocking/initializer refusals (`/tmp/pr39147-ci-round8-region-red.txt`). Earlier
+fixture-assignment error is excluded from clean RED evidence.
+
+Passive trace projection now reads the existing injected current-controller
+accessor; both provider display builders read the installed screen controller
+once. An absent controller yields no recovery state. Actual recovery actions,
+preparation/context-hold projection, resource/permission/revision fences and all
+budgets remain intact. ADR220 applies; no new ADR. Executable tree
+a53cc1078a23f12f043b42ca636550aca25e5fb9: **9 passed in27.60s** (all four held/no-
+controller response-rule variants plus five live recovery binding cases), packet
+`/tmp/pr39147-ci-round8-recovery-green.txt`. Separate trace/provider recovery
+controls give **29 passed,1 failed in19.21s**; the mounted provider case refuses
+`raw_source_selection_changed` during app construction, before recovery behavior.
+Unchanged6350 reproduces it (**1 failed in9.00s**); packets
+`/tmp/pr39147-ci-round8-recovery-controls.txt` and
+`/tmp/pr39147-ci-round8-provider-baseline.txt`. No passing mounted-provider claim
+or extra fixture repair is made. Prior mounted Undo limits remain recorded.
+
+Formatting-only test lines produce051adf8e2b7e363a1521d979fd8b8aae5b580621 with
+identical test AST; production sources stay byte-identical to the passing focused
+tree. All four changed Python files have zero new Ruff findings and every changed
+range formats cleanly; inherited whole-module formatting debt is retained.
+`/tmp/pr39147-ci-round8-verification.txt` proves unchanged logger AST, initializer,
+trace/provider action paths and the complete workflow, including runner/Python/
+checks/budgets; diff check passes. Self-review traces all three passive callbacks
+through the mounted region and confirms no skipped assertion, changed allowance,
+new authority or removed fence. Full real index/status/HEAD and375 preserved states
+audit unchanged. Later changes are evidence Markdown only. This partial local
+overlay is not full-filesystem/isolated-Python or Linux qualification; no full suite,
+external-provider/other-platform UAT, newer-dev integration, PR or merge. AC8 stays
+open for actual overall success on the eventual current pushed head. Dispatch is
+held until the existing run and its separate queue tick complete; neither is cancelled.
 
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
