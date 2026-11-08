@@ -852,7 +852,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-08, TASK-36949.6: 24908 -> 24909 (+1). The seven Chat imports
     # go; ConsoleLibraryMigrationSeed moves in beside the v47->v48 migration
     # that consumes it, and the v52->v53 step names the trimming port's errors.
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22558,
+    # 2026-11-08, TASK-36949.6 fix round 1: 24909 -> 24903 (-6). The 21
+    # internal call sites use the public seams; the three aliases are gone.
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22552,
     #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
     #: The OS notification defaults add 12 lines; pin the exact measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.

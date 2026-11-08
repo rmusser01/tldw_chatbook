@@ -339,7 +339,7 @@ def test_soft_deleted_public_routes_reject_before_coordinator_envelope_read(
     def coordinator_must_not_run(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("coordinator envelope read ran before public validation")
 
-    monkeypatch.setattr(db, "_coordinate_semantic_mutation", coordinator_must_not_run)
+    monkeypatch.setattr(db, "coordinate_semantic_mutation", coordinator_must_not_run)
     with pytest.raises(ConflictError):
         if route == "update":
             db.update_message(message_id, {"content": "after"}, expected_version=2)

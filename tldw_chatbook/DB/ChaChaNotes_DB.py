@@ -346,10 +346,6 @@ def validated_thinking_blocks_json(value: object) -> str:
     raise InputError("Invalid thinking data.") from None
 
 
-_validated_provider_continuation = validated_provider_continuation  # in-module name
-_validated_thinking_blocks_json = validated_thinking_blocks_json  # in-module name
-
-
 def _require_thinking_generation_actions(value: object) -> None:
     """Reject replacement of an unsupported durable thinking envelope."""
     from tldw_chatbook.Provider_Contract.thinking_blocks import read_thinking_blocks_json
@@ -14113,7 +14109,7 @@ DELETE FROM keywords
                 raise InputError(
                     "Provider continuation requires an assistant message."
                 ) from None
-            checkpoint, provider_continuation_json = _validated_provider_continuation(
+            checkpoint, provider_continuation_json = validated_provider_continuation(
                 msg_data["provider_continuation_json"]
             )
             _validate_continuation_owner_content(
@@ -14123,7 +14119,7 @@ DELETE FROM keywords
         if msg_data.get("thinking_blocks_json") is not None:
             if role != "assistant":
                 raise InputError("Thinking data requires an assistant message.")
-            thinking_blocks_json = _validated_thinking_blocks_json(
+            thinking_blocks_json = validated_thinking_blocks_json(
                 msg_data["thinking_blocks_json"]
             )
         raw_generation_state = msg_data.get("assistant_generation_state")
@@ -14398,8 +14394,6 @@ DELETE FROM keywords
         )
         return result[0]
 
-    _coordinate_semantic_mutation = coordinate_semantic_mutation  # in-class name
-
     @staticmethod
     def _advance_semantic_graph_epoch(cursor: sqlite3.Cursor) -> None:
         """Fence a visibility/ownership mutation without changing lineage."""
@@ -14440,7 +14434,7 @@ DELETE FROM keywords
             or expected_conversation_version <= 0
         ):
             raise InputError("Expected conversation version must be positive.")
-        checkpoint, canonical = _validated_provider_continuation(
+        checkpoint, canonical = validated_provider_continuation(
             provider_continuation_json
         )
         _validate_continuation_owner_content(checkpoint, content)
@@ -14548,7 +14542,7 @@ DELETE FROM keywords
             raise InputError("Deleted must be a boolean or None.")
         checkpoint = None
         if provider_continuation_json is not None:
-            checkpoint, _canonical = _validated_provider_continuation(
+            checkpoint, _canonical = validated_provider_continuation(
                 provider_continuation_json
             )
         if (
@@ -14588,7 +14582,7 @@ DELETE FROM keywords
                     checkpoint, current["content"] if content is None else content
                 )
             return bool(
-                self._coordinate_semantic_mutation(
+                self.coordinate_semantic_mutation(
                     cursor,
                     message_id=message_id,
                     creation_reason="continuation_update",
@@ -14627,7 +14621,7 @@ DELETE FROM keywords
         checkpoint = None
         canonical = None
         if provider_continuation_json is not None:
-            checkpoint, canonical = _validated_provider_continuation(
+            checkpoint, canonical = validated_provider_continuation(
                 provider_continuation_json
             )
         if (
@@ -14782,10 +14776,10 @@ DELETE FROM keywords
         if usage_json is not None and type(usage_json) is not str:
             raise InputError("Usage data must be text or None.")
         if thinking_blocks_json is not None:
-            _validated_thinking_blocks_json(thinking_blocks_json)
+            validated_thinking_blocks_json(thinking_blocks_json)
         checkpoint = None
         if provider_continuation_json is not None:
-            checkpoint, _canonical = _validated_provider_continuation(
+            checkpoint, _canonical = validated_provider_continuation(
                 provider_continuation_json
             )
             _validate_continuation_owner_content(checkpoint, content)
@@ -14822,7 +14816,7 @@ DELETE FROM keywords
             if current["role"] != "assistant":
                 raise InputError("Generation projection requires an assistant message.")
             committed_version = int(
-                self._coordinate_semantic_mutation(
+                self.coordinate_semantic_mutation(
                     cursor,
                     message_id=message_id,
                     creation_reason="generation_replace",
@@ -14877,12 +14871,12 @@ DELETE FROM keywords
         canonical_thinking = (
             None
             if thinking_blocks_json is None
-            else _validated_thinking_blocks_json(thinking_blocks_json)
+            else validated_thinking_blocks_json(thinking_blocks_json)
         )
         checkpoint = None
         canonical_continuation = None
         if provider_continuation_json is not None:
-            checkpoint, canonical_continuation = _validated_provider_continuation(
+            checkpoint, canonical_continuation = validated_provider_continuation(
                 provider_continuation_json
             )
             _validate_continuation_owner_content(checkpoint, content)
@@ -15135,7 +15129,7 @@ DELETE FROM keywords
                     mutation_cursor, message_id, rows
                 )
 
-            self._coordinate_semantic_mutation(
+            self.coordinate_semantic_mutation(
                 cursor,
                 message_id=message_id,
                 creation_reason="attachment_replace",
@@ -15390,7 +15384,7 @@ DELETE FROM keywords
                     (now, self.client_id, message_id),
                 )
 
-            self._coordinate_semantic_mutation(
+            self.coordinate_semantic_mutation(
                 cursor,
                 message_id=message_id,
                 creation_reason="attachment_append",
@@ -15496,7 +15490,7 @@ DELETE FROM keywords
                     (position, message_id, temp_position),
                 )
 
-            self._coordinate_semantic_mutation(
+            self.coordinate_semantic_mutation(
                 cursor,
                 message_id=message_id,
                 creation_reason="attachment_select",
@@ -15663,7 +15657,7 @@ DELETE FROM keywords
         if type(preserve_descendants) is not bool:
             raise InputError("Preserve descendants must be a boolean.")
         if update_data.get("thinking_blocks_json") is not None:
-            _validated_thinking_blocks_json(update_data["thinking_blocks_json"])
+            validated_thinking_blocks_json(update_data["thinking_blocks_json"])
 
         with self.transaction(immediate=True) as cursor:
             current = cursor.execute(
@@ -15683,7 +15677,7 @@ DELETE FROM keywords
                     entity_id=message_id,
                 )
             return bool(
-                self._coordinate_semantic_mutation(
+                self.coordinate_semantic_mutation(
                     cursor,
                     message_id=message_id,
                     creation_reason="message_update",
@@ -15716,7 +15710,7 @@ DELETE FROM keywords
         if type(preserve_descendants) is not bool:
             raise InputError("Preserve descendants must be a boolean.")
         if update_data.get("thinking_blocks_json") is not None:
-            _validated_thinking_blocks_json(update_data["thinking_blocks_json"])
+            validated_thinking_blocks_json(update_data["thinking_blocks_json"])
         for row in attachments:
             if int(row.get("position", 0)) < 1:
                 raise ValueError("message_attachments positions start at 1.")
@@ -15756,7 +15750,7 @@ DELETE FROM keywords
                         mutation_cursor, message_id, attachments
                     )
 
-            self._coordinate_semantic_mutation(
+            self.coordinate_semantic_mutation(
                 cursor,
                 message_id=message_id,
                 creation_reason="message_update",
@@ -15819,7 +15813,7 @@ DELETE FROM keywords
         thinking_update_requested = "thinking_blocks_json" in update_data
         continuation_clear_requested = "provider_continuation_json" in update_data
         if update_data.get("thinking_blocks_json") is not None:
-            update_data["thinking_blocks_json"] = _validated_thinking_blocks_json(
+            update_data["thinking_blocks_json"] = validated_thinking_blocks_json(
                 update_data["thinking_blocks_json"]
             )
         if continuation_clear_requested:
@@ -15949,7 +15943,7 @@ DELETE FROM keywords
 
                     checkpoint = None
                     if current["provider_continuation_json"] is not None:
-                        checkpoint, _canonical = _validated_provider_continuation(
+                        checkpoint, _canonical = validated_provider_continuation(
                             current["provider_continuation_json"]
                         )
                     try:
@@ -15979,7 +15973,7 @@ DELETE FROM keywords
                 )
                 private_json = current["provider_continuation_json"]
                 if content_changed and private_json is not None:
-                    checkpoint, _canonical = _validated_provider_continuation(
+                    checkpoint, _canonical = validated_provider_continuation(
                         private_json
                     )
                     try:
