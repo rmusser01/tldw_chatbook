@@ -674,7 +674,7 @@ def test_rag_ingest_batch_leaves_no_indexing_handle_for_the_quit(
     indexing-DB handle after a batch, so one the embedding path opened on a
     pool thread (the attached cache store) outlived the app."""
     from concurrent.futures import ThreadPoolExecutor
-    from datetime import datetime, timezone
+    from datetime import UTC, datetime
 
     from tldw_chatbook.DB.RAG_Indexing_DB import RAGIndexingDB
     from tldw_chatbook.RAG_Search.ingestion_indexing import (
@@ -715,7 +715,7 @@ def test_rag_ingest_batch_leaves_no_indexing_handle_for_the_quit(
             IndexEntry(
                 item_id="1",
                 item_type="media",
-                last_modified=datetime.now(timezone.utc),
+                last_modified=datetime.now(UTC),
                 document={"id": "media_1", "content": "c", "title": "t", "metadata": {}},
             )
         )
@@ -749,7 +749,10 @@ def test_owner_idle_close_never_aborts_a_straggler_write(owner: str, tmp_path: P
         close = db.close_idle_connections  # what the runtime's dispose runs
     else:
         db = RAGIndexingDB(tmp_path / "rag_indexing.db")
-        close = lambda: _retire_indexing_db(db)  # noqa: E731
+
+        def close() -> None:
+            _retire_indexing_db(db)
+
     with db.transaction() as conn:
         conn.execute("CREATE TABLE IF NOT EXISTS quit_probe (n TEXT NOT NULL)")
     entered, release = threading.Event(), threading.Event()

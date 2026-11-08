@@ -710,7 +710,7 @@ def _open_indexing_db(path: Path) -> Optional[Any]:
             return None
 
 
-def _retire_indexing_db(indexing_db: Optional[Any]) -> None:
+def _retire_indexing_db(indexing_db: Any | None) -> None:
     """Close every thread's idle handle of an installed indexing DB (TASK-39117).
 
     The embedding cache can open handles on executor threads; this owner's
@@ -1832,17 +1832,17 @@ async def backfill_semantic_index(
 
 async def _backfill_with(
     service: Any,
-    indexing_db: Optional[Any],
-    summary: Dict[str, Any],
+    indexing_db: Any | None,
+    summary: dict[str, Any],
     *,
-    media_db: Optional[Any],
-    chachanotes_db: Optional[Any],
+    media_db: Any | None,
+    chachanotes_db: Any | None,
     item_types: Sequence[str],
     page_size: int,
     batch_size: int,
-    progress_callback: Optional[Callable[[Dict[str, Any]], None]],
+    progress_callback: Callable[[dict[str, Any]], None] | None,
     reconcile_for_recovery: bool,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     if reconcile_for_recovery:
         from .recovery import rebuild_projection
 

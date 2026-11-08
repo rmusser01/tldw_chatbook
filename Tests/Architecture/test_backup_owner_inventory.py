@@ -305,7 +305,9 @@ def test_sqlite_registry_members_have_explicit_census_rows():
     rows = {
         owner: (module, kinds)
         for owner, module, kinds in re.findall(
-            r"^\| sqlite:([^ |]+) \| ([^ |]+) \| ([^ |]+) \|", DOC.read_text(), re.M
+            r"^\| sqlite:([^ |]+) \| ([^ |]+) \| ([^ |]+) \|",
+            DOC.read_text(),
+            re.MULTILINE,
         )
     }
     assert {

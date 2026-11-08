@@ -11,13 +11,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
 
+from tldw_chatbook.Backup_Recovery.config_adapter import _LocalSQLite
 from tldw_chatbook.Backup_Recovery.models import (
     OwnerAdapter,
     StorageItem,
     discovery_context,
     storage_logical_id,
 )
-from tldw_chatbook.Backup_Recovery.config_adapter import _LocalSQLite
 from tldw_chatbook.DB.recovery_operations import _SQLiteDeclaration
 from tldw_chatbook.DB.recovery_sqlite import _checked_capture, _validate_sqlite
 

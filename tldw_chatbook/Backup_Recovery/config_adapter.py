@@ -673,7 +673,6 @@ def _excluded_root(config, owner, path, *, kind, local_id=""):
     )
 
 
-
 @dataclass(frozen=True)
 class _LocalSQLite:
     """One exact SQLite store under the user data dir, with its sidecars,
@@ -723,6 +722,7 @@ class _LocalSQLite:
 
     def relocate(self, candidate, mapping):
         raise ValueError(self.reason)
+
 
 class _Generated(_RawDeclaration):
     def discover(self, config):
