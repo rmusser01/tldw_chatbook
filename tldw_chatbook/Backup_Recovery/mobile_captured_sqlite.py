@@ -601,10 +601,10 @@ class _CapturedSQLite:
             _verify_candidate(self, restrictions, candidate, digest)
         for (purpose, family), (
             connection,
-            restrictions,
+            _restrictions,
             tables,
-            candidate,
-            digest,
+            _candidate,
+            _digest,
         ) in members:
             for table in sorted(tables):
                 cursor = connection.execute(
@@ -655,10 +655,10 @@ class _CapturedSQLite:
             _verify_candidate(self, restrictions, candidate, digest)
         for (purpose, family), (
             connection,
-            restrictions,
+            _restrictions,
             tables,
-            candidate,
-            digest,
+            _candidate,
+            _digest,
         ) in members:
             if family != "chat":
                 continue
@@ -1214,7 +1214,7 @@ def _members(scope):
     if scope.read_budget is not None:
         scope.read_budget.container(len(originals) * 8)
     first = originals[0][0]
-    for partition, document, sealed in originals:
+    for partition, _document, sealed in originals:
         partition.check()
         source = (
             scope.captured.source
@@ -1243,7 +1243,7 @@ def _members(scope):
         _mobile_partition=first,
     )
     schedules = {}
-    for partition, document, sealed in originals:
+    for partition, document, _sealed in originals:
         partition.check()
         with scope.session._discovery_reads(private_sqlite=True):
             projected = partition.project(scope.session, inventory)
@@ -1508,7 +1508,7 @@ def _sqlite_reads(captured, *, password, cancel):
             # Both original authenticated before-images are available before
             # current discovery; no target member is made a captured source.
             schedules = _members(scope)
-            for purpose, partition, document, sealed, root in authenticated:
+            for purpose, _partition, _document, sealed, root in authenticated:
                 members = schedules[purpose]
                 # Exhaust the generator, including final sealed-byte verification,
                 # before any connection's single native budget starts.

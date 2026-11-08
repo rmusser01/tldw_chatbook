@@ -3183,7 +3183,9 @@ class MaintenanceSession:
                 raise ValueError("mobile_selector_review_changed")
             # Native owner transitions govern this destination; other candidates
             # retain their original strict physical review.
-            for current, original in zip(current_selectors, reviewed_selectors):
+            for current, original in zip(
+                current_selectors, reviewed_selectors, strict=False
+            ):
                 if (
                     current["destination_identity"]
                     == current_review.destination.identity

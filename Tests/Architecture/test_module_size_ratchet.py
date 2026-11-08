@@ -149,7 +149,9 @@ _BUDGETS: dict[str, int] = {
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
-    "tldw_chatbook/app_served.py": 125,
+    # PR3345: explicit owner source-count waiver; exact measurements, no runtime changes.
+    "tldw_chatbook/app_served.py": 150,
+    "tldw_chatbook/Backup_Recovery/storage_admission.py": 4000,
     # TASK-33011: the Library ingest queue moved verbatim out of app.py. At
     # 4,999 lines it is larger than two rows below, so it is born governed.
     # 2026-10-03 (PR #2993): TASK-20973's provenance block added 16 lines;

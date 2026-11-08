@@ -1,4 +1,4 @@
-"""TASK-38611: settlement never waits unbounded and unsent failures don't settle."""
+"""MCP settlement retains custody; proven unsent refusals keep a live session."""
 
 from __future__ import annotations
 
@@ -19,13 +19,15 @@ class _UnreapableStdin:
 
 
 class _UnreapableProcess:
-    """A child that ignores terminate/kill and never reports an exit."""
+    """A child that reports exit only when this fixture explicitly releases it."""
 
     def __init__(self) -> None:
         self.stdin = _UnreapableStdin()
         self.stdout = None
         self.stderr = None
-        self.returncode = None  # never set: the D-state shape
+        self.returncode = None
+        self.exited = asyncio.Event()
+        self.kill_attempted = asyncio.Event()
         self.terminate_calls = 0
         self.kill_calls = 0
 
@@ -34,10 +36,15 @@ class _UnreapableProcess:
 
     def kill(self) -> None:
         self.kill_calls += 1
+        self.kill_attempted.set()
+
+    def finish(self) -> None:
+        self.returncode = -1
+        self.exited.set()
 
     async def wait(self) -> int:
-        await asyncio.Future()
-        return -1
+        await self.exited.wait()
+        return self.returncode
 
 
 def _settled_bare_connection(process=None):
@@ -47,36 +54,50 @@ def _settled_bare_connection(process=None):
 
 
 @pytest.mark.asyncio
-async def test_settle_returns_within_grace_when_child_is_unreapable(
+async def test_failed_settlement_retains_custody_until_child_exit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An unreapable child surfaces the original failure, not an endless wait."""
     monkeypatch.setattr(client_module, "_TERMINATE_TIMEOUT_SECONDS", 0.05)
-    monkeypatch.setattr(client_module, "_SETTLE_EXIT_GRACE_SECONDS", 0.05)
+    monkeypatch.setattr(
+        client_module, "_SETTLE_EXIT_GRACE_SECONDS", 0.05, raising=False
+    )
     connection = _settled_bare_connection()
     process = connection.process
-
-    # Must return (no raise) well inside the 2s bound; pre-fix this hangs.
-    await asyncio.wait_for(connection._settle_failed_request(), 2.0)
-
-    assert process.terminate_calls >= 1 and process.kill_calls >= 1
-    assert process.returncode is None  # still unreaped, as designed
+    waiter = asyncio.create_task(connection._settle_failed_request())
+    try:
+        await asyncio.wait_for(process.kill_attempted.wait(), 2.0)
+        await asyncio.sleep(0.25)
+        assert process.terminate_calls >= 1 and process.kill_calls >= 1
+        assert process.returncode is None
+        assert not waiter.done(), "settlement returned while native work remained"
+        process.finish()
+        await asyncio.wait_for(waiter, 2.0)
+    finally:
+        process.finish()
+        await asyncio.gather(waiter, return_exceptions=True)
 
 
 @pytest.mark.asyncio
-async def test_shared_request_custody_wait_is_bounded(
+async def test_shared_request_retains_custody_until_child_exit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """_retain_shared_request gives up after the grace period."""
-    monkeypatch.setattr(client_module, "_SETTLE_EXIT_GRACE_SECONDS", 0.05)
+    monkeypatch.setattr(
+        client_module, "_SETTLE_EXIT_GRACE_SECONDS", 0.05, raising=False
+    )
     connection = _settled_bare_connection()
     future = asyncio.get_running_loop().create_future()
     future.cancel()
-
-    with pytest.raises(RuntimeError, match="MCP transport unavailable"):
-        await asyncio.wait_for(connection._retain_shared_request(future), 2.0)
-
-    assert connection.process.returncode is None
+    waiter = asyncio.create_task(connection._retain_shared_request(future))
+    try:
+        await asyncio.sleep(0.15)
+        assert connection.process.returncode is None
+        assert not waiter.done(), "shared custody returned before native exit"
+        connection.process.finish()
+        with pytest.raises(RuntimeError, match="MCP transport unavailable"):
+            await asyncio.wait_for(waiter, 2.0)
+    finally:
+        connection.process.finish()
+        await asyncio.gather(waiter, return_exceptions=True)
 
 
 @pytest.mark.asyncio
@@ -118,3 +139,28 @@ async def test_unsent_request_failure_does_not_tear_down_the_connection(
     assert result["content"][0]["text"] == "ok"
     assert not connection._reader_unavailable
     assert getattr(connection, "_request_settlement", None) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_type", [ValueError, LookupError])
+async def test_cleanup_exception_keeps_custody_until_child_exit(error_type):
+    connection = _settled_bare_connection()
+    entered = asyncio.Event()
+
+    async def fail_cleanup():
+        entered.set()
+        raise error_type("controlled cleanup failure")
+
+    connection._on_transport_failure = fail_cleanup
+    waiter = asyncio.create_task(connection._settle_failed_request())
+    try:
+        await asyncio.wait_for(entered.wait(), 2.0)
+        await asyncio.sleep(0.1)
+        assert connection.process.returncode is None
+        assert not waiter.done(), "cleanup failure released a live child"
+        connection.process.finish()
+        with pytest.raises(error_type, match="controlled cleanup failure"):
+            await asyncio.wait_for(waiter, 2.0)
+    finally:
+        connection.process.finish()
+        await asyncio.gather(waiter, return_exceptions=True)

@@ -347,7 +347,7 @@ def _existing_preview_target(path: str | Path):
                 os.stat(Path(str(selected) + suffix), follow_symlinks=False)
             except FileNotFoundError:
                 continue
-            raise ValueError("preview_preflight_orphaned_sidecar")
+            raise ValueError("preview_preflight_orphaned_sidecar") from None
         return None
     return selected, identity
 

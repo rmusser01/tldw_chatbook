@@ -789,3 +789,20 @@ def test_no_audio_playback_module_builds_a_cmd_exe_argv():
                 if any(value in {"cmd", "cmd.exe", "/c", "/k"} for value in values):
                     offenders.append(f"{source.relative_to(package)}:{node.lineno}")
     assert offenders == []
+
+
+def test_windows_fallback_opens_the_validated_resolved_audio_path(
+    tmp_path, monkeypatch
+):
+    spawned, opened = _windows_host(monkeypatch)
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    clip = tmp_path / "clip.mp3"
+    clip.write_bytes(b"fixture")
+    alias = nested / ".." / clip.name
+    assert alias != clip.resolve()
+
+    assert SimpleAudioPlayer().play(alias) is True
+
+    assert spawned == []
+    assert [call[0] for call in opened] == [str(clip.resolve())]
