@@ -275,13 +275,17 @@ def test_read_only_attachment_inspection_returns_valid_profile_without_a_databas
 def test_string_attachment_inspection_rejects_path_validation_violation(
     tmp_path: Path,
 ) -> None:
-    unsafe_path = tmp_path / "private;card.json"
-    unsafe_path.write_text(
+    # TASK-38227: dev pinned this with "private;card.json"; ";" is a legal
+    # file-name character this PR admits, so an EXISTING card reached through
+    # the kept double-parent spelling carries the pin now.
+    (tmp_path / "a" / "b").mkdir(parents=True)
+    (tmp_path / "private-card.json").write_text(
         json.dumps(_card(attachment=_valid_attachment())),
         encoding="utf-8",
     )
+    unsafe_path = f"{tmp_path}/a/b/../../private-card.json"
 
-    result = character_lib.inspect_character_card_tts_attachment(str(unsafe_path))
+    result = character_lib.inspect_character_card_tts_attachment(unsafe_path)
 
     assert result is None
 

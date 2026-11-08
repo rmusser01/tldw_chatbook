@@ -1686,10 +1686,10 @@ class EnhancedFileDialog(BaseFileDialog):
                 return
 
             # This is a *local* file picker: the user navigates their own
-            # filesystem, so ``~/`` (home), ``../`` (parent), and filenames
-            # containing shell metacharacters (``;``, ``|``, ``$(`` ...) are all
-            # legitimate here -- ``validate_path_simple`` would reject every one
-            # of them and break navigation. The one input that is never a valid
+            # filesystem, so ``~/`` (home) and ``../..`` (parents) are
+            # legitimate here -- ``validate_path_simple`` would reject both and
+            # break navigation (it also refused shell metacharacters such as
+            # ``;`` until TASK-38227). The one input that is never a valid
             # path is a NUL byte, so reject that explicitly (before any ``Path``
             # call, which would otherwise raise a bare ValueError).
             if "\x00" in path_str:
@@ -2663,8 +2663,9 @@ class EnhancedSelectDirectory(EnhancedFileDialog):
         Validation mirrors ``_on_path_input_submit`` (the Ctrl+L bar):
         a local file picker navigates the user's own filesystem, so
         ``validate_path_simple`` is deliberately NOT applied here -- it
-        rejects legitimate ``~/``, ``../``, and shell-metacharacter path
-        segments and would break navigation. The one input that is never
+        rejects legitimate ``~/`` and ``../..`` path segments (and, until
+        TASK-38227, shell metacharacters) and would break navigation. The
+        one input that is never
         a valid path (a NUL byte) is rejected explicitly before any
         ``Path`` construction, which would otherwise raise a bare
         ``ValueError`` out of this handler (Qodo review, TASK-16478).

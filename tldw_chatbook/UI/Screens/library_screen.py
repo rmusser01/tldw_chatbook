@@ -22019,8 +22019,9 @@ class LibraryScreen(BaseAppScreen):
         the same base-directory-free validator the rest of this codebase
         already uses for user-chosen save/output paths (e.g. this screen's
         note import path, ``settings_screen``'s
-        storage-location fields). It rejects null bytes and other
-        shell-metacharacter/traversal patterns; a rejected path is a quiet
+        storage-location fields). It rejects null bytes and traversal
+        patterns (shell metacharacters are legal file-name characters and
+        pass since TASK-38227); a rejected path is a quiet
         warning notice with no write and no crash, same as any other
         failure in this method. The write itself is
         ``library_file_export.export_library_note_file`` (TASK-34000.3): it

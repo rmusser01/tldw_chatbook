@@ -1336,7 +1336,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: ``get_focusable_widget_at``, before Textual focuses its target, so the
     #: first click after a resize is not read as programmatic: 38149 -> 38161
     #: lines, 1375 -> 1376 methods.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38161, 1376),
+    #: 2026-11-08, TASK-38227 (owner decision "expand limits, never contort
+    #: code"): the note-export docstring now says shell metacharacters are legal
+    #: file-name characters since the validate_path_simple flip: 38161 -> 38162
+    #: lines, 1376 methods.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38162, 1376),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

@@ -1,5 +1,10 @@
 # Lessons: what counts as evidence a change works
 
+## A `tmp_path/../..` spelling leaves the basetemp, and a mutation run can plant the file a later run trips on (TASK-38227, 2026-11-06)
+
+**Incident.** Re-pinning seven caller tests from a `;` name onto the kept `../..` refusal, the first draft wrote `tmp_path / ".." / ".." / "report-unexpected.json"`. Alone, each passed. The mutation that drops `"../.."` from the validator let the spelling through, so the real code wrote `report-unexpected.json` and `bad-name.wav` two levels up: into the shared `tmp/<dir>/` that every later basetemp sits under. The paired head arm then failed two of those tests on `assert not output.exists()`, with the path resolving to the files the mutation had left behind an hour earlier. Running the two paired arms at the same time also produced 60-odd head-only `ERROR`s in `Tests/Backup_Recovery/` fixtures; run alone and in sequence, the same six files were red-for-red identical on both arms.
+
+**What to do.** A traversal spelling in a test resolves INSIDE `tmp_path`: `tmp_path / "a" / "b" / ".." / ".." / name`, with `a/b` absent, so even a validator that accepts it cannot write outside the test's directory, and `exists()` is False whatever earlier runs left around. After a mutation sweep, list the basetemps' parent for files that are not directories before trusting a later `exists()` assertion. Run the two arms of a paired gate one after the other, not concurrently; a head-only `ERROR` in a fixture that both arms share is re-run alone before it is called a regression.
 ## A census's "gone" row can be a live producer the scanner stopped seeing (TASK-39053, 2026-11-06)
 
 **Incident.** The backup owner inventory reported 194 gone producer rows, and the task that filed it read them as removed or moved code. But 24 of them were live `os.replace` / `os.unlink` calls. Their modules had switched to `from tldw_chatbook.Utils.platform_files import os`, and the census only bound `os` from `import os`. Other reviewed rows looked gone for the same kind of reason:

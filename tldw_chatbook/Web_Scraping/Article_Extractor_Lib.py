@@ -910,7 +910,8 @@ def scrape_from_filtered_sitemap(sitemap_file: str, filter_function) -> list:
 
     :param sitemap_file: Path to the sitemap file. Rejected by
         `Utils.path_validation` -- and the file never opened -- if it is a
-        traversal spelling, carries shell metacharacters, or does not exist.
+        traversal spelling or does not exist (shell metacharacters are legal
+        file-name characters and pass since TASK-38227).
     :param filter_function: A function that takes a URL and returns True if it should be scraped
     :return: List of scraped articles (empty if the path or the XML is refused)
     """
