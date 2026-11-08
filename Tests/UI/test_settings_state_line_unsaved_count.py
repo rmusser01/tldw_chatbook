@@ -1018,8 +1018,21 @@ async def test_providers_models_unreadable_snapshot_preferences_keep_the_reload_
 async def test_revert_category_refuses_a_category_its_panel_serves(request) -> None:
     """TASK-1378.2 review M3: ``_revert_category`` would pop a registered
     category's draft and toast "reverted" without repainting it; the panel's
-    ``revert`` owns that discard, so the screen's path refuses."""
-    screen = SettingsScreen(_providers_app())
-    for category in CATEGORY_PANELS:
-        with pytest.raises(ValueError, match="registered panel"):
-            screen._revert_category(category)
+    ``revert`` owns that discard, so the screen's path refuses and the draft
+    stays (on a mounted screen, so the old path runs to its end; rev2 N2)."""
+    host = DestinationHarness(_providers_app(), "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _settle_settings(pilot)
+        screen = _active_destination_screen(host)
+        for category in CATEGORY_PANELS:
+            draft = SettingsDraft(category=category)
+            draft.set_value("probe", "saved", "edited")
+            screen._settings_drafts[category] = draft
+            try:
+                screen._revert_category(category)
+            except ValueError as exc:
+                refused = "registered panel" in str(exc)
+            else:
+                refused = False
+            assert refused, category
+            assert screen._settings_drafts.get(category) is draft, category
