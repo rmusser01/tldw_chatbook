@@ -1588,14 +1588,16 @@ and copies already on a sync server are not removed; the confirm adds "Its
 file in the synced folder stays on disk." or "Copies on your sync server are
 not removed." when it knows this note has either. The note's keywords stay:
 only its link to them goes. Keyword and folder links to the note that Sync v2
-had not sent yet are not sent afterwards, but a keyword or folder you removed
-from the note is still removed on your sync server. While another change to your notes is still
-running, Delete forever deletes nothing and the view says "Delete forever
-waits: another change to your notes is still running." until that change
-finishes. While a notes import is still running, **Restore** (r) restores
-nothing and the view says "Restore waits: another change to your notes is
-still running." Focus stays on the row, and the line clears when the import
-ends.
+had not sent yet are not sent afterwards. A keyword or folder you removed from
+the note, and did not add back, is still removed on your sync server once it
+syncs. The one exception: if the server had received that keyword or folder
+but not yet confirmed it to this device, the server keeps it. While another
+change to your notes is still running, Delete forever deletes nothing and the
+view says "Delete forever waits: another change to your notes is still
+running." until that change finishes. While a notes import is still running,
+**Restore** (r) restores nothing and the view says "Restore waits: another
+change to your notes is still running." Focus stays on the row, and the line
+clears when the import ends.
 
 ## Keyboard & commands
 
