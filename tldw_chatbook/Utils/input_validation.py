@@ -143,6 +143,10 @@ def validate_batch_transcription_provider(value: object) -> str:
     Raises:
         ValueError: The value is not a supported provider identifier.
     """
+    from .local_stt_providers import provider_release_deferral
+
+    if type(value) is str and (reason := provider_release_deferral(value)):
+        raise ValueError(reason)
     return _BATCH_TRANSCRIPTION_PROVIDER.validate_python(value, strict=True)
 
 CONSOLE_DRAFT_MAX_LENGTH = 100_000

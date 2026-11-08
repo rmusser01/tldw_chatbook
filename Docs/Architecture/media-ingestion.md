@@ -27,6 +27,12 @@ The Library screen captures form options through `Library/library_ingest_state.p
 
 1. **Admission**: the source is classified — `article`, `audio`, or `video` (video hosts: youtube/youtu.be/vimeo/dailymotion); URLs are canonicalized and egress-guarded (`Utils/egress.guarded_fetch_httpx`); local files are typed by extension.
    Local Library form submissions check the selected transcription runtime and exact model off-thread before queue creation. Missing selected packages block Start; a fresh import check catches incomplete Whisper caches and missing managed Parakeet models/VAD. Directory checks use the admission scan limit, and generation/snapshot fences discard stale results. Checks never download or load model weights. Explicit external Parakeet folders retain their verified-source and VAD-install consent flow; server imports do not consult local STT readiness. Worker admission remains authoritative if files change afterwards.
+Chatbook 0.2.4 refuses saved Lightning canonical/legacy identities categorically
+before ordinary provider/language/runtime validation or queue effects. Saved
+settings remain unchanged; obsolete Lightning install warnings are suppressed
+without hiding other prerequisite evidence. See ADR-025; no automatic provider
+substitution or tokenizer-guard relaxation is permitted.
+
 Library local-STT dispatch preserves HTTP(S) input as an immutable `URLIngestSource` in the executor request; it never passes URL text through filesystem `Path`. The worker forwards the original text to this same guarded parse pipeline. File and PCM-buffer sources retain their existing contracts.
 
 2. **Extraction** per type: web articles (trafilatura, streamed with a size cap; permanent vs retryable errors distinctly typed), video (yt-dlp download → audio extraction → STT; transcripts keyed by whisper model), audio (STT), PDF, ebooks, images (OCR), plaintext. Empty extraction hard-fails (`_reject_empty_extraction`).

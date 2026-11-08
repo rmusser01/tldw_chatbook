@@ -167,7 +167,7 @@ class Availability:
     """Whether dictation can run, and what to do about it if not."""
 
     ok: bool
-    kind: str = "ok"  # "ok" | "missing-capture" | "missing-provider"
+    kind: str = "ok"  # "ok" | "missing-capture" | "missing-provider" | "deferred-provider"
     reason: str = ""
     remedy: str = ""
 
@@ -205,15 +205,27 @@ def _faster_whisper_model_is_local(model: str) -> bool:
     return True
 
 
+def configured_provider() -> str:
+    """Read the saved selection without normalization or persistence."""
+    configured = get_cli_setting("transcription", "default_provider", None) or get_cli_setting(
+        "STT_settings", "default_stt_provider", ""
+    )
+    return str(configured or "")
+
+
 def probe() -> Availability:
-    """Report whether dictation is usable, distinguishing the two failures.
+    """Report whether dictation is usable, preserving explicit refusal.
 
     Returns:
         `Availability(ok=True)` when a capture backend and a transcription
         provider are both present; otherwise `ok=False` with `kind` set to
-        `"missing-capture"` or `"missing-provider"` and a UI-ready
+        `"missing-capture"`, `"missing-provider"` or `"deferred-provider"` and a UI-ready
         `reason`/`remedy` pair for whichever is absent.
     """
+    from tldw_chatbook.Utils.local_stt_providers import provider_release_deferral
+
+    if reason := provider_release_deferral(configured_provider()):
+        return Availability(ok=False, kind="deferred-provider", reason=reason)
     if not capture_available():
         logger.debug("Console dictation unavailable: no capture backend")
         return Availability(
@@ -319,7 +331,7 @@ def _dictation_model_override() -> str | None:
     return value or None
 
 
-def resolve() -> EffectiveConfig | None:
+def resolve(*, provider_override: str | None = None) -> EffectiveConfig | None:
     """Choose the provider before the dictation service gets the chance.
 
     `LazyLiveDictationService._initialize_streaming_transcriber` rewrites the
@@ -356,22 +368,26 @@ def resolve() -> EffectiveConfig | None:
     exactly the "no model given" case they use for direct calls, so this
     needs no matching change on that side.
 
-    Returns:
-        The settings to run with, or None when no local provider is installed.
-    """
-    installed = installed_local_providers()
-    if not installed:
-        return None
+    Args:
+        provider_override: Exact selected local provider, without fallback if absent.
 
+    Returns:
+        The settings to run with, or None for an unavailable selection.
+    """
     # Key names matter and are easy to get wrong: the [transcription] section
     # uses `default_provider`/`default_model`/`default_language` (config.py:3333),
     # and the raw TOML section `STTSettings` is stored in the loaded config under
     # `STT_settings` (config.py:1548). Reading `provider`/`model`/`language` or
     # `STTSettings` silently returns the default and defeats this whole function.
-    configured = get_cli_setting(
-        "transcription", "default_provider", None
-    ) or get_cli_setting("STT_settings", "default_stt_provider", "")
+    configured = provider_override if provider_override is not None else configured_provider()
     configured = str(configured or "")
+    from tldw_chatbook.Utils.local_stt_providers import provider_release_deferral
+
+    if provider_release_deferral(configured):
+        return None
+    installed = installed_local_providers()
+    if not installed or (provider_override is not None and configured not in installed):
+        return None
 
     if configured in installed:
         provider = configured

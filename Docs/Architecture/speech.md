@@ -194,12 +194,26 @@ container-owned controls retain their normal route (TASK-36694; ADR-025/031).
 ## Dictation (dataflow)
 
 1. The Console mic button starts a streaming dictation session (16 kHz mono PCM, bounded 60 s / 1.92 MiB).
-2. Provider resolution (`Chat/console_voice_input.py::resolve()`) returns unavailable only when no local provider is installed. It uses the configured provider (`[transcription] default_provider`, legacy `[STT_settings]` fallback) when installed; otherwise it selects the first installed provider in `LOCAL_PROVIDER_MODULES` declaration order. Replacing a configured provider emits `VoiceProviderOverridden`, which the Console reports once per app run with a warning toast naming both providers. At startup, `app.py` also records a WARNING `speech_stack_available` diagnostic naming both providers: status `fallback` when VAD is available, or `degraded-fallback` when VAD is missing. The `[dictation] model` override wins; non-faster-whisper providers get `model=None` so they never inherit a cross-provider model name (a real past 404 failure).
+2. Provider resolution (`Chat/console_voice_input.py::resolve()`) returns unavailable when no local provider is installed or the selected Lightning identity is release-deferred. It uses the configured provider (`[transcription] default_provider`, legacy `[STT_settings]` fallback) when installed; for non-deferred unavailable selections it selects the first installed provider in `LOCAL_PROVIDER_MODULES` declaration order. Replacing a configured provider emits `VoiceProviderOverridden`, which the Console reports once per app run with a warning toast naming both providers. At startup, `app.py` also records a WARNING `speech_stack_available` diagnostic naming both providers: status `fallback` when VAD is available, or `degraded-fallback` when VAD is missing. The `[dictation] model` override wins; non-faster-whisper providers get `model=None` so they never inherit a cross-provider model name (a real past 404 failure).
 3. Partials stream into the composer (`set_voice_partial`); spoken commands with the `[dictation] command_prefix` (default "computer") can send, insert new-lines, or stop.
 4. Stop (button, command, or limit) → `stop_and_transcribe()` blocks for the final transcript; failure offers a faster-whisper retry.
 5. Insertion is caret-aware and trims only spaces/tabs (a full `.strip()` used to eat spoken `new-line` commands); for non-live sessions the draft is appended to the store and banked undo history is deliberately dropped.
 
 Note: the `Event_Handlers/Audio_Events` dictation message family (`DictationEvent` + `VoiceCommandEvent`) serves the legacy dictation window (the voice widget was removed, task-34898) — the Console mic path is `Chat/console_voice_input.py` + `UI/Console_Modules/dictation.py`.
+
+### Lightning release availability (0.2.4)
+
+ADR-025 records the temporary public deferral. Shared identity and read-only alias
+normalization remain; public discovery/default/install paths omit Lightning even
+if physically present. Console probe/resolve, facade file/buffer/stream/models,
+Lazy Start, native process/runtime admission and Library batch validation refuse
+before their effects. Meetings preserve exact explicit provider/model/language
+precedence and never replace a missing or deferred exact override. Saved values
+are not migrated by reading or refusal; a fresh retained Dictation view permits
+only deliberate supported replacement through its existing atomic settings owner.
+Initialized-view capture/callback custody and terminal retirement stay with the
+existing parent/view owners, not an availability flag or a forced native close.
+ADR-335/318 tokenizer, immutable asset and cache-authority contracts are unchanged.
 
 ## Hands-free loop
 
@@ -207,7 +221,7 @@ Engine fork at entry: realtime (opt-in `[realtime] enabled`) or the pipeline FSM
 
 ## Config keys (exact sections)
 
-`[app_tts]` (the TTS section — there is **no** `[tts]`/`[speech]`), `[HiggsSettings]`, `[dictation]` (model, command_prefix, handsfree_engine, privacy.local_only), `[transcription]` (default_provider/model/language, provider knobs; legacy `[STT_settings]`), `[diarization]`, opt-in `[realtime]`, `[database] tts_profiles_db_path`. Auto-speak preferences are per-conversation session metadata, not config.
+`[app_tts]` (the TTS section — there is **no** `[tts]`/`[speech]`), `[HiggsSettings]`, `[dictation]` (model, command_prefix, handsfree_engine, privacy.local_only), `[transcription]` (default_provider/model/language, provider knobs; legacy TOML `[STTSettings]`, typed settings key `STT_settings`), `[diarization]`, opt-in `[realtime]`, `[database] tts_profiles_db_path`. Auto-speak preferences are per-conversation session metadata, not config.
 
 ## Failure behaviors
 

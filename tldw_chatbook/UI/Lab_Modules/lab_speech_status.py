@@ -71,7 +71,6 @@ def speech_local_dependency_availability(
                 for module_name in (
                     "nemo_toolkit",
                     "faster_whisper",
-                    "lightning_whisper_mlx",
                     "parakeet_mlx",
                 )
             ),

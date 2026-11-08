@@ -52,7 +52,7 @@ LOCAL_PROVIDER_MODULES: dict[str, tuple[str, ...]] = {
 
 #: Every provider that runs entirely on this machine, in preference order.
 #: This is what privacy mode (`dictation.privacy.local_only`) means by "local",
-#: and what the Console resolver may choose from. One tuple, both consumers.
+#: Availability is separate: retained identities can be release-deferred.
 LOCAL_STT_PROVIDERS: tuple[str, ...] = tuple(LOCAL_PROVIDER_MODULES)
 
 #: Providers usable only on Apple Silicon. Mirrors
@@ -109,6 +109,8 @@ def provider_installed(provider: str) -> bool:
     Returns:
         True when the provider is usable on this machine right now.
     """
+    if provider_release_deferral(provider):
+        return False
     module_names = LOCAL_PROVIDER_MODULES.get(provider)
     if module_names is None:
         return False
@@ -156,3 +158,14 @@ def normalize_provider_id(provider: str | None) -> str | None:
     if provider is None:
         return None
     return LEGACY_PROVIDER_IDS.get(provider, provider)
+
+
+def provider_release_deferral(provider: str | None) -> str | None:
+    """Return the categorical release refusal without probing or changing state."""
+    if normalize_provider_id(provider) == "lightning-whisper-mlx":
+        return (
+            "Lightning Whisper MLX is deferred for Chatbook 0.2.4. Select another "
+            "supported transcription provider, such as faster-whisper. Your saved "
+            "settings have not been changed."
+        )
+    return None

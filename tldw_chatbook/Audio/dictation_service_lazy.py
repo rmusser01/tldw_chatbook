@@ -841,6 +841,18 @@ class LazyLiveDictationService:
 
             self._notify_state_change()
 
+            from tldw_chatbook.Utils.local_stt_providers import (
+                provider_release_deferral,
+            )
+
+            provider = self.transcription_provider
+            if provider in (None, "auto"):
+                provider = get_cli_setting("transcription.default_provider", "faster-whisper")
+            if reason := provider_release_deferral(provider):
+                self._notify_error(TranscriptionInitializationError(reason))
+                self._notify_state_change()
+                return False
+
             # Initialize services (lazy loading happens here)
             try:
                 # This will trigger lazy initialization

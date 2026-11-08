@@ -413,9 +413,9 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
     ),
     "mlx_whisper": _feature(
         "mlx_whisper",
-        "Legacy MLX Whisper providers",
+        "Legacy Apple Silicon transcription bundle",
         AREA_MEDIA,
-        ("lightning-whisper-mlx", "parakeet-mlx"),
+        ("parakeet-mlx",),
         "Library > Import/Export",
         "MLX transcription",
         OWNER_LIBRARY_MEDIA,
@@ -519,15 +519,6 @@ OPTIONAL_FEATURES: dict[str, OptionalFeatureInfo] = {
         ("transcribe_cpp",),
         "Library > Import/Export",
         "transcribe.cpp transcription",
-        OWNER_LIBRARY_MEDIA,
-    ),
-    "transcription_lightning_whisper": _feature(
-        "transcription_lightning_whisper",
-        "Lightning Whisper MLX transcription",
-        AREA_MEDIA,
-        ("lightning-whisper-mlx",),
-        "Library > Import/Export",
-        "Lightning Whisper transcription",
         OWNER_LIBRARY_MEDIA,
     ),
     "transcription_parakeet": _feature(
@@ -1049,14 +1040,6 @@ def check_audio_processing_deps() -> bool:
     # Probe native MLX backends without importing them. Importing these modules
     # can initialize Metal and abort a headless process before Python can catch
     # an exception; the feature-specific runtime loader performs the real import.
-    lightning_whisper_available = False
-    if sys.platform == "darwin":
-        lightning_whisper_available = _check_dependency_installed(
-            "lightning_whisper_mlx"
-        )
-    else:
-        DEPENDENCIES_AVAILABLE["lightning_whisper_mlx"] = False
-
     parakeet_mlx_available = False
     if sys.platform == "darwin":
         parakeet_mlx_available = _check_dependency_installed("parakeet_mlx")
@@ -1073,7 +1056,7 @@ def check_audio_processing_deps() -> bool:
     audio_available = core_available
     DEPENDENCIES_AVAILABLE["audio_processing"] = audio_available
     DEPENDENCIES_AVAILABLE["faster_whisper"] = faster_whisper_available
-    DEPENDENCIES_AVAILABLE["lightning_whisper_mlx"] = lightning_whisper_available
+    DEPENDENCIES_AVAILABLE["lightning_whisper_mlx"] = False
     DEPENDENCIES_AVAILABLE["parakeet_mlx"] = parakeet_mlx_available
     DEPENDENCIES_AVAILABLE["qwen2audio"] = qwen2audio_available
     DEPENDENCIES_AVAILABLE["yt_dlp"] = yt_dlp_available
@@ -1083,8 +1066,6 @@ def check_audio_processing_deps() -> bool:
         enhanced_features = []
         if parakeet_mlx_available:
             enhanced_features.append("parakeet-mlx (Real-time ASR for Apple Silicon)")
-        if lightning_whisper_available:
-            enhanced_features.append("lightning-whisper-mlx (Apple Silicon optimized)")
         if faster_whisper_available:
             enhanced_features.append("faster-whisper transcription")
         if qwen2audio_available:

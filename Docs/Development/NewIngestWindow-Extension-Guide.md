@@ -83,7 +83,7 @@ Each media type has a dedicated form creation method:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `inputs` | List[str] | Required | List of audio URLs or file paths |
-| `transcription_provider` | str | "faster-whisper" | Options: "faster-whisper", "parakeet-mlx", "lightning-whisper-mlx", "qwen2audio", "nemo" |
+| `transcription_provider` | str | "faster-whisper" | Options: "faster-whisper", "parakeet-mlx", "qwen2audio", "nemo" |
 | `transcription_model` | str | "base" | Model size: "tiny", "base", "small", "medium", "large", "large-v2", "large-v3" |
 | `transcription_language` | Optional[str] | "en" | Language code (ISO 639-1) |
 | `translation_target_language` | Optional[str] | None | Target language for translation |

@@ -45,6 +45,9 @@ and this project adheres to Some kind of Versioning
   treat package assets as immutable.
 
 ### Changed
+- Defer Lightning Whisper MLX public availability for 0.2.4. Saved canonical and
+  legacy selections remain unchanged and report unavailable before runtime work;
+  supported replacement requires an explicit user choice.
 - Synchronize application and native companion source versions for the app-only
   release. Ordinary recording support remains available; speculative duplex
   voice stays unqualified and unavailable. No hardware qualification is claimed.

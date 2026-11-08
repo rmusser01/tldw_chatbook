@@ -157,6 +157,11 @@ Speech & TTS ▸ Output format to WAV to make it explicit. When nothing can
 play audio, hands-free warns once on entry ("replies will be silent") and
 each fully-silent reply says so.
 
+Lightning Whisper MLX is deferred for Chatbook 0.2.4, including its older
+`lightning-whisper` saved name. Installing it does not enable it in Chatbook.
+Your saved provider/model values are retained; choose another supported provider
+explicitly in Speech settings. There is no automatic fallback or settings rewrite.
+
 ### Linux notes (Fedora and friends)
 
 - Stock Fedora ships **no** player binary the legacy path can use (`mpv`,

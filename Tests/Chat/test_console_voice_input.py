@@ -18,6 +18,37 @@ from tldw_chatbook.Chat import console_voice_input as cvi
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("provider", ["lightning-whisper-mlx", "lightning-whisper"])
+def test_deferred_saved_selection_refuses_probe_and_resolution_before_effects(monkeypatch, provider):
+    monkeypatch.setattr(
+        cvi, "get_cli_setting",
+        lambda section, key=None, default=None: provider
+        if (section, key) == ("transcription", "default_provider") else default,
+    )
+    monkeypatch.setattr(cvi, "capture_available", lambda: pytest.fail("capture probed"))
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: pytest.fail("providers probed"))
+    availability = cvi.probe()
+    assert availability.ok is False
+    assert availability.kind == "deferred-provider"
+    assert "Your saved settings have not been changed." in availability.reason
+    assert cvi.resolve() is None
+
+
+@pytest.mark.parametrize("installed", [("parakeet-mlx", "faster-whisper"), ("faster-whisper",)])
+def test_explicit_supported_override_uses_only_that_provider_with_deferred_global(monkeypatch, installed):
+    monkeypatch.setattr(
+        cvi, "get_cli_setting",
+        lambda section, key=None, default=None: "lightning-whisper"
+        if (section, key) == ("transcription", "default_provider") else default,
+    )
+    monkeypatch.setattr(cvi, "installed_local_providers", lambda: installed)
+    result = cvi.resolve(provider_override="parakeet-mlx")
+    if "parakeet-mlx" in installed:
+        assert result.provider == "parakeet-mlx"
+    else:
+        assert result is None
+
+
 # The in-process `test_probe_does_not_import_transcription_service` below only
 # proves `console_voice_input.probe()` stays cheap, and it runs inside a test
 # session that has already imported an unpredictable pile of other modules --
@@ -86,6 +117,7 @@ def test_screen_import_does_not_load_transcription_stack():
 
 def test_probe_reports_missing_capture(monkeypatch):
     """No pyaudio and no sounddevice means no microphone backend."""
+    _stub_settings(monkeypatch, {})
     monkeypatch.setattr(cvi, "capture_available", lambda: False)
     monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
 
@@ -98,6 +130,7 @@ def test_probe_reports_missing_capture(monkeypatch):
 
 def test_probe_reports_missing_provider(monkeypatch):
     """Capture present but no transcription provider is a different remedy."""
+    _stub_settings(monkeypatch, {})
     monkeypatch.setattr(cvi, "capture_available", lambda: True)
     monkeypatch.setattr(cvi, "installed_local_providers", lambda: ())
 
@@ -110,6 +143,7 @@ def test_probe_reports_missing_provider(monkeypatch):
 
 
 def test_probe_ok_when_both_present(monkeypatch):
+    _stub_settings(monkeypatch, {})
     monkeypatch.setattr(cvi, "capture_available", lambda: True)
     monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
 
@@ -119,8 +153,9 @@ def test_probe_ok_when_both_present(monkeypatch):
     assert availability.kind == "ok"
 
 
-def test_probe_does_not_import_transcription_service():
+def test_probe_does_not_import_transcription_service(monkeypatch):
     """Probing must stay cheap: no faster-whisper, no NeMo, no torch."""
+    _stub_settings(monkeypatch, {})
     heavy = "tldw_chatbook.Local_Ingestion.transcription_service"
     original_module = sys.modules.pop(heavy, None)
 
@@ -205,6 +240,7 @@ def test_probe_reports_missing_capture_when_numpy_missing(monkeypatch):
     def fake_find_spec(name, *args, **kwargs):
         return object() if name == "sounddevice" else None  # numpy stays unresolved
 
+    _stub_settings(monkeypatch, {})
     monkeypatch.setattr(cvi.importlib.util, "find_spec", fake_find_spec)
 
     availability = cvi.probe()
@@ -216,16 +252,14 @@ def test_probe_reports_missing_capture_when_numpy_missing(monkeypatch):
 def test_installed_local_providers_returns_subset_in_declared_order(monkeypatch):
     """Only installed providers are returned, in LOCAL_PROVIDER_MODULES order.
 
-    `faster_whisper` is deliberately excluded from `installed` so the result
-    is a proper subset. The two that remain (`parakeet-mlx`,
-    `lightning-whisper-mlx`) are alphabetically out of order relative to each
-    other, so a stray `sorted()` in the implementation would also fail this
+    The supported subset (`parakeet-mlx`, `faster-whisper`) is out of
+    alphabetical order, so a stray `sorted()` would also fail this
     test. Patches `find_spec` directly so a real, potentially
     machine-installed `parakeet_mlx` cannot leak into the result. Both
-    remaining providers are Apple-Silicon only, so `sys.platform` is pinned
+    MLX provider requires Apple Silicon, so `sys.platform` is pinned
     to darwin rather than trusting whatever this machine happens to be.
     """
-    installed = {"parakeet_mlx", "lightning_whisper_mlx"}
+    installed = {"parakeet_mlx", "faster_whisper", "lightning_whisper_mlx"}
 
     def fake_find_spec(name, *args, **kwargs):
         return object() if name in installed else None
@@ -233,7 +267,7 @@ def test_installed_local_providers_returns_subset_in_declared_order(monkeypatch)
     monkeypatch.setattr(cvi.importlib.util, "find_spec", fake_find_spec)
     monkeypatch.setattr(cvi.sys, "platform", "darwin")
 
-    assert cvi.installed_local_providers() == ("parakeet-mlx", "lightning-whisper-mlx")
+    assert cvi.installed_local_providers() == ("parakeet-mlx", "faster-whisper")
 
 
 def test_installed_local_providers_includes_parakeet_onnx_when_present(monkeypatch):
@@ -343,7 +377,7 @@ def test_mlx_providers_require_darwin_even_if_module_resolves(
         ("lightning-whisper-mlx", "lightning_whisper_mlx"),
     ],
 )
-def test_mlx_providers_available_on_darwin_when_module_resolves(
+def test_mlx_providers_available_on_darwin_only_when_release_eligible(
     monkeypatch, provider, module_name
 ):
     monkeypatch.setattr(
@@ -353,7 +387,10 @@ def test_mlx_providers_available_on_darwin_when_module_resolves(
     )
     monkeypatch.setattr(cvi.sys, "platform", "darwin")
 
-    assert provider in cvi.installed_local_providers()
+    if provider == "lightning-whisper-mlx":
+        assert provider not in cvi.installed_local_providers()
+    else:
+        assert provider in cvi.installed_local_providers()
 
 
 def test_remote_whisper_is_never_returned(monkeypatch):
@@ -445,7 +482,7 @@ def test_resolve_never_returns_an_uninstalled_provider(monkeypatch):
     """This is the guard against the service's parakeet-mlx rewrite."""
     monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
     _stub_settings(
-        monkeypatch, {"transcription.default_provider": "lightning-whisper-mlx"}
+        monkeypatch, {"transcription.default_provider": "qwen2audio"}
     )
 
     effective = cvi.resolve()
@@ -1100,6 +1137,7 @@ def test_probe_failure_does_not_cascade_into_a_second_voicefailed(monkeypatch):
     raises partway through `_fail()`'s two calls -- one level up, at the
     call site that wraps `probe()`/`resolve()`.
     """
+    _stub_settings(monkeypatch, {})
     monkeypatch.setattr(cvi, "capture_available", lambda: False)
     monkeypatch.setattr(cvi, "installed_local_providers", lambda: ("faster-whisper",))
 

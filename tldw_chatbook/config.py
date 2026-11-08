@@ -313,8 +313,7 @@ def _default_stt_provider_for_platform() -> str:
     """Return the speech-to-text provider this platform prefers, unconfigured.
 
     macOS prefers the Apple-Silicon-native engines when installed --
-    parakeet-mlx first, then lightning-whisper-mlx -- and every other
-    platform (and macOS with neither installed) falls back to
+    parakeet-mlx -- and every other platform (and macOS without it) falls back to
     faster-whisper. This is the single source of truth for that
     preference: `load_settings()` uses it for `STT_settings.default_stt_provider`,
     and `CONFIG_TOML_CONTENT` is interpolated with it so the
@@ -326,8 +325,6 @@ def _default_stt_provider_for_platform() -> str:
     if sys.platform == "darwin":
         if _optional_package_available("parakeet_mlx"):
             return "parakeet-mlx"
-        if _optional_package_available("lightning_whisper_mlx"):
-            return "lightning-whisper-mlx"
     return "faster-whisper"
 
 

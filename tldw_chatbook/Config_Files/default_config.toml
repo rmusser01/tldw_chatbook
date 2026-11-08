@@ -2285,9 +2285,10 @@ pipeline_aec_enabled = true
 
 [transcription]
 # Default transcription provider
-# Options: "faster-whisper", "parakeet-onnx", "qwen2audio", "parakeet", "canary", "parakeet-mlx", "lightning-whisper-mlx", "remote-whisper"
-# Resolved for this install when this file was first created: parakeet-mlx or
-# lightning-whisper-mlx on macOS when installed, otherwise faster-whisper.
+# Options: "faster-whisper", "parakeet-onnx", "qwen2audio", "parakeet", "canary", "parakeet-mlx", "remote-whisper"
+# Resolved when first created: parakeet-mlx on macOS when installed, otherwise
+# faster-whisper. Lightning Whisper MLX is deferred for Chatbook 0.2.4; saved
+# selections remain unchanged until you deliberately choose another provider.
 # Edit this line to pin a different provider yourself -- your choice always
 # wins over the platform preference.
 default_provider = "__DEFAULT_TRANSCRIPTION_PROVIDER__"

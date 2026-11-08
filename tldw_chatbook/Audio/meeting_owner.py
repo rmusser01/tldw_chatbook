@@ -93,7 +93,7 @@ if TYPE_CHECKING:  # import-light at runtime: `console_voice_input` pulls config
     from .meeting_capture import MeetingCapture
 
 
-def resolve_effective_config() -> "EffectiveConfig | None":
+def resolve_effective_config(*, provider_override: str | None = None) -> EffectiveConfig | None:
     """Resolve the transcription settings a meeting would actually run with.
 
     Late import: `console_voice_input` pulls config; keep this module light.
@@ -102,9 +102,18 @@ def resolve_effective_config() -> "EffectiveConfig | None":
         The effective dictation config, or None when no local provider is
         usable (see `console_voice_input.resolve`).
     """
-    from tldw_chatbook.Chat.console_voice_input import resolve
+    from tldw_chatbook.Chat.console_voice_input import configured_provider, resolve
+    from tldw_chatbook.Utils.local_stt_providers import provider_release_deferral
 
-    return resolve()
+    selected = provider_override if provider_override is not None else configured_provider()
+    if reason := provider_release_deferral(selected):
+        raise RuntimeError(reason)
+    if provider_override is None:
+        return resolve()
+    resolved = resolve(provider_override=provider_override)
+    if resolved is None:
+        raise RuntimeError("The selected transcription provider is unavailable.")
+    return resolved
 
 
 def meeting_user_display_name(get_display_name: Callable[[str], str] | None = None) -> str:
@@ -1115,7 +1124,11 @@ class MeetingSessionOwner:
         Returns:
             The probe outcome, also stored on `self.prepared`.
         """
-        cfg = resolve_effective_config()
+        cfg = (
+            resolve_effective_config()
+            if self.settings.provider == "auto"
+            else resolve_effective_config(provider_override=self.settings.provider)
+        )
         provider = self.settings.provider if self.settings.provider != "auto" else getattr(cfg, "provider", "auto")
         model = self.settings.model or (getattr(cfg, "model", "") or "")
         self._cfg = type("Cfg", (), {"provider": provider, "model": model or None, "language": getattr(cfg, "language", "en")})()
@@ -1179,13 +1192,17 @@ class MeetingSessionOwner:
                 failed to start -- in which case the folder, its writers and
                 the transcript sink are cleaned up first.
         """
+        if self.prepared is None:
+            self.prepare()
+        elif self.settings.provider == "auto":
+            resolve_effective_config()
+        else:
+            resolve_effective_config(provider_override=self.settings.provider)
         # Late import (C1): `meeting_capture` needs numpy, and `app.py`
         # imports this module at module scope. A meeting is the only thing
         # that needs the mixer, so nothing pays for numpy until Start.
         from .meeting_capture import MeetingCapture
 
-        if self.prepared is None:
-            self.prepare()
         # Refreshed here, not just at prepare() (spec §4): a screen can sit on
         # a prepare from before the user installed (or removed) an engine's
         # packages, and the model id this meeting checks the voiceprint

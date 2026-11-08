@@ -19,6 +19,16 @@ Missing optional features do not mean Chatbook is broken. They mean the user has
 | Local inference | `local_vllm`, `local_mlx`, `local_transformers` | `pip install -e ".[local_vllm]"` | `pip install "tldw_chatbook[local_vllm]"` | Console/provider setup |
 | Web access | `web` | `pip install -e ".[web]"` | `pip install "tldw_chatbook[web]"` | Web/browser serving |
 
+## Lightning deferral for 0.2.4
+
+Lightning Whisper MLX has no public install extra or recovery install hint in
+this release. Canonical and legacy saved selections report unavailable before
+capture/model/worker effects and remain unchanged until deliberate replacement.
+Do not repair this limitation with a private fork or a `tiktoken` downgrade:
+the reviewed `tiktoken==0.14.0` package, offline guard and immutable assets remain
+mandatory (ADR-335/318). This release decision does not claim a fresh upstream
+resolver result. Supported explicit Meetings overrides retain their precedence.
+
 ## Chatterbox installation and recovery
 
 Install the `chatterbox` extra in the environment that runs Chatbook, using the

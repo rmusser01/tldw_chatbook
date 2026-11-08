@@ -10,6 +10,8 @@ import asyncio
 import threading
 import time
 from textual.app import ComposeResult
+from textual import on
+from textual.message import Message
 from textual.containers import Horizontal, Vertical, ScrollableContainer, Container
 from textual.widgets import (
     Label,
@@ -24,6 +26,7 @@ from textual.widgets import (
 from textual.widget import Widget
 from textual.reactive import reactive
 from textual.binding import Binding
+from textual.widgets._select import SelectOverlay
 from loguru import logger
 
 # Local imports
@@ -61,6 +64,28 @@ class _DictationActionButton(Button):
     """Activate focused Dictation controls with Space and inherited Enter."""
 
     BINDINGS = [Binding("space", "press", "Press button", show=False)]
+
+
+class _ProviderSelect(Select):
+    """Distinguish an overlay choice from passive value synchronization."""
+
+    class Chosen(Message):
+        def __init__(self, select: "_ProviderSelect", value: str) -> None:
+            super().__init__()
+            self.select = select
+            self.value = value
+
+    @on(SelectOverlay.UpdateSelection)
+    def _update_selection(self, event: SelectOverlay.UpdateSelection) -> None:
+        # Textual also dispatches decorated base handlers. Invoke the native
+        # selection exactly once, then prevent its second MRO dispatch.
+        event.prevent_default()
+        if self._closing or self._pruning or not self.expanded:
+            event.stop()
+            return
+        super()._update_selection(event)
+        if isinstance(self.value, str):
+            self.post_message(self.Chosen(self, self.value))
 
 
 class ImprovedDictationWindow(Widget):
@@ -338,7 +363,7 @@ class ImprovedDictationWindow(Widget):
 
                             # Provider selection (filtered by privacy mode)
                             yield Label("Provider:")
-                            yield Select(
+                            yield _ProviderSelect(
                                 options=self._get_provider_options(),
                                 value=self.settings.get("provider")
                                 or "auto",  # Ensure never None
@@ -417,27 +442,87 @@ class ImprovedDictationWindow(Widget):
 
     def _get_provider_options(self) -> List[tuple]:
         """Get provider options based on privacy settings."""
-        if self.settings["privacy"]["local_only"]:
-            # Only local providers in privacy mode
-            return [
-                ("Auto (Local)", "auto"),
-                ("Parakeet MLX", "parakeet-mlx"),
-                ("Faster Whisper", "faster-whisper"),
-                ("Lightning Whisper", "lightning-whisper-mlx"),
-            ]
-        else:
-            # All providers available
-            return [
-                ("Auto", "auto"),
-                ("Parakeet MLX", "parakeet-mlx"),
-                ("Faster Whisper", "faster-whisper"),
-                ("Lightning Whisper", "lightning-whisper-mlx"),
+        from tldw_chatbook.Utils.local_stt_providers import provider_release_deferral
+
+        local_only = self.settings["privacy"]["local_only"]
+        options = [
+            ("Auto (Local)" if local_only else "Auto", "auto"),
+            ("Parakeet MLX", "parakeet-mlx"),
+            ("Faster Whisper", "faster-whisper"),
+        ]
+        if not local_only:
+            options.extend((
                 ("OpenAI Whisper", "openai-whisper"),
                 ("Google Speech", "google-speech"),
-            ]
+            ))
+        stored = self.settings.get("provider")
+        if provider_release_deferral(stored):
+            options.append(("Lightning Whisper MLX (unavailable in 0.2.4)", stored))
+        return options
+
+    def _provider_deferral(self, provider: str | None = None) -> str | None:
+        """Check this selection without constructing a transcription service."""
+        from tldw_chatbook.Utils.local_stt_providers import provider_release_deferral
+
+        selected = (
+            self.settings.get("provider", "auto") if provider is None else provider
+        )
+        if not selected or selected == "auto":
+            selected = get_cli_setting(
+                "transcription.default_provider", "faster-whisper"
+            )
+        return provider_release_deferral(selected)
+
+    def _update_provider_availability(self) -> None:
+        reason = self._provider_deferral()
+        button = self.query_one("#dictation-toggle-btn", Button)
+        # A running capture must retain its Stop control.
+        button.disabled = bool(reason) and not self.is_dictating
+        button.tooltip = reason
+        if reason and not self.is_dictating:
+            self._show_status(reason, "error")
+
+    @on(_ProviderSelect.Chosen)
+    def _replace_deferred_provider(self, event: _ProviderSelect.Chosen) -> None:
+        """Persist an explicit replacement only before this view owns a service."""
+        event.stop()
+        if self._retired or getattr(self, "_settings_are_mounting", True):
+            return
+        select = self.query_one("#provider-select", _ProviderSelect)
+        value = event.value
+        if event.select is not select or value != select.value:
+            return
+        if not self._provider_deferral() or value == self.settings["provider"]:
+            return
+        if value not in {"auto", "parakeet-mlx", "faster-whisper"} or (
+            self._provider_deferral(value)
+        ):
+            select.value = self.settings["provider"]
+            return
+        if self.dictation_service is not None:
+            select.value = self.settings["provider"]
+            self._show_status(
+                "Close and reopen Dictation before replacing this provider.", "error"
+            )
+            return
+        self.settings["provider"] = value
+        self.is_initialized = False
+        self.initialization_error = ""
+        select.set_options(self._get_provider_options())
+        select.value = value
+        self._update_provider_availability()
+        self._show_status("Provider selected. Start Dictation when ready.", "info")
+        self._persist_settings()
 
     def _initialize_service(self) -> bool:
         """Initialize dictation service lazily."""
+        if self._retired:
+            return False
+        if reason := self._provider_deferral():
+            self.is_initialized = False
+            self.initialization_error = reason
+            self._show_status(reason, "error")
+            return False
         if self.dictation_service is not None:
             return True
 
@@ -513,6 +598,8 @@ class ImprovedDictationWindow(Widget):
     def _finish_mounting(self) -> None:
         """Stop treating control changes as mount noise."""
         self._settings_are_mounting = False
+        if not self._retired:
+            self._update_provider_availability()
 
     def _persist_settings(self) -> None:
         """Schedule a debounced settings save unless controls are mounting.
@@ -639,7 +726,12 @@ class ImprovedDictationWindow(Widget):
             self._update_privacy_ui()
             # Update provider options
             provider_select = self.query_one("#provider-select", Select)
-            provider_select.set_options(self._get_provider_options())
+            provider_select.expanded = False
+            options = self._get_provider_options()
+            provider_select.set_options(options)
+            stored = self.settings["provider"]
+            if any(value == stored for _, value in options):
+                provider_select.value = stored
         elif event.switch.id == "auto-clear-switch":
             self.settings["privacy"]["auto_clear_buffer"] = event.value
             self._persist_settings()
@@ -926,25 +1018,9 @@ Performance Tips:
         self.app.notify(help_text.strip(), title="Dictation Help", timeout=15)
 
     def _load_settings(self) -> Dict[str, Any]:
-        """Load dictation settings with privacy defaults.
-
-        Normalizes `dictation.provider` on read so a config file saved before
-        `_get_provider_options()` was corrected to `"lightning-whisper-mlx"`
-        (it used to offer the misspelled `"lightning-whisper"`) still resolves
-        to a real dispatch id. This is read-side only -- it does not write
-        the normalized value back to config.
-        """
-        # TASK-22504 follow-up (PR #3089): deferred to this single call site
-        # so the stts pre-import route does not pull local_stt_providers at
-        # boot (pass ratchet 558); it only runs on a settings read.
-        from tldw_chatbook.Utils.local_stt_providers import (  # noqa: PLC0415
-            normalize_provider_id,
-        )
-
+        """Load privacy defaults while retaining the exact saved provider value."""
         settings = {
-            "provider": normalize_provider_id(
-                get_cli_setting("dictation.provider", "auto") or "auto"
-            ),
+            "provider": get_cli_setting("dictation.provider", "auto") or "auto",
             "model": get_cli_setting("dictation.model", None),
             "language": get_cli_setting("dictation.language", "en") or "en",
             "punctuation": get_cli_setting("dictation.punctuation", True),

@@ -201,7 +201,6 @@ _PYPI_TO_IMPORT: dict[str, str] = {
     "ebooklib": "ebooklib",
     "faster-whisper": "faster_whisper",
     "html2text": "html2text",
-    "lightning-whisper-mlx": "lightning_whisper_mlx",
     "lxml": "lxml",
     "onnx-asr[cpu]": "onnx_asr",
     "parakeet_onnx": "onnx_asr",
@@ -224,7 +223,6 @@ _FEATURE_TO_EXTRA: dict[str, str] = {
     "ebooklib": "ebook",
     "faster_whisper": "transcription_faster_whisper",
     "html2text": "ebook",
-    "lightning_whisper_mlx": "transcription_lightning_whisper",
     "lxml": "ebook",
     "parakeet_onnx": "transcription_parakeet",
     "parakeet_mlx": "mlx_whisper",
@@ -276,7 +274,6 @@ _FEATURE_LABELS: dict[str, str] = {
     # (task-3307) Named so the image group's warning reads "OCR backend
     # isn't installed" rather than the ocr_docext extra's own label.
     "image_ocr": "OCR backend",
-    "lightning_whisper_mlx": "Lightning Whisper MLX",
     "lxml": "lxml",
     "parakeet_onnx": "Parakeet ONNX",
     "parakeet_mlx": "Parakeet MLX",
@@ -1519,6 +1516,7 @@ def selected_stt_warnings(
     Returns:
         Warnings for non-STT dependencies and the selected STT backend.
     """
+    warnings = [warning for warning in warnings if warning.get("feature") != "lightning_whisper_mlx"]
     try:
         selected_provider = validate_batch_transcription_provider(provider)
     except ValueError:

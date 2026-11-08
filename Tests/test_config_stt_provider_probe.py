@@ -18,7 +18,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
     ("installed", "expected"),
     [
         (("parakeet_mlx", "lightning_whisper_mlx"), "parakeet-mlx"),
-        (("lightning_whisper_mlx",), "lightning-whisper-mlx"),
+        (("lightning_whisper_mlx",), "faster-whisper"),
         ((), "faster-whisper"),
     ],
 )
@@ -151,7 +151,7 @@ def test_non_macos_stt_default_fallback_is_hyphenated(
     ("installed", "expected"),
     [
         (("parakeet_mlx", "lightning_whisper_mlx"), "parakeet-mlx"),
-        (("lightning_whisper_mlx",), "lightning-whisper-mlx"),
+        (("lightning_whisper_mlx",), "faster-whisper"),
         ((), "faster-whisper"),
     ],
 )

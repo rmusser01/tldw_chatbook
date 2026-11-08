@@ -213,7 +213,7 @@ is never sent automatically, so you can edit before pressing Enter.
   they have no automatic inactivity bound. Quiet cache files cannot establish
   that a native load is stuck. Use **Cancel** to leave Loading; quitting ends
   remaining background work. Byte progress is not qualified for Xet,
-  Lightning Whisper, NeMo or opaque post-download loading.
+  NeMo or opaque post-download loading.
 - **Length cap:** a capture stops itself at 60 seconds — "Dictation limit
   reached; transcribing the captured audio."
 - **Requires optional extras.** Without a microphone backend: "Microphone

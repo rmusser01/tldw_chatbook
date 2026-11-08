@@ -1274,7 +1274,7 @@ class ConsoleDictationController:
         # glance at the button, so it can afford the redundancy this can't.
         composer.set_dictation_availability(
             available=availability.ok,
-            tooltip="" if availability.ok else availability.remedy,
+            tooltip="" if availability.ok else (availability.remedy or availability.reason),
         )
 
     def _cancel_console_dictation_timer(self) -> None:

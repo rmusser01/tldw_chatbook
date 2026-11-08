@@ -93,6 +93,10 @@ def resolve_batch_stt_route(
             request cannot be fulfilled.
     """
     requested_provider = _normalize_provider(provider)
+    from tldw_chatbook.Utils.local_stt_providers import provider_release_deferral
+
+    if reason := provider_release_deferral(requested_provider):
+        raise BatchSTTRoutingError(reason)
     requested_language = _normalize_source_language(language)
     normalized_target = _normalize_target_language(target_language)
 

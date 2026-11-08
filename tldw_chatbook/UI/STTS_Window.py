@@ -104,9 +104,6 @@ from tldw_chatbook.Widgets.enhanced_file_picker import (
     EnhancedFileSave as FileSave,
 )
 from tldw_chatbook.Third_Party.textual_fspicker import Filters
-from tldw_chatbook.UI.Dictation_Window_Improved import (
-    ImprovedDictationWindow as DictationWindow,
-)
 # Note: Not using form_components due to generator/widget incompatibility
 
 
@@ -2082,7 +2079,11 @@ class STTSWindow(Container):
         elif new_view == "audiobook":
             await content_container.mount(AudioBookGenerationWidget())
         elif new_view == "dictation":
-            await content_container.mount(DictationWindow())
+            from tldw_chatbook.UI.Dictation_Window_Improved import (
+                ImprovedDictationWindow,
+            )
+
+            await content_container.mount(ImprovedDictationWindow())
 
         if new_view == "playground":
             # Top-level mount completion does not include composed descendants.

@@ -370,6 +370,10 @@ def _load_runtime(
     provider: str = "parakeet-mlx",
     options: LocalSttOptions | None = None,
 ) -> _LocalSttRuntime:
+    from tldw_chatbook.Utils.local_stt_providers import provider_release_deferral
+
+    if reason := provider_release_deferral(provider):
+        raise ValueError(reason)
     # Service/config/model imports and native objects belong only to this PID.
     # Parakeet retains its in-memory path and configured precision resolution.
     from tldw_chatbook.Local_Ingestion.transcription_service import TranscriptionService
@@ -564,6 +568,10 @@ class ParakeetVoiceProcess:
         provider: str = "parakeet-mlx",
         options: LocalSttOptions | None = None,
     ) -> None:
+        from tldw_chatbook.Utils.local_stt_providers import provider_release_deferral
+
+        if type(provider) is str and (reason := provider_release_deferral(provider)):
+            raise ValueError(reason)
         if (
             type(provider) is not str
             or provider not in LOCAL_STT_PROVIDERS

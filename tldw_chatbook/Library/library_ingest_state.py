@@ -226,6 +226,10 @@ def validate_ingest_option_value(field: Any, value: Any) -> str:
         acceptable to every downstream consumer.
     """
     if getattr(field, "name", "") == "transcription_provider":
+        from tldw_chatbook.Utils.local_stt_providers import provider_release_deferral
+
+        if type(value) is str and (reason := provider_release_deferral(value)):
+            return reason
         try:
             validate_batch_transcription_provider(value)
         except ValueError:

@@ -21,17 +21,17 @@ options. Parakeet ONNX is distinct from Parakeet-MLX and Legacy NeMo Parakeet
 The comparison below covers the older general and real-time providers; use the
 canonical routing link above for the current Parakeet ONNX Library batch path.
 
-| Feature | Parakeet-MLX | Lightning-Whisper-MLX | Faster-Whisper | Qwen2Audio | Legacy NeMo Parakeet | Canary |
-|---------|--------------|----------------------|----------------|------------|----------|---------|
-| **Speed** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
-| **Accuracy** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐ |
-| **Language Support** | English | 100+ | 100+ | Multiple | English | 4 (en,de,es,fr) |
-| **Translation** | ❌ | To English | To English | ❌ | ❌ | Any direction |
-| **Model Sizes** | 600MB | 39MB-1.5GB | 39MB-1.5GB | 15GB | 600MB-1.1GB | 1GB |
-| **GPU Required** | Apple Silicon | Apple Silicon | Optional | Recommended | Optional | Recommended |
-| **Real-time** | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
-| **Long Audio** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (chunked) |
-| **Platform** | macOS only | macOS only | All | All | All | All |
+| Feature | Parakeet-MLX | Faster-Whisper | Qwen2Audio | Legacy NeMo Parakeet | Canary |
+|---------|--------------|----------------|------------|----------|---------|
+| **Speed** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
+| **Accuracy** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐ |
+| **Language Support** | English | 100+ | Multiple | English | 4 (en,de,es,fr) |
+| **Translation** | ❌ | To English | ❌ | ❌ | Any direction |
+| **Model Sizes** | 600MB | 39MB-1.5GB | 15GB | 600MB-1.1GB | 1GB |
+| **GPU Required** | Apple Silicon | Optional | Recommended | Optional | Recommended |
+| **Real-time** | ✅ | ❌ | ❌ | ✅ | ✅ |
+| **Long Audio** | ✅ | ✅ | ✅ | ✅ | ✅ (chunked) |
+| **Platform** | macOS only | All | All | All | All |
 
 ## Detailed Provider Profiles
 
@@ -68,40 +68,14 @@ canonical routing link above for the current Parakeet ONNX Library batch path.
 - Voice commands and dictation
 - Quick file transcription on Mac
 
-### Lightning-Whisper-MLX (macOS Only)
+### Lightning-Whisper-MLX (deferred in 0.2.4)
 
-**Best for:** Ultra-fast transcription on Apple Silicon Macs
-
-**Strengths:**
-- 10x faster than Whisper CPP
-- 4x faster than standard MLX implementations  
-- Optimized specifically for Apple Silicon
-- Batched decoding for higher throughput
-- Support for quantized models (4-bit, 8-bit)
-- Uses unified memory efficiently
-- Same accuracy as OpenAI Whisper
-
-**Limitations:**
-- macOS only (requires Apple Silicon)
-- Translation only to English
-- Requires lightning-whisper-mlx package
-
-**Recommended Models:**
-- `tiny` or `base`: Lightning fast, good for real-time
-- `small` or `medium`: Great balance of speed and accuracy
-- `distil-large-v3`: Excellent accuracy with faster speed
-- `large-v3`: Best accuracy, still much faster than alternatives
-
-**Quantization Options:**
-- `None`: Best accuracy, moderate speed
-- `8bit`: Slightly faster, minimal accuracy loss
-- `4bit`: Fastest, small accuracy trade-off
-
-**Use Cases:**
-- Rapid podcast transcription on Mac
-- Real-time meeting notes
-- Quick content processing
-- High-volume transcription workflows
+Lightning Whisper MLX is unavailable in Chatbook 0.2.4, even when its package is
+installed. It is omitted from public install extras, discovery and defaults.
+Saved `lightning-whisper-mlx` and `lightning-whisper` selections remain readable
+and unchanged, but are refused before capture, model loading or worker startup.
+Choose another supported provider deliberately; Chatbook does not substitute one.
+The internal local/privacy/IPC identity is retained, not reclassified as remote.
 
 ### Faster-Whisper
 
@@ -242,7 +216,6 @@ Library audio/video form.
 
 **Apple Silicon Mac:**
 - Parakeet-MLX (best for real-time)
-- Lightning-Whisper-MLX (best for batch processing)
 - All other providers work well
 - Leverage unified memory architecture
 
@@ -309,13 +282,8 @@ Library audio/video form.
 - Model: mlx-community/parakeet-tdt-0.6b-v2
 - Settings: precision=bf16, attention=local
 
-### "Ultra-Fast Batch on Mac"
-- Provider: Lightning-Whisper-MLX
-- Model: distil-medium.en or distil-large-v3
-- Settings: batch_size=12, quant=None
-
 ### "Fast and Good Enough"
-- Provider: Faster-Whisper (or Lightning-Whisper-MLX on Mac)
+- Provider: Faster-Whisper
 - Model: base or small
 - Settings: CPU with int8
 

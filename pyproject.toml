@@ -148,15 +148,11 @@ transcription_parakeet_onnx = [
 transcription_transcribe_cpp = [
     "transcribe-cpp==0.1.3",  # Optional direct-local GGUF runtime
 ]
-transcription_lightning_whisper = [
-    "lightning-whisper-mlx; sys_platform == 'darwin'",  # Fast Whisper for Apple Silicon
-]
 transcription_parakeet = [
     "onnx-asr[cpu]==0.12.0",  # Cross-platform Parakeet ONNX runtime
 ]
 # Legacy alias for backward compatibility
 mlx_whisper = [
-    "lightning-whisper-mlx; sys_platform == 'darwin'",  # Fast Whisper for Apple Silicon
     "parakeet-mlx; sys_platform == 'darwin'",  # Real-time ASR for Apple Silicon
 ]
 local_transformers = ["transformers"]
@@ -213,8 +209,6 @@ audio = [
     "onnx-asr[cpu]==0.12.0",  # Cross-platform Parakeet ONNX batch runtime
     # Fallback everywhere, and the default off darwin.
     "faster-whisper",
-    # For the other Apple Silicon engine:
-    # pip install -e ".[audio,transcription_lightning_whisper]"
 ]
 video = [
     "soundfile",
@@ -229,8 +223,6 @@ video = [
     "onnx-asr[cpu]==0.12.0",  # Cross-platform Parakeet ONNX batch runtime
     # Fallback everywhere, and the default off darwin.
     "faster-whisper",
-    # For the other Apple Silicon engine:
-    # pip install -e ".[video,transcription_lightning_whisper]"
 ]
 media_processing = [
     "soundfile",
@@ -240,7 +232,6 @@ media_processing = [
     "faster-whisper",  # Default transcription provider
     "onnx-asr[cpu]==0.12.0",  # Cross-platform Parakeet ONNX batch runtime
     # Note: For Apple Silicon optimized transcription, also install:
-    # pip install -e ".[media_processing,transcription_lightning_whisper]" or
     # pip install -e ".[media_processing,transcription_parakeet]"
 ]
 chatterbox = [
@@ -408,7 +399,6 @@ all-tools = [
     # === Transcription and Audio ===
     "faster-whisper",  # CPU/CUDA optimized Whisper
     "onnx-asr[cpu]==0.12.0",  # Cross-platform Parakeet ONNX runtime
-    "lightning-whisper-mlx; sys_platform == 'darwin'",  # Fast Whisper for Apple Silicon
     "parakeet-mlx; sys_platform == 'darwin'",  # Real-time ASR for Apple Silicon
     
     # Audio processing
