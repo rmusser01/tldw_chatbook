@@ -534,6 +534,10 @@ RECOVERED_SUITES_TARGETS = (
     # TASK-32873); guard-clean, ~25 s and ~160 s serial at load 50-160.
     "Tests/UI/test_console_full_config_preparation.py",
     "Tests/UI/test_console_inspector_focus_carriers.py",
+    # TASK-39124: the built-in pixel buddy file, no Persona_Visual file ran on
+    # a PR lane before. Sandboxed, yet last: it passed after the
+    # bootstrap_profile suites in every timed run of the step.
+    "Tests/Persona_Visual/test_builtin_pixel_migu_buddy.py",
 )
 DREAMS_ADMISSION_TARGETS = (
     "Tests/Dreams/test_boot_dispatch_admission.py",

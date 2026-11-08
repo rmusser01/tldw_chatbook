@@ -1364,6 +1364,9 @@ jobs:
       # ingest runner, and two bootstrap_profile Tests/UI files, which the UI
       # census may not hold (ledger R11, TASK-32873): TASK-39043's Console full
       # config preparation file and TASK-39142's inspector focus carriers.
+      # TASK-39124 appends the built-in pixel buddy file (sandboxed, ~2.5 min
+      # serial at load 105-117), last as asked; it passed there, after the
+      # bootstrap_profile suites, in every timed run of this step.
       - name: Run the recovered suites
         run: |
           pytest \
@@ -1381,6 +1384,7 @@ jobs:
             Tests/Library/test_library_ingest_runner.py \
             Tests/UI/test_console_full_config_preparation.py \
             Tests/UI/test_console_inspector_focus_carriers.py \
+            Tests/Persona_Visual/test_builtin_pixel_migu_buddy.py \
             --storage-lease-guard \
             --timeout=180 \
             --tb=short
