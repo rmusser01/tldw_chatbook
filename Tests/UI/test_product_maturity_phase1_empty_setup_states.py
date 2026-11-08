@@ -216,6 +216,7 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
 
 # The retired Skills destination's failure and no-handoff contract is covered by
 # test_library_skills_retry_recovers_transient_list_failure on Library.
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("route", "button_selector", "expected_copy", "setup"),
     [
@@ -270,6 +271,7 @@ async def test_service_unavailable_states_disable_false_console_handoffs(
         assert "unavailable" in str(button.tooltip).lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_personas_default_state_disables_false_console_handoff(
     monkeypatch: pytest.MonkeyPatch,
@@ -296,6 +298,7 @@ async def test_personas_default_state_disables_false_console_handoff(
         assert button.disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_rag_mode_dependency_missing_state_names_install_hint(
     monkeypatch: pytest.MonkeyPatch,
