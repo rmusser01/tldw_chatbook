@@ -804,9 +804,10 @@ _BUDGETS: dict[str, int] = {
     #: The OS notification defaults add 12 lines; pin the exact measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-02: 12285 -> 9668; the default config template moved to Config_Files/default_config.toml (TASK-36945.1).
-    # 2026-11-07: 8961 -> 8820; the DB singletons, lazy getters,
-    # initialize_all_databases and its lazy-init log are gone (TASK-36947.6).
-    "tldw_chatbook/config.py": 8820,
+    # 2026-11-07: the DB singletons, lazy getters, initialize_all_databases
+    # and its lazy-init log are gone (TASK-36947.6, -141); measured after the
+    # 2026-11-08 rebase onto dev: 8983 -> 8842.
+    "tldw_chatbook/config.py": 8842,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
