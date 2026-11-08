@@ -25,6 +25,7 @@ from tldw_chatbook.Sync_Interop.chat_sync_source import (
     chat_record_payload_hash,
     chat_sync_source_for,
     install_chat_sync_hashing,
+    is_chat_sync_source_over,
 )
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 
@@ -46,13 +47,13 @@ def _live_message(db) -> tuple[str, str]:
     return conversation_id, message_id
 
 
-def _deleted_and_version(db, message_id) -> tuple[int, int]:
-    row = (
-        db.get_connection()
-        .execute("SELECT deleted, version FROM messages WHERE id = ?", (message_id,))
-        .fetchone()
-    )
-    return row["deleted"], row["version"]
+def _messages(db) -> list[tuple]:
+    return [
+        tuple(row)
+        for row in db.get_connection().execute(
+            "SELECT id, deleted, version, content FROM messages ORDER BY id"
+        )
+    ]
 
 
 def _delete_intent_base_hashes(db, message_id) -> list[str | None]:
@@ -68,16 +69,81 @@ def _delete_intent_base_hashes(db, message_id) -> list[str | None]:
     return [json.loads(row["payload"]).get("base_payload_hash") for row in rows]
 
 
-def _soft_delete(db, message_id):
-    return db.soft_delete_message(message_id, expected_version=1)
+def _continuation_json() -> str:
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": "moonshot",
+            "protocol": "chat_completions",
+            "model": "kimi-k2",
+            "api_base_url": "https://api.moonshot.ai/v1",
+            "state": "active",
+            "rounds": [
+                {
+                    "assistant_content": "",
+                    "reasoning_blocks": ["private"],
+                    "calls": [
+                        {
+                            "call_id": "call-1",
+                            "name": "calculator",
+                            "arguments": '{"expression":"2+2"}',
+                            "state": "pending",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
 
 
-def _subtree_delete(db, message_id):
-    return db.soft_delete_message_subtree(message_id, expected_version=1)
+# Each writer case returns (the message it tombstones, the write to run).
+def _soft_delete(db):
+    _conversation_id, message_id = _live_message(db)
+    return message_id, lambda: db.soft_delete_message(message_id, expected_version=1)
 
 
-DELETES = pytest.mark.parametrize(
-    "delete", [_soft_delete, _subtree_delete], ids=["message", "subtree"]
+def _subtree_delete(db):
+    _conversation_id, message_id = _live_message(db)
+    return message_id, lambda: db.soft_delete_message_subtree(
+        message_id, expected_version=1
+    )
+
+
+def _edit_truncates_descendant(db):
+    conversation_id, root = _live_message(db)
+    child = db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "content": "reply",
+            "parent_message_id": root,
+        }
+    )
+    return child, lambda: db.update_message(root, {"content": "edited"}, 1)
+
+
+def _continuation_discard(db):
+    conversation_id = db.add_conversation({"title": "t"})
+    message_id = db.create_assistant_with_continuation(
+        message_id="assistant-1",
+        conversation_id=conversation_id,
+        parent_message_id=None,
+        content="visible answer",
+        provider_continuation_json=_continuation_json(),
+    )
+    return message_id, lambda: db.update_provider_continuation(
+        message_id=message_id,
+        expected_message_version=1,
+        provider_continuation_json=None,
+        content="",
+    )
+
+
+WRITERS = pytest.mark.parametrize(
+    "writer",
+    [_soft_delete, _subtree_delete, _edit_truncates_descendant, _continuation_discard],
+    ids=["soft_delete", "subtree", "edit_truncation", "continuation_discard"],
 )
 
 
@@ -101,10 +167,10 @@ def test_db_module_imports_no_sync_interop():
     assert not {name for name in imported if "Sync_Interop" in name}
 
 
-@DELETES
-def test_tombstone_hash_runs_inside_the_delete_transaction(db, monkeypatch, delete):
-    _conversation_id, message_id = _live_message(db)
-    live = db.get_message_by_id(message_id)
+@WRITERS
+def test_tombstone_hash_runs_inside_the_delete_transaction(db, monkeypatch, writer):
+    tombstoned, write = writer(db)
+    expected = chat_record_payload_hash(db.get_message_by_id(tombstoned))
     seen: list[bool] = []
 
     def recording(row):
@@ -112,37 +178,47 @@ def test_tombstone_hash_runs_inside_the_delete_transaction(db, monkeypatch, dele
         return chat_record_payload_hash(row)
 
     monkeypatch.setattr(port, "_chat_record_hasher", recording)
-    delete(db, message_id)
+    write()
     assert seen == [True]
-    assert _deleted_and_version(db, message_id) == (1, 2)
-    assert _delete_intent_base_hashes(db, message_id) == [
-        chat_record_payload_hash(live)
-    ]
+    assert dict((r[0], r[1]) for r in _messages(db))[tombstoned] == 1
+    assert _delete_intent_base_hashes(db, tombstoned) == [expected]
 
 
-@DELETES
-def test_hasher_failure_rolls_the_tombstone_back(db, monkeypatch, delete):
-    _conversation_id, message_id = _live_message(db)
+@WRITERS
+def test_failure_after_the_hash_step_rolls_the_tombstone_back(db, monkeypatch, writer):
+    tombstoned, write = writer(db)
+    expected = chat_record_payload_hash(db.get_message_by_id(tombstoned))
+    before = _messages(db)
+    stamped: list[tuple[bool, list]] = []
 
-    def boom(_row):
-        raise RuntimeError("hasher failed")
+    def attach_then_fail(conn, proofs):
+        CharactersRAGDB._attach_chat_delete_base_hashes(conn, proofs)
+        stamped.append(
+            (
+                db.get_connection().in_transaction,
+                _delete_intent_base_hashes(db, tombstoned),
+            )
+        )
+        raise RuntimeError("failure after the hash step")
 
-    monkeypatch.setattr(port, "_chat_record_hasher", boom)
-    with pytest.raises(RuntimeError, match="hasher failed"):
-        delete(db, message_id)
-    assert _deleted_and_version(db, message_id) == (0, 1)
-    assert _delete_intent_base_hashes(db, message_id) == []
+    monkeypatch.setattr(db, "_attach_chat_delete_base_hashes", attach_then_fail)
+    with pytest.raises(Exception, match="failure after the hash step"):
+        write()
+    assert stamped == [(True, [expected])]
+    assert _messages(db) == before
+    assert _delete_intent_base_hashes(db, tombstoned) == []
 
 
-@DELETES
-def test_unset_port_fails_closed_and_deletes_nothing(db, monkeypatch, delete):
-    _conversation_id, message_id = _live_message(db)
+@WRITERS
+def test_unset_port_fails_closed_and_deletes_nothing(db, monkeypatch, writer):
+    tombstoned, write = writer(db)
+    before = _messages(db)
     monkeypatch.setattr(port, "_chat_record_hasher", None)
     with pytest.raises(port.ChatRecordHashingNotInstalledError) as info:
-        delete(db, message_id)
+        write()
     assert "install_chat_sync_hashing" in str(info.value)
-    assert _deleted_and_version(db, message_id) == (0, 1)
-    assert _delete_intent_base_hashes(db, message_id) == []
+    assert _messages(db) == before
+    assert _delete_intent_base_hashes(db, tombstoned) == []
 
 
 def test_install_is_idempotent(monkeypatch):
@@ -203,9 +279,24 @@ def test_coordinator_failure_rolls_the_adapter_sync_update_back(db, monkeypatch)
 
 
 def test_source_for_accepts_only_a_characters_rag_db(db):
-    assert chat_sync_source_for(db) == CharactersRAGDBChatSyncSource(db)
+    assert chat_sync_source_for(db).db is db
     assert chat_sync_source_for(None) is None
     assert chat_sync_source_for(object()) is None
+
+
+def test_source_identity_is_the_exact_database_object(db, tmp_path):
+    """A second connection object to the same file is a different source."""
+    twin = CharactersRAGDB(tmp_path / "hashing-port.db", client_id="hash-twin")
+    try:
+        adapter = CharactersRAGDBChatSyncSource(db)
+        assert is_chat_sync_source_over(adapter, db)
+        assert is_chat_sync_source_over(CharactersRAGDBChatSyncSource(db), db)
+        assert not is_chat_sync_source_over(adapter, twin)
+        assert not is_chat_sync_source_over(db, db)
+        assert not is_chat_sync_source_over(None, db)
+        assert adapter != CharactersRAGDBChatSyncSource(db)  # identity equality
+    finally:
+        twin.close_connection()
 
 
 _UNCOMPOSED_PROCESS = """

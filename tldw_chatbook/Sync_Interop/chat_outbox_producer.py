@@ -165,10 +165,9 @@ class ChatSyncV2OutboxProducer:
         )
         if profile["status"] != "ready":
             return profile
-        reader = getattr(self.source, "read_committed_chat_delete_intent", None)
-        if not callable(reader):
+        if self.source is None:
             return {"status": "skipped", "reason": "source_intent_unavailable"}
-        source_record = reader(
+        source_record = self.source.read_committed_chat_delete_intent(
             message_id=message_id,
             message_version=message_version,
             payload_hash=payload_hash,

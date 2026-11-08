@@ -28,8 +28,8 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
     ConflictError,
     InputError,
-    _validated_provider_continuation,
-    _validated_thinking_blocks_json,
+    validated_provider_continuation,
+    validated_thinking_blocks_json,
 )
 from tldw_chatbook.DB.transaction_observer import install_chat_record_hasher
 from tldw_chatbook.Provider_Contract.provider_continuation import (
@@ -115,7 +115,23 @@ def _normalize_legacy_chat_delete_intent_payload(
 
 
 def chat_record_payload_hash(row: Mapping[str, Any]) -> str:
-    """Hash one valid live Chat record without retaining its private fields."""
+    """Hash one valid live Chat record without retaining its private fields.
+
+    This is the DB-layer chat-record hashing port's implementation: tombstone
+    writers stamp its result on each delete intent inside their transaction.
+
+    Args:
+        row: A live message row with ``role``, ``content``,
+            ``provider_continuation_json``, ``thinking_blocks_json`` and
+            ``assistant_generation_state``.
+
+    Returns:
+        The canonical ``sha256:<hex>`` Sync v2 payload hash of the record.
+
+    Raises:
+        InputError: The row is not a valid Chat record; a tombstone writer
+            propagates it and its transaction rolls back.
+    """
     role = row["role"]
     content = row["content"]
     if type(role) is not str or type(content) is not str:
@@ -125,7 +141,7 @@ def chat_record_payload_hash(row: Mapping[str, Any]) -> str:
     if private_json is not None:
         if role != "assistant":
             raise InputError("Invalid chat sync record.")
-        checkpoint, canonical_private = _validated_provider_continuation(private_json)
+        checkpoint, canonical_private = validated_provider_continuation(private_json)
         if canonical_private != private_json:
             raise InputError("Invalid chat sync record.")
         active_continuation = checkpoint.state == "active"
@@ -148,19 +164,19 @@ def chat_record_payload_hash(row: Mapping[str, Any]) -> str:
     if thinking_json is not None:
         if role != "assistant":
             raise InputError("Invalid chat sync record.")
-        canonical_thinking = _validated_thinking_blocks_json(thinking_json)
+        canonical_thinking = validated_thinking_blocks_json(thinking_json)
         if canonical_thinking != thinking_json:
             raise InputError("Invalid chat sync record.")
         payload["thinking_blocks_json"] = canonical_thinking
     return canonical_payload_hash(payload)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class CharactersRAGDBChatSyncSource:
     """``ChatSyncIntentSource`` and Chat Sync local store over one database.
 
-    Equality is identity of the wrapped database, so two adapters over the
-    same ``CharactersRAGDB`` compare equal.
+    Adapters compare by identity; :func:`is_chat_sync_source_over` asks
+    whether one wraps exactly a given database object.
     """
 
     db: CharactersRAGDB
@@ -255,7 +271,7 @@ class CharactersRAGDBChatSyncSource:
             if row["thinking_blocks_json"] is not None:
                 if role != "assistant":
                     return None
-                thinking_json = _validated_thinking_blocks_json(
+                thinking_json = validated_thinking_blocks_json(
                     row["thinking_blocks_json"]
                 )
                 if thinking_json != row["thinking_blocks_json"]:
@@ -471,7 +487,7 @@ class CharactersRAGDBChatSyncSource:
         if thinking_json is not None:
             if role != "assistant":
                 return None
-            thinking_json = _validated_thinking_blocks_json(thinking_json)
+            thinking_json = validated_thinking_blocks_json(thinking_json)
             if thinking_json != payload["thinking_blocks_json"]:
                 return None
             base_payload["thinking_blocks_json"] = thinking_json
@@ -685,9 +701,7 @@ class CharactersRAGDBChatSyncSource:
             if private_json is not None:
                 if role != "assistant":
                     raise ValueError
-                checkpoint, private_json = _validated_provider_continuation(
-                    private_json
-                )
+                checkpoint, private_json = validated_provider_continuation(private_json)
                 active_continuation = checkpoint.state == "active"
             state = normalize_assistant_generation_state(
                 role=role,
@@ -706,7 +720,7 @@ class CharactersRAGDBChatSyncSource:
             if row["thinking_blocks_json"] is not None:
                 if role != "assistant":
                     raise ValueError
-                payload["thinking_blocks_json"] = _validated_thinking_blocks_json(
+                payload["thinking_blocks_json"] = validated_thinking_blocks_json(
                     row["thinking_blocks_json"]
                 )
             return canonical_payload_hash(payload)
@@ -732,12 +746,12 @@ class CharactersRAGDBChatSyncSource:
         if private_json is not None:
             if role != "assistant":
                 raise InputError("Invalid chat sync record.")
-            checkpoint, private_json = _validated_provider_continuation(private_json)
+            checkpoint, private_json = validated_provider_continuation(private_json)
         thinking_json = payload.get("thinking_blocks_json")
         if thinking_json is not None:
             if role != "assistant":
                 raise InputError("Invalid chat sync record.")
-            thinking_json = _validated_thinking_blocks_json(thinking_json)
+            thinking_json = validated_thinking_blocks_json(thinking_json)
         try:
             state = normalize_assistant_generation_state(
                 role=role,
@@ -812,7 +826,7 @@ class CharactersRAGDBChatSyncSource:
                         entity_id=message_id,
                     )
 
-            self.db._coordinate_semantic_mutation(
+            self.db.coordinate_semantic_mutation(
                 conn,
                 message_id=message_id,
                 creation_reason="sync_update",
@@ -946,7 +960,7 @@ class CharactersRAGDBChatSyncSource:
                         if role != "assistant":
                             continue
                         try:
-                            canonical_thinking = _validated_thinking_blocks_json(
+                            canonical_thinking = validated_thinking_blocks_json(
                                 thinking_json
                             )
                         except InputError:
@@ -982,16 +996,43 @@ class CharactersRAGDBChatSyncSource:
 
 
 def chat_sync_source_for(database: object) -> CharactersRAGDBChatSyncSource | None:
-    """Return the adapter over ``database`` if it is a CharactersRAGDB, else None."""
+    """Wrap a database in the chat-sync adapter.
+
+    Args:
+        database: Any object, typically a persistence service's ``db``.
+
+    Returns:
+        A new adapter over ``database`` if it is a ``CharactersRAGDB``, else
+        ``None``.
+    """
     if isinstance(database, CharactersRAGDB):
         return CharactersRAGDBChatSyncSource(database)
     return None
 
 
-def install_chat_sync_hashing() -> None:
-    """Install :func:`chat_record_payload_hash` into the DB layer's port (idempotent).
+def is_chat_sync_source_over(source: object, database: object) -> bool:
+    """Whether ``source`` is the chat-sync adapter over exactly ``database``.
 
-    Composition roots call this at startup; importing this module also calls it.
+    Args:
+        source: A producer's ``source``, of any type.
+        database: The database the caller persists to.
+
+    Returns:
+        ``True`` only if ``source`` is a :class:`CharactersRAGDBChatSyncSource`
+        and its ``db`` is the same ``CharactersRAGDB`` object as ``database``.
+    """
+    return (
+        isinstance(source, CharactersRAGDBChatSyncSource)
+        and isinstance(database, CharactersRAGDB)
+        and source.db is database
+    )
+
+
+def install_chat_sync_hashing() -> None:
+    """Install :func:`chat_record_payload_hash` into the DB layer's port.
+
+    Composition roots call this at startup; importing this module also calls
+    it. Calling it again is harmless.
     """
     install_chat_record_hasher(chat_record_payload_hash)
 

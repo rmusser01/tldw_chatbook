@@ -288,8 +288,18 @@ def extract_note_link_targets(content: str, *, source_note_id: str) -> list[str]
     return list(seen)
 
 
-def _validated_provider_continuation(value: object) -> tuple[Any, str]:
-    """Return a parsed checkpoint and canonical private JSON."""
+def validated_provider_continuation(value: object) -> tuple[Any, str]:
+    """Parse private continuation JSON; DB writers and the Sync hash share this.
+
+    Args:
+        value: Stored or incoming ``provider_continuation_json``.
+
+    Returns:
+        The parsed checkpoint and its canonical JSON.
+
+    Raises:
+        InputError: The value is not a supported continuation.
+    """
     from tldw_chatbook.Provider_Contract.provider_continuation import (
         ContinuationValidationError,
         dump_provider_continuation_json,
@@ -306,8 +316,18 @@ def _validated_provider_continuation(value: object) -> tuple[Any, str]:
     raise InputError("Invalid provider continuation data.") from None
 
 
-def _validated_thinking_blocks_json(value: object) -> str:
-    """Return canonical supported thinking JSON or raise content-free input error."""
+def validated_thinking_blocks_json(value: object) -> str:
+    """Canonicalise thinking JSON; DB writers and the Sync hash share this.
+
+    Args:
+        value: Stored or incoming ``thinking_blocks_json``.
+
+    Returns:
+        The canonical supported thinking JSON.
+
+    Raises:
+        InputError: The value is not a supported thinking envelope.
+    """
     from tldw_chatbook.Provider_Contract.thinking_blocks import (
         ThinkingEnvelopeValidationError,
         dump_thinking_blocks_json,
@@ -321,6 +341,10 @@ def _validated_thinking_blocks_json(value: object) -> str:
     except ThinkingEnvelopeValidationError:
         pass
     raise InputError("Invalid thinking data.") from None
+
+
+_validated_provider_continuation = validated_provider_continuation  # in-module name
+_validated_thinking_blocks_json = validated_thinking_blocks_json  # in-module name
 
 
 def _require_thinking_generation_actions(value: object) -> None:
@@ -14322,7 +14346,7 @@ DELETE FROM keywords
             creation_reason=creation_reason,
         )
 
-    def _coordinate_semantic_mutation(
+    def coordinate_semantic_mutation(
         self,
         cursor: sqlite3.Cursor,
         *,
@@ -14330,8 +14354,20 @@ DELETE FROM keywords
         creation_reason: str,
         mutate: Callable[[sqlite3.Cursor], Any],
     ) -> Any:
-        """Run a public model-visible writer under the shared coordinator."""
+        """Run a model-visible message write under the shared coordinator.
 
+        Repositories outside this class that write ``messages`` use this seam.
+
+        Args:
+            cursor: The cursor of an open ``self.transaction()``; the write and
+                its semantic bookkeeping commit or roll back with it.
+            message_id: The message being written.
+            creation_reason: Semantic-revision reason for a new revision.
+            mutate: Performs the write on the cursor it is given.
+
+        Returns:
+            Whatever ``mutate`` returns.
+        """
         authorization = self._semantic_mutation_authorization_for_coordinator(
             cursor.connection
         )
@@ -14350,6 +14386,8 @@ DELETE FROM keywords
             mutate=tracked,
         )
         return result[0]
+
+    _coordinate_semantic_mutation = coordinate_semantic_mutation  # in-class name
 
     @staticmethod
     def _advance_semantic_graph_epoch(cursor: sqlite3.Cursor) -> None:

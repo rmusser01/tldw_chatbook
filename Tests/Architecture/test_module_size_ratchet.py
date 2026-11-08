@@ -854,7 +854,10 @@ _BUDGETS: dict[str, int] = {
     # through the DB-layer port.
     # 2026-11-08, TASK-36949.4: 25863 -> 24870 (-993), chat-sync methods moved
     # to Sync_Interop/chat_sync_source.py; tombstone hashing via the DB port.
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22519,
+    # 2026-11-08, TASK-36949.4 fix round 1 (coordinator-directed re-pin):
+    # 24870 -> 24908 (+38), the two validators and coordinate_semantic_mutation
+    # became documented public seams for Sync_Interop and the dispatch repo.
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22557,
     # TASK-39147: the rebased report reader and workflow migrations cross 4000.
     # 2026-11-12, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
     # comment): +2, the store's @declare_store backup-participant declaration and import.
