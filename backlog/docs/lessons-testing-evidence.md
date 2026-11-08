@@ -24846,3 +24846,19 @@ Moving band consumption before the guard still failed the original assertion.
 prove the body ran while the guarded state existed. Test that synchronous
 boundary directly when appropriate, then retain separate native event coverage.
 An unchanged state after the decorated call can mean the call has not run yet.
+
+## A direct owned capture requires ready sources, even after the Console mounts
+
+**Incident (PR #3473, 2026-11-08).** UI31's temporary-capture voice cancellation
+test called the warm-only configuration capture before custody admission and
+failed `console_capture_source_not_ready`. The isolated case passed. Keeping the
+real App trust service but clearing its local-facade publication reproduced the
+same guard; awaiting the real initializer and reading the original lazy property
+made that control and all eleven file cases pass without changing Cancel checks.
+The hosted log did not identify the exact unready source. Switching to the public
+capture fallback passed Cancel but violated this fixture's native worker drain,
+so that candidate was discarded.
+
+**What to do.** Establish the actual readiness preconditions of a low-level
+fixture call through its original owners. Mount completion alone is not service
+readiness; keep teardown assertions when selecting a different capture route.

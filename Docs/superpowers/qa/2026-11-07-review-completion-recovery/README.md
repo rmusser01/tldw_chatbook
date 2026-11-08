@@ -659,3 +659,45 @@ retry; the corrected probe verifies that the existing 160-column retry is
 unchanged and no synthetic 80-column retry is added. No new ADR is required for
 this test-only correction under ADR-281/063/131. Application source is unchanged;
 no additional live requests or product children were used (cumulative 250/19).
+
+## Direct capture fixture readiness — 2026-11-08
+
+On `1d8e5f8b`, the repaired admission-sensitive lane, PR Fast Lane, UI3 and
+UI10 all passed. The earlier malformed-config, database-lock and fast-lane
+failures are not relabeled as product fixes. All other completed normal checks
+passed except [UI31](https://github.com/rmusser01/tldw_chatbook/actions/runs/42501109320/job/128805870595):
+its voice cancellation case raised `console_capture_source_not_ready` before
+custody admission. The final derived-artifact job was still queued at this
+observation, so this head did not pass CI.
+
+The test calls the low-level owned configuration capture directly; that route
+requires already-published stock sources. It previously relied on background
+skill discovery to satisfy that precondition. An unchanged isolated run passed.
+A control kept the real App trust service but cleared only its publication in
+the local skills facade immediately before capture. The original test then
+failed at the same readiness guard. This demonstrates a supported failure path;
+the hosted log does not identify which source failed qualification.
+
+The voice-case setup now awaits the real asynchronous trust initializer and
+reads the original lazy property, asserting it publishes that same service.
+The original owned capture, custody payload, Cancel path, image/draft checks,
+provider-call assertion and teardown remain unchanged. The publication control
+passes, including worker retirement; all 11 temporary-capture cases pass in
+47.77 seconds. Ruff lint and whitespace checks pass. Formatting the before and
+after sources produces exactly this four-line addition; existing formatting
+differences elsewhere in the file remain unchanged.
+
+Two exploratory controls are retained honestly. Delaying only the native trust
+builder did not reproduce the failure because this fixture invoked it on the
+main thread. A public-controller capture candidate passed cancellation but
+failed the fixture's native worker-retirement assertion, so it was discarded.
+The first observer setup also failed because Python monitoring does not allow
+RAISE as a local event; the corrected observer ran without replacing source
+bindings. No production or workflow change, timeout increase, or CI rerun was
+made. Private logs, control sources and observations are in
+`recovered-final60-20261108/capture-readiness-20261108/`.
+
+Independent review covers only this test/docs delta; unchanged full review and
+live qualification remain applicable. Fresh normal CI is still required before
+repository closeout. No new ADR under existing ADR-281/063/131; zero additional
+live requests or product children, cumulative recovery usage remains 250/19.
