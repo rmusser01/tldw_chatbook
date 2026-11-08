@@ -921,6 +921,10 @@ MINIMUM_FILES = 1847
 # TASK-39135 review r12s-rev1 (2026-11-07): append the PageDown case of the
 # moved-focus swap test at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1848
+# TASK-39135 review r12s-rev2 (2026-11-07): append the mid-rebuild move and
+# the Tab-into-the-rebuilt-panes nodes at the tail. The floor is the measured
+# entry count.
+MINIMUM_FILES = 1850
 
 
 def read_census(path: Path) -> list[str]:

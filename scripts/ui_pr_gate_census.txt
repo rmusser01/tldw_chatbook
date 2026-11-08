@@ -2685,3 +2685,6 @@ Tests/UI/test_settings_panel_scoped_updates.py::test_a_focus_the_user_moves_befo
 Tests/UI/test_settings_category_sweep.py::test_widening_the_terminal_never_narrows_the_detail_pane
 # TASK-39135 review r12s-rev1 M1: input that leaves focus in place keeps the landing.
 Tests/UI/test_settings_panel_scoped_updates.py::test_a_focus_the_user_moves_before_the_swap_lands_is_kept[pagedown]
+# TASK-39135 review r12s-rev2: a move made mid-rebuild is kept; a Tab into the rebuilt panes is not.
+Tests/UI/test_settings_panel_scoped_updates.py::test_a_focus_the_user_moves_while_the_panes_rebuild_is_kept
+Tests/UI/test_settings_panel_scoped_updates.py::test_a_tab_into_the_panes_the_swap_destroys_keeps_the_landing
