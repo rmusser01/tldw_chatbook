@@ -173,6 +173,30 @@ If a step wants a value the caller can supply:
 genuinely historical database with nothing but a client id, and goes red the
 moment any step in the chain needs something else.
 
+**The one exception: v52→v53 needs a composed process (TASK-36949.6).** The
+step rewrites every stored Safe exchange capture with the Console capture codec
+(decode, compact the per-turn history copy, re-encode through the credential
+sanitizer). That codec is Chat semantics, about 1.5k lines across three Chat
+modules, and the DB layer may not import Chat, so the step reaches it through
+the Safe-capture trimming port in `DB/transaction_observer.py`. It needs no
+caller *data*, only an installed port, and only for a database that holds a
+Safe capture: fresh databases and databases with no Safe captures (the
+installed-wheel v35 canary among them) never touch the port.
+
+* **Without the port** the step fails closed: `SchemaError` (from
+  `SafeCaptureTrimmingNotInstalledError`), the whole upgrade rolls back, and
+  the database stays at v52, unharmed, for a composed process to upgrade.
+* **Who installs it:** every composition root (the three `app_entry` entry
+  points, `tldw-serve`, the mobile service, the MCP server, the RAG backfill
+  CLI). A library consumer composes by importing
+  `tldw_chatbook.Chat.console_exchange_capture`, which installs it on import,
+  or by calling its `install_safe_capture_trimming()`.
+* **Do not "fix" it by skipping the trim** and advancing the version. The step
+  runs once, so a skipped trim is never retried.
+
+`test_a_bare_open_of_a_v52_safe_capture_fails_closed_and_stays_v52` in the
+same bare-open module pins this outcome in a fresh, uncomposed interpreter.
+
 ## The writer writes the schema it is opened against (TASK-21441)
 
 `CharactersRAGDB.add_message` used to name the newest schema's column list
