@@ -143,7 +143,20 @@ async def test_ready_disclosure_is_fully_painted_without_moving_run(
             strips[y].crop(region.x, region.right).text
             for y in range(max(0, region.y), min(region.bottom, len(strips)))
         )
-        assert painted.strip() == library_rag_query_quiet_text(current[0])
+        expected = (
+            f"To {provider} · its default model: question + evidence"
+            if mode == "rag"
+            else ""
+        )
+        assert str(quiet.renderable) == expected
+        visible = painted.strip()
+        if mode == "search" or size == (170, 50):
+            assert visible == expected
+        else:
+            assert visible.startswith(f"To {provider} · its default model")
+            if visible != expected:
+                assert visible.endswith("…")
+                assert expected.startswith(visible[:-1])
         run = screen.query_one("#library-rag-run-query", Button)
         assert not run.disabled
         run_y = run.region.y
