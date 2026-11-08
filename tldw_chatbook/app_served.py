@@ -21,6 +21,31 @@ def _start_served_canvas_control(self: Any, *, app_globals: dict[str, Any]) -> N
     )
 
 
+async def _await_served_control_start(self: Any) -> bool:
+    """Authenticate the owned transport before cold UI work can starve it."""
+    if getattr(self, "_shutting_down", False) or getattr(self, "_exit", False):
+        return False
+    client = getattr(self, "served_canvas_control", None)
+    task = getattr(self, "_served_canvas_control_start_task", None)
+    if client is None:
+        return task is None and not getattr(self, "_served_canvas_mode", False)
+    if task is None:
+        return False
+
+    import asyncio
+
+    # The existing start observer owns logging and fail-closed retirement.
+    (outcome,) = await asyncio.gather(asyncio.shield(task), return_exceptions=True)
+    if isinstance(outcome, BaseException):
+        return False
+    return (
+        self._served_canvas_control_start_task is task
+        and self.served_canvas_control is client
+        and not self._shutting_down
+        and not self._exit
+    )
+
+
 async def _retire_after_control_loss(self: Any) -> None:
     """Close native admission and retain execution ownership through retirement."""
     from .Web_Server import served_console_app

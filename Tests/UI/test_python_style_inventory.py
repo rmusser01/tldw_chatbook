@@ -3,7 +3,7 @@
 import pytest
 
 from Tests.private_profile import private_profile_test
-from Tests.UI.python_style_inventory import inventory_styles
+from Tests.UI.python_style_inventory import StyleWrite, inventory_styles
 
 
 @pytest.mark.parametrize(
@@ -208,3 +208,74 @@ def test_css_keyword_cannot_hide_string_or_dynamic_declarations(request):
         ("color", True),
         ("*", True),
     ]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "answer = 42",
+        "# w.styles.width = 3",
+        'text = "w.set_styles(width=3)"',
+    ],
+)
+@private_profile_test
+def test_style_free_syntax_has_no_writes(request, source):
+    assert inventory_styles(source) == []
+
+
+@pytest.mark.parametrize("source", ["def broken(", "value ="])
+@private_profile_test
+def test_style_free_invalid_syntax_still_refuses(request, source):
+    with pytest.raises(SyntaxError):
+        inventory_styles(source)
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            "w.ｓｔｙｌｅｓ.width = 3",
+            [StyleWrite("width", 1, "assignment", "static", None, True)],
+        ),
+        (
+            "w.ｓｅｔ_ｓｔｙｌｅｓ(width=3)",
+            [StyleWrite("width", 1, "set_styles", "static", None, True)],
+        ),
+        (
+            "w . styles . width = 3",
+            [StyleWrite("width", 1, "assignment", "static", None, True)],
+        ),
+        (
+            "w.styles.height += measured",
+            [StyleWrite("height", 1, "assignment", "runtime", None, True)],
+        ),
+        (
+            "setattr(w.styles, property_name, value)",
+            [StyleWrite("*", 1, "setattr", "runtime", None, True)],
+        ),
+        (
+            "w.styles.width = None",
+            [StyleWrite("width", 1, "assignment", "reset", None, False)],
+        ),
+        (
+            "# ds-runtime: measured terminal width\nw.set_styles(width=event.value)",
+            [
+                StyleWrite(
+                    "width",
+                    2,
+                    "set_styles",
+                    "runtime",
+                    "measured terminal width",
+                    False,
+                )
+            ],
+        ),
+        (
+            "w.set_styles(**options)",
+            [StyleWrite("*", 1, "set_styles", "runtime", None, True)],
+        ),
+    ],
+)
+@private_profile_test
+def test_attribute_gate_preserves_every_style_record_field(request, source, expected):
+    assert inventory_styles(source) == expected

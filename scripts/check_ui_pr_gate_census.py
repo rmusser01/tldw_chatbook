@@ -1281,6 +1281,8 @@ MINIMUM_FILES = 2546
 # Retain the post-attach native-read responsiveness case.
 # PR #3345: retain every relocated MCP workbench selector.
 MINIMUM_FILES = 2198
+# PR #3345: include both complete UI regression files.
+MINIMUM_FILES = 2200
 
 
 MINIMUM_FILES = 2038

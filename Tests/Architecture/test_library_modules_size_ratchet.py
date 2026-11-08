@@ -192,7 +192,7 @@ _BUDGETS: dict[str, int] = {
     # recheck_settled_load, so a load a list read found in flight is re-checked.
     # 967 -> 983 (2026-11-06, TASK-38981 review; owner size waiver): a
     # conversation picked from the list holding the narrow stage takes it back.
-    "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 983,
+    "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 967,
     "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": 1800,
     # 2026-10-21, TASK-34000.22 fix round 1 (owner decision 2026-10-04: raise
     # the row to the measured value): 1453 -> 1492. Dev itself was already
@@ -204,7 +204,8 @@ _BUDGETS: dict[str, int] = {
     # stale duplicate carried; library_screen.py drops 79 lines with it.
     # 2026-11-13, TASK-40297: the quality strip's open/close and pick repaint
     # the ‹ Library bar's guard: 1501 -> 1504.
-    "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1504,
+    # PR #3345, measured after integrating dev cc6006.
+    "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1495,
     # 2026-09-05, wave-5 task 2 (ingest controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
     # discovery, recipe §17) -- 57 moved methods (byte-for-byte) + a
@@ -878,7 +879,7 @@ _BUDGETS: dict[str, int] = {
     # (+3): the detail sync's ``arm_editor`` lands a pending stage pick.
     # 2026-11-19, TASK-41715 (review r17ls-rev1): the action-result reveal
     # reads `is_attached` on its own line before `app.screen`: 5068 -> 5069.
-    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 5069,
+    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 5065,
     # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
     # 2/3): born-governed by the glob above -- new file, pinned at its
     # exact measured line count on landing (42 moved methods + the
@@ -1052,7 +1053,7 @@ _BUDGETS["tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py"] =
 # 2026-11-19, TASK-41715 (review r17ls-rev1): `presentable`, `_scripts_closed`
 # and the share controller's `_active` read `is_attached` on its own line
 # before `app.screen`: 1063 -> 1065 and 339 -> 340 (measured).
-_BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 1065
+_BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 1057
 _BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_share_controller.py"] = 340
 
 # 2026-09-25, TASK-32954 (ruling R14): initial exact pin for the built-in
