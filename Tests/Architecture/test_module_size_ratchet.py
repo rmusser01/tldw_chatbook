@@ -984,7 +984,10 @@ _BUDGETS: dict[str, int] = {
     # live row count (dead sequences inside the range count too).
     # 2026-10-31, PR3298 user size waiver: +31 to select the completed proof
     # by exact descriptors and its permitted start before full validation.
-    "tldw_chatbook/Chat/console_trace_service.py": 6587,
+    # 2026-11-07, TASK-39123 (owner size waiver): 6587 -> 6600 (+13) -- the
+    # replay and surface-prefix comparisons accept a turn stored under an
+    # older readable credential projection (review r12b-rev2).
+    "tldw_chatbook/Chat/console_trace_service.py": 6600,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6049,
