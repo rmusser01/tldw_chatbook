@@ -1,5 +1,7 @@
 """Finite [agents] workflow policy fields for canonical Console behavior drafts."""
 
+from .settings_goal_policy import GOAL_SETTING_DEFAULTS, normalize_goal_setting
+
 WORKFLOW_SETTING_FIELDS = (
     ("max_workflow_generations", "Planning and execution phase attempts", 8),
     ("max_workflow_child_launches", "Task launches", 12),
@@ -13,6 +15,30 @@ WORKFLOW_SETTING_DEFAULTS = {
     **{key: default for key, _, default in WORKFLOW_SETTING_FIELDS},
 }
 WORKFLOW_SETTING_KEYS = tuple(WORKFLOW_SETTING_DEFAULTS)
+AGENT_SETTING_DEFAULTS = {**GOAL_SETTING_DEFAULTS, **WORKFLOW_SETTING_DEFAULTS}
+AGENT_SETTING_KEYS = (*WORKFLOW_SETTING_KEYS, *GOAL_SETTING_DEFAULTS)
+
+
+def normalize_agent_setting(key, value):
+    if key in WORKFLOW_SETTING_DEFAULTS:
+        return normalize_workflow_setting(key, value)
+    if key in GOAL_SETTING_DEFAULTS:
+        return normalize_goal_setting(key, value)
+    raise ValueError("Unknown automatic-work setting.")
+
+
+def compose_agent_policies(screen):
+    from .settings_goal_policy import compose_goal_policy
+
+    yield from compose_goal_policy(screen)
+    yield from compose_workflow_policy(screen)
+
+
+def sync_agent_policies(screen):
+    from .settings_goal_policy import sync_goal_policy
+
+    sync_goal_policy(screen)
+    sync_workflow_policy(screen)
 
 
 def normalize_workflow_setting(key, value):

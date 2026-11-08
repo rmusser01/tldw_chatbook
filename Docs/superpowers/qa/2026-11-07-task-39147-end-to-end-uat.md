@@ -233,3 +233,84 @@ layout correction. No full suite, external provider or other-platform run. Exact
 fix staging and preservation are audited in
 `/tmp/pr39147-prompt-layout-final-preservation.json`, against
 `/tmp/pr39147-prompt-layout-start.json`. Unrelated staging and files remain intact.
+
+
+## CI follow-up — 2026-11-08 (in progress)
+
+Published task commit: `3285573d77da4e646faa9ed8f974d4b42f99fea5` on
+`codex/task-39147-native-phase-rebuild`, parent `e08627a`.
+The [initial Derived Artifacts run](https://github.com/rmusser01/tldw_chatbook/actions/runs/42426760674)
+has 12 failed and 3 successful test jobs. Its final aggregate job was still queued
+when these failures were diagnosed. No success or bug-free claim follows from the
+earlier local UAT. Integration onto newer remote dev remains outside this work.
+
+Repairs are built as Git blobs through `/tmp/pr39147-ci-repair-state.json` and a
+private index. Local verification loads the candidate's Python and relevant
+package resources from Git objects in memory, including private pytest children;
+it does not replace checkout files or create a worktree. Local handles, adapters
+and assertions remain real except the tests' existing provider doubles. This
+harness does not replace actual Linux CI, filesystem-membership checks or isolated
+`python -I` execution; those remain qualified by the pushed run.
+
+Observed verification before publication of the repair batch:
+
+- Initial representatives: four migration variants and one standalone-controller
+  send failed. Two saved-hook controls also failed. Full baseline controls
+  reproduced the migration/hook defects, so they are inherited native-foundation
+  compatibility failures rather than claimed new task regressions.
+- Core repair candidate `853640e`: **21 passed in 60.25s**, covering the four
+  migration variants, controller send, saved hooks and publication, strict custody
+  fields, workflow atomic-save/invalid-value controls and app/Settings size pins.
+  Packet: `/tmp/pr39147-ci-core-targeted-green.txt`.
+- Broader targeted Console controls: **61 passed, 2 failed in 235.98s**.
+  Packet: `/tmp/pr39147-ci-secondary-targeted.txt`. Both failures were retained:
+  real completed-tool response-rule repair and the external Stop follow-up.
+- Binding the actual replacement bridges through runtime APIs makes the completed
+  tool case, real-agent boundary and unchanged-target native acceptance pass:
+  **3 passed, 1 failed in 100.27s**. The remaining prepared-start/manual-send case
+  hits the mounted configuration refusal, not a discarded assertion.
+  Packet: `/tmp/pr39147-ci-bound-fixtures-targeted.txt`.
+- Supplying the lifetime stub's actual store: **1 passed in 23.21s**;
+  `/tmp/pr39147-ci-custody-store-targeted.txt`.
+- The new ordinary-chat Stop case fails before the maximum fix:
+  **1 failed in 15.17s**; `/tmp/pr39147-ci-host-hook-red.txt`. A trace of the
+  external Stop control reports `ordinary maximum does not cover this effect` at
+  event prehold. The repair includes the installed engine's enabled definitions
+  before admission; it retains the existing opaque claim and physical-drain check.
+
+Final scoped checks of the repair batch:
+
+- Expanded original Stop physical-drain controls (agent runtime on/off,
+  onboarded/fresh) plus the actual external-Stop/native-rule follow-up:
+  **5 passed in 48.02s**; `/tmp/pr39147-ci-host-hook-green.txt`, source tree
+  `37e9ae83e420ef9e7c06208c4de96d3dc948ca24`.
+- The originally failing mounted Settings streaming-save case:
+  **1 passed in 62.54s**; `/tmp/pr39147-ci-settings-render-green.txt`, source tree
+  `52ccdd59bd3298cc9bb5e18bbecb9d37ff986adb` (same product sources plus evidence).
+
+Exact narrow commands use the Git-source harness environment described above:
+
+```sh
+.venv/bin/python -m pytest \
+  Tests/Chat/test_console_ordinary_tree.py::test_original_stop_hook_holds_same_ordinary_tree \
+  Tests/Chat/test_response_rules_external_hook.py::test_real_external_stop_and_native_violation_commit_one_followup -q
+.venv/bin/python -m pytest \
+  'Tests/UI/test_settings_console_fallback_rows.py::test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_value[saved-off]' -q
+```
+
+Remaining diagnosis: the mounted preparation refusal also reproduces with full
+Git sources from `e08627a` (**1 failed in 19.78s**;
+`/tmp/pr39147-ci-mounted-baseline.txt`). The synthetic app factory selects MCP
+files outside the configured profile, leaving the actual source unbound; the
+stock capture correctly refuses it. Memory-backed fixture sources also do not
+qualify for that stock route. Production refusal and actual source/recovery
+checks have not been weakened to accommodate these fixtures. Remaining fixtures
+and any task-related compatibility defects still need resolution and remote CI.
+
+Ruff comparison over every changed Python file introduces **zero new findings**;
+inherited lint debt remains explicit. The app shrinks to 5708 lines (ratchet
+reduced from 5710), and Settings fits the unchanged 35818-line budget. No assertion,
+timeout or budget is relaxed. Preservation auditing compares the complete real
+index, dev HEAD/status and hashes/links/missing states of all 374 starting dirty
+and untracked paths; `/tmp/pr39147-ci-repair-preservation.json` is the current
+packet. No full-suite local sweep, external provider or other-platform UAT was run.

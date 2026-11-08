@@ -2681,16 +2681,9 @@ class TldwCli(
             if service is None or (
                 retry_locked and callable(status) and status().state == "locked"
             ):
-                from .Personal_Context.bootstrap import (
-                    bootstrap_personal_context_service,
-                )
+                from .Chat.console_ordinary_tree import _bootstrap_personal_service
 
-                service = bootstrap_personal_context_service()
-                from .Chat.console_ordinary_tree import current_ordinary_tree
-
-                ordinary = current_ordinary_tree()
-                if ordinary is not None:
-                    ordinary.publish_personal_service(self, service)
+                service = _bootstrap_personal_service(self)
                 self._personal_context_service = service
         return service
 
@@ -5717,21 +5710,4 @@ _CONSOLE_SKILL_APP_SOURCE = (
     TldwCli._create_deferred_startup_task,
     TldwCli._create_deferred_startup_task.__code__,
     ConsoleRuntime,
-)
-
-# Original native raw-CLI policy closure; ordinary admission reads no callback.
-_NATIVE_RAW_CLI_APP_TYPE = TldwCli
-_NATIVE_RAW_CLI_PERMISSION_CALLBACK_CODE = next(
-    code
-    for code in TldwCli.__init__.__code__.co_consts
-    if isinstance(code, type(TldwCli.__init__.__code__))
-    and code.co_name == "<lambda>"
-    and code.co_names == ("_read_app_raw_cli_permitted",)
-)
-
-_NATIVE_ORDINARY_PERSONAL_GETTER = (
-    TldwCli.get_personal_context_service,
-    TldwCli.get_personal_context_service.__code__,
-    TldwCli.get_personal_context_service.__defaults__,
-    tuple((TldwCli.get_personal_context_service.__kwdefaults__ or {}).items()),
 )

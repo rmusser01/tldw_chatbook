@@ -1,7 +1,7 @@
 ---
 id: TASK-39147
 title: Rebuild PR3411 native phase orchestration on existing runtime
-status: Done
+status: In Progress
 created_date: 2026-11-07 15:27
 assignee:
 - '@codex'
@@ -36,7 +36,7 @@ Replace PR3411's orchestration implementation with a thin phase coordinator usin
 - [x] #5 Shared-tree conflicts serialize correctly and scoped writes require observed-content or observed-absence preconditions; unrelated dirty files survive Stop, cancellation and restart without automatic Git mutation.
 - [x] #6 Restart reconciliation distinguishes uncertain prior effects from live workers, can finish and release obsolete recovery protections, and preserves live-worker protection without blocking unrelated scratch work indefinitely.
 - [x] #7 Bounded private results, history and charges survive restart. Supported result/change-window removal releases quota exactly while retaining history/accounting; existing storage upgrades remain transactional and compatible.
-- [x] #8 Targeted functional, runtime failure/cancellation, permissions, concurrency, restart, storage, UI and ordinary-chat regression evidence plus lint/format and self-review are recorded. Full-suite execution, automatic commits, pushes, replacement PR publication and merge are excluded.
+- [ ] #8 Targeted functional, runtime failure/cancellation, permissions, concurrency, restart, storage, UI and ordinary-chat regression evidence plus lint/format and self-review are recorded. Full-suite execution, automatic commits, pushes, replacement PR publication and merge are excluded.
 - [x] #9 Planning accounting failures after proven native return release real execution resources, retain known charges and unknown evidence, and remain explicitly reviewable; failed native scopes still retain protection.
 - [x] #10 Upgraded closed history with saved filesystem ownership and no explicit recovery-review marker retains scoped protection until review.
 - [x] #11 A renamed/replaced saved root, including a retargeted symlink, never grants the old history protection over its replacement.
@@ -106,6 +106,16 @@ Reason: routine geometry correction using the canonical scrolling/docked-action 
 2. Make the existing dialog scroll with native docked actions; preserve Library feedback visibility and all Apply/Clear/Cancel results. Rebuild generated CSS using build_css.py.
 3. Run targeted prompt-modal tests and design-token/component/bundle checks, then rerun mounted prompt UAT at narrow and wide sizes and inspect screenshots.
 4. Update the task and UAT evidence; stage exact task files only and audit unrelated index/file bytes and HEAD.
+
+CI repair follow-up (authorized monitor/fix/push/rerun until green):
+ADR required: no new ADR
+ADR path: backlog/decisions/356-native-phase-orchestration-runtime-ownership.md
+Reason: restore existing native-workflow and ordinary-chat compatibility; no new storage schema or authority boundary.
+1. Read all failing job logs and reproduce representative failures on the task tree and untouched native-workflow baseline. Record inherited failures separately from newly introduced regressions.
+2. Correct old-version migration fixtures, native optional-owner setup and ordinary hook custody; remove dead implementation-attestation declarations and consolidate workflow Settings integration without raising size budgets.
+3. Diagnose mounted capture refusals, retain real source/resource/permission/revision fences, and verify supported ordinary provider and UI paths without restoring implementation-identity checks.
+4. Use targeted tests against in-memory Git sources, lint/format and exact branch diffs. Preserve the original checkout HEAD, real index and every staged/unstaged file.
+5. Commit only task-related repairs to codex/task-39147-native-phase-rebuild, push normally and rerun Derived Artifacts on the current head until green. No unrelated fixes, newer-dev integration or merge.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -271,11 +281,42 @@ included in the new commit. It excludes the unrelated staged portrait and Librar
 work. CI is to run against this published branch. Integration onto the newer,
 diverged remote `dev` remains a separate qualification; no merge is authorized.
 
+
+CI follow-up (2026-11-08): the initial task-only Derived Artifacts run
+[42426760674](https://github.com/rmusser01/tldw_chatbook/actions/runs/42426760674)
+finished its test jobs with failures; overall CI is not green. The task remains
+In Progress and AC #8 stays open during the authorized repair loop.
+
+The first repair batch initializes a standalone controller's runtime slot, binds
+legacy hook custody to the published runtime, and includes already-installed V2
+handlers in the ordinary turn's pre-admitted opaque footprint. The Stop regression
+now covers agent-runtime disabled as well as enabled and still proves exclusion
+of conflicting work until physical return. Native fixture handoffs use the real
+runtime store/controller/bridge APIs; the lifetime stub supplies its actual store.
+Synthetic pre-workflow migration fixtures remove later workflow schema before
+claiming to be v15/v17. No production migration or source/permission/revision fence
+is relaxed. Settings reads provider identity directly, shares existing Goal and
+Workflow control glue, and fits the existing size budget; dead attestation
+constants are removed and the app's ratchet budget is reduced to its smaller size.
+No implementation-identity checks are restored.
+
+The expanded Stop/native-follow-up regression batch passes all 5 cases (48.02s),
+and the originally failing mounted Settings streaming-save case passes (62.54s).
+Exact partial verification and remaining mounted-preparation failures are recorded
+in the [UAT evidence](../../Docs/superpowers/qa/2026-11-07-task-39147-end-to-end-uat.md).
+A baseline control also reproduces the mounted preparation refusal on `e08627a`;
+that is evidence of an inherited blocker, not a passing compatibility result.
+The original dev HEAD, all index entries and all 374 dirty/untracked path states
+remain unchanged. Repair commits use only Git blobs and a temporary index.
+
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
+CI follow-up remains in progress: the published task branch has failing gates;
+previous local UAT does not establish that the full CI contract passes.
+
 Implemented ADR-356 inline and completed all three review follow-ups without
 restoring implementation-identity checks. The 71 targeted regressions cover honest
 native return/journal retry, shutdown, established and replaced-root fences,

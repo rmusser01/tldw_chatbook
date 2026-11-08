@@ -1169,7 +1169,10 @@ async def test_late_subagent_stop_retains_original_tree_until_physical_return(
 
 
 @pytest.mark.parametrize("onboarded", [False, True])
-async def test_original_stop_hook_holds_same_ordinary_tree(ordinary_host, onboarded):
+@pytest.mark.parametrize("agent_runtime", [False, True])
+async def test_original_stop_hook_holds_same_ordinary_tree(
+    ordinary_host, onboarded, agent_runtime
+):
     from Tests.Agents.test_hooks_v2_execution import command
     from Tests.Chat.test_console_skill_substitution import _RecordingGateway
     from tldw_chatbook import config
@@ -1178,6 +1181,7 @@ async def test_original_stop_hook_holds_same_ordinary_tree(ordinary_host, onboar
     from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
 
     h = ordinary_host
+    h.controller._agent_runtime_enabled = agent_runtime
     if onboarded:
         h.app.app_config["console"] = {"onboarding": {"first_send_completed": True}}
     entered, release = h.tmp_path / "stop-entered", h.tmp_path / "stop-release"

@@ -30,6 +30,7 @@ async def native(tmp_path, request):
     runtime = ConsoleRuntime(app=app)
     app.console_runtime = runtime
     runtime.set_chat_store(chats)
+    runtime.set_agent_bridge(controller._agent_bridge)
     runtime.set_chat_controller(controller)
     rules = (
         None
@@ -189,6 +190,7 @@ async def test_real_agent_service_reply_uses_the_owned_rule_boundary(native):
         provider_gateway=gateway,
     )
     controller._agent_bridge = bridge
+    runtime.set_agent_bridge(bridge)
     controller._agent_runtime_enabled = True
     events = []
     chats.subscribe_message_completed(lambda _token: events.append("completion"))
@@ -254,6 +256,7 @@ async def test_real_completed_tool_work_is_retained_during_native_repair(
         store=chats,
         provider_gateway=gateway,
     )
+    runtime.set_agent_bridge(controller._agent_bridge)
     controller._agent_runtime_enabled = True
     result = await runtime.wait_for_turn(
         runtime.accept_turn(request(native, "Calculate 6*7 and explain result"))
@@ -293,6 +296,7 @@ async def test_real_agent_remaining_budget_limits_native_repairs(
         get_hooks_v2=runtime.get_hooks_v2,
     )
     controller._agent_bridge = bridge
+    runtime.set_agent_bridge(bridge)
     controller._agent_runtime_enabled = True
     budget = console_agent_bridge.console_run_budget()
     monkeypatch.setattr(

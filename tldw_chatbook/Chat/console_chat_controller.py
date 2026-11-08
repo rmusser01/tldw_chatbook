@@ -3736,6 +3736,7 @@ class ConsoleChatController:
         self.streaming = streaming
         self.system_prompt = system_prompt
         self._agent_bridge = agent_bridge
+        self._hooks_v2_runtime = None
         self._buddy_sink = buddy_sink
         # App-owned, content-free lifecycle projection. ConsoleRuntime binds
         # this stable callback; it is never a detachable screen hook.

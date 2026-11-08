@@ -246,6 +246,7 @@ def test_runtime_owned_custody_tracks_only_lifetime_handles():
     }
     assert {field.name for field in fields(type(record.inputs))} == {
         "attachments",
+        "attachments_transferred",
         "staged_evidence_revision",
         "durable_accepted",
     }
@@ -2079,6 +2080,9 @@ async def test_active_runtime_custody_does_not_retain_the_detached_chat_screen()
     release = asyncio.Event()
 
     class BlockingController:
+        def __init__(self):
+            self.store = store
+
         fleet_wake = SimpleNamespace(delivering_session_ids=lambda: ())
         prompt_queue_coordinator = SimpleNamespace(
             bind_turn_request=lambda _request, *, origin: None
@@ -3327,10 +3331,9 @@ async def test_accepted_agent_chat_start_has_visible_stop_in_mounted_target(
                 await pilot.pause(0.1)
             assert chat._console_attach_reconciled and app.screen is chat
             runtime = app.console_runtime
-            runtime._chat_store = store
-            runtime._chat_controller = controller
-            runtime._agent_bridge = controller._agent_bridge
-            controller.app = app
+            runtime.set_chat_store(store)
+            runtime.set_agent_bridge(controller._agent_bridge)
+            runtime.set_chat_controller(controller)
             _register_runtime_database_owners(runtime, runs)
             _register_runtime_database_owners(runtime, store.persistence.db)
             rig_registered = True
@@ -3516,10 +3519,9 @@ async def test_prepared_native_start_allows_mounted_manual_send(
                 await pilot.pause(0.1)
             assert chat._console_attach_reconciled and app.screen is chat
             runtime = app.console_runtime
-            runtime._chat_store = store
-            runtime._chat_controller = controller
-            runtime._agent_bridge = controller._agent_bridge
-            controller.app = app
+            runtime.set_chat_store(store)
+            runtime.set_agent_bridge(controller._agent_bridge)
+            runtime.set_chat_controller(controller)
             _register_runtime_database_owners(runtime, runs)
             _register_runtime_database_owners(runtime, store.persistence.db)
             rig_registered = True
@@ -3636,10 +3638,9 @@ async def test_native_acceptance_consumes_only_open_target_revision(
                 await pilot.pause(0.1)
             assert chat._console_attach_reconciled and app.screen is chat
             runtime = app.console_runtime
-            runtime._chat_store = store
-            runtime._chat_controller = controller
-            runtime._agent_bridge = controller._agent_bridge
-            controller.app = app
+            runtime.set_chat_store(store)
+            runtime.set_agent_bridge(controller._agent_bridge)
+            runtime.set_chat_controller(controller)
             _register_runtime_database_owners(runtime, runs)
             _register_runtime_database_owners(runtime, store.persistence.db)
             rig_registered = True

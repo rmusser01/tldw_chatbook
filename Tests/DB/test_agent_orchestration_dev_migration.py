@@ -38,6 +38,16 @@ db.close()
     assert result.returncode == 0, result.stderr
 
 
+def _drop_workflow_schema(conn):
+    # A pre-workflow fixture must remove the later feature, not just its version.
+    objects = conn.execute(
+        "SELECT type,name FROM sqlite_schema WHERE name GLOB 'workflow_*' "
+        "AND type IN ('trigger','table') ORDER BY type DESC"
+    ).fetchall()
+    for kind, name in objects:
+        conn.execute('DROP ' + kind.upper() + ' "' + name.replace('"', '""') + '"')
+
+
 def _upstream_v15_database(path):
     db = AgentRunsDB(path)
     run_id = db.create_run(
@@ -57,6 +67,7 @@ def _upstream_v15_database(path):
         run_id=run_id,
     )
     with db.transaction() as conn:
+        _drop_workflow_schema(conn)
         # Remove later feature shape as well as version rows: this fixture
         # must actually enter the v19/v20 upgrade path when reopened.
         # v24 Goal triggers depend on wake tables that this v15 fixture removes.

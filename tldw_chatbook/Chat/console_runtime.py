@@ -1207,6 +1207,7 @@ class ConsoleRuntime:
         #: while unconfigured (Ruling R17), hence the sentinel.
         self._run_hooks_engine: Any = _UNSET
         self._run_hooks_lock = RLock()
+        self._legacy_hooks_source = None
         self._hook_permissions: HookPermissions | None = None
         self._preparation_reads: set[Any] = set()
         from .console_plugin_hook_preparation import NativePluginHookPreparation
@@ -5833,39 +5834,38 @@ class ConsoleRuntime:
             return self._hook_permissions
 
     def ensure_run_hooks(self) -> RunHooksEngine | None:
-        """Build one engine whose launch authority reads saved config."""
+        """Build one saved-config engine; bind custody to its published runtime."""
         with self._run_hooks_lock:
             if self._disposed:
                 return None
-            if self._run_hooks_engine is not _UNSET:
-                return self._run_hooks_engine
-            from tldw_chatbook.Agents.run_hooks import RunHooksEngine
-
             owner = self.ensure_hook_permissions()
+            if self._run_hooks_engine is _UNSET:
+                from tldw_chatbook.Agents.run_hooks import RunHooksEngine
 
-            def cwd_provider() -> str:
-                # Bound runs supply their selected workspace per fire.
-                console = (getattr(self._app, "app_config", None) or {}).get("console")
-                root = (
-                    str(console.get("workspace_root", "") or "").strip()
-                    if isinstance(console, dict)
-                    else ""
+                def cwd_provider() -> str:
+                    console = (getattr(self._app, "app_config", None) or {}).get("console")
+                    root = (
+                        str(console.get("workspace_root", "") or "").strip()
+                        if isinstance(console, dict)
+                        else ""
+                    )
+                    return root or os.getcwd()
+
+                self._run_hooks_engine = RunHooksEngine(
+                    owner.targets,
+                    cwd_provider,
+                    notification_targets=owner.notification_targets,
+                    launch_guard=owner.launch_guard,
                 )
-                return root or os.getcwd()
+            if (
+                self._run_hooks_engine is not None
+                and self._legacy_hooks_source is None
+                and getattr(self._app, "console_runtime", None) is self
+            ):
+                from tldw_chatbook.Agents.legacy_hook_ownership import (
+                    _NativeLegacyHookSource,
+                )
 
-            self._run_hooks_engine = RunHooksEngine(
-                owner.targets,
-                cwd_provider,
-                notification_targets=owner.notification_targets,
-                launch_guard=owner.launch_guard,
-            )
-            from tldw_chatbook.Agents.legacy_hook_ownership import (
-                _NativeLegacyHookSource,
-            )
-
-            from .console_workflow_runs import native_workflow_qualified
-
-            if native_workflow_qualified():
                 self._legacy_hooks_source = _NativeLegacyHookSource(
                     self, self._run_hooks_engine, owner
                 )

@@ -43,6 +43,18 @@ def current_ordinary_tree(controller=None):
     return None
 
 
+def _bootstrap_personal_service(app):
+    from tldw_chatbook.Personal_Context.bootstrap import (
+        bootstrap_personal_context_service,
+    )
+
+    service = bootstrap_personal_context_service()
+    tree = current_ordinary_tree()
+    if tree is not None:
+        tree.publish_personal_service(app, service)
+    return service
+
+
 def finish_ordinary_submission(controller, task):
     tree = getattr(controller, "_ordinary_submissions", {}).pop(task, None)
     if tree is not None:
@@ -1289,6 +1301,8 @@ def _capture_maximum(tree):
             )
         else:
             opaque = True
+    engine = tree.runtime.get_hooks_v2(tree.session.id)
+    opaque |= bool(engine is not None and engine.enabled and engine.definitions)
     permissions = tree.runtime._hook_permissions
     if permissions is not None:
         from tldw_chatbook.Agents.run_hooks import load_hooks_config
