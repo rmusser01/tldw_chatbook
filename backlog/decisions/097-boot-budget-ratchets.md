@@ -129,6 +129,7 @@ commit, with the owner's explicit sign-off recorded in the PR.
 | 2026-11-06 | screen pre-import payload | `MAX_PASS_ADDED_LOC` | 426,467 → 426,575 | TASK-39040 (PR #3426), rebased on dev `8b762b52fa`: paired arms measured dev 426,467 (headroom 0) → head 426,575, +108, a LOC-only re-pin at the measurement, modules 556 of 558, no new pre-imported module. The growth is in two already-resident modules: `TTS/audio_player.py` (the `HANDED_OFF` state and `HAND_OFF_RETENTION_SECONDS`) and `UI/Speech/speech_playback_mixin.py` (a clip handed to the default app is kept for the bound instead of deleted on Stop, and its progress polling ends). | Owner decision 2026-11-05, "Re-pin per PR (Rec.)" |
 | 2026-11-12 | `_ui_ready` census | `MAX_TLDW_MODULES_AT_UI_READY` | 1039 → 1040 | Round-13 restack onto dev `e0186fa10a`: dev's own merges added `Agents.execution_capacity`, `Agents.ordinary_tree`, `Agents.workflow_task_scope`, `Chat.console_ordinary_tree` and `Workspaces.worktree_activity` (sheds: `Chat.console_compaction_hooks`, `DB.private_sqlite_files`, `Widgets.Console.console_library_search_modal`, `Widgets.Console.console_rag_settings_modal`). Dev itself measures 1040; limit = measured. | Owner size waiver, applied by the round-13 restack brief. |
 | 2026-11-07 | `_ui_ready` census | `MAX_TLDW_MODULES_AT_UI_READY` | 1038 → 1039 | TASK-38987 (fb610006fe, merged with PR #3487 on 2026-11-10): the shared switch-interval owner `Utils.switch_interval` (ref-counted scopes for config writes and Console preparation reads) is imported on first use, and a config write or preparation read runs before ready, so it is resident at ready; it stays off the app-import path (687/688). Limit = the 1038 measured + the documented +/-1 wobble. Row added retroactively on 2026-11-12 (round-13 closeout): the raise merged without one. | Owner size waiver 2026-10-31, applied by the round-12 follow-up brief. |
+| 2026-11-07 | PR3345 warm UI-ready source residency | `MAX_TLDW_MODULES_AT_UI_READY` | 1031 → 1032 | Actual boot epoch726 measured1032 and named existing `DB.character_conversation_search`; its navigation/importing files are identical to passing688. This records the observed source count, without attributing its timing or changing character navigation, FTS or native custody. Actual latency epoch725 passed13 checks. | Owner explicitly withdrew source-count ceilings as blockers in the PR3345 repair chat on2026-11-07. This scoped application preserves all timing, worker, buffer, absent-family, ownership and safety checks. |
 
 Row added retroactively on 2026-08-31 (TASK-25813), found while taking the
 ratchet baseline for the 2026-08-30 holistic review. **The decision was the
@@ -266,3 +267,20 @@ repeated ownership/freshness documentation, with executable AST identity verifie
 Incoming functional controls remain enrolled, including compact-setup gates under
 the retained 15-minute Perf job cap. These local measurements do not qualify
 hosted capacity or the new commit's required checks.
+
+
+## PR3345 owner source-count waiver (2026-11-07)
+
+The owner's later instruction withdraws source-count ceilings as blockers.
+For warm UI residency, epoch726 measured1,032 against1,031; all33 other boot
+checks passed. The existing character-conversation search module is the named
+resident, and its six connected files are identical to earlier passing688.
+No exact timing cause or new startup cost is claimed. This entry supersedes
+only the UI-ready1031 retention in the older PR3345 section above.
+
+The ceiling is aligned to the observed1,032 without additional headroom.
+All original census, warm-profile, forbidden-family and interaction assertions
+remain. Actual latency epoch725 passed13 checks. No runtime deadline, case/job
+cap, worker/buffer bound, permission, native ownership, FTS policy or durability
+rule changes. Existing diagnostic snapshots remain historical; no snapshot
+regeneration is claimed for this Test-constant-only exception.

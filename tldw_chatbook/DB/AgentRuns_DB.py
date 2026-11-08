@@ -1552,64 +1552,29 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
     ) -> int:
         """Record a user-authored note anchored to a turn's diff.
 
-        TASK-16800 (spec §1), anchor kinds extended by TASK-18060 Task 1
-        (review-rail spec §4). The base anchor is ``(run_id, root, path,
-        hunk_index, hunk_header)``; ``hunk_excerpt`` is captured once, at
-        note-creation time, from the full diff text the caller already has
-        -- it is the retention safety net that keeps display and delivery
-        self-contained even after shadow-repo snapshot pruning.
-
-        Three anchor kinds share this table (spec §4):
-
-        - ``"hunk"`` (default, V1.5): anchored to a whole hunk, exactly as
-          before this method gained the new keywords.
-        - ``"diff_line"``: anchored to one line of the file's full diff
-          text via ``diff_line_index``/``diff_line_text``, with the hunk
-          fields ALSO populated (the hunk the line falls in) -- a
-          deliberate convergence so the card's existing hunk-note filter
-          renders line comments under their hunk with no card changes.
-        - ``"file"``: a whole-file comment; callers pass the
-          ``hunk_index=-1, hunk_header=''`` sentinels (and typically
-          ``hunk_excerpt=''``) so the row can never match a real hunk.
+        TASK-16800/TASK-18060: capture excerpt and line text from the caller's full
+        diff at creation, keeping display and delivery independent of later snapshot
+        pruning. Diff-line notes also fill hunk fields for existing card filtering;
+        file notes use non-hunk sentinels.
 
         Args:
-            run_id: The agent run whose diff this note is anchored to.
+            run_id: Agent run whose diff owns the note.
             root: Canonical root path of the changed file.
-            path: The changed file's path (root-relative).
-            hunk_index: 0-based index of the hunk over the FULL diff, or
-                ``-1`` for a ``"file"`` note's sentinel.
-            hunk_header: The hunk's ``"@@ -a,b +c,d @@ ..."`` line, verbatim,
-                or ``""`` for a ``"file"`` note's sentinel.
-            hunk_excerpt: The hunk body captured at note time (already
-                capped/elided by the caller), or ``""`` for a ``"file"``
-                note.
-            note: The user's note text.
-            snapshot_id: The owning ``change_snapshots`` row's own DB
-                ``id`` (Qodo #6, PR #1779 fix round) -- disambiguates
-                which of TWO same-``run_id``/root/path windows (a turn's
-                own window and its surviving sub-agents' post-turn
-                window, PR3a-1 Task 6c) this note's hunk actually came
-                from, for the rare case where both windows happen to
-                produce the exact same ``hunk_index``/``hunk_header``
-                (identical position/line-count edits against different
-                baselines yield byte-identical headers, since a header
-                encodes only positions/counts, never content). ``None``
-                (the default) only by callers that predate this column or
-                have no snapshot row to anchor to.
-            anchor_kind: ``"hunk"`` (default), ``"file"``, or
-                ``"diff_line"`` (TASK-18060 Task 1). The default keeps
-                every V1.5 caller of this method byte-compatible.
-            diff_line_index: 0-based index over the file's FULL diff text
-                (a distinct axis from ``hunk_index``'s hunk-count
-                semantics), required for ``"diff_line"`` notes and
-                ``None`` otherwise.
-            diff_line_text: The anchored line, captured verbatim at
-                note-creation time -- same retention posture as
-                ``hunk_excerpt`` -- required for ``"diff_line"`` notes and
-                ``None`` otherwise.
+            path: Root-relative changed-file path.
+            hunk_index: Zero-based full-diff hunk index, or -1 for a file note.
+            hunk_header: Verbatim hunk header, or an empty string for a file note.
+            hunk_excerpt: Caller-capped hunk body captured at creation; empty for files.
+            note: User-authored note text.
+            snapshot_id: Owning snapshot row id, distinguishing same-run windows with
+                identical hunk coordinates. None for legacy callers or no snapshot.
+            anchor_kind: "hunk" (compatible default), "file", or "diff_line".
+            diff_line_index: Zero-based full-diff line index for diff-line notes,
+                distinct from the hunk index; None otherwise.
+            diff_line_text: Verbatim line retained at creation for diff-line notes;
+                None otherwise, with the same retention guarantee as hunk_excerpt.
 
         Returns:
-            The newly created note's row id.
+            Newly created note row id.
         """
         self._require_execution_owner()
         with self.transaction() as conn:
@@ -2003,45 +1968,30 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         """Create a new run record in ``running`` status.
 
         Args:
-            conversation_id: The owning Console conversation's id.
-            agent_kind: Caller-owned kind, such as ``"primary"``,
-                ``"subagent"``, or ``"local_command"``.
-            task: A generic run label or sub-agent task; ``None`` when the
-                caller does not record one.
-            parent_run_id: The parent run's id for a sub-agent; ``None``
-                for a primary run.
-            budget: The run's ``RunBudget`` serialized to a dict, stored
-                as JSON for later inspection; ``None`` if not recorded.
-            assistant_message_id: The persisted id of the assistant reply
-                this run produced, if already known at creation time;
-                ``None`` (the common case) when it will be recorded later
-                via ``set_run_assistant_message_id`` once the reply is
-                persisted.
-            agent_definition: The name of the agent definition used for
-                this run, if spawned from a definition; ``None`` otherwise.
-            definition_fingerprint: The fingerprint hash of the agent
-                definition used for this run, for audit trail purposes;
-                ``None`` if not applicable.
-            resumed_from_run_id: For a CONTINUATION of a finished
-                sub-agent (fleet PR3b Task 4): the run id this run was
-                seeded from. ``None`` for every ordinary run.
-            spawn_event_id: Stable parent Trace event that caused this run.
-                ``None`` for primary and legacy runs.
-            run_id: Preallocated stable identity; generated when omitted.
-            work_chain_id: Immutable accepted-work lineage. Children inherit
-                their parent's chain when omitted; legacy roots remain NULL.
-            resolved_provider: v21 (ADR-344, TASK-32477): the provider the
-                spawn actually routed to after preset resolution; ``None``
-                when routing was not resolved at spawn time.
-            resolved_model: The resolved model id; ``None`` likewise.
-            resolved_base_url: The resolved endpoint base URL; ``None``
-                likewise.
-            resolved_params_json: The resolved sampling params as a raw
-                JSON object string, stored verbatim for resume to reuse;
-                ``None`` likewise.
+            conversation_id: Owning Console conversation id.
+            agent_kind: Caller-owned kind, e.g. primary, subagent, or local_command.
+            task: Generic run label/sub-agent task, or None when unrecorded.
+            parent_run_id: Parent id for a sub-agent; None for a primary.
+            budget: RunBudget dict stored as JSON for inspection; None if unrecorded.
+            assistant_message_id: Persisted reply id, or None until recorded later
+                through set_run_assistant_message_id.
+            agent_definition: Spawned agent definition name, or None.
+            definition_fingerprint: Definition fingerprint hash for audit, or None.
+            resumed_from_run_id: Finished sub-agent continued by this run; None for
+                ordinary runs (fleet PR3b Task 4).
+            spawn_event_id: Stable parent Trace event; None for primary/legacy runs.
+            run_id: Preallocated stable identity; a hex UUID4 is generated if omitted.
+            work_chain_id: Immutable accepted-work lineage; children inherit their
+                parent's chain if omitted, while legacy roots remain NULL.
+            resolved_provider: Provider after preset resolution (ADR-344/TASK-32477),
+                or None if routing was not resolved at spawn time.
+            resolved_model: Resolved model id, or None likewise.
+            resolved_base_url: Resolved endpoint URL, or None likewise.
+            resolved_params_json: Raw sampling-params JSON stored verbatim for resume,
+                or None likewise.
 
         Returns:
-            The newly created run's id (a hex UUID4).
+            The created run id.
         """
         self._require_execution_owner()
         run_id = run_id or uuid.uuid4().hex
@@ -2541,43 +2491,21 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
     def reconcile_orphaned_runs(self) -> int:
         """Mark runs left ``running`` by a crashed process as ``error``.
 
-        A hard crash between run start (``create_run`` -> ``running``) and run
-        end (``set_status`` at finalize) leaves a row stuck ``running``
-        forever. On an execution-owned open, flip those rows to ``error``
-        with a default ``result`` (preserving any partial result via COALESCE).
-        The physical run-store lease excludes a competing process before this
-        sweep, including explicit calls; read-only handles always refuse it.
+        The physical execution-owned lease excludes competing processes, including
+        explicit sweeps; read-only handles refuse. Preserve partial results via
+        COALESCE. In-memory databases and paths already in _swept_paths return zero,
+        so later calls cannot sweep runs started after this process's first recovery.
 
-        No-ops (returns ``0`` without touching the database) for in-memory
-        databases and for any file path already reconciled once in this
-        process (tracked via ``_swept_paths``). The guard lives here, not
-        just in ``__init__``'s auto-call, so a later *explicit* call to this
-        method within the same process is also a no-op -- it must not sweep
-        up a run that legitimately started running after the first sweep
-        (e.g. one created by this same still-live process).
-
-        The path is registered in ``_swept_paths`` only *after* the sweep's
-        transaction has committed successfully (i.e. after the ``with
-        self.transaction()`` block below exits normally). ``transaction()``
-        rolls back and re-raises on any error -- e.g. a transient
-        ``sqlite3.OperationalError: database is locked`` -- so registering
-        beforehand would leave the path permanently marked "swept" even
-        though nothing was actually reconciled, silently defeating AC#2's
-        crash-recovery guarantee for the rest of the process. A clean sweep
-        that finds zero orphaned rows still registers the path (it commits
-        successfully; it just has nothing to update).
-
-        Recovery remains lazy: the first execution-capable open sweeps once.
-        Non-owning inspection can see unreconciled rows, but cannot execute or
-        turn their persisted status into live-process authority (ADR-244).
+        Register the path only after a successful transaction commit, even for an
+        empty sweep. Rollback/re-raise leaves it unregistered for a later retry.
+        Recovery stays lazy on the first execution-capable open; non-owning inspection
+        cannot execute or turn persisted status into live-process authority (ADR-244).
 
         Returns:
-            The number of rows reconciled (``0`` if skipped by a guard).
+            Number of rows reconciled, or zero when a guard skips the sweep.
 
         Raises:
-            Exception: Re-raised (from ``transaction()``) on any error
-                while sweeping; the path is left unregistered so a later
-                call in this process retries the sweep.
+            Exception: Transaction errors propagate without registering the path.
         """
         from .mobile_import_authority import run_allowed
 
@@ -3709,44 +3637,18 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
     def supersede_run_tree(self, run_id: str) -> int:
         """Mark an exact primary and terminal direct sub-agents superseded.
 
-        PR3a-1 Task 2 lets a sub-agent outlive its turn, so a still-
-        ``running`` child is not a dead attempt -- it is a live cross-turn
-        survivor a retry/regenerate/variant call must not disturb. Flipping
-        a row straight to ``superseded`` (itself a member of
-        ``TERMINAL_RUN_STATUSES``) would not stop its live worker thread;
-        it would only make ``set_status``'s first-writer-wins guard
-        silently drop that run's real terminal write when it finishes for
-        real, losing its result. So this only ever touches rows already in
-        a terminal status -- a live row is skipped entirely and settles
-        normally through its own later ``set_status`` call.
-
-        This guard applies to the run identified by ``run_id`` itself, not
-        just its children: a first draft assumed ``run_turn``'s own
-        "the primary's record is always persisted before this returns"
-        guarantee made the *target* primary always terminal by the time
-        this runs. That guarantee is real but narrower than it looks -- it
-        only covers ``run_turn``'s OWN coroutine returning, not a
-        *different, earlier* run whose coroutine already returned to the
-        UI (e.g. via Stop) while its ``asyncio.to_thread`` worker survives
-        Task cancellation and keeps running. ``supersede_run_id`` is
-        resolved as the newest non-superseded primary for the whole
-        conversation, not necessarily the run tied to the message being
-        retried, so retrying an older failed message can reach a
-        different, still-live, stopped-but-not-dead primary. Guarding the
-        primary's own row the same way the child guard does closes that
-        hole without adding a second code path.
+        Retry/regenerate can reach an earlier primary whose coroutine returned after
+        Stop while its worker survives. Supersede only terminal rows: superseding a
+        live row would make set_status's first-writer-wins guard discard its eventual
+        result. Skipped live rows remain parented, running, and free to settle normally.
 
         Args:
-            run_id: The exact primary whose tree (itself + exact sub-agent
-                rows with ``parent_run_id == run_id``) should be marked superseded.
-                Used by retry/regenerate to retire a prior attempt while
-                keeping it for drill-in history.
+            run_id: Exact primary whose row and direct sub-agent children should be
+                retired for retry/regenerate while retaining drill-in history.
 
         Returns:
-            The number of rows updated -- the run itself plus any direct
-            sub-agent children, restricted to whichever of those were
-            already terminal. A live row (primary or child) is not
-            counted -- it stays parented and running, untouched.
+            Number of terminal rows updated, including the primary when terminal;
+            live primary/child rows are untouched and not counted.
         """
         self._require_execution_owner()
         placeholders = ",".join("?" for _ in TERMINAL_RUN_STATUSES)
@@ -3846,7 +3748,7 @@ COMMIT;
 
 # Definition-time originals for the finite stock run-log availability read.
 _RUN_LOG_PROBE_AGENT_BASES = AgentRunsDB.__bases__
-_RUN_LOG_PROBE_INHERITED = (
+_RUN_LOG_PROBE_KERNEL_METHODS = (
     "_init_store_kernel",
     "_get_connection",
     "_held_connection",
@@ -3855,6 +3757,70 @@ _RUN_LOG_PROBE_INHERITED = (
     "close",
     "_transaction_immediate_default",
 )
+_RUN_LOG_PROBE_INHERITED = tuple(
+    name
+    for name in _RUN_LOG_PROBE_KERNEL_METHODS
+    if name not in ("connection", "transaction")
+)
+_RUN_LOG_PROBE_OWNED_METHODS = (
+    "connection",
+    "transaction",
+    "_execution_use",
+    "_require_execution_owner",
+)
+_RUN_LOG_PROBE_OWNER_METHODS = (
+    "__init__",
+    "acquire",
+    "require_current",
+    "_use",
+    "close",
+    "__enter__",
+    "__exit__",
+)
+_EXECUTION_OWNER_GLOBALS = ConsoleExecutionOwner.require_current.__globals__
+
+
+def _stock_execution_owner(database: AgentRunsDB) -> ConsoleExecutionOwner | None:
+    """After source checks, select metadata; native _use validates authority."""
+    try:
+        owner = vars(database).get("_execution_owner")
+        if (
+            type(database) is not AgentRunsDB
+            or vars(database).get("_read_only") is not False
+            or type(owner) is not ConsoleExecutionOwner
+            or vars(owner).get("_path") != vars(database).get("db_path")
+            or inspect.getattr_static(ConsoleExecutionOwner, "__getattribute__")
+            is not object.__getattribute__
+            or inspect.getattr_static(ConsoleExecutionOwner, "__getattr__", None)
+            is not None
+            or any(
+                name in vars(owner) for name in (*_RUN_LOG_PROBE_OWNER_METHODS, "_live")
+            )
+            or any(
+                inspect.getattr_static(ConsoleExecutionOwner, name, None) is not None
+                for name in (
+                    "_path",
+                    "_stream",
+                    "_pid",
+                    "_parent_identity",
+                    "_lock_identity",
+                    "_store_identity",
+                    "_lock",
+                    "_users",
+                    "_closing",
+                )
+            )
+            or any(
+                inspect.getattr_static(AgentRunsDB, name, None) is not None
+                for name in ("_execution_owner", "_read_only", "db_path")
+            )
+        ):
+            return None
+        return owner
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
 _AGENT_RUNS_FACTORY_SLOTS = (
     (globals(), "AgentRunsDB", AgentRunsDB),
     (globals(), "BaseDB", BaseDB),
@@ -3862,6 +3828,57 @@ _AGENT_RUNS_FACTORY_SLOTS = (
     (globals(), "_store_kernel", _store_kernel),
     (globals(), "_RUN_LOG_PROBE_AGENT_BASES", _RUN_LOG_PROBE_AGENT_BASES),
     (globals(), "_RUN_LOG_PROBE_INHERITED", _RUN_LOG_PROBE_INHERITED),
+    (globals(), "_RUN_LOG_PROBE_KERNEL_METHODS", _RUN_LOG_PROBE_KERNEL_METHODS),
+    (globals(), "_RUN_LOG_PROBE_OWNED_METHODS", _RUN_LOG_PROBE_OWNED_METHODS),
+    (globals(), "_RUN_LOG_PROBE_OWNER_METHODS", _RUN_LOG_PROBE_OWNER_METHODS),
+    (globals(), "_EXECUTION_OWNER_GLOBALS", _EXECUTION_OWNER_GLOBALS),
+    (globals(), "ConsoleExecutionOwner", ConsoleExecutionOwner),
+    (globals(), "ConsoleExecutionUnavailable", ConsoleExecutionUnavailable),
+    (globals(), "nullcontext", nullcontext),
+    (globals(), "_stock_execution_owner", _stock_execution_owner),
+    (
+        _EXECUTION_OWNER_GLOBALS["__spec__"],
+        "origin",
+        getattr(_EXECUTION_OWNER_GLOBALS["__spec__"], "origin", None),
+    ),
+    (
+        sys.modules,
+        ConsoleExecutionOwner.__module__,
+        sys.modules[ConsoleExecutionOwner.__module__],
+    ),
+    *(
+        (_EXECUTION_OWNER_GLOBALS, name, _EXECUTION_OWNER_GLOBALS[name])
+        for name in (
+            "__name__",
+            "__file__",
+            "__spec__",
+            "ConsoleExecutionOwner",
+            "ConsoleExecutionUnavailable",
+            "_identity",
+            "_store_identity",
+            "lexical_path",
+            "verify_trusted_directory",
+            "PrivatePathStatus",
+            "os",
+            "stat",
+            "open_private_binary",
+            "open_private_lock_stream",
+            "fcntl",
+        )
+    ),
+    *(
+        (
+            ConsoleExecutionOwner,
+            name,
+            inspect.getattr_static(ConsoleExecutionOwner, name),
+        )
+        for name in (
+            *_RUN_LOG_PROBE_OWNER_METHODS,
+            "__getattribute__",
+            "__dict__",
+            "_live",
+        )
+    ),
     (globals(), "__file__", __file__),
     (globals(), "__spec__", __spec__),
     (__spec__, "origin", getattr(__spec__, "origin", None)),
@@ -3888,11 +3905,12 @@ _AGENT_RUNS_FACTORY_SLOTS = (
             "__getattribute__",
             "__dict__",
             *_RUN_LOG_PROBE_INHERITED,
+            *_RUN_LOG_PROBE_OWNED_METHODS,
         )
     ),
     *(
         (SQLiteStoreKernel, name, vars(SQLiteStoreKernel)[name])
-        for name in (*_RUN_LOG_PROBE_INHERITED, "is_memory_db")
+        for name in (*_RUN_LOG_PROBE_KERNEL_METHODS, "is_memory_db")
     ),
     *(
         (vars(_store_kernel), name, vars(_store_kernel)[name])

@@ -1,5 +1,6 @@
 """TldwCli lifecycle, shutdown, maintenance and quit flow through LifecycleMixin.
 
+TASK-33011 extracted this lifecycle from app.py.
 The mixin precedes App, preserving its overrides. Textual-decorated members
 on_splash_screen_closed and on_app_focus remain on TldwCli in app.py.
 Patch defining globals here; patch app.py too when it reads the same name.
@@ -78,12 +79,11 @@ _QUIT_CLOSE_BUSY_SECONDS = 0.5
 # here belongs to the application lifecycle.
 _DIAGNOSTICS_COMPONENT_APP = "app"
 
-# TASK-32533. The three `textual.message_pump` frames that mean "one pump's own
-# handler raised": `_dispatch_message` (a message handler, and the compose/mount
-# dispatch in `_pre_process` -- the P0's own path), `_flush_next_callbacks`
-# (`call_after_refresh` / `call_later`) and `_process_messages_loop` (the
-# `on_idle` dispatch inlined there). Workers, the compositor and the driver
-# carry none of these and still exit.
+# TASK-32533. The three `textual.message_pump` frames that mean "one pump's own handler
+# raised": `_dispatch_message` (a message handler, and the compose/mount dispatch in
+# `_pre_process` -- the P0's own path), `_flush_next_callbacks` (`call_after_refresh` /
+# `call_later`) and `_process_messages_loop` (the `on_idle` dispatch inlined there).
+# Workers, the compositor and the driver carry none of these and still exit.
 #
 # The application's OWN run loop is the exception: it runs through
 # `_process_messages_loop` too, so this frame set alone would make run-loop
@@ -128,14 +128,12 @@ class LifecycleMixin:
                 RecoveryService,
                 default_control_root,
             )
-
             service = self._recovery_service = RecoveryService(default_control_root())
         return service
 
     def action_backup_restore(self, mode: str = "home") -> None:
         """Open recovery (setup's Restore entry passes ``mode="inspect"``) for all profiles."""
         from .UI.Screens.backup_restore_screen import BackupRestoreScreen
-
         self.push_screen(
             BackupRestoreScreen(
                 self.recovery_service, config_paths=(get_cli_config_path(),),
@@ -149,7 +147,6 @@ class LifecycleMixin:
         """Use ordinary guarded shutdown before the CLI starts recovery alone."""
         from .Backup_Recovery.recovery_restart import RecoveryRestart
         from .Backup_Recovery.runtime_maintenance import RuntimeMaintenance
-
         if not getattr(self, "_recovery_restart_available", False) or self._quit_in_progress:
             self.notify("Open Chatbook from its CLI to continue in recovery mode.", severity="warning")
             return
@@ -174,7 +171,6 @@ class LifecycleMixin:
             finally:
                 if not self._shutting_down:
                     self._quit_in_progress = False
-
         quit_flow = quit_for_recovery()
         try:
             return self.run_worker(
@@ -214,7 +210,6 @@ class LifecycleMixin:
     async def open_recovery_profile(self, profile_id: str) -> None:
         """Keep the parent terminal suspended until the actual child exits."""
         from textual.app import SuspendNotSupported
-
         service = self.recovery_service
         current = service.current()
         if current is not None and current["state"] == "running":
@@ -249,7 +244,6 @@ class LifecycleMixin:
         if getattr(self, "_backup_maintenance_monitor_task", None) is not None:
             return
         from .Backup_Recovery.runtime_maintenance import monitor_app
-
         self._backup_maintenance_monitor_task = asyncio.create_task(
             monitor_app(self), name="backup-maintenance-monitor"
         )
@@ -275,22 +269,17 @@ class LifecycleMixin:
 
     async def on_shutdown_request(self) -> None:  # Use the imported ShutdownRequest
         logging.info("--- App Shutdown Requested ---")
-
         # Set shutdown flag to prevent new operations
         self._shutting_down = True
-
         # TASK-22215: stop admitting staggered boot workers before cancelling
         # the live ones, so a completion arriving mid-teardown cannot start a
         # fresh thread worker behind the cancel sweep.
         self._close_boot_worker_gate("shutdown request")
-
         # Cancel all active workers first
         await self._cancel_and_settle_workers("shutdown request")
-
         if self._rich_log_handler:
             await self._rich_log_handler.stop_processor()
             logging.info("RichLogHandler processor stopped.")
-
         # --- Stop DB Size Update Timer ---
         self.db_status_manager.stop_periodic_updates()
         self._stop_footer_status_timers()
@@ -300,15 +289,14 @@ class LifecycleMixin:
     async def _cancel_and_settle_workers(self, phase: str) -> None:
         """Cancel every live worker and actually wait for them, bounded.
 
-        task-19561. Both shutdown hooks used to cancel their workers and
-        then ``await asyncio.sleep(0.1)`` -- a flat wait that is
-        simultaneously too long (nothing to wait for on a quiet exit) and
-        far too short (a worker mid-``await`` gets one tick, and a thread
-        worker gets nothing at all), and which never observed the outcome
-        either way. Waiting on the workers themselves is both faster in the
-        common case and honest in the uncommon one; the timeout keeps a
-        worker that ignores cancellation from turning quit into a hang, and
-        says which ones they were.
+        task-19561. Both shutdown hooks used to cancel their workers and then ``await
+        asyncio.sleep(0.1)`` -- a flat wait that is simultaneously too long (nothing to
+        wait for on a quiet exit) and far too short (a worker mid-``await`` gets one
+        tick, and a thread worker gets nothing at all), and which never observed the
+        outcome either way. Waiting on the workers themselves is both faster in the
+        common case and honest in the uncommon one; the timeout keeps a worker that
+        ignores cancellation from turning quit into a hang, and says which ones they
+        were.
         """
         try:
             active_workers = [w for w in self.workers if not w.is_finished]
@@ -356,12 +344,11 @@ class LifecycleMixin:
     async def _disconnect_local_mcp_client(self) -> None:
         """Best-effort teardown of local MCP client sessions (P5-T6).
 
-        ``local_mcp_control_service.client`` (``LocalMCPControlService.
-        client``) stays ``None`` until a local external MCP profile is
-        actually connected during this process's lifetime (see
-        ``LocalMCPControlService._get_client``'s lazy-init) -- a session-
-        free app quit is a no-op here, matching the sibling teardown
-        blocks' own guarded style.
+        ``local_mcp_control_service.client`` (``LocalMCPControlService. client``) stays
+        ``None`` until a local external MCP profile is actually connected during this
+        process's lifetime (see ``LocalMCPControlService._get_client``'s lazy-init) -- a
+        session- free app quit is a no-op here, matching the sibling teardown blocks'
+        own guarded style.
         """
         local_mcp_control_service = getattr(self, "local_mcp_control_service", None)
         client = getattr(local_mcp_control_service, "client", None)
@@ -371,16 +358,14 @@ class LifecycleMixin:
     async def _close_local_writing_service(self) -> None:
         """Release the writing suite's held SQLite connections (TASK-21125).
 
-        Peeks the slot rather than reading through any accessor: a service that
-        was never wired must not be constructed purely to close it. A close
-        failure is logged (type name only) and never allowed to abort the rest
-        of unmount.
+        Peeks the slot rather than reading through any accessor: a service that was
+        never wired must not be constructed purely to close it. A close failure is
+        logged (type name only) and never allowed to abort the rest of unmount.
 
-        Runs on a thread, NOT inline. ``close()`` waits for an autosave still
-        running on a worker thread, and a synchronous call here froze the event
-        loop for the whole settle timeout (measured: 5.00 s during which a 50 ms
-        ticker fired zero times) -- which also starved the very operation it was
-        waiting for.
+        Runs on a thread, NOT inline. ``close()`` waits for an autosave still running on
+        a worker thread, and a synchronous call here froze the event loop for the whole
+        settle timeout (measured: 5.00 s during which a 50 ms ticker fired zero times)
+        -- which also starved the very operation it was waiting for.
         """
         service = getattr(self, "local_writing_service", None)
         if service is None:
@@ -395,10 +380,9 @@ class LifecycleMixin:
     async def _close_local_research_service(self) -> None:
         """Release the research store's held SQLite connections (TASK-21127).
 
-        Peeks the slot rather than reading through any accessor: a service that
-        was never wired must not be constructed purely to close it. A close
-        failure is logged (type name only) and never allowed to abort the rest
-        of unmount.
+        Peeks the slot rather than reading through any accessor: a service that was
+        never wired must not be constructed purely to close it. A close failure is
+        logged (type name only) and never allowed to abort the rest of unmount.
 
         Runs on a thread, NOT inline. ``close()`` waits for an operation still
         running on the research backend thread (a run's progress write, say),
@@ -483,7 +467,6 @@ class LifecycleMixin:
 
     async def _shutdown_notes_sync_runtime(self) -> None:
         """Settle the application-owned lasting-sync runtime exactly once."""
-
         # TASK-21108: a runtime that was never built was never started, so
         # there is nothing to settle -- and reading the lazy property here
         # would construct one purely to shut it down.
@@ -518,10 +501,9 @@ class LifecycleMixin:
     async def _shutdown_persona_buddy(self) -> None:
         """Drain the app-owned Buddy before profile database teardown.
 
-        Peeks the lazy controller slot (TASK-21103): a controller that was
-        never built has nothing to drain, and going through the property
-        here could CONSTRUCT one (importing Persona_Visual + PIL) purely to
-        shut it down.
+        Peeks the lazy controller slot (TASK-21103): a controller that was never built
+        has nothing to drain, and going through the property here could CONSTRUCT one
+        (importing Persona_Visual + PIL) purely to shut it down.
         """
         task = self._persona_buddy_shutdown_task
         if task is None:
@@ -540,7 +522,6 @@ class LifecycleMixin:
 
     async def _shutdown_actor_pack_export(self) -> None:
         """Cancel and drain Actor Pack export before profile teardown."""
-
         controller = getattr(self, "actor_pack_export_controller", None)
         if controller is None:
             return
@@ -555,13 +536,11 @@ class LifecycleMixin:
 
     def _refresh_after_actor_pack_import(self, result: object) -> None:
         """Fence mounted Persona Buddy state after a committed Persona import."""
-
         if getattr(result, "actor_kind", None) == "persona":
             self.persona_buddy_controller.invalidate_profile()
 
     async def _shutdown_actor_pack_import(self) -> None:
         """Cancel and drain Actor Pack import before profile teardown."""
-
         controller = getattr(self, "actor_pack_import_controller", None)
         if controller is None:
             return
@@ -599,7 +578,6 @@ class LifecycleMixin:
                     capture_console_view_workers,
                     drain_console_view_workers,
                 )
-
                 # Preserve the original App manager-wide selected group scope;
                 # Runtime.detach_view can precede a retired view's awaited cleanup.
                 captured = capture_console_view_workers(self)
@@ -609,7 +587,6 @@ class LifecycleMixin:
                     if image is not None:
                         await image._recovered_images_close()
                 await dispose_console_runtime(self)
-
             task = asyncio.create_task(
                 settle_view_and_dispose(),
                 name="shutdown_console_runtime",
@@ -664,7 +641,6 @@ class LifecycleMixin:
     async def _shutdown_console_settings_durability(self) -> None:
         """Drain admitted settings writes without cancelling thread work."""
         from .Chat.console_settings_durability import shutdown_console_settings_durability
-
         await shutdown_console_settings_durability(self)
 
     @property
@@ -680,7 +656,6 @@ class LifecycleMixin:
         owner = self._meeting_session_owner
         if owner is None:
             from .Audio.meeting_owner import build_meeting_session_owner
-
             owner = build_meeting_session_owner(self)
             self._meeting_session_owner = owner
         return owner
@@ -695,7 +670,6 @@ class LifecycleMixin:
         from tldw_chatbook.Widgets.Library.library_ingest_canvas import (
             LibraryIngestCanvas,
         )
-
         event.stop()
         for screen in self.screen_stack:
             for canvas in screen.query(LibraryIngestCanvas):
@@ -708,7 +682,6 @@ class LifecycleMixin:
         from tldw_chatbook.Chunking.lab_coordinator import LabCoordinator
         from tldw_chatbook.Chunking.lab_runner import LocalPreviewRunner, PreviewLimits
         from tldw_chatbook.DB.Chunking_Lab_DB import CheckpointStore
-
         lock = getattr(self, "_chunking_lab_owner_lock", None)
         if lock is None:
             lock = self._chunking_lab_owner_lock = asyncio.Lock()
@@ -744,7 +717,6 @@ class LifecycleMixin:
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
         from .Workspaces.project_index.runtime import close_project_index_service
-
         await close_project_index_service(self)
         actor_recovery_cancellation = await self._shutdown_actor_pack_recovery()
         await self._shutdown_workflow_session()
@@ -817,7 +789,6 @@ class LifecycleMixin:
         await self._shutdown_file_notes_session_owner()
         # Live owners may use shared sessions until their drains finish.
         from .Utils.egress import close_pooled_default_sessions
-
         pool_error = None
         try:
             close_pooled_default_sessions()
@@ -857,7 +828,6 @@ class LifecycleMixin:
             except BaseException as error:
                 owner_error = error
             break
-
         shutdown_error: BaseException | None = None
         try:
             await super()._shutdown()
@@ -865,7 +835,6 @@ class LifecycleMixin:
             cancellation = cancellation or error
         except BaseException as error:
             shutdown_error = error
-
         if shutdown_error is not None:
             if owner_error is not None:
                 shutdown_error.add_note(
@@ -893,27 +862,24 @@ class LifecycleMixin:
         TASK-1240. Names the exception class only -- never the message, which is
         caller-supplied text and may quote user or model content.
 
-        TASK-32533 adds the raising frame to that record and stops calling
-        super() for the one case where the default (exit the whole app) is worse
-        than the bug: an exception raised inside a widget's own message handler.
-        Every other path -- workers, the run loop, the compositor, the driver --
-        still goes to super(), which sets the return code; swallowing those
-        would turn a crash into a hang.
+        TASK-32533 adds the raising frame to that record and stops calling super() for
+        the one case where the default (exit the whole app) is worse than the bug: an
+        exception raised inside a widget's own message handler. Every other path --
+        workers, the run loop, the compositor, the driver -- still goes to super(),
+        which sets the return code; swallowing those would turn a crash into a hang.
 
-        `WorkerFailed` is unwrapped. When a worker raises and `exit_on_error` is
-        true (the default), `Worker._run` sets `WorkerState.ERROR` -- posting
-        `StateChanged` *asynchronously* -- and then calls this method
-        *synchronously* with `WorkerFailed(self._error)`. So this override fires
-        first and, without unwrapping, would persist
-        `exception_type=WorkerFailed` for every worker crash in the app, while
-        `_fatal_error()` -> `_close_messages_no_wait()` races the queued
-        `StateChanged` so the `worker_failed` event that carries the real type
-        and `operation` may never be delivered. A crashed session's log would
-        then read `event=unhandled_exception exception_type=WorkerFailed` and
-        nothing else. `WorkerFailed.error` holds the real exception.
+        `WorkerFailed` is unwrapped. When a worker raises and `exit_on_error` is true
+        (the default), `Worker._run` sets `WorkerState.ERROR` -- posting `StateChanged`
+        *asynchronously* -- and then calls this method *synchronously* with
+        `WorkerFailed(self._error)`. So this override fires first and, without
+        unwrapping, would persist `exception_type=WorkerFailed` for every worker crash
+        in the app, while `_fatal_error()` -> `_close_messages_no_wait()` races the
+        queued `StateChanged` so the `worker_failed` event that carries the real type
+        and `operation` may never be delivered. A crashed session's log would then read
+        `event=unhandled_exception exception_type=WorkerFailed` and nothing else.
+        `WorkerFailed.error` holds the real exception.
         """
         from textual.worker import WorkerFailed
-
         underlying = (
             getattr(error, "error", None) if isinstance(error, WorkerFailed) else None
         )
@@ -969,28 +935,25 @@ class LifecycleMixin:
         except Exception:
             # Diagnostics must never be the reason a crash handler fails.
             pass
-        # TASK-32533: a widget or screen pump that raises inside its own
-        # dispatch reaches here through one of `_PUMP_DISPATCH_FRAMES`;
-        # Textual's default then exits the whole app for one panel's bug. Keep
-        # the screen alive for that case only -- not for a worker
-        # (`underlying`), not for the compositor or driver, and only outside
-        # headless `run_test` so the suite keeps its exception signal. Where the
-        # raise came from the handler dispatch itself, Textual has already
-        # broken that widget's message loop (`_process_messages_loop` breaks
-        # after this call), which is why the notification warns that the panel
-        # may stop responding.
+        # TASK-32533: a widget or screen pump that raises inside its own dispatch
+        # reaches here through one of `_PUMP_DISPATCH_FRAMES`; Textual's default then
+        # exits the whole app for one panel's bug. Keep the screen alive for that case
+        # only -- not for a worker (`underlying`), not for the compositor or driver, and
+        # only outside headless `run_test` so the suite keeps its exception signal.
+        # Where the raise came from the handler dispatch itself, Textual has already
+        # broken that widget's message loop (`_process_messages_loop` breaks after this
+        # call), which is why the notification warns that the panel may stop responding.
         #
         # TWO clauses do the pump filtering and BOTH are load-bearing. `pump` is
-        # Textual's `active_message_pump`: `App._context()` sets it to the app
-        # around the application loop, `MessagePump._context()` sets it to the
-        # widget around each widget task (including `_pre_process`, so a
-        # mount-time widget failure is still kept alive and still names the
-        # widget). `pump is not self` therefore excludes exactly the application
-        # loop -- which also runs through `_process_messages_loop` and so is
-        # matched by the frame set. Without it, breaking out of
-        # `App._process_messages` without `super()` unwinds with no return code
-        # and no `panic()`: the app vanishes on exit 0 with nothing in the log,
-        # the P0's symptom with LESS evidence than before.
+        # Textual's `active_message_pump`: `App._context()` sets it to the app around
+        # the application loop, `MessagePump._context()` sets it to the widget around
+        # each widget task (including `_pre_process`, so a mount-time widget failure is
+        # still kept alive and still names the widget). `pump is not self` therefore
+        # excludes exactly the application loop -- which also runs through
+        # `_process_messages_loop` and so is matched by the frame set. Without it,
+        # breaking out of `App._process_messages` without `super()` unwinds with no
+        # return code and no `panic()`: the app vanishes on exit 0 with nothing in the
+        # log, the P0's symptom with LESS evidence than before.
         keep_alive = (
             underlying is None
             and pump is not None
@@ -1035,7 +998,6 @@ class LifecycleMixin:
         controller = getattr(self, "artifact_share_controller", None)
         if controller is None:
             from .Web_Server.artifact_share import ArtifactShareController
-
             controller = ArtifactShareController()
             self.artifact_share_controller = controller
             try:
@@ -1054,14 +1016,12 @@ class LifecycleMixin:
         except Exception as exc:
             logger.warning(f"Artifact share shutdown failed: {exc}")
         finally:
-            # Drop the reference so a second call (or a late on_unmount
-            # re-entry) never re-issues stop_share -- shutdown is strictly
-            # once per controller.
+            # Drop the reference so a second call (or a late on_unmount re-entry) never
+            # re-issues stop_share -- shutdown is strictly once per controller.
             self.artifact_share_controller = None
 
     async def on_unmount(self) -> None:
         """Clean up logging resources on application exit."""
-
         # Settle boot-owned native work before any other owner can advance.
         actor_recovery_cancellation = await self._shutdown_actor_pack_recovery()
         # Do not close Notes or arm forced-exit cleanup while its worker is live.
@@ -1092,7 +1052,6 @@ class LifecycleMixin:
             from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
                 stop_all_server_processes,
             )
-
             stopped_servers = await asyncio.to_thread(
                 stop_all_server_processes, self
             )
@@ -1125,7 +1084,6 @@ class LifecycleMixin:
             # disabled. Aggregate counters only -- no user content. The
             # import is quit-time only (boot census, ADR-097).
             from tldw_chatbook.Chat.session_usage import session_usage
-
             snap = session_usage().snapshot()
             persist_event(
                 _DIAGNOSTICS_COMPONENT_APP,
@@ -1150,7 +1108,6 @@ class LifecycleMixin:
         if monitor is not None:
             with contextlib.suppress(Exception):
                 await asyncio.to_thread(monitor.close)
-
         # F3/TASK-601: shut down both Library ingest worker boundaries. Final
         # shutdown order, explicit:
         #   1. `_ingest_shutdown = True` + executor/pool references detached
@@ -1181,10 +1138,8 @@ class LifecycleMixin:
             self.loguru_logger.error(
                 f"Error shutting down Library ingest parse pool: {e}"
             )
-
         # Stop all background services and threads
         from tldw_chatbook.app_shutdown import _drain_app_unmount_services
-
         await _drain_app_unmount_services(self, speech_cleanup_cancellation)
 
         # Original cleanup code
@@ -1297,17 +1252,15 @@ class LifecycleMixin:
                 except Exception as e:
                     self.loguru_logger.error(f"Error terminating subprocess: {e}")
 
-            # task-19561: a loop that force-set `thread.daemon = True` on
-            # every live `ThreadPoolExecutor*`/`AudioPlayer*` thread used to
-            # sit here. CPython raises `RuntimeError: cannot set daemon
-            # status of active thread` for every one of them, so it changed
-            # nothing and logged an ERROR per thread while doing it. The
-            # "Active non-daemon threads remaining" warning that followed
-            # reported the same threads a moment before the process was
-            # going to wait on them anyway, with no way to act on it.
-            # Both are gone. What replaces them is the exit watchdog armed
-            # at the top of this method: it names the threads still alive
-            # at the moment the wait actually becomes a hang, and ends the
+            # task-19561: a loop that force-set `thread.daemon = True` on every live
+            # `ThreadPoolExecutor*`/`AudioPlayer*` thread used to sit here. CPython
+            # raises `RuntimeError: cannot set daemon status of active thread` for every
+            # one of them, so it changed nothing and logged an ERROR per thread while
+            # doing it. The "Active non-daemon threads remaining" warning that followed
+            # reported the same threads a moment before the process was going to wait on
+            # them anyway, with no way to act on it. Both are gone. What replaces them
+            # is the exit watchdog armed at the top of this method: it names the threads
+            # still alive at the moment the wait actually becomes a hang, and ends the
             # process rather than merely describing it.
 
             # Threads that expose a cooperative stop() still get asked --
@@ -1453,10 +1406,9 @@ class LifecycleMixin:
         """Schedule periodic media cleanup based on configuration."""
         from tldw_chatbook.Backup_Recovery.activation import execution_allowed
 
-        # TASK-1975: change-review snapshot retention rides the same
-        # maintenance path but has its OWN knob ([change_review]
-        # retention_days; <=0 disables inside the pass) -- disabling media
-        # cleanup must not silently disable snapshot retention.
+        # TASK-1975: change-review snapshot retention rides the same maintenance path
+        # but has its OWN knob ([change_review] retention_days; <=0 disables inside the
+        # pass) -- disabling media cleanup must not silently disable snapshot retention.
         try:
             if execution_allowed(("db.agent_runs",)):
                 self._change_review_retention_startup_timer = self.set_timer(
@@ -1470,10 +1422,9 @@ class LifecycleMixin:
             self.loguru_logger.opt(exception=True).warning(
                 "Could not schedule change-review retention"
             )
-        # TASK-34389: sync-journal retention rides the same maintenance path
-        # but has its OWN knob ([sync] sync_log_retention_days; <=0 disables
-        # inside the pass) -- disabling the other passes must not silently
-        # disable sync-log retention.
+        # TASK-34389: sync-journal retention rides the same maintenance path but has its
+        # OWN knob ([sync] sync_log_retention_days; <=0 disables inside the pass) --
+        # disabling the other passes must not silently disable sync-log retention.
         try:
             self._sync_log_retention_startup_timer = self.set_timer(
                 DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS + 60,
@@ -1554,11 +1505,10 @@ class LifecycleMixin:
     async def _perform_sync_log_retention(self) -> None:
         """Run one sync-journal retention pass off the UI thread (TASK-34389).
 
-        Deletes ``sync_log`` rows older than ``[sync]
-        sync_log_retention_days`` from both stores that keep a sync journal
-        (ChaChaNotes and media). ``<=0`` disables the pass entirely. Rides
-        the same post-startup maintenance path as change-review retention
-        and media cleanup; all DB work happens in a thread so it can never
+        Deletes ``sync_log`` rows older than ``[sync] sync_log_retention_days`` from
+        both stores that keep a sync journal (ChaChaNotes and media). ``<=0`` disables
+        the pass entirely. Rides the same post-startup maintenance path as change-review
+        retention and media cleanup; all DB work happens in a thread so it can never
         block the UI.
         """
         try:
@@ -2130,10 +2080,9 @@ class LifecycleMixin:
             except Exception:
                 persistence_ok = False
                 loguru_logger.warning("Blocking quit persistence failed")
-            # Fail closed: a config-read failure on the quit path must
-            # degrade to "no summary", never to a failed quit (issue #365);
-            # a failed persistence also skips the summary (spec: exit
-            # reliability wins over the farewell screen).
+            # Fail closed: a config-read failure on the quit path must degrade to "no
+            # summary", never to a failed quit (issue #365); a failed persistence also
+            # skips the summary (spec: exit reliability wins over the farewell screen).
             summary_enabled = False
             if persistence_ok:
                 try:

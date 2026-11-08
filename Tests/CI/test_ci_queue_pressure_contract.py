@@ -466,6 +466,9 @@ ARCHITECTURE_GUARD_TARGETS = (
     "Tests/Architecture/test_profile_owned_path_inventory.py::test_base_data_dir_census_detects_qualified_and_aliased_consumers",
     "Tests/Architecture/test_profile_owned_path_inventory.py::test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners",
     "Tests/Architecture/test_profile_owned_path_inventory.py::test_python_outside_the_package_and_tests_parses",
+    "Tests/Architecture/test_profile_owned_path_inventory.py::test_runtime_source_population_keeps_tooling_and_ignores_nonruntime_evidence",
+    "Tests/Architecture/test_profile_owned_path_inventory.py::test_runtime_constant_guard_rejects_new_runtime_owners",
+    "Tests/Architecture/test_profile_owned_path_inventory.py::test_runtime_constant_guard_does_not_swallow_runtime_parse_failure",
     "Tests/Architecture/test_progress_widget_clock_guard.py",
     "Tests/Architecture/test_recovery_entrypoints.py",
     "Tests/Architecture/test_task2062_3_legacy_downloader_retirement.py",
@@ -524,6 +527,7 @@ ARCH_REVIEW_TARGETS = (
     "Tests/test_config_load_settings_table_guard.py",
     "Tests/Performance/test_boot_css_byte_budget.py",
     "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+    "Tests/Chat/test_served_startup_authentication.py",
     # TASK-39114: the private-SQLite registry and inventory files, red on no
     # required lane before; last, because Tests/DB keeps the bootstrap profile.
     "Tests/DB/test_private_sqlite.py",
@@ -2255,3 +2259,8 @@ def test_eval_native_retirement_controls_keep_platform_recovery_enrollment():
     assert "Tests/Backup_Recovery/test_rag_manager_maintenance.py" in step["run"]
     assert "Tests/Evals/test_orchestrator_offloop_writes.py" in step["run"]
     assert "--timeout=180" in step["run"]
+    target = (
+        "Tests/RAG_Search/test_keyword_leg_db_resolution.py::"
+        "test_failed_last_user_close_retains_pool_for_maintenance"
+    )
+    assert _pytest_targets(step["run"]).count(target) == 1

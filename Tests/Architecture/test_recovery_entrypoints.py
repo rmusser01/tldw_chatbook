@@ -156,6 +156,143 @@ if __name__ == "__main__":
     assert not (home / ".local").exists()
 
 
+def _bootstrap_import_inventory(tree):
+    import ast
+    from collections import Counter
+
+    def collect(node, owner="<module>"):
+        found = Counter()
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            key = (
+                owner,
+                type(node).__name__,
+                getattr(node, "level", 0),
+                getattr(node, "module", None),
+                tuple((alias.name, alias.asname) for alias in node.names),
+            )
+            found[key] += 1
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            nested = node.name if owner == "<module>" else owner + "." + node.name
+            for child in node.body:
+                found.update(collect(child, nested))
+        else:
+            for child in ast.iter_child_nodes(node):
+                found.update(collect(child, owner))
+        return found
+
+    return collect(tree)
+
+
+def _assert_bootstrap_import_inventory(tree):
+    from collections import Counter
+
+    # Pin eager and lazy owners separately; a permitted lazy import cannot move
+    # ahead of the fence or silently acquire another name, alias or occurrence.
+    expected = Counter(
+        {
+            ("<module>", "Import", 0, None, (("functools", None),)): 1,
+            ("<module>", "Import", 0, None, (("hashlib", None),)): 1,
+            ("<module>", "Import", 0, None, (("json", None),)): 1,
+            ("<module>", "Import", 0, None, (("re", None),)): 1,
+            ("<module>", "Import", 0, None, (("stat", None),)): 1,
+            ("<module>", "Import", 0, None, (("threading", None),)): 1,
+            ("<module>", "ImportFrom", 0, "__future__", (("annotations", None),)): 1,
+            (
+                "<module>",
+                "ImportFrom",
+                0,
+                "collections.abc",
+                (("Callable", None), ("Iterable", None), ("Mapping", None)),
+            ): 1,
+            ("<module>", "ImportFrom", 0, "contextlib", (("contextmanager", None),)): 1,
+            ("<module>", "ImportFrom", 0, "pathlib", (("Path", None),)): 1,
+            (
+                "<module>",
+                "ImportFrom",
+                0,
+                "tldw_chatbook.Utils.platform_files",
+                (("fcntl", None), ("os", None)),
+            ): 1,
+            (
+                "<module>",
+                "ImportFrom",
+                0,
+                "typing",
+                (("ParamSpec", None), ("TypeVar", None)),
+            ): 1,
+            ("<module>", "ImportFrom", 1, "limits", (("_TraceReadLimit", None),)): 1,
+            (
+                "<module>",
+                "ImportFrom",
+                1,
+                "profile_paths",
+                (
+                    ("default_config_path", None),
+                    ("effective_config_path", None),
+                    ("lexical_path", None),
+                ),
+            ): 1,
+            (
+                "<module>",
+                "ImportFrom",
+                2,
+                "Utils.private_paths",
+                (("_native_close", None), ("_open_verified_parent", None)),
+            ): 1,
+            (
+                "_binding",
+                "ImportFrom",
+                1,
+                "mobile_preview_budget",
+                (("read_options", None),),
+            ): 1,
+            (
+                "_bounded_names",
+                "ImportFrom",
+                1,
+                "journal",
+                (("_artifact_component_limit", None),),
+            ): 1,
+            (
+                "_control_records",
+                "ImportFrom",
+                1,
+                "mobile_preview_budget",
+                (("read_options", None),),
+            ): 1,
+            (
+                "_read",
+                "ImportFrom",
+                1,
+                "mobile_preview_budget",
+                (("read_options", None),),
+            ): 1,
+            (
+                "_registry",
+                "ImportFrom",
+                1,
+                "mobile_preview_budget",
+                (("read_options", None),),
+            ): 1,
+            (
+                "effective_roots",
+                "ImportFrom",
+                1,
+                "admission",
+                (("_price_paths", None),),
+            ): 1,
+            (
+                "effective_roots",
+                "ImportFrom",
+                1,
+                "effective_roots",
+                (("effective_roots", "prove_absence"),),
+            ): 1,
+        }
+    )
+    assert _bootstrap_import_inventory(tree) == expected
+
+
 def test_bootstrap_dependency_leaf_and_script_route_inventory():
     import ast
     import tomllib
@@ -166,23 +303,26 @@ def test_bootstrap_dependency_leaf_and_script_route_inventory():
         "tldw-serve": "tldw_chatbook.Web_Server.serve:main",
     }
     tree = ast.parse((ROOT / "tldw_chatbook/Backup_Recovery/bootstrap.py").read_text())
-    imports = [
-        node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
-    ]
-    assert set(imports) <= {
-        "__future__",
-        "collections.abc",
-        "contextlib",
-        "pathlib",
-        "Utils.private_paths",
-        "profile_paths",
-        "typing",
-        # TASK-38991: os/fcntl shim; imports only os, fcntl or windows_files.
-        "tldw_chatbook.Utils.platform_files",
-        # TASK-38991: lazy, reached only when an enrolled root is absent; no
-        # config, DB or app import.
-        "effective_roots",
+    _assert_bootstrap_import_inventory(tree)
+    limits = ast.parse((ROOT / "tldw_chatbook/Backup_Recovery/limits.py").read_text())
+    assert _bootstrap_import_inventory(limits) == {
+        ("<module>", "ImportFrom", 0, "dataclasses", (("dataclass", None),)): 1
     }
+    refusal = next(
+        node
+        for node in limits.body
+        if isinstance(node, ast.ClassDef) and node.name == "_TraceReadLimit"
+    )
+    assert ast.dump(refusal.bases[0]) == ast.dump(
+        ast.Name(id="RuntimeError", ctx=ast.Load())
+    )
+    assert (
+        len(refusal.bases) == 1 and not refusal.keywords and not refusal.decorator_list
+    )
+    assert len(refusal.body) == 1
+    assert isinstance(refusal.body[0], ast.Expr)
+    assert isinstance(refusal.body[0].value, ast.Constant)
+    assert isinstance(refusal.body[0].value.value, str)
 
 
 def test_console_enrolls_before_loading_app_and_releases_on_process_exit(tmp_path):
@@ -318,7 +458,7 @@ def test_every_package_main_route_has_reviewed_classification():
 @pytest.mark.parametrize("editable", [False, True])
 @pytest.mark.parametrize("pending", [False, True])
 def test_chatterbox_actual_script_path_without_pythonpath(tmp_path, editable, pending):
-    import sysconfig
+    import site
     import venv
 
     runtime = tmp_path / "runtime"
@@ -330,8 +470,27 @@ def test_chatterbox_actual_script_path_without_pythonpath(tmp_path, editable, pe
         / f"python{sys.version_info.major}.{sys.version_info.minor}"
         / "site-packages"
     )
-    # Read shared dependencies without executing their editable-install .pth hooks.
-    (packages / "dependencies.pth").write_text(sysconfig.get_path("purelib") + "\n")
+    # Plain paths share installed dependencies without executing their .pth hooks.
+    shared = tmp_path / "shared" / "site-packages"
+    shared.mkdir(parents=True)
+    pth_marker = tmp_path / "shared-pth-executed"
+    (shared / "must-not-run.pth").write_text(
+        str(ROOT)
+        + "\n"
+        + f"import pathlib; pathlib.Path({str(pth_marker)!r}).write_text('executed')\n"
+    )
+    dependency_paths = [
+        Path(value).resolve()
+        for value in dict.fromkeys((*site.getsitepackages(), *sys.path))
+        if value
+        and Path(value).is_absolute()
+        and Path(value).name in {"site-packages", "dist-packages"}
+        and Path(value).is_dir()
+    ]
+    dependency_paths.append(shared)
+    (packages / "dependencies.pth").write_text(
+        "\n".join(str(path) for path in dependency_paths) + "\n"
+    )
     if editable:
         (packages / "chatbook-editable.pth").write_text(str(ROOT) + "\n")
     marker = tmp_path / "runtime-import-reached"
@@ -352,7 +511,11 @@ def test_chatterbox_actual_script_path_without_pythonpath(tmp_path, editable, pe
     if pending:
         register_pending(root, "op", ("p",), tmp_path / "control", (config,))
     env = dict(
-        os.environ, HOME=str(home), TLDW_CONFIG_PATH=str(config), PYTHONUNBUFFERED="1"
+        os.environ,
+        HOME=str(home),
+        TLDW_CONFIG_PATH=str(config),
+        PYTHONUNBUFFERED="1",
+        PYTHONDONTWRITEBYTECODE="1",
     )
     env.pop("PYTHONPATH", None)
     env.pop("PYTHONHOME", None)
@@ -360,7 +523,11 @@ def test_chatterbox_actual_script_path_without_pythonpath(tmp_path, editable, pe
         [
             str(interpreter),
             "-c",
-            "import importlib.util; print(importlib.util.find_spec('tldw_chatbook') is not None)",
+            (
+                "import importlib.util, sys; import pydantic; assert pydantic.BaseModel; "
+                "assert sys.dont_write_bytecode; "
+                "print(importlib.util.find_spec('tldw_chatbook') is not None)"
+            ),
         ],
         env=env,
         cwd=tmp_path,
@@ -369,6 +536,7 @@ def test_chatterbox_actual_script_path_without_pythonpath(tmp_path, editable, pe
         timeout=15,
     )
     assert provenance.returncode == 0, provenance.stderr
+    assert not pth_marker.exists(), "shared dependency .pth was executed"
     assert provenance.stdout.strip() == str(editable)
     result = subprocess.run(
         [
@@ -391,3 +559,116 @@ def test_chatterbox_actual_script_path_without_pythonpath(tmp_path, editable, pe
         assert marker.read_text() == "runtime reached after guard"
     assert not (home / ".local").exists()
     assert not (home / ".config" / "tldw_cli" / "config.toml").exists()
+    assert not pth_marker.exists(), "direct launch executed a shared dependency .pth"
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["eager", "lazy", "duplicate", "name", "alias", "move", "if", "try"],
+)
+def test_bootstrap_import_inventory_rejects_unreviewed_phase_or_site(mutation):
+    import ast
+    import copy
+
+    tree = ast.parse((ROOT / "tldw_chatbook/Backup_Recovery/bootstrap.py").read_text())
+    _assert_bootstrap_import_inventory(tree)
+    owner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "effective_roots"
+    )
+    site = next(node for node in owner.body if isinstance(node, ast.ImportFrom))
+    if mutation == "eager":
+        tree.body.append(ast.parse("import tldw_chatbook.config").body[0])
+    elif mutation == "lazy":
+        owner.body.append(ast.parse("import tldw_chatbook.config").body[0])
+    elif mutation == "duplicate":
+        owner.body.append(copy.deepcopy(site))
+    elif mutation == "name":
+        site.names[0].name = "unreviewed_name"
+    elif mutation == "alias":
+        site.names[0].asname = "unreviewed_alias"
+    elif mutation == "move":
+        owner.body.remove(site)
+        tree.body.append(site)
+    elif mutation == "if":
+        tree.body.append(
+            ast.If(test=ast.Constant(value=True), body=[copy.deepcopy(site)], orelse=[])
+        )
+    else:
+        tree.body.append(
+            ast.Try(
+                body=[copy.deepcopy(site)],
+                handlers=[],
+                orelse=[],
+                finalbody=[ast.Pass()],
+            )
+        )
+    with pytest.raises(AssertionError):
+        _assert_bootstrap_import_inventory(tree)
+
+
+@pytest.mark.parametrize("requested", ["bootstrap", "pydantic", "tldw_chatbook.config", "tldw_chatbook.Backup_Recovery.admission", "tldw_chatbook.Backup_Recovery.journal"])
+def test_bootstrap_cold_import_has_only_reviewed_leaf_dependencies(tmp_path, requested):
+    home = tmp_path / "home"
+    home.mkdir()
+    config = tmp_path / "never-created.toml"
+    code = r"""
+import importlib, sys
+assert sys.dont_write_bytecode
+from Tests import network_guard
+network_guard.install()
+allowed = {
+    'tldw_chatbook', 'tldw_chatbook.Utils',
+    'tldw_chatbook.Utils.tiktoken_runtime',
+    'tldw_chatbook.Utils.private_paths',
+    'tldw_chatbook.Utils.platform_files',
+    'tldw_chatbook.Utils.windows_files',
+    'tldw_chatbook.Backup_Recovery',
+    'tldw_chatbook.Backup_Recovery.bootstrap',
+    'tldw_chatbook.Backup_Recovery.limits',
+    'tldw_chatbook.Backup_Recovery.profile_paths',
+}
+class LeafOnly:
+    def find_spec(self, fullname, path=None, target=None):
+        if (fullname.startswith('tldw_chatbook') and fullname not in allowed) or fullname.split('.')[0] in {'pydantic','textual','loguru','tiktoken','torch'}:
+            raise AssertionError('bootstrap_import_not_leaf:' + fullname)
+sys.meta_path.insert(0, LeafOnly())
+heavy = {'pydantic','textual','loguru','tiktoken','torch'}
+assert not any(name.split('.')[0] in heavy for name in sys.modules)
+requested = sys.argv[1]
+if requested != 'bootstrap':
+    importlib.import_module(requested)
+from tldw_chatbook.Backup_Recovery import bootstrap, limits
+assert bootstrap._TraceReadLimit is limits._TraceReadLimit
+assert not any(name.split('.')[0] in heavy for name in sys.modules)
+assert {name for name in sys.modules if name.startswith('tldw_chatbook')} <= allowed
+assert not network_guard.blocked_attempts()
+print('cold leaf imported')
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code, requested],
+        cwd=ROOT,
+        env=dict(
+            os.environ,
+            HOME=str(home),
+            USERPROFILE=str(home),
+            XDG_CONFIG_HOME=str(home / ".config"),
+            XDG_DATA_HOME=str(home / ".local" / "share"),
+            TLDW_CONFIG_PATH=str(config),
+            PYTHONPATH=str(ROOT),
+            PYTHONDONTWRITEBYTECODE="1",
+        ),
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    if requested == "bootstrap":
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "cold leaf imported"
+    else:
+        assert result.returncode != 0
+        assert "bootstrap_import_not_leaf:" + requested in result.stderr
+    assert not config.exists()
+    assert not (home / ".config").exists()
+    assert not (home / ".local").exists()

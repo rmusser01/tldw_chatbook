@@ -9974,12 +9974,11 @@ def _read_change_review_markers(
     ]
 
 
-
 # Direct defining callbacks for finite marker presentation.
 _CONSOLE_PRESENTATION_SOURCES = tuple(
     (
         name,
-        vars(ConsoleAgentBridge)[name],
+        descriptor,
         (
             (
                 function,

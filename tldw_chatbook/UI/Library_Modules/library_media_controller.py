@@ -10,17 +10,16 @@ canvas's browse/filter/sort/pager/selection surface, the reader/viewer
 adaptive reader shell and its return-settlement machinery), the Trash view,
 the bulk Analyze run, and the console/chat handoff.
 
-**Cluster derivation.** An ``ast`` census of every ``LibraryScreen``
-class-body method whose name contains ``"media"`` (case-insensitive), run
-fresh at this task's own execution time (the recipe's "never trust a
-carried-over count" rule, §6): **251 raw ``FunctionDef`` matches, 251 unique
-names** -- no property/setter-pair gap. Of those, 79 carry an ``@on``
-decorator, 12 are ``action_*``, 5 are ``@staticmethod``, **0 are ``@work``**,
-and -- re-verifying task 1's claim rather than trusting it -- **0 are
-``on_<message>`` name-dispatched handlers**, so §4's third whitelist member
-(the one the plan predicted "will bite media") is inert here. The only
-``on_[a-z]`` methods on the class are 10 Textual lifecycle hooks and the 7
-prompts-owned ``on_prompt_block_editor_*``.
+**Cluster derivation.** An ``ast`` census of every ``LibraryScreen`` class-body method
+whose name contains ``"media"`` (case-insensitive), run fresh at this task's own
+execution time (the recipe's "never trust a carried-over count" rule, §6): **251 raw
+``FunctionDef`` matches, 251 unique names** -- no property/setter-pair gap. Of those, 79
+carry an ``@on`` decorator, 12 are ``action_*``, 5 are ``@staticmethod``, **0 are
+``@work``**, and -- re-verifying task 1's claim rather than trusting it -- **0 are
+``on_<message>`` name-dispatched handlers**, so §4's third whitelist member (the one the
+plan predicted "will bite media") is inert here. The only ``on_[a-z]`` methods on the
+class are 10 Textual lifecycle hooks and the 7 prompts-owned
+``on_prompt_block_editor_*``.
 
 Two completeness checks ran alongside the census:
 
@@ -28,56 +27,49 @@ Two completeness checks ran alongside the census:
   ``#library-media*``/``.library-media*``/``*Media*`` ``@on`` selector:
   **zero**;
 - a reverse call-graph fixpoint for NON-media-named methods whose every
-  in-class caller is (transitively) media-named -- the "bare-named cluster
-  member" shape the conversations exemplar's own ``_conversation_records``
-  miss made the recipe warn about. This one is NOT zero: it returns **17
-  names, every one of them a review-set member** (``_review_*``,
-  ``_walk_active_review_set``, ``_activate_review_set``,
-  ``_create_and_open_review_set``, ``_collect_review_*``,
-  ``_push_review_set_picker``, ``_order_selected_review_pairs``,
-  ``_toggle_reviewed_unguarded``, ``_active_review_set_banner``). **All 17
-  are deliberately NOT moved**, and the reason is the One Home Rule rather
-  than a hazard: review sets are a FEATURE FAMILY of ~25 methods that
-  straddles the media/shell boundary, not a media sub-cluster. Eight more of
-  its members (``_review_set_service``, ``_review_set_live_ids``,
+  in-class caller is (transitively) media-named -- the "bare-named cluster member" shape
+  the conversations exemplar's own ``_conversation_records`` miss made the recipe warn
+  about. This one is NOT zero: it returns **17 names, every one of them a review-set
+  member** (``_review_*``, ``_walk_active_review_set``, ``_activate_review_set``,
+  ``_create_and_open_review_set``, ``_collect_review_*``, ``_push_review_set_picker``,
+  ``_order_selected_review_pairs``, ``_toggle_reviewed_unguarded``,
+  ``_active_review_set_banner``). **All 17 are deliberately NOT moved**, and the reason
+  is the One Home Rule rather than a hazard: review sets are a FEATURE FAMILY of ~25
+  methods that straddles the media/shell boundary, not a media sub-cluster. Eight more
+  of its members (``_review_set_service``, ``_review_set_live_ids``,
   ``_notify_review_set``, ``_review_set_active``, ``_active_review_progress``,
   ``_active_review_loaded_at_last``, ``_review_footer_entries``,
-  ``_maybe_auto_resume_review_set``/``_cancel_pending_review_set_resume``)
-  are called by SHELL methods -- ``check_action``,
-  ``_library_route_shortcuts_for_current_state``,
-  ``_select_library_rail_row_after_source_admission``,
-  ``_open_library_item_by_id`` -- so moving the media-reachable subset would
-  split one family across two homes, exactly the split task 1's own BLOCKED
-  ruling on ``_library_pending_list_entry_media_return`` refused at the field
-  level. The five movers that call into the family reach it through named
-  late-binding dependencies instead. (The same fixpoint run WITHOUT first
-  removing the two media-NAMED generic dispatchers,
-  ``_toggle_library_media_reader_pane`` and
-  ``request_library_media_layout_refresh``, returns 31 names -- it drags in
-  the whole shared reader-preference machinery, including three OTHER
-  subsystems' ``_mirror_library_*_reader_preference`` methods. That
-  contamination is why the dispatchers are removed from the seed first, and
-  it is worth recording: an uncritical bare-name fixpoint over a cluster that
-  owns a generic dispatcher will claim half the screen.)
+  ``_maybe_auto_resume_review_set``/``_cancel_pending_review_set_resume``) are called by
+  SHELL methods -- ``check_action``, ``_library_route_shortcuts_for_current_state``,
+  ``_select_library_rail_row_after_source_admission``, ``_open_library_item_by_id`` --
+  so moving the media-reachable subset would split one family across two homes, exactly
+  the split task 1's own BLOCKED ruling on ``_library_pending_list_entry_media_return``
+  refused at the field level. The five movers that call into the family reach it through
+  named late-binding dependencies instead. (The same fixpoint run WITHOUT first removing
+  the two media-NAMED generic dispatchers, ``_toggle_library_media_reader_pane`` and
+  ``request_library_media_layout_refresh``, returns 31 names -- it drags in the whole
+  shared reader-preference machinery, including three OTHER subsystems'
+  ``_mirror_library_*_reader_preference`` methods. That contamination is why the
+  dispatchers are removed from the seed first, and it is worth recording: an uncritical
+  bare-name fixpoint over a cluster that owns a generic dispatcher will claim half the
+  screen.)
 
-**Single vs. split controller: SINGLE, decided by connected components, not
-by feel.** The plan made the split decision a real one this wave ("at ~244
-methods a single controller would be ~8-9k lines"). Building the
-``self.<name>`` reference graph among all 251 candidates yields **one
-connected component of 213 names plus 28 isolated singletons and four small
-2-3 member components**; adding an edge between any two candidates that
-touch the same ``LibraryMediaState`` field collapses that to **one component
-of 238 plus 11 singletons**. There is no second component of any size, so
-there is no seam to split on. The plan's own candidate seam (browse/viewer
-vs trash/maintenance) was probed directly and does not hold: the 35
-trash-named candidates carry **16 cross-call edges** to the rest and share
-**6 media state fields** with it, and only 20 of the 140 movers are
-trash-named -- a second controller for 20 methods, still coupled through six
-shared fields, buys nothing the ratchet's per-file governance does not
-already give. The feared size did not materialise either: the hazard
-exclusions below remove 111 of the 251 candidates, so the 140 that move
-carry **3,166 source lines** of body, putting this file within a few hundred
-lines of ``library_prompts_controller.py``'s 4,998 rather than at 8-9k.
+**Single vs. split controller: SINGLE, decided by connected components, not by feel.**
+The plan made the split decision a real one this wave ("at ~244 methods a single
+controller would be ~8-9k lines"). Building the ``self.<name>`` reference graph among
+all 251 candidates yields **one connected component of 213 names plus 28 isolated
+singletons and four small 2-3 member components**; adding an edge between any two
+candidates that touch the same ``LibraryMediaState`` field collapses that to **one
+component of 238 plus 11 singletons**. There is no second component of any size, so
+there is no seam to split on. The plan's own candidate seam (browse/viewer vs
+trash/maintenance) was probed directly and does not hold: the 35 trash-named candidates
+carry **16 cross-call edges** to the rest and share **6 media state fields** with it,
+and only 20 of the 140 movers are trash-named -- a second controller for 20 methods,
+still coupled through six shared fields, buys nothing the ratchet's per-file governance
+does not already give. The feared size did not materialise either: the hazard exclusions
+below remove 111 of the 251 candidates, so the 140 that move carry **3,166 source
+lines** of body, putting this file within a few hundred lines of
+``library_prompts_controller.py``'s 4,998 rather than at 8-9k.
 
 **111 of the 251 candidates excluded, not moved (140 move):**
 
@@ -95,9 +87,8 @@ lines of ``library_prompts_controller.py``'s 4,998 rather than at 8-9k.
      ``test_review_set_walker.py``, ``test_library_shell.py``,
      ``test_library_media_bulk_delete_real_db.py``);
    - **34 names** bound onto a ``SimpleNamespace`` fake as
-     ``types.MethodType(LibraryScreen.<name>, fake)`` /
-     ``_press(fake, LibraryScreen.<name>)`` /
-     ``LibraryScreen.<name>.__get__(fake)``;
+     ``types.MethodType(LibraryScreen.<name>, fake)`` / ``_press(fake,
+     LibraryScreen.<name>)`` / ``LibraryScreen.<name>.__get__(fake)``;
    - **12 names** dispatched by STRING through a
      ``for name in ("...", ...): setattr(fake, name, types.MethodType(
      getattr(LibraryScreen, name), fake))`` loop -- the quoted-string
@@ -105,71 +96,59 @@ lines of ``library_prompts_controller.py``'s 4,998 rather than at 8-9k.
      call that consumes it (``test_library_multiselect_media.py:2515``,
      ``:2734``; ``test_library_media_reader_flow.py:1362``);
    - a bare-``LibraryScreen.<name>`` reference in DOCSTRING PROSE
-     (``test_local_media_reading_service.py``) is the one false positive the
-     line-based pass produced and the ``ast`` pass rejected -- recorded
-     because the line-based and ``ast`` passes were reconciled name-for-name
-     rather than assumed to agree.
+     (``test_local_media_reading_service.py``) is the one false positive the line-based
+     pass produced and the ``ast`` pass rejected -- recorded because the line-based and
+     ``ast`` passes were reconciled name-for-name rather than assumed to agree.
 
-   All 73 stay on ``LibraryScreen``, UNMOVED, full-bodied -- the recipe's
-   established accommodation (leave the method real; a mover reaches it,
-   where needed, through a named late-binding dependency that re-reads
-   ``screen.<name>`` at call time, which is why every fixture above keeps
-   working unmodified after this move).
+   All 73 stay on ``LibraryScreen``, UNMOVED, full-bodied -- the recipe's established
+   accommodation (leave the method real; a mover reaches it, where needed, through a
+   named late-binding dependency that re-reads ``screen.<name>`` at call time, which is
+   why every fixture above keeps working unmodified after this move).
 
 2. **16 instance-attribute-monkeypatch exclusions** (recipe §3's second
-   shape). Each is patched on a REAL, ``__init__``-constructed
-   ``LibraryScreen`` instance -- eight via
-   ``monkeypatch.setattr(screen, "<name>", ...)``
-   (``_arm_library_media_return_settlement``,
-   ``_focus_library_media_grip_if_current``,
+   shape). Each is patched on a REAL, ``__init__``-constructed ``LibraryScreen``
+   instance -- eight via ``monkeypatch.setattr(screen, "<name>", ...)``
+   (``_arm_library_media_return_settlement``, ``_focus_library_media_grip_if_current``,
    ``_library_media_content_signature``, ``_library_media_layout_signature``,
    ``_library_media_settlement_tree``, ``_open_selected_media_handoff``,
-   ``_reconcile_library_media_stage_presentation``,
-   ``_request_library_media_browse``) and eight more via a bare
-   ``screen.<name> = ...`` assignment. The governing rule is recipe §3's
-   OPENING one, not a narrower dependency test: a name a test patches on a
-   real ``LibraryScreen`` keeps its whole in-cluster call graph
-   screen-routed until that subsystem's cleanup PR retargets the fixtures.
-   Under a mover-caller map re-derived at the parent tree, **9 of the 16 do
-   have a direct MOVER calling them as ``self.<name>(...)``** --
-   ``_arm_library_media_return_settlement``,
+   ``_reconcile_library_media_stage_presentation``, ``_request_library_media_browse``)
+   and eight more via a bare ``screen.<name> = ...`` assignment. The governing rule is
+   recipe §3's OPENING one, not a narrower dependency test: a name a test patches on a
+   real ``LibraryScreen`` keeps its whole in-cluster call graph screen-routed until that
+   subsystem's cleanup PR retargets the fixtures. Under a mover-caller map re-derived at
+   the parent tree, **9 of the 16 do have a direct MOVER calling them as
+   ``self.<name>(...)``** -- ``_arm_library_media_return_settlement``,
    ``_library_media_content_signature``, ``_library_media_layout_signature``,
    ``_library_media_settlement_tree``, ``_open_selected_media_handoff``,
-   ``_reconcile_library_media_stage_presentation``,
-   ``_request_library_media_browse``, ``_sync_library_media_browse_state``,
-   ``_sync_library_media_trash_state`` -- so for those the patch is directly
-   bypassable by a moved body. The other **7**
-   (``_analyze_one_library_media_item``,
-   ``_exit_library_media_select_mode``,
-   ``_focus_library_media_grip_if_current``,
-   ``_library_media_unanalyzed_ids``,
-   ``_notify_library_media_analysis_warning``,
-   ``_request_library_media_type``, ``_start_library_media_analyze``) have
-   only EXCLUDED in-cluster callers today, so they are held by §3's
-   conservative rule rather than by a demonstrated bypass -- correct as
-   exclusions, and MOVE candidates for a later series once their fixtures
-   retarget. An earlier draft of this paragraph asserted the narrower
-   condition for all 16; it was false for those 7 and is corrected here
-   rather than left as precedent.
+   ``_reconcile_library_media_stage_presentation``, ``_request_library_media_browse``,
+   ``_sync_library_media_browse_state``, ``_sync_library_media_trash_state`` -- so for
+   those the patch is directly bypassable by a moved body. The other **7**
+   (``_analyze_one_library_media_item``, ``_exit_library_media_select_mode``,
+   ``_focus_library_media_grip_if_current``, ``_library_media_unanalyzed_ids``,
+   ``_notify_library_media_analysis_warning``, ``_request_library_media_type``,
+   ``_start_library_media_analyze``) have only EXCLUDED in-cluster callers today, so
+   they are held by §3's conservative rule rather than by a demonstrated bypass --
+   correct as exclusions, and MOVE candidates for a later series once their fixtures
+   retarget. An earlier draft of this paragraph asserted the narrower condition for all
+   16; it was false for those 7 and is corrected here rather than left as precedent.
 
 3. **8 source-census exclusions** -- the shape recipe §3 records as "a
-   hardcoded-file-path census, not a monkeypatch bypass, ships red", here in
-   its ``inspect.getsource`` spelling.
+   hardcoded-file-path census, not a monkeypatch bypass, ships red", here in its
+   ``inspect.getsource`` spelling.
    ``test_library_multiselect_media.py::test_every_media_mutation_claims_
    the_interlock_at_one_audited_seam`` asserts
    ``"self._media_state.bulk_delete_in_flight = True" in inspect.getsource(
-   LibraryScreen._claim_library_media_mutation)`` AND, for each of SIX named
-   handlers, ``"_claim_library_media_mutation" in inspect.getsource(handler)``
-   -- assertions a one-line delegator's source empties. It also asserts that
-   ``inspect.getsource(library_screen_module)`` contains EXACTLY ONE
-   whitespace-tolerant regex match for ``_media_state.bulk_delete_in_flight
-   = True``, and one for the shared worker-group literal; both sites live
-   inside ``_claim_library_media_mutation`` (``library_screen.py:15062``/
-   ``:15066`` at this wave's tip; task 3 retargeted seam and guard together),
-   which this exclusion keeps in place, so both counts stay at 1.
+   LibraryScreen._claim_library_media_mutation)`` AND, for each of SIX named handlers,
+   ``"_claim_library_media_mutation" in inspect.getsource(handler)`` -- assertions a
+   one-line delegator's source empties. It also asserts that
+   ``inspect.getsource(library_screen_module)`` contains EXACTLY ONE whitespace-tolerant
+   regex match for ``_media_state.bulk_delete_in_flight = True``, and one for the shared
+   worker-group literal; both sites live inside ``_claim_library_media_mutation``
+   (``library_screen.py:15062``/ ``:15066`` at this wave's tip; task 3 retargeted seam
+   and guard together), which this exclusion keeps in place, so both counts stay at 1.
    ``test_review_set_walker.py:1292`` (``inspect.getsource(
-   LibraryScreen.handle_library_media_row)``) is the eighth. Five of the
-   eight are independently excluded as unbound-fake-self anyway;
+   LibraryScreen.handle_library_media_row)``) is the eighth. Five of the eight are
+   independently excluded as unbound-fake-self anyway;
    ``handle_library_media_edit_save`` is excluded by this class alone.
 
 4. **4 module-globals-coupling exclusions** (recipe §3's oldest shape,
@@ -226,15 +205,13 @@ lines of ``library_prompts_controller.py``'s 4,998 rather than at 8-9k.
      importer, not a rebinding in ``library_screen``'s own globals.
 
 5. **2 class-monkeypatch exclusions** (recipe §3's opening rule: a name a
-   test patches on ``LibraryScreen`` keeps its whole call graph
-   screen-routed until cleanup). ``_refresh_library_media_detail``
-   (``monkeypatch.setattr(LibraryScreen, ...)`` in
-   ``test_library_entry_compose_once.py:779`` and
-   ``test_library_shell.py:9416``) and
-   ``_sync_library_media_reader_layout_from_shell``
+   test patches on ``LibraryScreen`` keeps its whole call graph screen-routed until
+   cleanup). ``_refresh_library_media_detail`` (``monkeypatch.setattr(LibraryScreen,
+   ...)`` in ``test_library_entry_compose_once.py:779`` and
+   ``test_library_shell.py:9416``) and ``_sync_library_media_reader_layout_from_shell``
    (``patch.object(type(screen), ...)`` in
-   ``test_library_reader_press_scope_t22228.py:135``/``:177``). Both have
-   mover callers, so both stay.
+   ``test_library_reader_press_scope_t22228.py:135``/``:177``). Both have mover callers,
+   so both stay.
 
 6. **1 shared-shell-helper exclusion, by the >=2-subsystems rule applied to
    a METHOD rather than a field.** ``_sanitize_media_field`` is media-NAMED
@@ -251,46 +228,41 @@ lines of ``library_prompts_controller.py``'s 4,998 rather than at 8-9k.
 
 8. **2 bypassed-construction-lifecycle exclusions -- a NINTH bypass shape,
    found by this task's OWN battery rather than by any of its censuses.**
-   ``_stop_library_media_selection_debounce`` and
-   ``_stop_library_media_filter_timer`` are called by ``on_screen_suspend``,
-   a SCREEN-RESIDENT lifecycle hook, and
+   ``_stop_library_media_selection_debounce`` and ``_stop_library_media_filter_timer``
+   are called by ``on_screen_suspend``, a SCREEN-RESIDENT lifecycle hook, and
    ``Tests/UI/test_library_screen_reuse.py::test_on_screen_suspend_stops_
    every_timer_in_isolation`` invokes that hook directly on an
    ``object.__new__(LibraryScreen)`` instance -- ``__init__`` never ran, so
-   ``self._media_controller`` does not exist and the delegator raises
-   ``AttributeError: 'LibraryScreen' object has no attribute
-   '_media_controller'``. This is the CONTROLLER-PR analogue of recipe §3's
-   seventh shape (which bites a STATE PR through the generated property
-   shim): same bypassed-construction cause, different attribute, and equally
-   undeferrable -- it goes red at the move commit itself, so the no-red-ships
-   rule fixes it here rather than at cleanup. Unlike the state PR's version
-   there is no cheap one-line fixture seed available, because seeding a
-   controller means constructing one with 80+ keyword arguments; the
-   accommodation is therefore the ordinary one, exclusion. Task 1's own
-   forward note had already flagged both names as exclusion candidates for
-   exactly this call path, which is the reason to read a predecessor's
-   forward notes as hypotheses to TEST rather than as either facts or noise.
-   The census that generalises: for every mover, ask whether a
-   SCREEN-RESIDENT method calls it AND is invoked on a bypassed screen. This
-   task ran it empirically -- all 9 files in the repo containing
-   ``object.__new__(LibraryScreen)``/``LibraryScreen.__new__``, run together
-   after the two exclusions: **1 failed / 426 passed**, the one failure being
+   ``self._media_controller`` does not exist and the delegator raises ``AttributeError:
+   'LibraryScreen' object has no attribute '_media_controller'``. This is the
+   CONTROLLER-PR analogue of recipe §3's seventh shape (which bites a STATE PR through
+   the generated property shim): same bypassed-construction cause, different attribute,
+   and equally undeferrable -- it goes red at the move commit itself, so the
+   no-red-ships rule fixes it here rather than at cleanup. Unlike the state PR's version
+   there is no cheap one-line fixture seed available, because seeding a controller means
+   constructing one with 80+ keyword arguments; the accommodation is therefore the
+   ordinary one, exclusion. Task 1's own forward note had already flagged both names as
+   exclusion candidates for exactly this call path, which is the reason to read a
+   predecessor's forward notes as hypotheses to TEST rather than as either facts or
+   noise. The census that generalises: for every mover, ask whether a SCREEN-RESIDENT
+   method calls it AND is invoked on a bypassed screen. This task ran it empirically --
+   all 9 files in the repo containing
+   ``object.__new__(LibraryScreen)``/``LibraryScreen.__new__``, run together after the
+   two exclusions: **1 failed / 426 passed**, the one failure being
    ``test_library_ingest_retry_last.py::test_registry_ticks_only_reflow_
-   footer_when_retry_availability_changes``, documented pre-existing in
-   recipe §7 since wave-5 task 3.
-   ``_stop_library_media_filter_timer`` has three MOVER callers and so also
-   becomes a named late-binding dependency below;
+   footer_when_retry_availability_changes``, documented pre-existing in recipe §7 since
+   wave-5 task 3. ``_stop_library_media_filter_timer`` has three MOVER callers and so
+   also becomes a named late-binding dependency below;
    ``_stop_library_media_selection_debounce`` has none.
 9. **3 screen-identity exclusions in a FOURTH form -- recipe §3's sixth
    bypass shape, as a MEMBERSHIP test rather than an ``is`` comparison.**
-   ``_commit_library_media_return``, ``_library_media_focus_target_matches_
-   receipt`` and ``_resolve_library_media_settlement_target`` each spell
-   ``self in <widget>.ancestors`` / ``self not in <widget>.ancestors``.
-   ``Widget.ancestors`` is the DOM parent chain up to the screen, so a moved
-   body's ``self`` -- the CONTROLLER -- is never a member: the guard flips to
-   permanently False (or permanently True for the negated form) and silently
-   changes behaviour, exactly like Forms A/B/C. No accommodation exists;
-   identity cannot be satisfied by a proxy.
+   ``_commit_library_media_return``, ``_library_media_focus_target_matches_ receipt``
+   and ``_resolve_library_media_settlement_target`` each spell ``self in
+   <widget>.ancestors`` / ``self not in <widget>.ancestors``. ``Widget.ancestors`` is
+   the DOM parent chain up to the screen, so a moved body's ``self`` -- the CONTROLLER
+   -- is never a member: the guard flips to permanently False (or permanently True for
+   the negated form) and silently changes behaviour, exactly like Forms A/B/C. No
+   accommodation exists; identity cannot be satisfied by a proxy.
 
    **How it was found, and the census gap it exposes.** The recipe's own
    sixth-shape census, as written, looks for ``... is self`` / ``... is not
@@ -316,33 +288,29 @@ lines of ``library_prompts_controller.py``'s 4,998 rather than at 8-9k.
    are stated because only the pair shows the census working: 10 is what it
    found, 7 is what survives.
 
-   **The shape is more common than one incident suggests: there are FOUR
-   ``self in/not in <widget>.ancestors`` sites in the 251-candidate
-   cluster, not three.** The fourth is ``_library_media_settlement_tree``
-   (``library_screen.py:5872`` at this commit, ``:5646`` at the parent
-   ``3dd7a745a``), which is already excluded under class 2 above and is
-   therefore not reclassified -- but it means a subsystem can carry this
-   shape in a method whose exclusion happens to be over-determined, and a
-   census that stops at the methods it had to newly exclude will undercount
-   how widespread the shape is.
+   **The shape is more common than one incident suggests: there are FOUR ``self in/not
+   in <widget>.ancestors`` sites in the 251-candidate cluster, not three.** The fourth
+   is ``_library_media_settlement_tree`` (``library_screen.py:5872`` at this commit,
+   ``:5646`` at the parent ``3dd7a745a``), which is already excluded under class 2 above
+   and is therefore not reclassified -- but it means a subsystem can carry this shape in
+   a method whose exclusion happens to be over-determined, and a census that stops at
+   the methods it had to newly exclude will undercount how widespread the shape is.
 
 10. **1 callback-identity exclusion -- a TENTH bypass shape, also found by
-   this task's own battery.** ``_exit_library_media_viewer``'s body schedules
-   its continuation as ``self.call_next(self._apply_library_media_list_
-   return, None)``, and ``test_screen_navigation.py:3109`` asserts
-   ``continuation == screen._apply_library_media_list_return`` on a REAL
-   screen. Moved, ``self`` is the controller, so the captured callback is the
-   CONTROLLER's bound method and the equality fails -- and note that
-   excluding the CALLEE would not have fixed it either: the controller's
-   late-binding property returns the injected ``lambda``, which is a third
-   object again. The CALLER is what has to stay, so that ``self.<name>``
-   resolves to a screen-bound method whose ``__self__``/``__func__`` match
-   the assertion's own. The census: any test comparing a captured callback
-   against ``<receiver>.<cluster-name>`` as a BARE attribute (not a call, not
-   an assignment target). Run over all 251 candidates across ``Tests/`` it
-   returns 10 names, 9 of them already excluded on other grounds and 1
-   (``_navigate_to_media``) where the receiver holds a ``MagicMock`` set on
-   the instance, which a delegator cannot disturb.
+   this task's own battery.** ``_exit_library_media_viewer``'s body schedules its
+   continuation as ``self.call_next(self._apply_library_media_list_ return, None)``, and
+   ``test_screen_navigation.py:3109`` asserts ``continuation ==
+   screen._apply_library_media_list_return`` on a REAL screen. Moved, ``self`` is the
+   controller, so the captured callback is the CONTROLLER's bound method and the
+   equality fails -- and note that excluding the CALLEE would not have fixed it either:
+   the controller's late-binding property returns the injected ``lambda``, which is a
+   third object again. The CALLER is what has to stay, so that ``self.<name>`` resolves
+   to a screen-bound method whose ``__self__``/``__func__`` match the assertion's own.
+   The census: any test comparing a captured callback against
+   ``<receiver>.<cluster-name>`` as a BARE attribute (not a call, not an assignment
+   target). Run over all 251 candidates across ``Tests/`` it returns 10 names, 9 of them
+   already excluded on other grounds and 1 (``_navigate_to_media``) where the receiver
+   holds a ``MagicMock`` set on the instance, which a delegator cannot disturb.
 
 **140 of the 251 candidates move onto this controller** (48 ``@on`` handlers
 + 5 ``action_*`` + 3 ``@staticmethod`` + 84 plain).
@@ -359,34 +327,31 @@ state fields and the movers themselves -- **90 names** -- and then adding
 ``test_media_controller_binds_every_name_its_moved_bodies_use``:
 
 1. **Framework services** (``app``, ``app_instance``, ``call_after_refresh``,
-   ``call_next``, ``focused``, ``is_mounted``, ``is_running``,
-   ``post_message``, ``query``, ``query_one``, ``refresh``, ``run_worker``,
-   ``set_focus``, ``set_timer``, ``size``) are live-read from the screen via
-   ``@property`` on every access -- never snapshotted. ``focused`` is here
-   for the reason the skills series established: six movers reach it, and an
-   unbound ``getattr(self, "focused", None)`` returns its default silently,
-   forever.
+   ``call_next``, ``focused``, ``is_mounted``, ``is_running``, ``post_message``,
+   ``query``, ``query_one``, ``refresh``, ``run_worker``, ``set_focus``, ``set_timer``,
+   ``size``) are live-read from the screen via ``@property`` on every access -- never
+   snapshotted. ``focused`` is here for the reason the skills series established: six
+   movers reach it, and an unbound ``getattr(self, "focused", None)`` returns its
+   default silently, forever.
 2. **Everything else** is a NAMED constructor dependency: (a) 24 general
-   Library-wide shell helpers a moved body calls with explicit arguments --
-   including the five review-set entry points the One Home Rule kept on the
-   screen (``_active_review_set_banner``, ``_review_dismiss_receipt_name``,
+   Library-wide shell helpers a moved body calls with explicit arguments -- including
+   the five review-set entry points the One Home Rule kept on the screen
+   (``_active_review_set_banner``, ``_review_dismiss_receipt_name``,
    ``_review_selected_worker``, ``_review_set_picker_worker``,
-   ``_review_these_worker``, ``_walk_active_review_set``); (b) 11 shared
-   shell state accessors this cluster READS and never writes; (b') **5 it
-   also WRITES** (``_library_selected_row_id``,
-   ``_library_notes_programmatic_focus_target``,
+   ``_review_these_worker``, ``_walk_active_review_set``); (b) 11 shared shell state
+   accessors this cluster READS and never writes; (b') **5 it also WRITES**
+   (``_library_selected_row_id``, ``_library_notes_programmatic_focus_target``,
    ``_library_notes_restoring_focus``, ``_library_list_entry_focus_timer``,
-   ``_library_canvas_resync_pending``) -- getter **and** setter, a shape the
-   prompts series did not need (its census found zero stores to a
-   non-own-state name) and this one does; (c) 2 wiring accessors for the
-   prior-extracted media controller instances task 1 kept off
-   ``LibraryMediaState`` (``_library_media_browse_controller``,
-   ``_library_media_trash_browse_controller`` -- 11 movers each, the
-   cluster's most-referenced names); (e) 35 named late-binding callables for
-   the exclusions above that a MOVER still calls internally -- each a
-   ``lambda`` re-reading ``screen.<name>`` on every invocation, at CALL time,
-   which is exactly why every bypass fixture named above keeps working
-   unmodified after this move.
+   ``_library_canvas_resync_pending``) -- getter **and** setter, a shape the prompts
+   series did not need (its census found zero stores to a non-own-state name) and
+   this one does; (c) 2 wiring accessors for the prior-extracted media controller
+   instances task 1 kept off ``LibraryMediaState``
+   (``_library_media_browse_controller``, ``_library_media_trash_browse_controller``
+   -- 11 movers each, the cluster's most-referenced names); (e) 35 named late-binding
+   callables for the exclusions above that a MOVER still calls internally -- each a
+   ``lambda`` re-reading ``screen.<name>`` on every invocation, at CALL time, which
+   is exactly why every bypass fixture named above keeps working unmodified after
+   this move.
 
 **The two bindings a ``self.<attr>`` walk cannot produce, and the precedent
 that already knew about them.** ``_library_canvas_projection_depth`` and
@@ -600,6 +565,7 @@ class LibraryMediaController:
         arm_library_list_entry_focus,
         disarm_library_list_entry_focus,
         focus_library_control,
+        land_stage_pick,
         focus_library_list_entry,
         library_entry_route_key,
         open_library_export_canvas,
@@ -718,6 +684,7 @@ class LibraryMediaController:
         self._arm_library_list_entry_focus_fn = arm_library_list_entry_focus
         self._disarm_library_list_entry_focus_fn = disarm_library_list_entry_focus
         self._focus_library_control_fn = focus_library_control
+        self._land_stage_pick_fn = land_stage_pick
         self._focus_library_list_entry_fn = focus_library_list_entry
         self._library_entry_route_key_fn = library_entry_route_key
         self._open_library_export_canvas_fn = open_library_export_canvas
@@ -1036,6 +1003,10 @@ class LibraryMediaController:
     @property
     def _focus_library_control(self) -> Any:
         return self._focus_library_control_fn
+
+    @property
+    def _land_stage_pick(self) -> Any:
+        return self._land_stage_pick_fn
 
     @property
     def _focus_library_list_entry(self) -> Any:
@@ -4588,7 +4559,7 @@ class LibraryMediaController:
             # the opened item's controls exist.
             self._queue_after_library_media_viewer_recompose(
                 partial(
-                    self._screen._land_stage_pick,
+                    self._land_stage_pick,
                     "media",
                     loaded_id,
                     ".library-media-route",

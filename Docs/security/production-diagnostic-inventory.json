@@ -2297,8 +2297,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 3,
-      "diagnostic_digest": "a80c0d70ec3b41c65d8b",
+      "call_count": 2,
+      "diagnostic_digest": "67660de3b192a3df62de",
       "owner": "TASK-494",
       "path": "tldw_chatbook/RAG_Search/simplified/db_connection_pool.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -9786,15 +9786,6 @@
     },
     {
       "candidates": [
-        {
-          "call_digest": "5a0dc0ae486bc8c1",
-          "method": "debug",
-          "path_expressions": [
-            "db_path"
-          ],
-          "scope": "_retire_pool",
-          "status": "legacy_unreviewed"
-        },
         {
           "call_digest": "146d1e9eadbff2ed",
           "method": "debug",

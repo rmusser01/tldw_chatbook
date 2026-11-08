@@ -188,7 +188,7 @@ to the linked source module and the cohorts above; unresolved mappings remain bl
 | sqlite:kanban.local | tldw_chatbook/Kanban_Interop/local_kanban_db | _PRIVATE_OR_MEMORY | sqlite/unsupported |
 | sqlite:notes.file_notes_replica | tldw_chatbook/Notes/file_notes_replica | _PRIVATE_OR_MEMORY | sqlite/unsupported |
 | sqlite:notes.library_parent | tldw_chatbook/Notes/Notes_Library | _PRIVATE_FILE | sqlite/unsupported |
-| sqlite:notes.sync_state | tldw_chatbook/Notes/notes_device_state_store | _PRIVATE_AND_READ_ONLY | sqlite/installed exclusion (`_LocalSQLite`) |
+| sqlite:notes.sync_state | tldw_chatbook/Notes/notes_device_state_store | _PRIVATE_AND_READ_ONLY | sqlite/installed exclusion (`_DeviceStateExclusion`) |
 | sqlite:notifications.client | tldw_chatbook/Notifications/client_notifications_db | _MEMORY | sqlite/unsupported |
 | sqlite:notifications.event_state | tldw_chatbook/Notifications/event_state_repository | _PRIVATE_OR_MEMORY | sqlite/unsupported |
 | sqlite:rag.chachanotes_keyword_leg | tldw_chatbook/RAG_Search/simplified/rag_service | _READ_ONLY_URI | sqlite/unsupported |
@@ -1071,11 +1071,11 @@ BLOB assets through a WAL-aware snapshot. Pure discovery resolves custom paths
 without constructing/opening domain stores. Required later-owned file assets and
 operational activation stay explicit dependencies. See [core qualification](backup-recovery-core-owners.md).
 
-| sqlite:recovery.core.chachanotes | tldw_chatbook/DB/recovery_core | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
-| sqlite:recovery.core.media | tldw_chatbook/DB/recovery_core | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
-| sqlite:recovery.core.prompts | tldw_chatbook/DB/recovery_core | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
-| sqlite:recovery.core.library_collections | tldw_chatbook/DB/recovery_core | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
-| sqlite:recovery.core.library_ingest_jobs | tldw_chatbook/DB/recovery_core | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
+| sqlite:recovery.core.chachanotes | tldw_chatbook/Backup_Recovery/core_adapters | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
+| sqlite:recovery.core.media | tldw_chatbook/Backup_Recovery/core_adapters | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
+| sqlite:recovery.core.prompts | tldw_chatbook/Backup_Recovery/core_adapters | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
+| sqlite:recovery.core.library_collections | tldw_chatbook/Backup_Recovery/core_adapters | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
+| sqlite:recovery.core.library_ingest_jobs | tldw_chatbook/Backup_Recovery/core_adapters | _PRIVATE_AND_READ_ONLY | sqlite/core-recovery-qualified |
 | tldw_chatbook/Backup_Recovery/core_adapters.py | _CoreAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-admission-and-core-recovery |
 | tldw_chatbook/Backup_Recovery/core_adapters.py | _CoreAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-admission-and-core-recovery |
 | tldw_chatbook/Backup_Recovery/core_adapters.py | _CoreAdapter.validate_dependencies | connect_private_sqlite | 2 | generic_boundary | native-admission-and-core-recovery |
@@ -1245,9 +1245,9 @@ copy census rows therefore remain unchanged by this consolidation.
 | tldw_chatbook/Scheduling/recovery.py | _ScheduledTasksAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
 | tldw_chatbook/Sync_Interop/recovery.py | _SyncAdapter.capture | copy_private_sqlite | 1 | generic_boundary | native-operational-recovery |
 | tldw_chatbook/Sync_Interop/recovery.py | _SyncAdapter.validate | connect_private_sqlite | 1 | generic_boundary | native-operational-recovery |
-| sqlite:recovery.operations.workspaces | tldw_chatbook/DB/recovery_operations | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
-| sqlite:recovery.operations.agent_runs | tldw_chatbook/DB/recovery_operations | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
-| sqlite:recovery.operations.subscriptions | tldw_chatbook/DB/recovery_operations | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
+| sqlite:recovery.operations.workspaces | tldw_chatbook/Backup_Recovery/sqlite_adapters | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
+| sqlite:recovery.operations.agent_runs | tldw_chatbook/Backup_Recovery/sqlite_adapters | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
+| sqlite:recovery.operations.subscriptions | tldw_chatbook/Backup_Recovery/sqlite_adapters | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
 | sqlite:recovery.operations.scheduled_tasks | tldw_chatbook/Scheduling/recovery | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
 | sqlite:recovery.operations.notifications | tldw_chatbook/Notifications/recovery | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
 | sqlite:recovery.operations.events | tldw_chatbook/Notifications/recovery | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
@@ -2768,7 +2768,7 @@ copies preserve live main/WAL bytes; credential reconstruction operates only on
 private staged copies. Model lease rows retain their existing cohort status.
 
 | sqlite:recovery.credentials | tldw_chatbook/Backup_Recovery/credentials | _PRIVATE_FILE | disposable credential reconstruction |
-| sqlite:recovery.validation | tldw_chatbook/DB/private_sqlite | _PRIVATE_AND_READ_ONLY | disposable imported candidate validation |
+| sqlite:recovery.validation | tldw_chatbook/Backup_Recovery/sqlite_validation | _PRIVATE_AND_READ_ONLY | disposable imported candidate validation |
 | sqlite:recovery.validation_schema | tldw_chatbook/DB/recovery_workflow_schema | _MEMORY | installed schema reference |
 | sqlite:recovery.rag_projection_validation | tldw_chatbook/Backup_Recovery/rag_projection_validation | _READ_ONLY_URI | disposable Chroma candidate validation |
 

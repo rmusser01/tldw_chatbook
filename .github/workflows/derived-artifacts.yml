@@ -1287,6 +1287,9 @@ jobs:
             Tests/Architecture/test_profile_owned_path_inventory.py::test_base_data_dir_census_detects_qualified_and_aliased_consumers \
             Tests/Architecture/test_profile_owned_path_inventory.py::test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners \
             Tests/Architecture/test_profile_owned_path_inventory.py::test_python_outside_the_package_and_tests_parses \
+            Tests/Architecture/test_profile_owned_path_inventory.py::test_runtime_source_population_keeps_tooling_and_ignores_nonruntime_evidence \
+            Tests/Architecture/test_profile_owned_path_inventory.py::test_runtime_constant_guard_rejects_new_runtime_owners \
+            Tests/Architecture/test_profile_owned_path_inventory.py::test_runtime_constant_guard_does_not_swallow_runtime_parse_failure \
             Tests/Architecture/test_progress_widget_clock_guard.py \
             Tests/Architecture/test_recovery_entrypoints.py \
             Tests/Architecture/test_task2062_3_legacy_downloader_retirement.py \
@@ -1307,12 +1310,10 @@ jobs:
 
   pr-fast-lane-arch:
     needs: [preflight]
-    # The 2026-10-25 architecture-review program's 14 tests, which ran in no
-    # pull-request lane. A first attempt appended them to pr-fast-lane, whose
-    # run then hit its 35-min cap (PR #3399); the job's own note says to add
-    # a job, not minutes. Their own job, so no existing lane moves toward its
-    # cap: one invocation, same minimal dependency set and serial pytest as
-    # the other lanes. Those 14 ran in about 2.5 min locally.
+    # The architecture-review program's 14 selectors have their own job after
+    # PR #3399 hit the unchanged Fast Lane cap. Use one serial invocation and
+    # the existing dependency set. Normal per-node profiles apply: the native
+    # note-service selector uses bootstrap_profile.
     # TASK-37173: PR #3494 reached the 35-minute fast-lane cap at 99%.
     # Run the four package-wide AST censuses here, where the same attempt
     # took 2m28s against this job's 20-minute cap.
@@ -1368,6 +1369,7 @@ jobs:
             Tests/test_config_load_settings_table_guard.py \
             Tests/Performance/test_boot_css_byte_budget.py \
             Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet \
+            Tests/Chat/test_served_startup_authentication.py \
             Tests/DB/test_private_sqlite.py \
             Tests/DB/test_private_sqlite_inventory.py \
             --timeout=180 \

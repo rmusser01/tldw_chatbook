@@ -1,16 +1,15 @@
 """Library Export canvas controller.
 
 Controller PR of the Export extraction series (wave-2 task 3 of
-``.superpowers/sdd/2026-09-02-library-decomposition-wave2-cold-trio``; export
-series 2/3; recipe: ``backlog/docs/library-decomposition-recipe.md``;
-conversations series -- ``library_conversations_controller.py`` -- is the
-worked example this mirrors). Owns the Export canvas's own execution
-mechanics that survive this task's two exclusion rounds (see below): scope
-open/reset, the memory-DB server-mode/DB-handle helpers, the static
-payload/service/message builders, the worker-completion marshal chain's
-non-``@work`` links, the Escape-back action, and the form fields (name/
-description/quality/destination). ``LibraryScreen`` keeps one-line
-delegators under every one of these original names.
+``.superpowers/sdd/2026-09-02-library-decomposition-wave2-cold-trio``; export series
+2/3; recipe: ``backlog/docs/library-decomposition-recipe.md``; conversations series --
+``library_conversations_controller.py`` -- is the worked example this mirrors). Owns the
+Export canvas's own execution mechanics that survive this task's two exclusion rounds
+(see below): scope open/reset, the memory-DB server-mode/DB-handle helpers, the static
+payload/service/message builders, the worker-completion marshal chain's non-``@work``
+links, the Escape-back action, and the form fields (name/
+description/quality/destination). ``LibraryScreen`` keeps one-line delegators under
+every one of these original names.
 
 **Cluster derivation, round 1 -- ownership.** A mechanical ``ast`` scan of
 ``LibraryScreen`` for method names containing ``"export"`` (case-
@@ -108,32 +107,27 @@ its bypassing test:
   dependency of ``_apply_library_export_failure``, which stays MOVED --
   see its own dependency list below).
 - ``_start_library_export_counts_worker`` (``Tests/Library/test_library_
-  export_execution.py::test_prompt_memory_database_forces_inline_count_
-  resolution``).
+  export_execution.py::test_prompt_memory_database_forces_inline_count_ resolution``).
 - ``_start_library_export_worker`` (``Tests/Library/test_library_export_
   execution.py``, two tests).
 - ``_apply_library_export_success`` (``test_library_shell.py::
-  test_library_export_registry_failure_warns_it_wont_appear_in_artifacts``,
-  a FOURTH, new-to-this-task bypass shape: ``screen = Mock()``, not a
-  ``SimpleNamespace``. A ``Mock`` auto-creates any attribute access --
-  including ``screen._export_controller`` -- as ANOTHER ``Mock``, so a
-  delegator here does not raise; it silently "succeeds" while never running
-  the real body, which is what actually breaks the test's assertions on
-  ``screen._library_export_running``/etc. Call this shape **"silent Mock
+  test_library_export_registry_failure_warns_it_wont_appear_in_artifacts``, a FOURTH,
+  new-to-this-task bypass shape: ``screen = Mock()``, not a ``SimpleNamespace``. A
+  ``Mock`` auto-creates any attribute access -- including ``screen._export_controller``
+  -- as ANOTHER ``Mock``, so a delegator here does not raise; it silently "succeeds"
+  while never running the real body, which is what actually breaks the test's assertions
+  on ``screen._library_export_running``/etc. Call this shape **"silent Mock
   auto-attribution"** -- distinct from the ``AttributeError``-raising
-  ``SimpleNamespace`` shape above precisely because it fails quietly rather
-  than loudly; only running the actual test surfaced it, not a grep for
-  ``AttributeError``.)
+  ``SimpleNamespace`` shape above precisely because it fails quietly rather than loudly;
+  only running the actual test surfaced it, not a grep for ``AttributeError``.)
 
-None of these 9 were caught by the free-name-resolution script, the
-byte-for-byte body diff, or a static read of the moved bodies -- every one
-was found only by running this task's own verification battery
-(``-k "export and library"`` under ``Tests/UI``, THEN widened to
-``Tests/Library/`` once the SimpleNamespace-unbound idiom's prevalence
-there became apparent) and reading each failure's traceback. All 9 were
-independently confirmed to PASS on a pristine ``git stash -u`` baseline
-(i.e. genuine regressions this task's move introduced, not pre-existing
-reds) before being excluded here.
+None of these 9 were caught by the free-name-resolution script, the byte-for-byte body
+diff, or a static read of the moved bodies -- every one was found only by running this
+task's own verification battery (``-k "export and library"`` under ``Tests/UI``, THEN
+widened to ``Tests/Library/`` once the SimpleNamespace-unbound idiom's prevalence there
+became apparent) and reading each failure's traceback. All 9 were independently
+confirmed to PASS on a pristine ``git stash -u`` baseline (i.e. genuine regressions this
+task's move introduced, not pre-existing reds) before being excluded here.
 
 **Net: 51 candidates -> 18 (other-subsystem) + 2 (framework-decorator) + 9
 (unbound-fake-self) excluded = 22 move onto this controller.**
@@ -175,36 +169,33 @@ examples):
    ``is_mounted``, ``query_one``, ``refresh``) are live-read from the screen
    via ``@property`` on every access -- never snapshotted.
 2. **Everything else** the cluster depends on that is not its own state is a
-   NAMED constructor dependency -- EXCEPT ``_safe_text``, bound the same
-   class-level way the conversations controller's own ``_safe_text`` is
-   (see that controller's module docstring for the full incident this shape
-   resolves). This cluster's dependencies: (a) general Library-wide shell
-   helpers the moved bodies call with explicit arguments
-   (``_apply_library_open_item_surface``, ``_flush_library_note_save``,
-   ``_set_library_destination_with_conversation_fence`` -- the SAME shared
-   rail/destination-switch helper the conversations controller's own
-   docstring documents as staying on the screen for every subsystem alike
-   -- ``_sync_library_emergency_guard_presentation``, ``_close_open_library_
+   NAMED constructor dependency -- EXCEPT ``_safe_text``, bound the same class-level
+   way the conversations controller's own ``_safe_text`` is (see that controller's
+   module docstring for the full incident this shape resolves). This cluster's
+   dependencies: (a) general Library-wide shell helpers the moved bodies call with
+   explicit arguments (``_apply_library_open_item_surface``,
+   ``_flush_library_note_save``, ``_set_library_destination_with_conversation_fence``
+   -- the SAME shared rail/destination-switch helper the conversations controller's own
+   docstring documents as staying on the screen for every subsystem alike --
+   ``_sync_library_emergency_guard_presentation``, ``_close_open_library_
    choice_strip``, ``_focus_library_hub_entry``, ``_select_library_rail_row``,
-   ``_focus_library_choice_strip_active``, ``_focus_library_control``); (b)
-   shared shell state this cluster only READS (``_library_selected_row_id``
-   -- the recipe's own canonical >=2-subsystems field, 226 refs, read-only
-   in this cluster: no direct write site exists inside any of the 22 moved
-   bodies, confirmed by an AST Store-context check before committing to a
-   read-only accessor here -- and ``_library_prompts_mutation_in_flight``, a
-   DIFFERENT subsystem's own state that ``_open_library_export_canvas``
-   reads as a guard); and (c) the SEVEN screen-resident siblings excluded
-   in round 3 above (``build_library_export_state``,
+   ``_focus_library_choice_strip_active``, ``_focus_library_control``); (b) shared
+   shell state this cluster only READS (``_library_selected_row_id`` -- the recipe's
+   own canonical >=2-subsystems field, 226 refs, read-only in this cluster: no direct
+   write site exists inside any of the 22 moved bodies, confirmed by an AST
+   Store-context check before committing to a read-only accessor here -- and
+   ``_library_prompts_mutation_in_flight``, a DIFFERENT subsystem's own state that
+   ``_open_library_export_canvas`` reads as a guard); and (c) the SEVEN screen-resident
+   siblings excluded in round 3 above (``build_library_export_state``,
    ``start_library_export_counts_worker``, ``start_library_export_worker``,
    ``apply_library_export_success``, ``apply_library_export_cancelled``,
-   ``update_library_export_canvas_after_run``, ``handle_library_export_
-   cancel``), bound as named callables exactly like (a) despite their own
-   bodies staying screen-resident, for the "unbound fake-self"/"silent Mock
-   auto-attribution" reasons documented above. (Round 2's two ``@work``
-   siblings need NO binding here at all: their only callers,
-   ``_start_library_export_counts_worker``/``_start_library_export_worker``,
-   are THEMSELVES excluded in round 3, so this controller never reaches for
-   either name.)
+   ``update_library_export_canvas_after_run``, ``handle_library_export_ cancel``),
+   bound as named callables exactly like (a) despite their own bodies staying
+   screen-resident, for the "unbound fake-self"/"silent Mock auto-attribution" reasons
+   documented above. (Round 2's two ``@work`` siblings need NO binding here at all:
+   their only callers,
+   ``_start_library_export_counts_worker``/``_start_library_export_worker``, are
+   THEMSELVES excluded in round 3, so this controller never reaches for either name.)
 
 This subsystem's OWN state (every ``_library_export_<field>`` name the moved
 bodies reference) is exposed through generated properties reading
