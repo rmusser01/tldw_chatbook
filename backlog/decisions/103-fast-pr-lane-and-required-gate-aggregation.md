@@ -407,10 +407,10 @@ Current UI lane: 36 shards. The current total is 46 eligible test jobs per PR
 (2026-11-02: includes the third admission-sensitive lane; 2026-11-06: and the
 Architecture guard contracts job, TASK-38989, and the architecture-review
 tests' own job, `pr-fast-lane-arch`, split out of the PR Fast Lane at its
-35-min cap, PR #3399; 2026-11-07: and `recovered-suites` and two more UI
+35-min cap, PR #3399; 2026-11-07: and `recovered-suites` and four more UI
 shards, below).
-The `max-parallel: 17` ceiling, peak 23 application test runners (24 with
-Perf Guard), minimal dependencies, serial execution, 20-minute job cap,
+As of this amendment, the `max-parallel: 17` ceiling (18 since 2026-11-07,
+below), minimal dependencies, serial execution, 20-minute job cap,
 180-second test timeout and fail-closed required aggregation remain unchanged.
 All 1,140 inherited selectors remain exactly once. The 43 new concrete native
 cases and the previously unenrolled canonical-class governance control bring
