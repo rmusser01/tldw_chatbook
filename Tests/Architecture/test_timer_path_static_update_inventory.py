@@ -75,7 +75,9 @@ Known remaining limitation, on purpose: the intra-package call graph still
 cannot cross a constructor-injected *non-clock* callable (e.g. a
 ``repaint_chip=lambda: screen._repaint...`` seam), so reach out of the
 Console_Modules family understates. Clock ROOTS through such seams are what
-TASK-23028 made loud; general graph crossing stays out of scope.
+TASK-23028 made loud; general graph crossing stays out of scope. Likewise, a
+direct call on a registered panel instance (``PROVIDERS_MODELS_PANEL.discard``)
+resolves by name only; none is clock-reachable today (TASK-1378.2).
 """
 
 from __future__ import annotations
