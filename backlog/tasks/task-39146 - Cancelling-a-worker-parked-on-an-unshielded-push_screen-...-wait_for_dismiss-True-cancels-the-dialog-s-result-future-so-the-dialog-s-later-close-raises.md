@@ -86,4 +86,7 @@ It now flags any `push_screen` call that may pass a non-False `wait_for_dismiss`
 - The forms test flags lines `[2, 3, 7, 8, 10, 11, 12]`; cebb6681b1's scanner flagged only `[2, 3, 7]` on the same source.
 - Negative control: with the allowlist entry renamed, the guard went red on `confirmation_dialog.py:339`.
 
+
+**Review r12p-rev2 M3 (2026-11-08).** A `*args` splat could carry the third positional `wait_for_dismiss`. `_waits_for_dismiss` now treats any starred argument as unprovable and fails closed, as it does for a `**` splat. The forms test adds `await app.push_screen(*args)`, so the expected lines are now `[2, 3, 7, 8, 10, 11, 12, 13]`. With the new check removed, the forms test goes red. The package scan still finds only the allowlisted `await_quit_prompt`.
+
 Files: the six product modules above, `UI/Screens/personas_screen.py`, the four test files, `Tests/Architecture/test_worker_exclusive_group_inventory.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.

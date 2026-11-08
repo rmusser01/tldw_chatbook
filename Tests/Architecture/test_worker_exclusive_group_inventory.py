@@ -982,6 +982,8 @@ UNSHIELDED_DISMISS_WAIT_ALLOWLIST: dict[str, str] = {
 
 def _waits_for_dismiss(call: ast.Call) -> bool:
     """Whether ``call`` may pass a non-False ``wait_for_dismiss``."""
+    if any(isinstance(arg, ast.Starred) for arg in call.args):
+        return True  # An unprovable ``*`` splat fails closed too.
     wait = _keyword(call, "wait_for_dismiss")
     if wait is None and len(call.args) >= 3:
         wait = call.args[2]
@@ -1059,7 +1061,7 @@ def test_no_unshielded_dismiss_waits() -> None:
 def test_unshielded_dismiss_wait_forms_are_flagged() -> None:
     """Every way to ask for the future is flagged unless asyncio.shield wraps it."""
     tree = ast.parse(
-        "async def f(app, s, cb, flag, opts):\n"
+        "async def f(app, s, cb, flag, opts, args):\n"
         "    await app.push_screen(s, wait_for_dismiss=True)\n"
         "    await self.app.push_screen(\n"
         "        s,\n"
@@ -1071,10 +1073,11 @@ def test_unshielded_dismiss_wait_forms_are_flagged() -> None:
         "    await asyncio.wait_for(app.push_screen(s, wait_for_dismiss=True), 5)\n"
         "    await app.push_screen(s, **{'wait_for_dismiss': True})\n"
         "    await app.push_screen(s, **opts)\n"
+        "    await app.push_screen(*args)\n"
         "    await app.push_screen_wait(s)\n"
         "    await asyncio.shield(app.push_screen(s, wait_for_dismiss=True))\n"
         "    await app.push_screen(s)\n"
         "    await app.push_screen(s, wait_for_dismiss=False)\n"
         "    await app.push_screen(s, **{'wait_for_dismiss': False})\n"
     )
-    assert _unshielded_dismiss_waits(tree) == [2, 3, 7, 8, 10, 11, 12]
+    assert _unshielded_dismiss_waits(tree) == [2, 3, 7, 8, 10, 11, 12, 13]
