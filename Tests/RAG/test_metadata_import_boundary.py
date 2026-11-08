@@ -233,6 +233,7 @@ _LEGACY_EXPORTS = [
     ("create_embeddings_service", "embeddings_wrapper", "create_embeddings_service"),
     ("SearchResult", "vector_store", "SearchResult"),
     ("VectorStore", "vector_store", "VectorStore"),
+    ("VectorStoreSearchError", "vector_store", "VectorStoreSearchError"),
     ("ChromaVectorStore", "vector_store", "ChromaVectorStore"),
     ("InMemoryVectorStore", "vector_store", "InMemoryVectorStore"),
     ("create_vector_store", "vector_store", "create_vector_store"),
