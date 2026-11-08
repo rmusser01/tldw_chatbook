@@ -63,4 +63,10 @@ Reused TASK-38950's `apply_scoped_breakpoints` (`UI/Console_Modules/frame.py`); 
 
 **Runs (load 45-98).** Covering files (projection restyles, composer restyle guard, keyboard trust, shell regions, resize reflow, narrow layout, approval card, internals decomposition, compaction hold, provider persistence, screen size ratchet, review-selection boundary): 219 failed / 149 passed on head and the same 219 failed / 148 passed on base 8b762b52fa (RecoveryRequired in the plain files). The compact readers among them, `test_console_shell_drops_header_at_small_height` and `test_console_compact_height_keeps_header_controls_and_row_budget[size0,size1]`, passed on head under a temporary `@private_profile_test` marker (3 passed; marker removed). `test_height_resize_requests_one_coalesced_context_reconcile` fails under that marker with `2 == 1` reconcile runs both with and without this change (3 runs each), so it is pre-existing and in no lane.
 
+
+**Review r12p-rev1 M5 (2026-11-08).** No test failed if the subtree branch broke. New: `test_a_breakpoint_rule_descendants_read_refreshes_their_styles`.
+- It caches every shell descendant's `visual_style`, adds a breakpoint rule setting `text-style: italic` on `#console-shell`, flips the class with `apply_scoped_breakpoints`, and compares each descendant's style with a fresh computation.
+- Green on head.
+- Under the mutant that never fills `deep`: red, `507 descendants kept a stale style`.
+
 Files: `tldw_chatbook/UI/Console_Modules/frame.py`, `tldw_chatbook/UI/Screens/chat_screen.py`, `Tests/UI/test_console_projection_restyles.py`, `backlog/docs/lessons-textual.md` (the 38950 entry's "same shape elsewhere" line).

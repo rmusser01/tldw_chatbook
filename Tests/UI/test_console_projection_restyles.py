@@ -804,6 +804,43 @@ async def test_a_header_breakpoint_flip_restyles_only_what_its_rules_style(monke
 
 
 @pytest.mark.asyncio
+async def test_a_breakpoint_rule_descendants_read_refreshes_their_styles():
+    """TASK-39132 review: a breakpoint rule setting a property descendants read
+    from their ancestors restyles the target's subtree, so each descendant's
+    cached visual style is the one a fresh computation gives. Red when the
+    helper never walks a subtree (its ``deep`` set always empty)."""
+    from textual.widget import Widget
+
+    host = _ready_host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        await _mounted(host, pilot, "#console-workbench-header")
+        console = host.screen
+        await pilot.pause(0.5)
+        shell = console.query_one("#console-shell")
+        nodes = [node for node in shell.walk_children() if isinstance(node, Widget)]
+        for node in nodes:
+            node.visual_style  # Cache each against the old ancestry.
+        host.stylesheet.add_source(
+            ".r12-deep-probe #console-shell { text-style: italic; }",
+            read_from=(__file__, "deep probe"),
+        )
+        apply_scoped_breakpoints(console, [(0, "r12-deep-probe")], 45)
+        shown = {id(node): node.visual_style for node in nodes}
+        for node in nodes:
+            node._visual_style = None
+        fresh = {id(node): node.visual_style for node in nodes}
+        assert any(style.italic for style in fresh.values()), (
+            "the probe rule italicized no descendant"
+        )
+        stale = [
+            f"{type(node).__name__}#{node.id}"
+            for node in nodes
+            if shown[id(node)] != fresh[id(node)]
+        ]
+        assert not stale, f"{len(stale)} descendants kept a stale style: {stale[:5]}"
+
+
+@pytest.mark.asyncio
 async def test_a_compact_flip_restyles_only_what_its_rules_style(monkeypatch):
     """TASK-39132: crossing 34/35 rows restyles the nodes the compact rules style.
 
