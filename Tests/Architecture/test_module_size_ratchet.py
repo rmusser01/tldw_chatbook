@@ -860,16 +860,13 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-08, TASK-36949.4: 25863 -> 24908 (-955), chat-sync methods moved
     # to Sync_Interop/chat_sync_source.py; tombstone hashing via the DB port; the
     # two validators and coordinate_semantic_mutation are documented public seams.
-    # 2026-11-08, TASK-36949.4: 25863 -> 24870 (-993), chat-sync methods moved
-    # to Sync_Interop/chat_sync_source.py; tombstone hashing via the DB port.
-    # 2026-11-08, TASK-36949.4 fix round 1 (coordinator-directed re-pin):
-    # 24870 -> 24908 (+38), the two validators and coordinate_semantic_mutation
-    # became documented public seams for Sync_Interop and the dispatch repo.
-    # 2026-11-08, TASK-36949.6: 24908 -> 24909 (+1). The seven Chat imports
+    # 2026-11-08, TASK-36949.6: 24908 -> 24903 (-5). The seven Chat imports
     # go; ConsoleLibraryMigrationSeed moves in beside the v47->v48 migration
     # that consumes it, and the v52->v53 step names the trimming port's errors.
     # 2026-11-08, TASK-36949.6 fix round 1: 24909 -> 24903 (-6). The 21
     # internal call sites use the public seams; the three aliases are gone.
+    # that consumes it; the v52->v53 step names the trimming port's errors; the
+    # internal call sites use the public seams and the three aliases are gone.
     "tldw_chatbook/DB/ChaChaNotes_DB.py": 22552,
     # TASK-39147: the rebased report reader and workflow migrations cross 4000.
     # 2026-11-12, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
