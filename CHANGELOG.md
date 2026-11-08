@@ -37,6 +37,18 @@ and this project adheres to Some kind of Versioning
   use the variable, remove the saved key in Settings ▸ Providers & Models and
   name the variable in the Env var field.
 
+## [0.2.4] - 2026-11-08
+
+### Fixed
+- Include the complete served web and mobile assets, device/passkey scripts and
+  vendored notice in application distributions. Installed commands continue to
+  treat package assets as immutable.
+
+### Changed
+- Synchronize application and native companion source versions for the app-only
+  release. Ordinary recording support remains available; speculative duplex
+  voice stays unqualified and unavailable. No hardware qualification is claimed.
+
 ## [0.2.3] - 2026-10-02
 
 Includes committed development changes since 0.2.2 and retains the evaluation

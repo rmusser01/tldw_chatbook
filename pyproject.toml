@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tldw_chatbook"
-version = "0.2.3"
+version = "0.2.4"
 authors = [
   { name="Robert Musser", email="contact@rmusser.net" },
 ]
@@ -570,9 +570,15 @@ exclude = [
     "mermaid/sequence_layout.js",
 ]
 "tldw_chatbook.Web_Server" = [
-    "static/served_shell.html",
-    "static/served_shell.css",
-    "static/served_shell.js",
+    "static/*.html",
+    "static/*.css",
+    "static/*.js",
+    "static/VENDORED.md",
+    "static/mobile/*.html",
+    "static/mobile/*.css",
+    "static/mobile/*.js",
+    "static/mobile/*.webmanifest",
+    "static/mobile/*.png",
 ]
 "tldw_profile_core" = ["schemas/*.json", "fixtures/v1/*.json"]
 # Include all .tcss files in css directory and subdirectories

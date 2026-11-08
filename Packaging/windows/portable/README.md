@@ -86,7 +86,7 @@ Run from the repository root:
 ```powershell
 python Packaging/windows/portable/wezterm/build.py --work output/wezterm-build --jobs 4
 python -m build --wheel --outdir output/portable-wheel
-python Packaging/windows/portable/build_portable.py --wheel output/portable-wheel/tldw_chatbook-0.2.3-py3-none-any.whl --wezterm-build output/wezterm-build --output output/Chatbook-Windows-Portable --cache .portable-cache
+python Packaging/windows/portable/build_portable.py --wheel output/portable-wheel/tldw_chatbook-0.2.4-py3-none-any.whl --wezterm-build output/wezterm-build --output output/Chatbook-Windows-Portable --cache .portable-cache
 ```
 
 The builder checks `inputs.json` SHA-256 values before extracting official

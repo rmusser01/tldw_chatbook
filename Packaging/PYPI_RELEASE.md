@@ -42,7 +42,7 @@ branch pushes, and it skips the upload when the built version already exists on
 PyPI or is older than the latest published version. Publish jobs only download
 built artifacts and request the PyPI OIDC token.
 
-## App-only 0.2.3 scope
+## App-only 0.2.4 scope
 
 This release continues the approved app-only scope and omits the unavailable
 `tldw-voice-aec` dependency. Ordinary recording

@@ -183,13 +183,13 @@ def _install_zero_width_fold_guard() -> None:
     Content._wrap_and_format = _wrap_and_format  # type: ignore[method-assign]
 
 
-__version__ = "0.2.3"
+__version__ = "0.2.4"
 __author__ = "Robert Musser"
 __email__ = "contact@rmusser.net"
 __license__ = "AGPLv3+"
 
 # Version tuple for programmatic comparison
-VERSION_TUPLE = (0, 2, 3)
+VERSION_TUPLE = (0, 2, 4)
 
 # Export key components when package is imported
 __all__ = [

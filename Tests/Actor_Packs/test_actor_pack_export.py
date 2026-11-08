@@ -579,7 +579,9 @@ def test_archive_bytes_are_deterministic_and_independently_readable(
 @pytest.mark.parametrize("actor_kind", ("character", "persona"))
 def test_archive_matches_independent_golden_bytes(
     actor_kind: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr("tldw_chatbook.Actor_Packs.export.__version__", "0.1.8.0")
     payload = canonical_json(
         {
             "schema": "tldw.actor/v1",
@@ -614,6 +616,7 @@ def test_archive_matches_independent_golden_bytes(
     assert b"private-local-id" not in golden
     with zipfile.ZipFile(io.BytesIO(golden)) as archive:
         root = json.loads(archive.read("actor-pack.json"))
+        assert root["producer"]["version"] == "0.1.8.0"
         assert root["actor"]["kind"] == actor_kind
         assert set(archive.namelist()) == {
             "actor-pack.json",

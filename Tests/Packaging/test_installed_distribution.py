@@ -2025,6 +2025,108 @@ def test_release_checker_accepts_fresh_artifacts(
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_served_web_inventory_requires_source_assets_and_notice(tmp_path: Path) -> None:
+    from Packaging.check_manifest import source_web_static_paths
+
+    with pytest.raises(FileNotFoundError):
+        source_web_static_paths(tmp_path)
+    root = tmp_path / "tldw_chatbook/Web_Server/static"
+    root.mkdir(parents=True)
+    (root / "index.html").write_text("runtime")
+    with pytest.raises(FileNotFoundError):
+        source_web_static_paths(tmp_path)
+    (root / "VENDORED.md").write_text("notice")
+    assert source_web_static_paths(tmp_path) == {
+        "tldw_chatbook/Web_Server/static/index.html",
+        "tldw_chatbook/Web_Server/static/VENDORED.md",
+    }
+
+
+def test_built_artifacts_carry_complete_served_web_assets(
+    built_distributions: BuiltDistributions,
+    sdist_wheel: SdistWheel,
+) -> None:
+    # Independent, hand-checked runtime maps and vendored license inventory.
+    paths = {
+        "VENDORED.md", "devices.js", "passkeys.js", "qrcodegen.js",
+        "served_shell.html", "served_shell.css", "served_shell.js",
+        "mobile/index.html", "mobile/app.css", "mobile/app.js",
+        "mobile/manifest.webmanifest", "mobile/icon-192.png",
+        "mobile/icon-512.png", "mobile/apple-touch-icon.png",
+    }
+    prefix = "tldw_chatbook/Web_Server/static/"
+    with (
+        zipfile.ZipFile(built_distributions.wheel) as wheel,
+        zipfile.ZipFile(sdist_wheel.wheel) as rebuilt_wheel,
+        tarfile.open(built_distributions.sdist, "r:gz") as sdist,
+    ):
+        members = {
+            entry.name.split("/", 1)[-1]: entry
+            for entry in sdist.getmembers() if entry.isfile()
+        }
+        for relative in sorted(paths):
+            name = prefix + relative
+            expected = (built_distributions.source_root / name).read_bytes()
+            assert wheel.read(name) == expected
+            assert rebuilt_wheel.read(name) == expected
+            stream = sdist.extractfile(members[name])
+            assert stream is not None
+            assert stream.read() == expected
+
+
+@pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
+@pytest.mark.parametrize("relative", ["mobile/app.css", "passkeys.js", "VENDORED.md"])
+def test_release_checker_rejects_missing_served_web_resource(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+    relative: str,
+) -> None:
+    missing = "tldw_chatbook/Web_Server/static/" + relative
+    dist_dir = _dist_dir_without(
+        built_distributions,
+        tmp_path,
+        drop_from_wheel=[missing] if archive_kind == "wheel" else [],
+        drop_from_sdist=[missing] if archive_kind == "sdist" else [],
+    )
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    assert result.returncode == 1
+    assert missing in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
+def test_release_checker_rejects_unrelated_static_markdown(
+    built_distributions: BuiltDistributions,
+    tmp_path: Path,
+    archive_kind: str,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    shutil.copytree(built_distributions.dist_dir, dist_dir)
+    name = "tldw_chatbook/Web_Server/static/unrelated.md"
+    if archive_kind == "wheel":
+        with zipfile.ZipFile(next(dist_dir.glob("*.whl")), "a") as archive:
+            archive.writestr(name, "not runtime data")
+    else:
+        sdist = next(dist_dir.glob("*.tar.gz"))
+        rewritten = sdist.with_suffix(".rewritten")
+        with (
+            tarfile.open(sdist, "r:gz") as source,
+            tarfile.open(rewritten, "w:gz") as destination,
+        ):
+            for member in source.getmembers():
+                stream = source.extractfile(member) if member.isfile() else None
+                destination.addfile(member, stream)
+            root = source.getmembers()[0].name.split("/", 1)[0]
+            extra = tarfile.TarInfo(root + "/" + name)
+            extra.size = len(b"not runtime data")
+            destination.addfile(extra, BytesIO(b"not runtime data"))
+        rewritten.replace(sdist)
+    result = _run_manifest_checker(built_distributions, dist_dir, tmp_path)
+    assert result.returncode == 1
+    assert "forbidden development Markdown" in result.stdout + result.stderr
+    assert name in result.stdout + result.stderr
+
+
 def test_release_checker_rejects_multiple_wheels(
     built_distributions: BuiltDistributions,
     tmp_path: Path,
@@ -3014,20 +3116,28 @@ def test_release_checker_rejects_missing_database_migration(
     assert missing in result.stdout + result.stderr
 
 
+@pytest.mark.parametrize("wheel_source", ["source", "sdist"])
 def test_installed_wheel_loaders_entry_points_and_assets_are_immutable(
     built_distributions: BuiltDistributions,
+    sdist_wheel: SdistWheel,
     tmp_path: Path,
+    wheel_source: str,
 ) -> None:
     target = tmp_path / "target"
     state_root = tmp_path / "state"
     run_root = tmp_path / "run"
     state_root.mkdir(mode=0o700)
     run_root.mkdir()
-    _install_wheel(built_distributions, target)
+    wheel, build_source_root = (
+        (built_distributions.wheel, built_distributions.source_root)
+        if wheel_source == "source"
+        else (sdist_wheel.wheel, sdist_wheel.source_root)
+    )
+    _install_wheel_path(wheel, target)
     env = _private_child_env(
         state_root,
         target,
-        built_distributions.source_root,
+        build_source_root,
     )
     app_only_probe = r"""
 from importlib.metadata import requires

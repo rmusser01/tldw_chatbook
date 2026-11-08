@@ -35,6 +35,8 @@ SEMANTIC_MUTATION_GUARD_MIGRATION_PATH = (
 # every file-backed migration step uses to locate its script.
 RUNTIME_MIGRATION_READ = re.compile(r'"migrations"\s*/\s*"([^"\n]+\.sql)"')
 REPO_ROOT = Path(__file__).resolve().parents[1]
+WEB_STATIC_ROOT = "tldw_chatbook/Web_Server/static/"
+WEB_VENDORED_NOTICE = f"{WEB_STATIC_ROOT}VENDORED.md"
 
 SAMIRA_RESOURCE_ROOT = "tldw_chatbook/assets/characters/samira"
 SAMIRA_REACTION_LABELS = (
@@ -304,6 +306,29 @@ def source_migration_paths(repo_root: Path = REPO_ROOT) -> set[str]:
     return {f"{MIGRATIONS_PREFIX}{path.name}" for path in scripts}
 
 
+def source_web_static_paths(repo_root: Path = REPO_ROOT) -> set[str]:
+    """Return the complete fixed-root served assets and their vendored notice.
+
+    Raises:
+        FileNotFoundError: If the source assets or notice are unavailable.
+    """
+    directory = repo_root / WEB_STATIC_ROOT
+    files = {
+        path
+        for pattern in (
+            "*.html", "*.css", "*.js", "mobile/*.html", "mobile/*.css",
+            "mobile/*.js", "mobile/*.webmanifest", "mobile/*.png",
+        )
+        for path in directory.glob(pattern)
+        if path.is_file()
+    }
+    if not files or not (repo_root / WEB_VENDORED_NOTICE).is_file():
+        raise FileNotFoundError(
+            f"served web assets or vendored notice missing under {directory}"
+        )
+    return {path.relative_to(repo_root).as_posix() for path in files} | {WEB_VENDORED_NOTICE}
+
+
 def runtime_migration_paths(module_source: str) -> set[str]:
     """Return the migrations the shipped schema runner opens at runtime.
 
@@ -532,6 +557,7 @@ def _validate_content(
         if (
             (
                 label == "wheel"
+                or name.startswith(WEB_STATIC_ROOT)
                 or name.startswith("tldw_chatbook/Agents/code_review_guides/")
             )
             and name.endswith(".md")
@@ -541,6 +567,7 @@ def _validate_content(
             and name not in CANVAS_GUIDE_RESOURCE_PATHS
             and name not in CODE_REVIEW_GUIDE_RESOURCE_PATHS
             and name not in BUILTIN_SKILL_RESOURCE_PATHS
+            and name != WEB_VENDORED_NOTICE
         ):
             errors.append(f"{label}: forbidden development Markdown: {name}")
 
@@ -736,6 +763,11 @@ def check_distribution(dist_dir: Path = Path("dist")) -> bool:
     except FileNotFoundError as error:
         source_migrations = set()
         errors.append(f"source tree: {error}")
+    try:
+        source_web_assets = source_web_static_paths()
+    except FileNotFoundError as error:
+        source_web_assets = set()
+        errors.append(f"source tree: {error}")
     sdist_migrations, sdist_migration_errors = _archive_migration_requirements(
         "sdist", _sdist_member_text(sdist, CHACHANOTES_DB_MODULE_PATH)
     )
@@ -749,7 +781,10 @@ def check_distribution(dist_dir: Path = Path("dist")) -> bool:
         _validate_content(
             "sdist",
             sdist_members,
-            required_paths=REQUIRED_SDIST_PATHS | source_migrations | sdist_migrations,
+            required_paths=(
+                REQUIRED_SDIST_PATHS | source_migrations
+                | sdist_migrations | source_web_assets
+            ),
             required_globs=REQUIRED_SDIST_GLOBS,
             tiktoken_members=sdist_tiktoken_members,
         )
@@ -758,7 +793,10 @@ def check_distribution(dist_dir: Path = Path("dist")) -> bool:
         _validate_content(
             "wheel",
             wheel_members,
-            required_paths=REQUIRED_WHEEL_PATHS | source_migrations | wheel_migrations,
+            required_paths=(
+                REQUIRED_WHEEL_PATHS | source_migrations
+                | wheel_migrations | source_web_assets
+            ),
             required_globs=REQUIRED_WHEEL_GLOBS,
             forbidden_paths=FORBIDDEN_WHEEL_PATHS,
             tiktoken_members=wheel_tiktoken_members,
