@@ -2041,6 +2041,53 @@ async def test_submit_draft_dispatch_gap_session_closed_sets_toast_flag_with_inf
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("cause", ["review_required", "failed_write", "unsynced_write"])
+async def test_open_session_unconfirmed_draft_custody_is_refused(cause):
+    """TASK-39138: only a CLOSED chat skips the draft-custody refusal.
+
+    An open chat whose agent handoff needs review, or whose handoff write
+    failed or has not reached its durable revision, still refuses the send
+    (3176bebc22): no provider call and no user row.
+    """
+
+    class CountingGateway(StreamingGateway):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.calls += 1
+            async for chunk in super().stream_chat(resolution, messages, **kwargs):
+                yield chunk
+
+    gateway = CountingGateway()
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    session = store.ensure_session(title="A")
+    if cause == "review_required":
+        session.agent_handoff_state = "review_required"
+    else:
+        store._agent_handoff_writes[session.id] = {
+            "conversation_id": "conversation-1",
+            "durable_revision": 1,
+            "revision": 1 if cause == "failed_write" else 2,
+            "draft": "x",
+            "task": None,
+            "failed": cause == "failed_write",
+        }
+
+    result = await controller.submit_draft("hello", session_id=session.id)
+
+    assert result.accepted is False
+    assert result.visible_copy == "Draft custody is unconfirmed."
+    assert gateway.calls == 0
+    assert all(
+        message.role is not ConsoleMessageRole.USER
+        for message in store.messages_for_session(session.id)
+    )
+
+
+@pytest.mark.asyncio
 async def test_retry_message_active_run_rejection_does_not_append_system_row():
     """Task 4 fix-round-2 (I1): ``_active_run_rejection``'s SYSTEM-row
     append is scoped to ``submit_draft`` alone (``append_row=True``) --

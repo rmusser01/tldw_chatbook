@@ -4,7 +4,7 @@ title: "Re-pin the 34 Console controller test nodes in test_console_chat_control
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-07 06:51'
+updated_date: '2026-11-08 01:01'
 created_date: 2026-11-07 02:03
 labels:
 - follow-up
@@ -128,3 +128,10 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-1
   - `test_console_run_state_per_session.py::test_submit_draft_closed_session_id_fails_closed_without_touching_active`, which pins the same dispatch-gap contract. It moved from base's `KeyError: 'Unknown Console chat session'` to "Hooks unavailable" (that file has no profile marker). Under a temporary `bootstrap_profile` marker (reverted) it passes on head. That is a second, independent pin agreeing with the dispatch-gap fix.
 - e788e2bc6f's successor tests (`test_console_accepted_setup_native.py`, `test_console_accepted_stop_guards.py`, `Tests/UI/test_console_accepted_setup_stop.py`) pass on both trees, so a real ownership change still returns the owner-changed result.
 - Module size ratchet: 201 passed.
+
+**Review r12c-rev1 fixes (2026-11-07).**
+- New `test_open_session_unconfirmed_draft_custody_is_refused`, parametrised over review required, a failed handoff write and an unsynced handoff write. It pins the open-session half of the relaxed custody check: the refusal copy, no provider call and no user row. All 3 cases are green. Each of two temporary regressions turned all 3 red (`assert True is False` on `accepted`): inverting the membership test to `target_id not in self.store._sessions`, and dropping the refusal.
+- The closed-session comment moved above the custody `if`.
+- `AcceptedStopAuthority.is_current` and `closed_in_place` now share `_same_owners` for the store, persistence and database checks. e788e2bc6f's successor suites still pass (58).
+- Size row for `console_chat_controller.py`: 29,183 -> 29,184 (the moved comment), under the owner waiver.
+- Whole controller file at `-n 4`, load 46-51: 1 failed (TASK-39045's node) / 367 passed. Module size ratchet: 201 passed. Preflight: passed.
