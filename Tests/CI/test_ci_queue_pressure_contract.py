@@ -541,6 +541,19 @@ RECOVERED_SUITES_TARGETS = (
     # cases patch get_user_data_dir, and with no app_config the Buddy-preference
     # migration returns before its writer (library.migrate_legacy_selection).
     "Tests/Persona_Visual/test_builtin_pixel_migu_buddy.py",
+    # TASK-39119: the wake and goal-iteration reply pins, by node (the three
+    # fleet-wake nodes run their bodies in private-profile children; the
+    # goal-dispatch file is bootstrap_profile). Four other fleet-wake nodes
+    # ride pr-fast-lane; none of these does. Guard-clean, ~55 s serial.
+    "Tests/Chat/test_console_fleet_wake.py::test_a_wake_takes_no_mixin_anchor_from_an_earlier_unsaved_user_row",
+    "Tests/Chat/test_console_fleet_wake.py::test_a_failed_wake_reply_is_saved_as_failed",
+    "Tests/Chat/test_console_fleet_wake.py::test_a_wake_reply_is_the_durable_active_leaf",
+    "Tests/Chat/test_console_goal_dispatch.py::test_a_goal_iteration_takes_no_mixin_anchor_from_an_unsaved_earlier_turn",
+    "Tests/Chat/test_console_goal_dispatch.py::test_a_failed_goal_iteration_reply_is_saved_as_failed",
+    "Tests/Chat/test_console_goal_dispatch.py::test_a_goal_iteration_reply_is_the_durable_active_leaf",
+    # TASK-39119: the goal recovery file (bootstrap_profile, 4 tests, ~19 s
+    # serial), which caught a regression this round and ran on no lane.
+    "Tests/Chat/test_console_goal_recovery.py",
 )
 DREAMS_ADMISSION_TARGETS = (
     "Tests/Dreams/test_boot_dispatch_admission.py",
@@ -1346,17 +1359,21 @@ def test_recovered_suites_lane_is_one_serial_guarded_minimal_python_312_job() ->
     )
     assert len(set(RECOVERED_SUITES_TARGETS)) == len(RECOVERED_SUITES_TARGETS)
     for target in RECOVERED_SUITES_TARGETS:
-        assert (PROJECT_ROOT / target).is_file()
+        assert (PROJECT_ROOT / target.split("::", 1)[0]).is_file()
+    # A whole file here runs in no other step; a node id here is not listed
+    # by another step, nor is its file listed there whole.
+    files = {target for target in RECOVERED_SUITES_TARGETS if "::" not in target}
+    nodes = set(RECOVERED_SUITES_TARGETS) - files
+    node_files = {node.split("::", 1)[0] for node in nodes}
     others = [
         f"{key}: {candidate['name']}"
         for key, other in workflow["jobs"].items()
         if key != "recovered-suites"
         for candidate in other.get("steps", ())
-        if set(RECOVERED_SUITES_TARGETS)
-        & {
-            target.split("::", 1)[0]
-            for target in _pytest_targets(str(candidate.get("run", "")))
-        }
+        for targets in [set(_pytest_targets(str(candidate.get("run", ""))))]
+        if files & {target.split("::", 1)[0] for target in targets}
+        or nodes & targets
+        or node_files & targets
     ]
     assert others == []
 

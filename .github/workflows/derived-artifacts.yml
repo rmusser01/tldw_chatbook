@@ -1370,7 +1370,12 @@ jobs:
       # config in-process: BuddyLibrary.ensure_builtin and ChaChaNotes take no
       # config, its readiness cases patch get_user_data_dir, and with no
       # app_config the Buddy-preference migration returns before its writer
-      # (Persona_Buddy/library.py, migrate_legacy_selection).
+      # (Persona_Buddy/library.py, migrate_legacy_selection). TASK-39119's
+      # wake and goal-iteration reply pins follow, by node: the three fleet-wake
+      # nodes are private-profile tests (each body runs in its own child
+      # process), the goal-dispatch file is bootstrap_profile, and the file's
+      # other nodes in pr-fast-lane stay there. Last, the goal recovery file
+      # (bootstrap_profile, 4 tests), which runs on no other lane.
       - name: Run the recovered suites
         run: |
           pytest \
@@ -1387,6 +1392,13 @@ jobs:
             Tests/RAG_Search/test_keyword_leg_tiered_merge.py \
             Tests/Library/test_library_ingest_runner.py \
             Tests/Persona_Visual/test_builtin_pixel_migu_buddy.py \
+            Tests/Chat/test_console_fleet_wake.py::test_a_wake_takes_no_mixin_anchor_from_an_earlier_unsaved_user_row \
+            Tests/Chat/test_console_fleet_wake.py::test_a_failed_wake_reply_is_saved_as_failed \
+            Tests/Chat/test_console_fleet_wake.py::test_a_wake_reply_is_the_durable_active_leaf \
+            Tests/Chat/test_console_goal_dispatch.py::test_a_goal_iteration_takes_no_mixin_anchor_from_an_unsaved_earlier_turn \
+            Tests/Chat/test_console_goal_dispatch.py::test_a_failed_goal_iteration_reply_is_saved_as_failed \
+            Tests/Chat/test_console_goal_dispatch.py::test_a_goal_iteration_reply_is_the_durable_active_leaf \
+            Tests/Chat/test_console_goal_recovery.py \
             --storage-lease-guard \
             --timeout=180 \
             --tb=short
