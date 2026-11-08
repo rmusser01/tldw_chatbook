@@ -154,6 +154,7 @@ async def test_every_executable_type_is_launched_as_a_run(handler, sub_type):
     handler.url_monitor.check_url.assert_not_awaited()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scheduler_and_scope_share_one_durable_winner(tmp_path):
     path = tmp_path / "subscriptions.db"
@@ -239,6 +240,7 @@ async def test_scheduler_and_scope_share_one_durable_winner(tmp_path):
     scheduler_db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scheduler_loser_timeout_preserves_stranded_winner(monkeypatch, tmp_path):
     path = tmp_path / "scheduler-timeout.db"
@@ -293,6 +295,7 @@ async def test_scheduler_loser_timeout_preserves_stranded_winner(monkeypatch, tm
     scheduler_db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scheduler_loser_cancellation_preserves_stranded_winner(tmp_path):
     path = tmp_path / "scheduler-cancel.db"

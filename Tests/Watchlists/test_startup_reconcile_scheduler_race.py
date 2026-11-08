@@ -159,7 +159,12 @@ async def test_the_sweep_still_fails_a_run_the_previous_process_stranded(
     spared -- the two behaviours in one database, at the same moment.
     """
     db = SubscriptionsDB(tmp_path / "subs.db", "test")
-    subscription_id = _due_source(db)
+    stranded_source_id = db.add_subscription(
+        name="Stranded page",
+        type="url",
+        source="https://example.com/stranded",
+        is_active=False,
+    )
 
     # The previous process died here, mid-run.
     with db.transaction() as conn:
@@ -167,10 +172,11 @@ async def test_the_sweep_still_fails_a_run_the_previous_process_stranded(
             "INSERT INTO local_watchlist_runs "
             "(source_id, status, created_at, updated_at) "
             "VALUES (?, 'running', datetime('now'), datetime('now'))",
-            (subscription_id,),
+            (stranded_source_id,),
         ).lastrowid
 
     boundary = capture_prior_process_boundary(db)
+    due_source_id = _due_source(db)
 
     fetch_started = asyncio.Event()
     release_fetch = asyncio.Event()
@@ -196,7 +202,15 @@ async def test_the_sweep_still_fails_a_run_the_previous_process_stranded(
     scheduler_worker = asyncio.create_task(loop.run(), name="scheduler_worker")
     try:
         await asyncio.wait_for(fetch_started.wait(), timeout=_TIMEOUT_SECONDS)
-        live_id = [row["id"] for row in _run_rows(db) if row["id"] != stranded_id][0]
+        before = {row["id"]: row for row in _run_rows(db)}
+        assert len(before) == 2
+        assert before[stranded_id]["status"] == "running"
+        (live_id,) = before.keys() - {stranded_id}
+        assert boundary.runs == stranded_id < live_id
+        live_run = db.get_watchlist_run_for_agent(live_id)
+        assert live_run is not None
+        assert live_run["source_id"] == due_source_id
+        assert live_run["status"] == "running"
 
         reconciled = await asyncio.wait_for(
             asyncio.to_thread(reconcile_interrupted_subscription_work, db, boundary),
@@ -205,10 +219,12 @@ async def test_the_sweep_still_fails_a_run_the_previous_process_stranded(
 
         after = {row["id"]: row for row in _run_rows(db)}
         assert reconciled["runs"] == 1
+        assert after.keys() == before.keys()
         assert after[stranded_id]["status"] == "failed", (
             "the row the previous process stranded must still be un-wedged"
         )
         assert after[live_id]["status"] == "running"
+        assert after[live_id]["error_msg"] is None
     finally:
         loop.running = False
         release_fetch.set()

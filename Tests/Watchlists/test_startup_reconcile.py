@@ -230,13 +230,12 @@ def test_one_failing_sweep_does_not_veto_the_others(db, monkeypatch):
 @pytest.mark.bootstrap_profile
 def test_a_row_created_after_the_boundary_is_never_swept(db):
     """The whole point: this process's own in-flight work is out of reach."""
-    source_id = _source(db)
-    stranded = _run(db, source_id, "running")
+    stranded = _run(db, _source(db, "stranded"), "running")
     boundary = capture_prior_process_boundary(db)
 
     # Everything from here stands in for work this process starts after the
     # database was opened -- a scheduled check, a Check Now press, anything.
-    live = _run(db, source_id, "running")
+    live = _run(db, _source(db, "live"), "running")
 
     reconciled = reconcile_interrupted_subscription_work(db, boundary)
 
@@ -250,16 +249,14 @@ def test_a_row_created_after_the_boundary_is_never_swept(db):
 @pytest.mark.bootstrap_profile
 def test_the_boundary_protects_every_table_the_sweep_touches(db):
     """Briefings, scripts and audio get the same protection as runs."""
-    source_id = _source(db)
-    watchlist_id = _watchlist(db)
-    old_run = _run(db, source_id, "running")
-    old_briefing = _briefing(db, watchlist_id, "generating")
+    old_run = _run(db, _source(db, "stranded"), "running")
+    old_briefing = _briefing(db, _watchlist(db, "Stranded"), "generating")
     old_script = _script(db, old_briefing, "generating")
     old_audio = _audio(db, old_script, "generating")
     boundary = capture_prior_process_boundary(db)
 
-    new_run = _run(db, source_id, "running")
-    new_briefing = _briefing(db, watchlist_id, "generating")
+    new_run = _run(db, _source(db, "live"), "running")
+    new_briefing = _briefing(db, _watchlist(db, "Live"), "generating")
     new_script = _script(db, new_briefing, "generating")
     new_audio = _audio(db, new_script, "generating")
 
