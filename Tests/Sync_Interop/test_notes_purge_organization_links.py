@@ -34,6 +34,13 @@ already copied is cancelled too, together with its outbox row (keeping the
 intent would let every later drain copy it again); a copied tombstone is
 kept, so its acknowledgement finds it and moves the head.
 
+PR #3423 re-review 4 (I-A, m-A): a kept tombstone must also be its link's
+LATEST intent -- a removal the user undid before the purge is not sent, as
+the server already holds the link the user ended with -- and an unlink with
+no predecessor is kept only with a base bound to the server's head; one the
+server never had is cancelled. A copied tombstone is kept whatever follows
+it: its outbox row is pushed anyway, and its acknowledgement must find it.
+
 Real stores throughout: a ``CharactersRAGDB``, a ``SyncStateRepository``
 with a local-first profile, the real ``NotesOrganizationSyncService`` on a
 ready group, the real ``NotesScopeService.purge_note``, and
@@ -49,7 +56,9 @@ id in its payload; the raced link is pushed. Base for the re-review 3 pins
 (``67ddead5e9``): the purge deletes every pending unlink, so an uncopied one
 never reaches the server, and a copied one's acknowledgement leaves the head
 on ``upsert``; and a link held back from a ``payload_clear``-only envelope
-is never healed (re-review 3 m-3).
+is never healed (re-review 3 m-3). Base for the re-review 4 pins
+(``6e4f2b0cbe``): a removal the user undid, and a removal of a link the
+server never had, are both pushed.
 """
 
 from __future__ import annotations
@@ -186,6 +195,27 @@ class _Linked:
         assert self.org.detach_folder_link(
             folder_repository=self.folders,
             folder_id=self.folder.folder_id,
+            note_id=note_id,
+            expected_version=manual[0].version,
+            **SCOPE,
+        )
+
+    def move(self, note_id: str, source, target) -> None:
+        """Move the note from folder ``source`` to folder ``target``: file it
+        in the target, then take it out of the source."""
+        self.org.attach_folder_link(
+            folder_repository=self.folders,
+            folder_id=target.folder_id,
+            note_id=note_id,
+            **SCOPE,
+        )
+        manual = self.folders.get_exact_manual_membership(
+            folder_id=source.folder_id, note_id=note_id
+        )
+        assert manual is not None
+        assert self.org.detach_folder_link(
+            folder_repository=self.folders,
+            folder_id=source.folder_id,
             note_id=note_id,
             expected_version=manual[0].version,
             **SCOPE,
@@ -478,29 +508,47 @@ class _AcknowledgingServer(FakeLocalFirstServer):
         }
 
 
-async def _synced_then_unlinked(tmp_path, monkeypatch) -> tuple[_Linked, _AcknowledgingServer]:
+#: The note's links as the server holds them after the first sync.
+SYNCED_LINKS = {
+    ("notes.keyword_link", "upsert", 0),
+    ("notes.folder_link", "upsert", 0),
+}
+
+
+async def _synced_then_restored(
+    tmp_path, monkeypatch
+) -> tuple[_Linked, _AcknowledgingServer]:
     """Both notes' links reach the server and are acknowledged; then the note
-    comes back from the Trash, loses its keyword and its folder, and goes
-    back in the Trash. Its two unlinks are pending, each after an
-    acknowledged link."""
+    comes back from the Trash."""
     linked = _Linked(tmp_path, monkeypatch)
     server = _AcknowledgingServer()
     await linked.sync_service(server).sync_once(**SCOPE, domains=ORG_DOMAINS)
-    assert linked.heads_of(linked.note) == {
-        ("notes.keyword_link", "upsert", 0),
-        ("notes.folder_link", "upsert", 0),
-    }
+    assert linked.heads_of(linked.note) == SYNCED_LINKS
     linked.restore()
-    linked.unlink(linked.note)
-    linked.trash()
-    pending = [
-        row
+    return linked, server
+
+
+def _pending_links(linked: _Linked) -> list[tuple[str, str]]:
+    """``(domain, operation)`` of the note's unacknowledged link intents, in
+    the order they were recorded."""
+    return [
+        (row["domain"], row["operation"])
         for row in linked.intents()
         if row["domain"] in LINKS
         and row["acknowledged_at"] is None
         and _subject(row["domain"], json.loads(row["payload_json"])) == linked.note
     ]
-    assert sorted((row["domain"], row["operation"]) for row in pending) == [
+
+
+async def _synced_then_unlinked(tmp_path, monkeypatch) -> tuple[_Linked, _AcknowledgingServer]:
+    """Both notes' links reach the server and are acknowledged; then the note
+    comes back from the Trash, loses its keyword and its folder, and goes
+    back in the Trash. Its two unlinks are pending, each after an
+    acknowledged link."""
+    linked, server = await _synced_then_restored(tmp_path, monkeypatch)
+    linked.unlink(linked.note)
+    linked.trash()
+    assert sorted(_pending_links(linked)) == [
         ("notes.folder_link", "tombstone"),
         ("notes.keyword_link", "tombstone"),
     ]
@@ -704,6 +752,144 @@ async def test_an_unlink_learned_from_the_server_still_reaches_it_after_a_purge(
     finally:
         device_a.close()
         device_b.close()
+
+
+# -- PR #3423 re-review 4: only a removal the server should apply is sent ----
+
+
+def _sent_for(pushed: set[tuple[str, str, str | None]], note_id: str) -> list:
+    return sorted(entry for entry in pushed if entry[2] == note_id)
+
+
+async def test_a_keyword_removed_and_added_back_before_a_purge_is_not_removed(
+    tmp_path, monkeypatch
+) -> None:
+    """I-A: the note's keyword was removed and added back after its link was
+    acknowledged, then the note was deleted for good before the next sync.
+    The user's last state is the server's -- tagged -- so nothing for the
+    note is sent and the heads stay on the links. Without the purge the same
+    intents would leave the server tagged too."""
+    linked, server = await _synced_then_restored(tmp_path, monkeypatch)
+    for keywords in ((), ("Lesson",)):
+        linked.org.sync_subject_keywords(
+            subject_type="note", subject_id=linked.note, keywords=keywords, **SCOPE
+        )
+    linked.trash()
+    assert _pending_links(linked) == [
+        ("notes.keyword_link", "tombstone"),
+        ("notes.keyword_link", "upsert"),
+    ]
+    before = server.pushes()
+
+    assert await linked.purge() is True
+    await linked.sync_service(server).sync_once(**SCOPE, domains=ORG_DOMAINS)
+
+    sent = _sent_for(server.pushed(since=before), linked.note)
+    assert not sent, f"a removal the user undid was sent: {sent}"
+    assert linked.heads_of(linked.note) == SYNCED_LINKS
+    assert _pending_links(linked) == []
+
+
+async def test_a_note_moved_out_of_a_folder_and_back_before_a_purge_stays_filed(
+    tmp_path, monkeypatch
+) -> None:
+    """I-A, folders: the note was moved from Projects to Archive and back
+    after its Projects link was acknowledged, then deleted for good before
+    the next sync. The server keeps it in Projects, and never hears of the
+    Archive link it never had."""
+    linked, server = await _synced_then_restored(tmp_path, monkeypatch)
+    archive = linked.org.create_folder(
+        folder_repository=linked.folders, name="Archive", parent_id=None, **SCOPE
+    )
+    linked.move(linked.note, linked.folder, archive)
+    linked.move(linked.note, archive, linked.folder)
+    linked.trash()
+    assert sorted(_pending_links(linked)) == sorted(
+        [("notes.folder_link", "tombstone"), ("notes.folder_link", "upsert")] * 2
+    )
+    before = server.pushes()
+
+    assert await linked.purge() is True
+    await linked.sync_service(server).sync_once(**SCOPE, domains=ORG_DOMAINS)
+
+    sent = _sent_for(server.pushed(since=before), linked.note)
+    assert not sent, f"a move the user undid was sent: {sent}"
+    assert linked.heads_of(linked.note) == SYNCED_LINKS
+    assert _pending_links(linked) == []
+
+
+async def test_a_copied_unlink_added_back_before_a_purge_still_moves_the_head(
+    tmp_path, monkeypatch
+) -> None:
+    """I-A's limit, m-1 kept: the unlink was already copied to the outbox
+    when the user added the keyword back and deleted the note for good. The
+    copied unlink is pushed whatever the purge does, so its intent is kept
+    and its acknowledgement moves the head to what the server now holds;
+    the re-add is cancelled with the note."""
+    linked, server = await _synced_then_restored(tmp_path, monkeypatch)
+    linked.org.sync_subject_keywords(
+        subject_type="note", subject_id=linked.note, keywords=(), **SCOPE
+    )
+    linked.drain()
+    assert ("notes.keyword_link", "tombstone", linked.note) in linked.links_of(
+        linked.note
+    )
+    linked.org.sync_subject_keywords(
+        subject_type="note", subject_id=linked.note, keywords=("Lesson",), **SCOPE
+    )
+    linked.trash()
+    before = server.pushes()
+
+    assert await linked.purge() is True
+    await linked.sync_service(server).sync_once(**SCOPE, domains=ORG_DOMAINS)
+
+    assert _sent_for(server.pushed(since=before), linked.note) == [
+        ("notes.keyword_link", "tombstone", linked.note)
+    ]
+    assert linked.heads_of(linked.note) == {
+        ("notes.keyword_link", "tombstone", 1),
+        ("notes.folder_link", "upsert", 0),
+    }, "the pushed unlink's acknowledgement found no intent: the head is stale"
+    assert _pending_links(linked) == []
+
+
+async def test_a_removal_of_a_link_the_server_never_had_is_not_sent_after_a_purge(
+    tmp_path, monkeypatch
+) -> None:
+    """m-A: a keyword link with no intent and no head -- one enrollment's
+    inventory skipped -- is removed, then the note is deleted for good. Its
+    unlink has no predecessor and no base: the server never had the link, so
+    the purge cancels it and nothing for the note is sent."""
+    linked = _Linked(tmp_path, monkeypatch)
+    linked.restore()
+    orphan = linked.db.add_keyword("Orphan")
+    assert linked.db.link_note_to_keyword(linked.note, orphan)
+    linked.org.sync_subject_keywords(
+        subject_type="note", subject_id=linked.note, keywords=("Lesson",), **SCOPE
+    )
+    unlinks = (
+        linked.db.get_connection()
+        .execute(
+            "SELECT predecessor_intent_id, base_object_revision "
+            "FROM notes_organization_sync_intents WHERE operation = 'tombstone'"
+        )
+        .fetchall()
+    )
+    assert [tuple(row) for row in unlinks] == [(None, None)]
+    linked.trash()
+
+    assert await linked.purge() is True
+    server = _AcknowledgingServer()
+    await linked.sync_service(server).sync_once(**SCOPE, domains=ORG_DOMAINS)
+
+    sent = _sent_for(server.pushed(), linked.note)
+    assert not sent, f"a removal of a link the server never had was sent: {sent}"
+    assert not [row for row in linked.intents() if linked.note in row["payload_json"]]
+    # The keeper's links still go.
+    assert {
+        ("notes.keyword_link", "upsert", linked.keeper),
+        ("notes.folder_link", "upsert", linked.keeper),
+    } <= server.pushed()
 
 
 # -- PR #3423 re-review 3 m-3: the guard and its heal read one payload -------
