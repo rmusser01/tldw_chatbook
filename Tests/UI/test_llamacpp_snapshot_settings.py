@@ -431,9 +431,13 @@ async def test_f9_stale_snapshot_draft_requires_revert_before_save(request, monk
         newer = preferences.SnapshotPreferences(enabled=True, keep_count=14)
         await asyncio.to_thread(preferences.save_snapshot_preferences, newer)
         screen.action_settings_save_category(allow_text_entry_focus=True)
-        await pilot.pause(0.2)
+        # Until the save worker settles; "Revert" alone is in the draft's own
+        # copy before any Save, so the refusal's copy is what this pins.
+        await _until(lambda: not screen._snapshot_preferences_saving)
         assert preferences.load_snapshot_preferences() == newer
-        assert "Revert" in str(screen.query_one("#settings-snapshot-result").render())
+        assert "changed elsewhere" in str(
+            screen.query_one("#settings-snapshot-result").render()
+        )
         assert screen.query_one("#settings-snapshot-keep", Input).value == "31"
 
 
