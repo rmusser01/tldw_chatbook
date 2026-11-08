@@ -589,3 +589,32 @@ unchanged. This qualifies the bounded synthetic-fixture workflow, not reviewer
 recall or arbitrary repositories; unchanged offline adverse-case controls remain
 separate evidence. Repository closeout still requires current-head review, normal
 CI for these documentation changes, resolved threads and an actual queue merge.
+
+## Rebased preflight platform repair — 2026-11-08
+
+The user authorized independent local review in place of Qodo. The review of all
+32 changed files and connected callers at `78cb6a2d1bed83bfe3175d5ed518cbe52b321c0e`
+against dev `36a21dc4d270940e3576b49487a71b37c78896f8` found no actionable issues.
+The rebase retained dev's generated worker bundle; its build check passed, and
+the recovery and wizard patches remained unchanged.
+
+[Hosted preflight job 128761152638](https://github.com/rmusser01/tldw_chatbook/actions/runs/42490354387/job/128761152638)
+then failed at Python setup: `ubuntu-latest` selected Ubuntu 26.04, for which
+`actions/setup-python` had no Python 3.12.11 x64 build. The subsequent Mermaid
+check rejected the fallback Python version. The
+[official Python versions manifest](https://github.com/actions/python-versions/blob/main/versions-manifest.json)
+listed 3.12.11 Linux x64 builds for Ubuntu 22.04 and 24.04 only. Pinning just the
+preflight job to `ubuntu-24.04` retains the immutable Mermaid Python version,
+all checks, dependencies and deadlines. Application source is unchanged.
+
+Local validation: 181 existing workflow/queue contract cases passed with
+`--noconftest`; the remaining storage-lease guard case requires `Tests.conftest`
+and passed separately with normal fixtures after that invocation error was
+corrected. The selected runner/version pair matches the retained upstream
+manifest. Whitespace checks and independent review of the workflow delta passed.
+The job log, manifest and review receipt are retained in the durable private
+evidence directory above. Hosted CI for the repair remains required; this is not
+a passing hosted result or repository closeout. Tool Recovery, Perf Guard, Lint
+and Merge Queue passed on the preceding head. No new ADR is needed for this
+platform compatibility correction; ADR-281/063/131 remain applicable. No further
+live requests or product children were used; cumulative usage remains 250/19.

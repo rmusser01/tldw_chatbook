@@ -23691,6 +23691,8 @@ failures also failed alone on dev, so they were not order-dependent.
 
 **What to do.** Enumerate and run the aggregate's actual current-tree commands before publishing, rather than treating their unit tests or green runtime lanes as substitutes. Preserve environment preconditions separately: the Canvas builder pins Python3.12.11 and rejects the workstation's3.12.10, so its unchanged assets still need that exact hosted check; do not relax the pin to obtain a local green.
 
+**Follow-up (PR #3473, 2026-11-08).** The same pinned builder exposed a runner-image mismatch: `ubuntu-latest` selected Ubuntu 26.04, but `actions/setup-python` published Python 3.12.11 x64 only for Ubuntu 22.04/24.04. Setup failed first, then the builder rejected the fallback interpreter. Pinning only preflight to Ubuntu 24.04 preserves the byte-generation contract. For an exact runtime pin, verify the runner/version pair against the provider's build manifest; downstream artifact errors can be consequences of failed runtime setup.
+
 
 ### PR #3228: verify the live base ref before calling a PR current
 
