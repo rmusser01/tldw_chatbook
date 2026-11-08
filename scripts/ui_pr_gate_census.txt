@@ -2683,3 +2683,5 @@ Tests/UI/test_settings_panel_scoped_updates.py::test_a_focus_the_user_moves_befo
 Tests/UI/test_settings_panel_scoped_updates.py::test_a_focus_the_user_moves_before_the_swap_lands_is_kept[click]
 # TASK-39134: widening the terminal never narrows the Settings detail pane.
 Tests/UI/test_settings_category_sweep.py::test_widening_the_terminal_never_narrows_the_detail_pane
+# TASK-39135 review r12s-rev1 M1: input that leaves focus in place keeps the landing.
+Tests/UI/test_settings_panel_scoped_updates.py::test_a_focus_the_user_moves_before_the_swap_lands_is_kept[pagedown]

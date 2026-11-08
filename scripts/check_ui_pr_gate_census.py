@@ -918,6 +918,9 @@ MINIMUM_FILES = 1834
 # Settings handoff nodes (9), the moved-focus swap nodes (3) and the detail
 # width sweep (1) at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1847
+# TASK-39135 review r12s-rev1 (2026-11-07): append the PageDown case of the
+# moved-focus swap test at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1848
 
 
 def read_census(path: Path) -> list[str]:

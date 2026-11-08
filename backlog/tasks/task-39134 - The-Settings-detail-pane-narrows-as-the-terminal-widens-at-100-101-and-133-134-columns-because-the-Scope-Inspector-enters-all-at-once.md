@@ -77,3 +77,5 @@ Owner decision (2026-11-06): "Inspector waits for room: show the Scope Inspector
 **Docs.** `Docs/User_Guide/settings.md`: the Scope Inspector row and the one-pane row describe the decided layout.
 
 Files: `tldw_chatbook/UI/Screens/settings_screen.py`, `tldw_chatbook/css/features/_settings.tcss`, `tldw_chatbook/css/screen_agentic_settings.tcss`, `Tests/UI/test_settings_category_sweep.py`, `Tests/UI/test_destination_visual_parity_correction.py`, `Tests/Architecture/test_module_size_ratchet.py` (+19, owner waiver), `Docs/User_Guide/settings.md`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
+
+**Review r12s-rev1 (M5, docs).** Stale comments fixed (`SETTINGS_ACTION_ROWS_INLINE_MIN_WIDTH`: the pane is 64 at 140 columns; the compact-workbench CSS comment: below 127 columns, holding 64 from 101). The User Guide's Scope Inspector row now says what the compact layout hides and shows up to 126 columns (inspector, category filter help and status lines, stacked field labels, the Theme preview's two anchor rows, Web Search's in-pane **Save all search settings**), and the Web Search step names the width.

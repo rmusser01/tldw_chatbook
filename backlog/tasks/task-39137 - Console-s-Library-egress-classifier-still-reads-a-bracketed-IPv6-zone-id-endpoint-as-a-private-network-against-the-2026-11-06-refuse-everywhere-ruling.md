@@ -59,3 +59,5 @@ Owner decision (2026-11-06): "Refuse everywhere: Discover refuses it too, matchi
 - **Runs** (run.sh, `-n 4`, load 30-39): the two files, 423 passed. Covering files that import the classifier or its doubles (7 Chat files, `Tests/Utils/test_egress.py`, two `LLM_Provider_Catalog` files, `test_console_store_continuity.py`, `test_console_native_chat_flow.py`): head 290 failed / 766 passed, `fu-base-r12` 291 failed / 765 passed. The same nodes fail on both, apart from one base-only flake (`test_console_delete_confirmation_resets_when_selection_changes`); the reds are the known plain-UI `RecoveryRequired` setup failures and pre-existing Chat reds.
 
 Files: `tldw_chatbook/Chat/console_library_destination.py`, `Tests/Chat/test_console_library_destination.py`, `Tests/Chat/test_local_server_discovery.py`.
+
+**Review r12s-rev1 (M3).** The classifier stripped trailing dots before asking the contract, so `http://localhost..:8080/v1` (which `canonical_endpoint_host` refuses) read as on-device. The check now runs on the host as typed; only the identity drops a trailing dot. Rows for `localhost..` (unknown, in both files, red before) and `localhost.` (still on-device) pin it.
