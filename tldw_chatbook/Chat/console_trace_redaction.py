@@ -18,6 +18,11 @@ from tldw_chatbook.Utils.log_sanitizer import (
 #: TASK-39123: new traces are stored under v2. Stored v1 policies keep their
 #: tag and still read; every read, export and share re-applies the v2 masks.
 CREDENTIAL_FILTER_VERSION = "credentials-v2"
+#: Rule for adding a version: each newer projection must mask everything the
+#: older ones do, and be idempotent (v2 = v1 + bare underscore keys). Only then
+#: does ``ConsoleTraceService._durable_reference_matches``, which retries a
+#: surface-prefix match under every readable version, accept nothing new; and
+#: ``trace_policies_agree`` / the v2 re-mask on read rely on the same rule.
 _CREDENTIAL_PROJECTIONS = {
     "credentials-v1": sanitize_trace_credentials_v1,
     CREDENTIAL_FILTER_VERSION: sanitize_trace_credentials_v2,
