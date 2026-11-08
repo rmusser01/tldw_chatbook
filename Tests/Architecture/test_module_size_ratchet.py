@@ -894,6 +894,10 @@ _BUDGETS: dict[str, int] = {
     # limits, don't contort code): 26150 -> 26171 (measured): +21 a purge
     # keeps the note's pending unlink of a link the server holds (I-1, m-1);
     # the log-key nit is line-neutral.
+    # 2026-11-07, PR #3423 re-review 4 fixes (same owner decision: expand
+    # limits, don't contort code): 26171 -> 26181 (measured): +10 a purge
+    # keeps a pending unlink only when it is the link's latest intent and,
+    # with no predecessor, has a bound base; a copied one is kept (I-A, m-A).
     "tldw_chatbook/DB/ChaChaNotes_DB.py": 22552,
     # TASK-39147: the rebased report reader and workflow migrations cross 4000.
     # 2026-11-12, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
