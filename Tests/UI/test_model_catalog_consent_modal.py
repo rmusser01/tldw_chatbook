@@ -107,6 +107,7 @@ async def test_app_push_suppresses_modal_in_headless_runs():
         assert not isinstance(app.screen, ModelCatalogConsentModal)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_splash_finishes_before_catalog_consent_and_deny_returns_home():
     """Consent stays topmost after splash startup and dismisses to Home."""

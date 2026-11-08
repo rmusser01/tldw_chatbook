@@ -464,6 +464,7 @@ async def test_read_and_info_modes_render_content_and_provenance_as_inert_text()
             assert expected in str(widget.renderable)
 
 
+@pytest.mark.bootstrap_profile
 async def test_real_library_route_mounts_contextual_three_pane_reader_and_both_grips() -> (
     None
 ):
@@ -533,6 +534,7 @@ async def test_real_library_route_mounts_contextual_three_pane_reader_and_both_g
         assert live_shell().work.is_mounted and live_shell().work.display
 
 
+@pytest.mark.bootstrap_profile
 async def test_real_library_route_quick_capture_persists_and_selects_capture() -> None:
     app = _build_test_app()
     host = LibraryHarness(app)
@@ -582,6 +584,7 @@ async def test_real_library_route_quick_capture_persists_and_selects_capture() -
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_quick_capture_draft_survives_background_reader_recompose() -> None:
     """An unrelated reader refresh must not erase an in-progress capture."""
     app = _build_test_app()
@@ -633,6 +636,7 @@ async def test_quick_capture_draft_survives_background_reader_recompose() -> Non
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_unknown_quick_capture_preserves_draft_and_does_not_auto_retry(
     monkeypatch,
 ) -> None:
@@ -699,6 +703,7 @@ async def test_unknown_quick_capture_preserves_draft_and_does_not_auto_retry(
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_real_local_capture_actions_persist_reader_results() -> None:
     app = _build_test_app()
     scope = app.collections_capture_scope_service
@@ -802,6 +807,7 @@ async def test_real_local_capture_actions_persist_reader_results() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_summarize_result_is_discarded_after_selecting_another_capture(
     monkeypatch,
 ) -> None:
@@ -880,6 +886,7 @@ async def test_summarize_result_is_discarded_after_selecting_another_capture(
         assert screen._collections_state.action_status == ""
 
 
+@pytest.mark.bootstrap_profile
 async def test_legacy_recovery_inspector_and_export_reach_every_page(
     tmp_path: Path,
 ) -> None:
@@ -917,6 +924,7 @@ async def test_legacy_recovery_inspector_and_export_reach_every_page(
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_quick_capture_hostile_fields_are_rejected_and_valid_still_saves() -> (
     None
 ):

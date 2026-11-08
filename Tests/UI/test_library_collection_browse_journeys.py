@@ -47,6 +47,7 @@ async def _saved_searches(scope, count=21):
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
@@ -104,6 +105,7 @@ async def test_clear_restores_results_and_valid_sort_within_scope(
         assert engine.state.applied_scope.sort == "saved_asc"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
@@ -179,6 +181,7 @@ async def test_more_saved_searches_pages_and_applies_real_scope(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
@@ -227,6 +230,7 @@ async def test_repeated_archive_keeps_original_undo_status(size, theme, monkeypa
         assert (await scope.get_detail(identity)).capture.status == "reading"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_saved_search_page_keeps_rows_and_visible_retry(monkeypatch):
     app, scope, _ = await _seed()
@@ -277,6 +281,7 @@ async def test_failed_saved_search_page_keeps_rows_and_visible_retry(monkeypatch
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scope_rejects_repeated_archive_without_replacing_undo():
     _app, scope, identities = await _seed()
@@ -292,6 +297,7 @@ async def test_scope_rejects_repeated_archive_without_replacing_undo():
     assert restored.status == "reading"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "focus_target", ["saved", "outgoing-search", "replaced-opener"]

@@ -316,6 +316,7 @@ async def test_bulk_reader_status_names_loaded_preview_inclusion(
         assert copy in str(status.renderable).casefold()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversations_mount_three_retained_roles_once(
     monkeypatch: pytest.MonkeyPatch,
@@ -788,6 +789,7 @@ def _missing_version_record() -> dict[str, object]:
     }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("outcome", "unavailable", "copy"),
     (
@@ -826,6 +828,7 @@ async def test_missing_version_bootstrap_distinguishes_error_from_unavailable(
         assert state.selected_version is None and not state.loading
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_missing_version_bootstrap_loses_authority_on_leave_return() -> None:
     app = _build_test_app()
@@ -855,6 +858,7 @@ async def test_missing_version_bootstrap_loses_authority_on_leave_return() -> No
         assert state.loaded_generation != bootstrap_generation
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_missing_version_bootstrap_loses_authority_on_real_unmount() -> None:
     app = _build_test_app()
@@ -882,6 +886,7 @@ async def test_missing_version_bootstrap_loses_authority_on_real_unmount() -> No
         assert state.selected_version is None and state.loaded_id is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rejected_later_page_cannot_promote_hostile_metadata() -> None:
     app = _build_test_app()
@@ -913,6 +918,7 @@ async def test_rejected_later_page_cannot_promote_hostile_metadata() -> None:
         }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("steal_focus", (False, True))
 @pytest.mark.asyncio
 async def test_find_retry_reveals_match_only_for_current_focus_intent(
@@ -972,6 +978,7 @@ async def test_find_retry_reveals_match_only_for_current_focus_intent(
             assert replacement_focus.has_focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("steal_focus", (False, True))
 @pytest.mark.asyncio
 async def test_messages_synced_revalidates_find_focus_before_deferred_reveal(
@@ -1094,6 +1101,7 @@ async def test_messages_synced_revalidates_find_focus_before_deferred_reveal(
             assert focus_calls == ["message-deferred", "message-deferred"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_progressive_reader_paints_first_page_then_completes_find_off_loop() -> (
     None
@@ -1154,6 +1162,7 @@ async def test_progressive_reader_paints_first_page_then_completes_find_off_loop
         assert all(thread_id != event_loop_thread for thread_id in service.thread_ids)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_exiting_select_mode_restarts_invalidated_progressive_reader() -> None:
     app = _build_test_app()
@@ -1190,6 +1199,7 @@ async def test_exiting_select_mode_restarts_invalidated_progressive_reader() -> 
         assert [call["message_offset"] for call in service.calls].count(0) == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("trigger", ("find", "retry"))
 @pytest.mark.asyncio
 async def test_select_mode_keeps_partial_reader_bulk_fence_during_recovery(
@@ -1234,6 +1244,7 @@ async def test_select_mode_keeps_partial_reader_bulk_fence_during_recovery(
         assert screen._conversations_state.reader_state.bulk_active
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_late_previous_selection_cannot_overwrite_current_reader() -> None:
     app = _build_test_app()
@@ -1273,6 +1284,7 @@ async def test_late_previous_selection_cannot_overwrite_current_reader() -> None
         assert state.messages[0].text == f"transcript for {target_id}"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("steal_focus", (False, True))
 @pytest.mark.asyncio
 async def test_long_continuation_find_reveals_only_current_focus_intent(
@@ -1323,6 +1335,7 @@ async def test_long_continuation_find_reveals_only_current_focus_intent(
             assert replacement_focus.has_focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("phase", ("later-page", "continuation"))
 @pytest.mark.asyncio
 async def test_reader_request_loses_page_and_continuation_authority_on_route_leave(
@@ -1364,6 +1377,7 @@ async def test_reader_request_loses_page_and_continuation_authority_on_route_lea
         assert not settled.complete
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("phase", ("later-page", "continuation"))
 @pytest.mark.asyncio
 async def test_reader_request_loses_authority_when_screen_unmounts(phase: str) -> None:
@@ -1405,6 +1419,7 @@ async def test_reader_request_loses_authority_when_screen_unmounts(phase: str) -
         assert not settled.complete
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("phase", ("later-page", "continuation"))
 @pytest.mark.parametrize("leave_path", ("navigation-context", "export"))
 @pytest.mark.asyncio
@@ -1479,6 +1494,7 @@ async def test_reader_request_cannot_resurrect_after_bypass_leave_and_return(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_same_identity_version_refresh_fences_old_loaded_revision() -> None:
     app = _build_test_app()
@@ -1542,6 +1558,7 @@ async def test_same_identity_version_refresh_fences_old_loaded_revision() -> Non
         assert "Keywords: alpha, planning" not in info
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("outcome", ("invalid", "unavailable"))
 @pytest.mark.asyncio
 async def test_mounted_failed_b_selection_never_relabels_retained_a_metadata(
@@ -1589,6 +1606,7 @@ async def test_mounted_failed_b_selection_never_relabels_retained_a_metadata(
         assert "Alpha planning (chat-a)" in status
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_authoritative_refresh_marks_selected_conversation_deleted_without_fallback(
     monkeypatch: pytest.MonkeyPatch,
@@ -1742,6 +1760,7 @@ async def test_page_drift_confirms_exact_identity_before_declaring_deletion(
         assert rows and not any(getattr(row, "selected", False) for row in rows)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("locator_outcome", ("invalid", "error"))
 @pytest.mark.asyncio
 async def test_unconfirmed_page_absence_is_stale_not_deleted_or_reselected(
@@ -1806,6 +1825,7 @@ async def test_unconfirmed_page_absence_is_stale_not_deleted_or_reselected(
         assert rows and not any(getattr(row, "selected", False) for row in rows)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_missing_version_pending_selection_can_be_confirmed_deleted(
     monkeypatch: pytest.MonkeyPatch,
@@ -1869,6 +1889,7 @@ async def test_missing_version_pending_selection_can_be_confirmed_deleted(
         assert rows and not any(getattr(row, "selected", False) for row in rows)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversations_global_f6_cycles_visible_destination_roles() -> None:
     app = _build_test_app()
@@ -1925,6 +1946,7 @@ async def test_conversations_global_f6_cycles_visible_destination_roles() -> Non
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversations_slash_targets_only_visible_items_filter() -> None:
     app = _build_test_app()
@@ -1957,6 +1979,7 @@ async def test_conversations_slash_targets_only_visible_items_filter() -> None:
         assert read.has_focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversations_escape_moves_to_nearest_visible_prior_role() -> None:
     app = _build_test_app()
@@ -2011,6 +2034,7 @@ async def test_conversations_escape_moves_to_nearest_visible_prior_role() -> Non
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", ((160, 50), (120, 35), (100, 30), (80, 24)))
 @pytest.mark.asyncio
 async def test_conversations_geometry_contains_protected_work_and_restore_grips(

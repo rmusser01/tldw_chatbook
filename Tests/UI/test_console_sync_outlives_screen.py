@@ -85,6 +85,7 @@ async def _console_app(tmp_path):
     return app, gateway
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_console_sync_tick_scheduled_after_teardown_cannot_kill_the_app(
     tmp_path,
@@ -134,6 +135,7 @@ async def test_a_console_sync_tick_scheduled_after_teardown_cannot_kill_the_app(
         assert isinstance(chat2, ChatScreen), type(chat2).__name__
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_torn_down_screen_runs_no_sync_work_and_never_re_arms(tmp_path):
     """The two guards, each with its own observable.
@@ -222,6 +224,7 @@ async def _arm_midtick_injection(app, pilot, gateway, *, navigate_away: bool):
     return chat, injected
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_live_screens_console_sync_failure_still_propagates(tmp_path):
     """The CONTROL for the teardown-scoped `except`.
@@ -246,6 +249,7 @@ async def test_a_live_screens_console_sync_failure_still_propagates(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_real_navigation_arriving_mid_tick_is_absorbed(tmp_path):
     """The user navigates away WHILE a sync tick is running."""
@@ -275,6 +279,7 @@ async def test_a_real_navigation_arriving_mid_tick_is_absorbed(tmp_path):
         assert isinstance(chat2, ChatScreen), type(chat2).__name__
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_partly_dismantled_screen_mid_tick_is_absorbed(tmp_path):
     """The window the entry guard structurally cannot cover.

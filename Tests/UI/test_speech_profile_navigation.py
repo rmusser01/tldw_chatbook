@@ -313,6 +313,7 @@ def _track_live_reconciliations(
     return reconciled_rows
 
 
+@pytest.mark.bootstrap_profile
 def test_speech_screen_state_keeps_only_bounded_playground_axes() -> None:
     """Fresh-screen restore cannot retain text, unknown keys, or unsafe axes."""
 
@@ -339,6 +340,7 @@ def test_speech_screen_state_keeps_only_bounded_playground_axes() -> None:
     }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_profile_library_navigation_waits_for_deferred_speech_body() -> None:
     app = _SpeechHost({"view": "profiles"})
@@ -355,6 +357,7 @@ async def test_profile_library_navigation_waits_for_deferred_speech_body() -> No
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_profile_library_bundle_service_is_lazy_until_warning_acknowledged() -> (
     None
@@ -381,6 +384,7 @@ async def test_profile_library_bundle_service_is_lazy_until_warning_acknowledged
         app.screen.query_one("#bundle-warning-cancel", Button).press()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_voice_profiles_returns_to_originating_studio_action() -> None:
     app = _SpeechHost({"view": "settings"})
@@ -419,6 +423,7 @@ async def test_voice_profiles_returns_to_originating_studio_action() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_voice_blends_opens_kokoro_tool_and_returns_to_origin() -> None:
     app = _SpeechHost({"view": "settings"})
@@ -463,6 +468,7 @@ async def test_voice_blends_opens_kokoro_tool_and_returns_to_origin() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_main_navigation_clears_voice_tool_origin_before_reopen() -> None:
     app = _SpeechHost({"view": "settings"})
@@ -503,6 +509,7 @@ async def test_main_navigation_clears_voice_tool_origin_before_reopen() -> None:
         assert not screen.query("#speech-destination-back")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_voice_tool_back_is_single_flight_and_recovers_after_failure(
     monkeypatch: pytest.MonkeyPatch,
@@ -566,6 +573,7 @@ async def test_voice_tool_back_is_single_flight_and_recovers_after_failure(
         assert back.disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_profile_verification_reconciles_on_library_remount(
     tmp_path: Path,
@@ -627,6 +635,7 @@ async def test_real_profile_verification_reconciles_on_library_remount(
         await repository.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_profile_return_does_not_steal_focus_after_user_input(
     tmp_path: Path,
@@ -677,6 +686,7 @@ async def test_profile_return_does_not_steal_focus_after_user_input(
         await repository.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_edited_profile_cannot_publish_stale_verified_result(
     tmp_path: Path,
@@ -749,6 +759,7 @@ async def test_edited_profile_cannot_publish_stale_verified_result(
         await repository.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_deleted_profile_discards_verified_result_and_selection(
     tmp_path: Path,
@@ -1061,6 +1072,7 @@ async def test_out_of_order_superseded_callback_cannot_consume_newer_context(
         await repository.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_exact_playground_preset_survives_deferred_speech_body_mount() -> None:
     preset = _preset()
@@ -1079,6 +1091,7 @@ async def test_exact_playground_preset_survives_deferred_speech_body_mount() -> 
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_exact_preset_applies_to_an_already_open_playground() -> None:
     app = _SpeechHost()
@@ -1105,6 +1118,7 @@ async def test_exact_preset_applies_to_an_already_open_playground() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_exact_preset_preserves_existing_playground_audio(tmp_path) -> None:
     app = _SpeechHost()
@@ -1141,6 +1155,7 @@ async def test_exact_preset_preserves_existing_playground_audio(tmp_path) -> Non
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_voice_profile_handoff_keeps_mounted_clone_draft_until_cancel() -> None:
     """Browsing the existing library must not unmount or clear setup state."""
@@ -1168,6 +1183,7 @@ async def test_voice_profile_handoff_keeps_mounted_clone_draft_until_cancel() ->
         assert playground._clone_setup_canonical is retained_draft
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_exact_preset_rejects_late_prior_generation_completion(tmp_path) -> None:
     app = _SpeechHost()
@@ -1196,6 +1212,7 @@ async def test_exact_preset_rejects_late_prior_generation_completion(tmp_path) -
         assert playground.query_one("#audio-export-btn", Button).disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("intent", "focused_id"),
@@ -1261,6 +1278,7 @@ async def test_bounded_lab_navigation_restores_provider_and_focus_without_action
     assert True not in catalog_calls
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_test_connection_and_refresh_are_distinct_explicit_actions(
     monkeypatch,
@@ -1327,6 +1345,7 @@ async def test_test_connection_and_refresh_are_distinct_explicit_actions(
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "context",
     [

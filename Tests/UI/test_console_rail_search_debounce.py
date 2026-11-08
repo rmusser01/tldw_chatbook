@@ -149,6 +149,7 @@ async def _mounted_rail_search(host, pilot):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_keystroke_does_no_db_work_and_no_tray_recompose():
     """The synchronous part of a keystroke must touch nothing expensive."""
@@ -172,6 +173,7 @@ async def test_a_keystroke_does_no_db_work_and_no_tray_recompose():
         assert console._console_conversation_browser_search_timer is not None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_debounced_pass_still_does_that_work():
     """Control for the test above: the search sync runs once the timer fires.
@@ -195,6 +197,7 @@ async def test_the_debounced_pass_still_does_that_work():
             assert counter.registry_calls == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_burst_of_keystrokes_runs_the_debounced_pass_once():
     """Six characters typed inside the debounce window search once, for "alpha6".
@@ -225,6 +228,7 @@ async def test_a_burst_of_keystrokes_runs_the_debounced_pass_once():
         assert console._console_conversation_browser_query == "alpha6"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_superseded_timer_never_searches_for_the_stale_query():
     """Cancellation-token semantics survive the move behind the timer.
@@ -258,6 +262,7 @@ async def test_a_superseded_timer_never_searches_for_the_stale_query():
         assert console._console_conversation_browser_query == "fresh"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_visible_rows_never_contradict_the_search_box_mid_debounce():
     """The cheap in-memory re-filter keeps the rail honest inside the window.
@@ -320,6 +325,7 @@ class _ComposerQueryCounter:
         DOMNode.query = self._original
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_composer_lookup_is_resolved_once_then_memoized():
     """Repeat lookups must not re-walk the largest widget tree in the app."""
@@ -341,6 +347,7 @@ async def test_the_composer_lookup_is_resolved_once_then_memoized():
         assert isinstance(first, ConsoleComposerBar)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_composer_memo_can_never_return_a_detached_widget():
     """Mutation control: a removed composer must not survive in the memo.
@@ -367,6 +374,7 @@ async def test_the_composer_memo_can_never_return_a_detached_widget():
         assert console._console_composer_ref is not stale
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_composer_memo_follows_a_recomposed_composer():
     """After the composer is replaced, the memo resolves the NEW instance."""

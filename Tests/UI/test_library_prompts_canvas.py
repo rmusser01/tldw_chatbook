@@ -658,6 +658,7 @@ async def test_prompt_basic_edit_updates_stable_block_and_hidden_advanced_editor
         assert hidden_block == updated
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("stored_mode", "expected"),
     [
@@ -679,6 +680,7 @@ def test_library_prompt_editor_mode_reads_profile_preference_fail_closed(
     assert screen._prompts_state.editor_mode == expected
 
 
+@pytest.mark.bootstrap_profile
 def test_library_prompt_forced_advanced_does_not_change_remembered_basic():
     app = _build_test_app()
     app.app_config.setdefault("library", {})["prompt_editor_mode"] = "basic"
@@ -698,6 +700,7 @@ def test_library_prompt_forced_advanced_does_not_change_remembered_basic():
     assert app.app_config["library"]["prompt_editor_mode"] == "basic"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_mode_persistence_failure_keeps_live_mode_and_warns(
     monkeypatch,
@@ -1670,6 +1673,7 @@ async def test_prompts_canvas_export_toolbar_is_painted_focusable_and_in_bounds(
             assert pilot.app.focused is button
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("focus_selector", "expected"),
@@ -2487,6 +2491,7 @@ async def test_prompts_canvas_select_mode_geometry_fits_40_columns(
         assert canvas.query_one("#library-prompts-list", VerticalScroll)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(64, 24), (120, 40)], ids=["narrow", "wide"])
 @pytest.mark.parametrize("shell_case", ["ordinary", "mutation", "plural-receipt"])
@@ -2932,6 +2937,7 @@ def test_build_library_prompts_state_retains_applied_rows_while_loading():
     assert state.count == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_library_prompts_canvas_kwargs_separate_requested_input_from_applied_rows():
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
@@ -3257,6 +3263,7 @@ async def _wait_for_prompt_browse_scope(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", PROMPT_PAGER_TEST_SIZES)
 @pytest.mark.asyncio
 async def test_library_prompt_canvas_receives_retained_pager_on_sync(size) -> None:
@@ -3380,6 +3387,7 @@ async def test_library_prompt_canvas_receives_retained_pager_on_sync(size) -> No
             service.release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", PROMPT_PAGER_TEST_SIZES)
 @pytest.mark.asyncio
 async def test_library_prompt_pager_first_and_filter_failure_states(size) -> None:
@@ -3506,6 +3514,7 @@ async def test_library_prompt_pager_first_and_filter_failure_states(size) -> Non
             assert widget in host.screen._compositor.visible_widgets, selector
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_clamped_next_focuses_filter_when_both_pages_disable():
     """A shrinking result leaves focus on an enabled control after clamping."""
@@ -3565,6 +3574,7 @@ async def test_library_prompt_clamped_next_focuses_filter_when_both_pages_disabl
         assert screen.query_one("#library-prompts-filter", Input).has_focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_page_focus_survives_loading_recompose() -> None:
     """A real loading phase must not replace the invoking pager focus."""
@@ -3625,6 +3635,7 @@ async def test_library_prompt_page_focus_survives_loading_recompose() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", PROMPT_PAGER_TEST_SIZES)
 @pytest.mark.asyncio
 async def test_library_prompt_pager_geometry_pages_and_focus(size) -> None:
@@ -3765,6 +3776,7 @@ async def test_library_prompt_pager_geometry_pages_and_focus(size) -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_prompt_selection_persists_across_search_page_sort_and_collection(
     tmp_path,
@@ -3885,6 +3897,7 @@ async def test_prompt_selection_persists_across_search_page_sort_and_collection(
         assert screen._prompts_state.select_mode is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_prompt_selection_basket_crosses_a_real_twenty_row_page_boundary():
     app = _build_test_app()
@@ -3933,6 +3946,7 @@ async def test_prompt_selection_basket_crosses_a_real_twenty_row_page_boundary()
         assert str(summary.renderable) == "25 selected · 5 on this page"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_prompts_export_selected_uses_canonical_ids_and_preserves_selection(
     tmp_path,
@@ -4035,6 +4049,7 @@ async def test_prompts_export_selected_uses_canonical_ids_and_preserves_selectio
         assert screen._prompts_state.select_mode is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_prompt_selection_clear_boundaries_and_invalid_row_fail_closed(tmp_path):
     """Only admitted navigation discards; Clear and teardown stay silent."""
@@ -4138,6 +4153,7 @@ async def test_prompt_selection_clear_boundaries_and_invalid_row_fail_closed(tmp
     app.notify.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_prompt_selection_navigation_context_clears_only_after_admission():
     """Mounted deep links preserve on invalid/veto/same and clear on admitted leave."""
@@ -4191,6 +4207,7 @@ async def test_prompt_selection_navigation_context_clears_only_after_admission()
         app.notify.assert_called_once_with("Selection discarded · 1 prompts")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_prompt_selection_new_same_prompt_intent_supersedes_held_navigation(
     monkeypatch: pytest.MonkeyPatch,
@@ -4237,6 +4254,7 @@ async def test_prompt_selection_new_same_prompt_intent_supersedes_held_navigatio
         app.notify.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_prompts_row_press_renders_list_canvas():
     """Prompt rows come only from exact browse, whose local work is off-loop."""
@@ -4294,6 +4312,7 @@ async def test_library_shell_prompts_row_press_renders_list_canvas():
         assert prompt_service.browse_threads[0] != ui_thread
 
 
+@pytest.mark.bootstrap_profile
 def test_library_prompt_scope_snapshot_persists_only_applied_scope() -> None:
     """Snapshots exclude loading, failed, and unsubmitted Prompt requests."""
     app = _build_test_app()
@@ -4366,6 +4385,7 @@ def test_library_prompt_scope_snapshot_persists_only_applied_scope() -> None:
     }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("query", "page", "expected_query", "expected_page"),
     [
@@ -4412,6 +4432,7 @@ def test_library_prompt_scope_restore_validates_query_page_offset_and_page_size(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompts_restored_create_row_list_stays_on_landing():
     """A non-resumable create-row state does not bypass the Library landing."""
@@ -4441,6 +4462,7 @@ async def test_library_prompts_restored_create_row_list_stays_on_landing():
         assert service.browse_calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompts_fresh_reentry_refetches_the_applied_scope_once():
     app = _build_test_app()
@@ -4505,6 +4527,7 @@ async def test_library_prompts_fresh_reentry_refetches_the_applied_scope_once():
         assert screen._library_prompt_browse_controller.applied_result is not applied
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompts_failed_filter_keeps_requested_input_and_applied_page():
     class _FailRequestedFilterService(_FakePromptScopeServiceWithList):
@@ -4577,6 +4600,7 @@ async def test_library_prompts_failed_filter_keeps_requested_input_and_applied_p
         assert canvas.collection_label == "All prompts"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompts_unmount_revokes_late_apply_before_workspace_shutdown():
     """Prompt apply authority closes before an awaited workspace shutdown."""
@@ -4629,6 +4653,7 @@ async def test_library_prompts_unmount_revokes_late_apply_before_workspace_shutd
         assert controller.applied_result is applied_before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_back_restores_applied_scope_after_failed_request(
     tmp_path,
@@ -4697,6 +4722,7 @@ async def test_library_prompt_back_restores_applied_scope_after_failed_request(
         assert requests == [(applied_scope, None)]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_missing_prompt_detail_restores_applied_scope_after_failed_request(
     monkeypatch,
@@ -4732,6 +4758,7 @@ async def test_missing_prompt_detail_restores_applied_scope_after_failed_request
     assert requests == [applied.scope]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_missing_conflict_prompt_restores_applied_scope_after_failed_request(
     monkeypatch,
@@ -4768,6 +4795,7 @@ async def test_missing_conflict_prompt_restores_applied_scope_after_failed_reque
     assert requests == [applied.scope]
 
 
+@pytest.mark.bootstrap_profile
 def test_failed_prompt_choices_use_applied_active_scope_and_retry_requested_draft(
     monkeypatch,
 ) -> None:
@@ -4812,6 +4840,7 @@ def test_failed_prompt_choices_use_applied_active_scope_and_retry_requested_draf
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompts_enter_flushes_debounce_without_duplicate_call():
     """Enter dispatches the pending token once and cancels its timer."""
@@ -4846,6 +4875,7 @@ async def test_library_prompts_enter_flushes_debounce_without_duplicate_call():
         assert screen._prompts_state.debounce_timer is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompts_retry_recovers_service_error():
     """The explicit Retry control reruns the same scope with a fresh token."""
@@ -4875,6 +4905,7 @@ async def test_library_prompts_retry_recovers_service_error():
         assert screen._library_prompt_browse_controller.result.status == "ready"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompts_fast_failure_reconciles_after_reader_transition():
     """A failure racing the adaptive-shell mount must still expose Retry."""
@@ -4900,6 +4931,7 @@ async def test_library_prompts_fast_failure_reconciles_after_reader_transition()
         assert screen._library_prompt_browse_controller.result.status == "ready"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompts_browse_failure_keeps_exception_details_out_of_logs():
     """A failure logs only its fixed operation and exception category."""
@@ -4946,6 +4978,7 @@ async def test_library_prompts_browse_failure_keeps_exception_details_out_of_log
     assert "exception_type=RuntimeError" in joined_logs
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("next_page", [1, 2], ids=["surviving-row", "fallback"])
 async def test_library_prompts_result_restores_row_or_toolbar_focus(next_page: int):
@@ -4991,6 +5024,7 @@ async def test_library_prompts_result_restores_row_or_toolbar_focus(next_page: i
         assert screen.focused.id == expected_focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompts_search_preserves_filter_caret_while_loading_and_ready():
     """Search recomposes keep the active filter's exact logical caret."""
@@ -5049,6 +5083,7 @@ async def test_library_prompts_search_preserves_filter_caret_while_loading_and_r
         release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompts_debounced_search_uses_live_caret_at_dispatch():
     """A caret moved after debounce capture wins for loading and settlement."""
@@ -5100,6 +5135,7 @@ async def test_library_prompts_debounced_search_uses_live_caret_at_dispatch():
         service.release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompts_settlement_keeps_newer_surviving_focus():
     """A user focus move during service work outranks request-time focus."""
@@ -5144,6 +5180,7 @@ async def test_library_prompts_settlement_keeps_newer_surviving_focus():
         service.release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("focus_id", "opener_id"),
@@ -5201,6 +5238,7 @@ async def test_library_prompts_settlement_keeps_any_live_canvas_control_focus(
         service.release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompts_live_focus_that_disappears_uses_bounded_fallback():
     """A retained focused row falls back only after the new page removes it."""
@@ -5250,6 +5288,7 @@ async def test_library_prompts_live_focus_that_disappears_uses_bounded_fallback(
         service.release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompts_stale_search_cannot_restore_an_old_filter_caret():
     """A superseded settlement cannot overwrite the latest filter caret."""
@@ -5338,6 +5377,7 @@ async def test_library_prompts_stale_search_cannot_restore_an_old_filter_caret()
         old_release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_prompts_row_secondary_line_shows_details_not_author():
     """Task 8b D2/U1: the list row's secondary line surfaces the prompt's
@@ -5374,6 +5414,7 @@ async def test_library_shell_prompts_row_secondary_line_shows_details_not_author
         assert "Alice" not in label_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_real_recipe_list_pipeline_preserves_type_source_and_lanes(
     tmp_path,
@@ -5775,6 +5816,7 @@ def _choose_shared_save_action(screen: Any, action: str) -> None:
     menu.value = action
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_mode_switch_is_targeted_and_remembered(
     tmp_path,
@@ -5858,6 +5900,7 @@ async def _wait_for_prompt_mutation_settlement(screen, pilot) -> None:
     raise AssertionError("Prompt mutation did not settle")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_bulk_delete_mixed_batch_is_atomic_and_opaque(tmp_path):
     """Selected Prompt/Recipe rows use one typed call and one durable receipt."""
@@ -5979,6 +6022,7 @@ async def test_library_prompt_bulk_delete_mixed_batch_is_atomic_and_opaque(tmp_p
         assert str(receipt.renderable) == "✓ deleted · 5 items"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("selected_positions", "focus_position", "expected_position"),
@@ -6058,6 +6102,7 @@ async def test_library_prompt_bulk_delete_focus_and_refresh_are_exactly_once(
         assert refresh_calls == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_delete_refreshes_applied_final_page_once_and_clamps(
     tmp_path,
@@ -6144,6 +6189,7 @@ async def test_library_prompt_delete_refreshes_applied_final_page_once_and_clamp
         assert len(controller.retained_items) == 20
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_delete_refresh_failure_keeps_reconciled_page_read_only(
     tmp_path,
@@ -6298,6 +6344,7 @@ async def test_library_prompt_delete_refresh_failure_keeps_reconciled_page_read_
         assert all(not row.disabled for row in screen.query(".library-prompt-row"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_undo_refreshes_applied_page_and_preserves_basket(
     tmp_path,
@@ -6401,6 +6448,7 @@ async def test_library_prompt_undo_refreshes_applied_page_and_preserves_basket(
         assert restored_row.prompt_version == 3
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_bulk_delete_stale_batch_preserves_selection_and_receipt(
     tmp_path,
@@ -6463,6 +6511,7 @@ async def test_library_prompt_bulk_delete_stale_batch_preserves_selection_and_re
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_bulk_delete_missing_capability_is_visible_and_preserves_basket(
     tmp_path,
@@ -6501,6 +6550,7 @@ async def test_library_prompt_bulk_delete_missing_capability_is_visible_and_pres
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_bulk_delete_changed_generation_rejects_late_decision(
     tmp_path,
@@ -6542,6 +6592,7 @@ async def test_library_prompt_bulk_delete_changed_generation_rejects_late_decisi
         assert db.fetch_prompt_details(second_id) is not None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_editor_delete_uses_shared_batch_family_and_typed_receipt(
     tmp_path,
@@ -6601,6 +6652,7 @@ async def test_library_prompt_editor_delete_uses_shared_batch_family_and_typed_r
         assert str(receipt.renderable) == "✓ deleted · Prompt · Editor batch"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure_kind", ["missing", "conflict", "malformed"])
 async def test_library_prompt_editor_delete_failure_restores_native_controls_and_live_fields(
@@ -6677,6 +6729,7 @@ async def test_library_prompt_editor_delete_failure_restores_native_controls_and
         host.screen.query_one("#prompt-delete-cancel", Button).press()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_batch_undo_restores_mixed_receipt_atomically(tmp_path):
     """One typed restore recovers every deleted Prompt/Recipe surface."""
@@ -6756,6 +6809,7 @@ async def test_library_prompt_batch_undo_restores_mixed_receipt_atomically(tmp_p
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_batch_undo_conflict_restores_none_and_keeps_receipt(
     tmp_path,
@@ -6813,6 +6867,7 @@ async def test_library_prompt_batch_undo_conflict_restores_none_and_keeps_receip
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_batch_undo_late_success_preserves_new_receipt(tmp_path):
     """A late success clears only the identical receipt that admitted it."""
@@ -6858,6 +6913,7 @@ async def test_library_prompt_batch_undo_late_success_preserves_new_receipt(tmp_
         assert screen._prompts_state.delete_receipt is new_receipt
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("conflict", [False, True])
 async def test_library_prompt_batch_undo_cancel_drains_durable_settlement(
@@ -6934,6 +6990,7 @@ async def test_library_prompt_batch_undo_cancel_drains_durable_settlement(
             assert db.fetch_prompt_details(prompt_id)["deleted"] == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_mutation_route_vetoes_before_every_flush_or_transition(
     tmp_path, monkeypatch
@@ -7017,6 +7074,7 @@ async def test_library_prompt_mutation_route_vetoes_before_every_flush_or_transi
         await _wait_for_prompt_mutation_settlement(screen, pilot)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_mutation_vetoes_every_import_seam(tmp_path):
     """Queued Prompt Import handlers cannot outlive mutation admission."""
@@ -7121,6 +7179,7 @@ async def test_library_prompt_mutation_vetoes_every_import_seam(tmp_path):
         await _wait_for_prompt_mutation_settlement(screen, pilot)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_conflict_overwrite_blocks_delete_admission(tmp_path):
     """A pre-admitted overwrite must settle before delete can own the row."""
@@ -7239,6 +7298,7 @@ async def test_library_prompt_conflict_overwrite_blocks_delete_admission(tmp_pat
         assert screen._prompts_state.dirty is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_import_blocks_undo_until_import_settles(tmp_path):
     """An app-owned import and receipt Undo cannot write SQLite together."""
@@ -7358,6 +7418,7 @@ async def test_library_prompt_import_blocks_undo_until_import_settles(tmp_path):
         assert db.fetch_prompt_details(deleted_id)["deleted"] == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cancelled_prompt_save_retains_writer_ownership_until_commit(
     tmp_path,
@@ -7453,6 +7514,7 @@ async def test_cancelled_prompt_save_retains_writer_ownership_until_commit(
         assert db.fetch_prompt_details(prompt_id, include_deleted=True)["deleted"] == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cancelled_prompt_import_retains_writer_ownership_until_commit(tmp_path):
     """An app-owned cancelled import must drain before Undo can write."""
@@ -7577,6 +7639,7 @@ async def test_cancelled_prompt_import_retains_writer_ownership_until_commit(tmp
         assert db.fetch_prompt_details(deleted_id)["deleted"] == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_history_count_is_index_only_and_first_page_is_lazy(
     tmp_path,
@@ -7670,6 +7733,7 @@ async def test_library_prompt_history_count_is_index_only_and_first_page_is_lazy
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("snapshot_kind", "reason", "system_preview", "user_preview"),
@@ -7827,6 +7891,7 @@ async def test_library_prompt_history_previews_nonrestorable_local_snapshots_wit
         assert db.get_prompt_history_count(prompt_uuid) == before_count
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_history_title_starts_with_ellipsis_before_count_settles(
     tmp_path,
@@ -7870,6 +7935,7 @@ async def test_library_prompt_history_title_starts_with_ellipsis_before_count_se
         count_gate.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_history_collapse_resets_page_without_refetching_count(
     tmp_path,
@@ -7931,6 +7997,7 @@ async def test_library_prompt_history_collapse_resets_page_without_refetching_co
         assert len(service.page_calls) == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("late_kind", ["count", "page", "restore"])
 async def test_library_prompt_history_late_results_after_prompt_switch_are_noops(
@@ -8045,6 +8112,7 @@ async def test_library_prompt_history_late_results_after_prompt_switch_are_noops
         gate.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "action",
@@ -8175,6 +8243,7 @@ async def test_queued_outgoing_history_action_is_noop_after_prompt_adoption(
         assert service.restore_calls == restore_calls
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("late_kind", ["count", "page"])
 async def test_library_prompt_history_late_load_is_noop_after_duplicate_detaches(
@@ -8239,6 +8308,7 @@ async def test_library_prompt_history_late_load_is_noop_after_duplicate_detaches
         load_gate.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_history_retries_count_and_page_errors(tmp_path):
     """Removing either retry leaves a real worker failure permanently stuck."""
@@ -8294,6 +8364,7 @@ async def test_library_prompt_history_retries_count_and_page_errors(tmp_path):
         assert len(screen.query(".library-prompt-history-row")) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_history_loads_older_pages_once_per_cursor(tmp_path):
     """Paging appends strictly older rows and rejects duplicate in-flight presses."""
@@ -8350,6 +8421,7 @@ async def test_library_prompt_history_loads_older_pages_once_per_cursor(tmp_path
         assert len(screen.query("#library-prompt-history-load-older")) == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "type_change", [False, True], ids=["same-type", "prompt-to-recipe"]
@@ -8486,6 +8558,7 @@ async def test_library_prompt_history_confirms_and_restores_as_new_current_versi
         assert disclosure.collapsed is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_history_restore_stays_gated_until_detail_adoption(
     tmp_path,
@@ -8594,6 +8667,7 @@ async def test_library_prompt_history_restore_stays_gated_until_detail_adoption(
         detail_gate.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_history_restore_refresh_rejects_same_id_aba_scope(
     tmp_path,
@@ -8695,6 +8769,7 @@ async def test_library_prompt_history_restore_refresh_rejects_same_id_aba_scope(
         detail_gate.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_history_collapse_during_restore_detail_fetch_stays_closed(
     tmp_path,
@@ -8805,6 +8880,7 @@ async def test_library_prompt_history_collapse_during_restore_detail_fetch_stays
         detail_gate.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_history_no_change_keeps_selection_and_retry_available(
     tmp_path,
@@ -8862,6 +8938,7 @@ async def test_library_prompt_history_no_change_keeps_selection_and_retry_availa
         assert db.fetch_prompt_details(prompt_id)["version"] == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_history_snapshot_unavailable_has_first_page_reload(
     tmp_path,
@@ -8944,6 +9021,7 @@ async def test_library_prompt_history_snapshot_unavailable_has_first_page_reload
         assert len(service.page_calls) == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_history_generic_db_failure_is_private_and_retryable(
     tmp_path,
@@ -9027,6 +9105,7 @@ async def test_library_prompt_history_generic_db_failure_is_private_and_retryabl
         assert "SECRET retained prompt body" not in str(logger_spy.method_calls)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("restore_error", "expected_copy", "enters_conflict"),
@@ -9125,6 +9204,7 @@ async def test_library_prompt_history_restore_failures_are_truthful_and_guarded(
         assert "SECRET validation payload" not in logged
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_history_duplicate_name_is_retryable_not_stale_conflict(
     tmp_path,
@@ -9212,6 +9292,7 @@ async def test_library_prompt_history_duplicate_name_is_retryable_not_stale_conf
     assert after_history == before_history
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_history_stale_conflict_reload_refreshes_and_can_retry(
     tmp_path,
@@ -9316,6 +9397,7 @@ async def test_library_prompt_history_stale_conflict_reload_refreshes_and_can_re
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_conflict_overwrite_adopts_persisted_detail_and_history(
     tmp_path,
@@ -9384,6 +9466,7 @@ async def test_library_prompt_conflict_overwrite_adopts_persisted_detail_and_his
         assert state.restore_outcome is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_row_opens_editor_with_six_fields_populated(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
@@ -9425,6 +9508,7 @@ async def test_library_prompt_row_opens_editor_with_six_fields_populated(tmp_pat
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_row_opens_editor_with_modified_meta_not_new_prompt(
     tmp_path,
@@ -9466,6 +9550,7 @@ async def test_library_prompt_row_opens_editor_with_modified_meta_not_new_prompt
         assert "v1" in meta_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_row_opens_editor_under_real_runtime_policy_enforcer(
     tmp_path,
@@ -9511,6 +9596,7 @@ async def test_library_prompt_row_opens_editor_under_real_runtime_policy_enforce
         assert screen.query_one("#library-prompt-name", Input).value == "Summarize"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_save_name_already_in_use_shows_status_copy(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
@@ -9540,6 +9626,7 @@ async def test_library_prompt_save_name_already_in_use_shows_status_copy(tmp_pat
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_save_onto_soft_deleted_name_shows_status_copy(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
@@ -9570,6 +9657,7 @@ async def test_library_prompt_save_onto_soft_deleted_name_shows_status_copy(tmp_
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_save_stale_version_shows_conflict_bar(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
@@ -9605,6 +9693,7 @@ async def test_library_prompt_save_stale_version_shows_conflict_bar(tmp_path):
         assert screen.query_one("#library-prompt-conflict-reload", Button)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_conflict_save_as_new_replaces_source_history_identity(
     tmp_path,
@@ -9669,6 +9758,7 @@ async def test_library_prompt_conflict_save_as_new_replaces_source_history_ident
         assert screen._prompts_state.detail["uuid"] == persisted["uuid"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_save_write_time_conflict_shows_conflict_bar(tmp_path):
     """A ``ConflictError`` raised by the actual write itself -- a race the
@@ -9789,6 +9879,7 @@ async def test_library_prompt_save_write_time_conflict_shows_conflict_bar(tmp_pa
         assert db.fetch_prompt_details(prompt_id)["author"] == "Original"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_create_prompt_write_time_conflict_recovers_on_reload(
     tmp_path,
@@ -9887,6 +9978,7 @@ async def test_library_shell_create_prompt_write_time_conflict_recovers_on_reloa
         assert calls["count"] == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_create_prompt_write_time_conflict_save_as_new_retries_create(
     tmp_path,
@@ -9974,6 +10066,7 @@ async def test_library_shell_create_prompt_write_time_conflict_save_as_new_retri
         assert allowed is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_flush_pending_work_vetoes_dirty_editor(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
@@ -10028,6 +10121,7 @@ async def test_library_prompt_flush_pending_work_vetoes_dirty_editor(tmp_path):
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_delete_receipt_undo_restores_row_and_count(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
@@ -10096,6 +10190,7 @@ async def test_library_prompt_delete_receipt_undo_restores_row_and_count(tmp_pat
         assert restored["version"] == 3
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_delete_modal_cancel_preserves_dirty_editor_and_request(
     tmp_path,
@@ -10136,6 +10231,7 @@ async def test_library_prompt_delete_modal_cancel_preserves_dirty_editor_and_req
         assert db.fetch_prompt_details(prompt_id) is not None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_delete_rejects_a_stale_modal_result(tmp_path):
     """A confirmation for an earlier editor identity must not delete either row."""
@@ -10190,6 +10286,7 @@ def test_library_prompt_undo_interlock_rejects_a_concurrent_delete_settlement() 
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_save_success_updates_status_and_persists(tmp_path):
     """Happy-path Save: not one of the brief's six numbered scenarios, but
@@ -10224,6 +10321,7 @@ async def test_library_prompt_save_success_updates_status_and_persists(tmp_path)
         assert persisted["version"] == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("include_starter", [False, True])
 async def test_library_save_recipe_respects_explicit_starter_content_choice(
@@ -10280,6 +10378,7 @@ async def test_library_save_recipe_respects_explicit_starter_content_choice(
             assert persisted["user_prompt"] == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_embedded_save_prompt_adopts_complete_new_identity(tmp_path):
     """Save Prompt as-new must replace every persisted identity field."""
@@ -10331,6 +10430,7 @@ async def test_library_embedded_save_prompt_adopts_complete_new_identity(tmp_pat
         assert screen._library_prompt_history_state.prompt_uuid == new_uuid
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_use_recipe_creates_unsaved_prompt_copy_without_staging(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
@@ -10391,6 +10491,7 @@ async def test_library_use_recipe_creates_unsaved_prompt_copy_without_staging(tm
         assert db.fetch_prompt_details(prompt_id)["artifact_type"] == "recipe"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_use_mismatched_structured_prompt_requires_conversion(tmp_path):
     """A mismatched discriminator cannot execute compatibility User text."""
@@ -10466,6 +10567,7 @@ async def test_library_use_mismatched_structured_prompt_requires_conversion(tmp_
         assert after["artifact_type"] == "prompt"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_editing_shows_unsaved_marker_and_save_clears_it(tmp_path):
     """U6 (Task 8c): editing a field surfaces a visible unsaved-changes
@@ -10529,6 +10631,7 @@ async def test_library_prompt_editing_shows_unsaved_marker_and_save_clears_it(tm
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_compatibility_editor_discard_returns_to_current_list(
     tmp_path,
@@ -10625,6 +10728,7 @@ async def test_library_prompt_compatibility_editor_discard_returns_to_current_li
     assert after["version"] == before["version"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_discard_refuses_while_save_is_in_flight(tmp_path):
     """Discard stays disabled and inert until an admitted save settles.
@@ -10736,6 +10840,7 @@ async def _open_prompts_list(screen, pilot) -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompts_export_opens_prompt_scope_without_media_controls(
     tmp_path,
@@ -10783,6 +10888,7 @@ async def test_library_prompts_export_opens_prompt_scope_without_media_controls(
         assert not screen.query("#library-export-quality")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompts_export_refuses_server_mode_before_prompt_count(
     tmp_path,
@@ -10830,6 +10936,7 @@ async def test_library_prompts_export_refuses_server_mode_before_prompt_count(
         app.notify.assert_called_once()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompts_import_button_opens_row(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
@@ -10852,6 +10959,7 @@ async def test_library_prompts_import_button_opens_row(tmp_path):
         assert isinstance(import_path, Input)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompts_import_cancel_closes_row(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
@@ -10875,6 +10983,7 @@ async def test_library_prompts_import_cancel_closes_row(tmp_path):
         assert len(screen.query("#library-prompts-import-path")) == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompts_import_preserves_recipe_structure_in_real_db(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
@@ -10957,6 +11066,7 @@ async def test_library_prompts_import_preserves_recipe_structure_in_real_db(tmp_
         assert persisted["user_prompt"] == "<goal>Ship the outcome</goal>"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_export_pushes_file_save_dialog(tmp_path):
     """Export… pushes a ``FileSave`` dialog pre-filled with a sanitized
@@ -10995,6 +11105,7 @@ async def test_library_prompt_export_pushes_file_save_dialog(tmp_path):
         await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_export_blocks_invalid_recipe_without_downgrade(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
@@ -11055,6 +11166,7 @@ async def test_library_prompt_export_blocks_invalid_recipe_without_downgrade(tmp
         assert not (tmp_path / "Invalid export.md").exists()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_write_export_file_writes_roundtrippable_markdown(
     tmp_path,
@@ -11114,6 +11226,7 @@ async def test_library_prompt_write_export_file_writes_roundtrippable_markdown(
         assert p["keywords"] == ["k1", "k2"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_write_export_preserves_live_recipe_structure(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
@@ -11178,6 +11291,7 @@ async def test_library_prompt_write_export_preserves_live_recipe_structure(tmp_p
         assert "exported successfully" in app.notify.call_args.args[0]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_write_export_file_rejects_invalid_path(
     tmp_path, monkeypatch
@@ -11220,6 +11334,7 @@ async def test_library_prompt_write_export_file_rejects_invalid_path(
         assert screen._prompts_state.status == "Rejected export path: rejected for test"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_write_export_file_cancelled_dialog_notifies_quietly(
     tmp_path,
@@ -11379,6 +11494,7 @@ async def test_prompts_canvas_editor_copy_and_duplicate_relabeled():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", PROMPT_PAGER_TEST_SIZES)
 async def test_library_prompt_basic_and_advanced_geometry_uses_production_css(
@@ -11491,6 +11607,7 @@ async def test_library_prompt_basic_and_advanced_geometry_uses_production_css(
         assert not content.region.overlaps(actions.region)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (100, 30), (140, 40), (200, 50)])
 @pytest.mark.parametrize("conflict", [False, True])
@@ -11808,6 +11925,7 @@ async def test_library_prompt_action_groups_preserve_conflict_action_order():
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_copy_uses_live_unsaved_legacy_lane_markdown(tmp_path):
     """Catches the missing legacy-lane ``handle_library_prompt_copy`` path."""
@@ -11862,6 +11980,7 @@ async def test_library_prompt_copy_uses_live_unsaved_legacy_lane_markdown(tmp_pa
         assert not list(host._notifications)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_copy_uses_current_structured_block_working_copy(tmp_path):
     """Catches a copy handler that serializes preview text but drops structure."""
@@ -11951,6 +12070,7 @@ async def test_library_prompt_copy_uses_current_structured_block_working_copy(tm
         assert not list(host._notifications)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_copy_warns_when_clipboard_is_unavailable(tmp_path):
     """Catches the missing unavailable-clipboard branch in the copy handler."""
@@ -11980,6 +12100,7 @@ async def test_library_prompt_copy_warns_when_clipboard_is_unavailable(tmp_path)
         assert not list(host._notifications)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_copy_reports_clipboard_error_without_success_notice(
     tmp_path,
@@ -12011,6 +12132,7 @@ async def test_library_prompt_copy_reports_clipboard_error_without_success_notic
         assert not list(host._notifications)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("artifact_type", "schema_version"),
@@ -12065,6 +12187,7 @@ async def test_library_prompt_copy_preserves_compatibility_structured_metadata(
         assert '"keep":"this definition"' in copied[0]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("prompt_format", "outer_schema", "raw_definition"),
@@ -12207,6 +12330,7 @@ async def test_library_prompt_copy_and_export_reject_unrepresentable_metadata(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_export_preserves_representable_foreign_recipe(tmp_path):
     """A foreign Recipe with agreeing metadata remains exportable without conversion."""
@@ -12261,6 +12385,7 @@ async def test_library_prompt_export_preserves_representable_foreign_recipe(tmp_
         assert '"keep":"FOREIGN_RECIPE_DEFINITION"' in exported
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_copy_after_compatibility_recipe_conversion_uses_prompt(
     tmp_path,
@@ -12352,6 +12477,7 @@ async def test_library_prompt_copy_after_compatibility_recipe_conversion_uses_pr
         assert "future_recipe" not in copied[0]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_copy_keeps_both_edited_legacy_lanes_plain(tmp_path):
     """Editing both real legacy blocks cannot implicitly change Copy format."""
@@ -12411,6 +12537,7 @@ async def test_library_prompt_copy_keeps_both_edited_legacy_lanes_plain(tmp_path
         assert "### STRUCTURE ###" not in copied[0]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("schema_version", "definition_state"),
@@ -12455,6 +12582,7 @@ async def test_library_prompt_delete_uses_compatibility_recipe_type(
         assert ":" not in modal.request.fingerprint
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_delete_allows_only_one_in_flight_service_call(tmp_path):
     """A cancelled UI worker drains its durable delete and keeps editor inert."""
@@ -12536,6 +12664,7 @@ async def test_library_prompt_delete_allows_only_one_in_flight_service_call(tmp_
         assert db.fetch_prompt_details(prompt_id) is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_delete_reset_rejects_a_late_modal_dismissal(tmp_path):
     """Leaving an editor clears its pending confirmation before late settlement."""
@@ -12566,6 +12695,7 @@ async def test_library_prompt_delete_reset_rejects_a_late_modal_dismissal(tmp_pa
         assert db.fetch_prompt_details(prompt_id) is not None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_copy_and_delete_fail_closed_for_unknown_future_type(
     tmp_path,
@@ -12614,6 +12744,7 @@ async def test_library_prompt_copy_and_delete_fail_closed_for_unknown_future_typ
         assert db.fetch_prompt_details(prompt_id) is not None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_export_and_duplicate_fail_closed_for_unknown_future_type(
     tmp_path,
@@ -12672,6 +12803,7 @@ async def test_library_prompt_export_and_duplicate_fail_closed_for_unknown_futur
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_duplicate_requires_conversion_for_compatibility_artifact(
     tmp_path,
@@ -12734,6 +12866,7 @@ async def test_library_prompt_duplicate_requires_conversion_for_compatibility_ar
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_copy_rejects_legacy_recipe_without_clipboard_write(
     tmp_path,
@@ -12783,6 +12916,7 @@ async def test_library_prompt_copy_rejects_legacy_recipe_without_clipboard_write
         assert "PRIVATE_USER_BODY" not in notice
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_export_rejects_legacy_recipe_before_file_save(
     tmp_path,
@@ -12832,6 +12966,7 @@ async def test_library_prompt_export_rejects_legacy_recipe_before_file_save(
         assert "PRIVATE_USER_BODY" not in notice
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_duplicate_rejects_legacy_recipe_without_state_mutation(
     tmp_path,
@@ -12883,6 +13018,7 @@ async def test_library_prompt_duplicate_rejects_legacy_recipe_without_state_muta
         assert "PRIVATE_USER_BODY" not in notice
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_copy_uses_unsaved_legacy_create_working_copy(tmp_path):
     """A not-yet-saved create copies its live lanes without requiring an ID."""
@@ -12930,6 +13066,7 @@ async def test_library_prompt_copy_uses_unsaved_legacy_create_working_copy(tmp_p
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_copy_uses_unsaved_structured_duplicate_working_copy(
     tmp_path,
@@ -13023,6 +13160,7 @@ async def test_library_prompt_copy_uses_unsaved_structured_duplicate_working_cop
         assert copied == [expected]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_create_prompt_row_opens_blank_editor(tmp_path):
     """D1: the Create rail's "New prompt" row opens the in-canvas editor on
@@ -13054,6 +13192,7 @@ async def test_library_shell_create_prompt_row_opens_blank_editor(tmp_path):
         assert len(screen.query("#library-prompt-open-existing")) == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_create_prompt_save_creates_and_increments_count(tmp_path):
     """D1: Save with a fresh name CREATES via the scope service's create
@@ -13131,6 +13270,7 @@ async def test_library_shell_create_prompt_save_creates_and_increments_count(tmp
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_create_prompt_save_existing_name_shows_name_in_use(
     tmp_path,
@@ -13168,6 +13308,7 @@ async def test_library_shell_create_prompt_save_existing_name_shows_name_in_use(
         assert total == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_duplicate_button_between_copy_and_delete(tmp_path):
     """U3: the Duplicate action sits between Copy and Delete in the editor's
@@ -13195,6 +13336,7 @@ async def test_library_prompt_duplicate_button_between_copy_and_delete(tmp_path)
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_duplicate_prefills_blank_editor_and_saves_distinct_prompt(
     tmp_path,
@@ -13246,6 +13388,7 @@ async def test_library_prompt_duplicate_prefills_blank_editor_and_saves_distinct
         assert original["name"] == "Original"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_recipe_duplicate_outer_save_is_honest_and_preserves_starter(
     tmp_path,
@@ -13310,6 +13453,7 @@ async def test_library_recipe_duplicate_outer_save_is_honest_and_preserves_start
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_open_existing_button_shows_only_in_name_in_use_state_and_opens_it(
     tmp_path,
@@ -13370,6 +13514,7 @@ async def test_library_prompt_open_existing_button_shows_only_in_name_in_use_sta
         assert len(screen.query("#library-prompt-open-existing")) == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompt_open_existing_resolves_offending_name_not_drifted_field(
     tmp_path,
@@ -13433,6 +13578,7 @@ async def test_library_prompt_open_existing_resolves_offending_name_not_drifted_
         assert screen.query_one("#library-prompt-name", Input).value == "Alpha"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_prompts_import_browse_button_fills_path_input(tmp_path):
     """D4: Browse… (beside the import path Input) opens the same FileOpen
@@ -13473,6 +13619,7 @@ async def test_library_prompts_import_browse_button_fills_path_input(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_recipe_use_in_console_detaches_source_history(tmp_path):
     definition = {
@@ -13911,6 +14058,7 @@ def _painted_word_column(host, button, word: str) -> int:
     return button.region.x + painted.index(word)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_prompts_selection_action_labels_hold_their_column_when_enabled():
     """Every select-mode action word paints in the same column throughout."""

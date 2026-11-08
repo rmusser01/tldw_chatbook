@@ -634,6 +634,7 @@ async def _wait_for_quiz_status(
         await pilot.pause(0.1)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_quizzes_view_loads_scope_backed_quizzes():
     scope = FakeQuizScopeService()
@@ -660,6 +661,7 @@ async def test_quizzes_view_loads_scope_backed_quizzes():
         assert "Ready to manage selected quiz" in _text(status)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_quizzes_view_loads_workspace_scoped_quizzes_and_attempt_history():
     scope = WorkspaceFilteredQuizScopeService()
@@ -727,6 +729,7 @@ async def test_quizzes_view_loads_workspace_scoped_quizzes_and_attempt_history()
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_quizzes_view_creates_workspace_quiz_with_active_scope():
     scope = WorkspaceFilteredQuizScopeService()
@@ -775,6 +778,7 @@ async def test_quizzes_view_creates_workspace_quiz_with_active_scope():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workspace_scope_local_mode_disables_quiz_actions_and_shows_unavailable_message():
     scope = FakeQuizScopeService()
@@ -840,6 +844,7 @@ async def test_workspace_scope_local_mode_disables_quiz_actions_and_shows_unavai
             assert "Workspace Study requires server mode" in str(button.tooltip)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_backend_flip_resets_quiz_question_attempt_and_answer_state_through_scope_application_path():
     scope = WorkspaceFilteredQuizScopeService()
@@ -907,6 +912,7 @@ async def test_backend_flip_resets_quiz_question_attempt_and_answer_state_throug
         assert "server mode" in _text(status).lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_quizzes_view_creates_quiz_and_question_through_scope_service():
     scope = FakeQuizScopeService()
@@ -963,6 +969,7 @@ async def test_quizzes_view_creates_quiz_and_question_through_scope_service():
         assert question_list.children
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_quizzes_attempt_flow_submits_answer_and_shows_summary():
     scope = FakeQuizScopeService()
@@ -1010,6 +1017,7 @@ async def test_quizzes_attempt_flow_submits_answer_and_shows_summary():
         assert "Score: 2 / 2" in _text(status)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_active_attempt_disables_quiz_mutations_and_blocks_second_start():
     scope = FakeQuizScopeService()
@@ -1089,6 +1097,7 @@ async def test_active_attempt_disables_quiz_mutations_and_blocks_second_start():
         assert controller.current_attempt_questions == first_questions
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_active_attempt_blocks_create_and_delete_quiz_without_refreshing_selection():
     scope = FakeQuizScopeService()
@@ -1129,6 +1138,7 @@ async def test_active_attempt_blocks_create_and_delete_quiz_without_refreshing_s
         assert controller.current_attempt_questions
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_active_attempt_blocks_loading_attempt_history_directly():
     scope = FakeQuizScopeService()
@@ -1163,6 +1173,7 @@ async def test_active_attempt_blocks_loading_attempt_history_directly():
         assert controller.current_attempt_questions
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_quizzes_view_shows_explicit_empty_state_when_no_quizzes_exist():
     app_instance = SimpleNamespace(
@@ -1189,6 +1200,7 @@ async def test_quizzes_view_shows_explicit_empty_state_when_no_quizzes_exist():
         assert "start an attempt" in status_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workspace_quizzes_empty_state_explains_workspace_recovery_path():
     scope = WorkspaceFilteredQuizScopeService()
@@ -1224,6 +1236,7 @@ async def test_workspace_quizzes_empty_state_explains_workspace_recovery_path():
         assert create_button.disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_quizzes_view_deletes_selected_quiz_and_resets_selection():
     scope = FakeQuizScopeService()
@@ -1256,6 +1269,7 @@ async def test_quizzes_view_deletes_selected_quiz_and_resets_selection():
         assert "No quizzes yet." in _text(status)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_quizzes_view_deletes_selected_question_and_refreshes_question_list():
     scope = FakeQuizScopeService()
@@ -1293,6 +1307,7 @@ async def test_quizzes_view_deletes_selected_question_and_refreshes_question_lis
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_quizzes_view_loads_attempt_history_into_summary_panel():
     scope = FakeQuizScopeService()

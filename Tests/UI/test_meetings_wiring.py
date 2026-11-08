@@ -135,6 +135,7 @@ def test_build_owner_calls_directly_when_already_on_ui_thread(tmp_path, monkeypa
     assert owner._submit_on_ui_thread(source_path="x") == "j"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_app_owns_a_meeting_owner_and_shuts_it_down():
     import inspect

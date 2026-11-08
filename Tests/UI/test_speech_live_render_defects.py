@@ -27,6 +27,7 @@ class _Harness(App[None]):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_axis_select_has_no_inner_border_under_the_real_css(
     monkeypatch: pytest.MonkeyPatch,

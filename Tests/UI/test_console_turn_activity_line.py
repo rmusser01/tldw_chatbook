@@ -761,6 +761,7 @@ async def test_no_eligible_row_means_no_effective_activity():
         assert "read_file" not in _rendered_row_text(transcript, "a1")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_eligible_row_reports_the_effective_activity():
     """The mirror of the pin above: an in-flight row does take the line."""
@@ -1076,6 +1077,7 @@ async def test_published_token_usage_repaints_once_per_changed_scalar():
     assert transcript.refresh_messages.await_count == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_real_console_screen_carries_the_line_to_its_mounted_row():
     """The stubs above meet reality: a REAL screen, a REAL mounted transcript.

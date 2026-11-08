@@ -388,6 +388,7 @@ async def test_real_textual_pilot_shows_explicit_repair_and_stale_refresh(
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_library_refreshes_real_cas_version_then_retry_succeeds(
     tmp_path,

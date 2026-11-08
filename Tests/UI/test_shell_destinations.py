@@ -1,3 +1,5 @@
+import pytest
+
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Navigation.shell_destinations import (
@@ -183,6 +185,7 @@ def test_lab_legacy_routes_resolve_to_their_lab_screens():
         assert screen_class.__name__ == expected_class, route
 
 
+@pytest.mark.bootstrap_profile
 def test_every_shell_destination_id_resolves_to_its_primary_screen():
     """Destination-id resolution: a destination id lands on the same screen
     as the destination's primary route (covers "lab" and "console", whose
@@ -214,6 +217,7 @@ def test_each_shell_destination_has_recovery_tooltip_copy():
         assert destination.purpose
 
 
+@pytest.mark.bootstrap_profile
 def test_every_shell_destination_has_readable_purpose_and_mounted_route():
     app = _build_test_app()
 

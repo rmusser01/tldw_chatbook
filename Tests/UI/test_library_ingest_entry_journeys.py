@@ -122,6 +122,7 @@ async def test_import_gate_paints_complete_recovery_above_start(
         assert start.disabled is (case != "consent")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])

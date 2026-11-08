@@ -36,6 +36,7 @@ from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Speech.speech_settings_contracts import SpeechTTSNavigationTarget
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_provider_pane_survives_a_catalog_value_its_select_no_longer_offers():
     """The Providers pane's real sync route, with the catalog moved under it."""
@@ -77,6 +78,7 @@ async def test_provider_pane_survives_a_catalog_value_its_select_no_longer_offer
         assert not manual_input.disabled
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_speech_pane_survives_a_navigation_target_its_select_no_longer_offers():
     """The Speech deep-link route, with the two provider tuples disagreeing."""
@@ -114,6 +116,7 @@ async def test_speech_pane_survives_a_navigation_target_its_select_no_longer_off
         assert provider_select.value == kept
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_provider_picker_row_the_select_no_longer_offers_does_not_raise():
     """Clicking a picker row for a provider the mounted select dropped.
@@ -172,6 +175,7 @@ async def test_provider_picker_row_the_select_no_longer_offers_does_not_raise():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_provider_revert_with_a_saved_value_the_select_no_longer_offers():
     """Revert the Providers category while its select has lost the saved value.

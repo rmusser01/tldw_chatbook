@@ -31,6 +31,7 @@ from Tests.UI.test_settings_narrow_layout import (
 )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(120, 35), (100, 30), (80, 24)])
 async def test_model_catalog_group_renders_all_controls(size):

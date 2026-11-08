@@ -85,6 +85,7 @@ async def _scroll_to_category(pilot, screen, category_value: str) -> None:
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(120, 35), (100, 30)])
 async def test_all_category_labels_render_fully(size):
@@ -115,6 +116,7 @@ async def test_all_category_labels_render_fully(size):
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(120, 35), (100, 30)])
 async def test_dirty_marker_renders_fully(size):
@@ -146,6 +148,7 @@ async def test_dirty_marker_renders_fully(size):
             screen._refresh_category_button_label(SettingsCategoryId.PROVIDERS_MODELS)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_narrow_width_layout_80x24():
     """AC2: at 80x24 the screen offers a working narrow layout.
@@ -183,6 +186,7 @@ async def test_narrow_width_layout_80x24():
         assert search.display and search.region.height >= 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_capture_controls_are_reachable_at_80x24() -> None:
     app = _build_test_app()
@@ -207,6 +211,7 @@ async def test_console_capture_controls_are_reachable_at_80x24() -> None:
         assert status.region.height > 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("size", "category_value", "expected_words"),

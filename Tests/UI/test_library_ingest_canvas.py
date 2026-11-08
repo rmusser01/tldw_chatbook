@@ -1045,6 +1045,7 @@ async def test_active_ingest_confirm_copy_fits_fixed_gate_at_72x18(copy):
         assert quiet.region.bottom <= start.region.y
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_active_confirm_update_preserves_start_input_focus_cursor_and_scroll(
     tmp_path,
@@ -1738,6 +1739,7 @@ async def test_parakeet_model_directory_picker_updates_only_the_submission_form(
     screen.app_instance._ensure_parakeet_source_service.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_idle_external_fence_preserves_focused_form_input(
     monkeypatch: pytest.MonkeyPatch,
@@ -1785,6 +1787,7 @@ async def test_idle_external_fence_preserves_focused_form_input(
         refresh.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.allow_network
 async def test_library_screen_multiline_prompt_typing_preserves_widget_and_focus(
@@ -1852,6 +1855,7 @@ def _backend_switch_screen(app, backend: dict[str, str]) -> LibraryScreen:
     return screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.allow_network
 async def test_backend_switch_repaints_after_delayed_persistence_success(
@@ -1915,6 +1919,7 @@ async def test_backend_switch_repaints_after_delayed_persistence_success(
         release_save.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.allow_network
 async def test_backend_switch_failure_restores_persisted_server_controls(
@@ -1974,6 +1979,7 @@ async def test_backend_switch_failure_restores_persisted_server_controls(
         release_save.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.allow_network
 async def test_rapid_backend_switch_keeps_latest_server_selection(
@@ -2055,6 +2061,7 @@ async def test_rapid_backend_switch_keeps_latest_server_selection(
         release["server"].set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.allow_network
 @pytest.mark.parametrize("size", [LIBRARY_TEST_SIZE, (120, 48)])

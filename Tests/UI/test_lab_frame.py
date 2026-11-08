@@ -99,6 +99,7 @@ def _mount(screen_factory):
     return app, screen_factory(app)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_body_is_absent_at_first_paint_and_present_after_deferral():
     """The lazy mount is the whole performance claim -- assert it directly.
@@ -116,6 +117,7 @@ async def test_the_body_is_absent_at_first_paint_and_present_after_deferral():
         assert screen.body_ready_calls == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mount_lab_body_is_a_silent_no_op_before_the_screen_is_mounted():
     """The deferred callback firing after the screen was torn down (the user
@@ -127,6 +129,7 @@ async def test_mount_lab_body_is_a_silent_no_op_before_the_screen_is_mounted():
     assert screen.body_ready_calls == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mount_lab_body_raises_when_the_region_is_missing_on_a_mounted_screen():
     """A missing `#lab-body` while the screen itself is alive means the
@@ -146,6 +149,7 @@ async def test_mount_lab_body_raises_when_the_region_is_missing_on_a_mounted_scr
             screen._mount_lab_body()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_mode_with_no_chips_renders_no_status_row_at_all():
     """A mode without status must not reserve a row of dead chrome.
@@ -160,6 +164,7 @@ async def test_a_mode_with_no_chips_renders_no_status_row_at_all():
         assert not screen.query("#lab-status-row")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_chips_render_and_refresh_mutates_them_without_recomposing():
     """Refresh must update the same Static, not replace the row."""
@@ -184,6 +189,7 @@ async def test_chips_render_and_refresh_mutates_them_without_recomposing():
         assert "Servers: 2 running" in str(chip_widget.renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_frame_wires_its_route_into_the_mode_strip():
     """The existing strip suite mounts the strip standalone and would not
@@ -196,6 +202,7 @@ async def test_the_frame_wires_its_route_into_the_mode_strip():
         assert "is-active" in active.classes
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_inspector_starts_collapsed_on_first_run():
     app, screen = _mount(lambda a: _ProbeLabScreen(a))
@@ -206,6 +213,7 @@ async def test_the_inspector_starts_collapsed_on_first_run():
         assert screen.query_one("#lab-inspector-handle") is not None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_the_inspector_handle_expands_it_and_shows_its_content(
     fake_rail_store, monkeypatch
@@ -237,6 +245,7 @@ async def test_pressing_the_inspector_handle_expands_it_and_shows_its_content(
         assert fake_rail_store, "expanding via the button did not persist the layout"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_the_inspector_collapse_button_collapses_it_again(
     fake_rail_store, monkeypatch
@@ -263,6 +272,7 @@ async def test_pressing_the_inspector_collapse_button_collapses_it_again(
         assert screen.query_one("#lab-inspector-handle").display is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_the_rail_collapse_button_collapses_the_catalog_rail(
     fake_rail_store, monkeypatch
@@ -309,6 +319,7 @@ def fake_rail_store(monkeypatch):
     return saved
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_toggling_a_rail_preserves_the_mounted_mode_content(fake_rail_store):
     """Regression test: a rail toggle must not blow away mounted content.
@@ -352,6 +363,7 @@ async def test_toggling_a_rail_preserves_the_mounted_mode_content(fake_rail_stor
         assert fake_rail_store, "toggle_lab_rail did not persist the new layout"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_screen_level_recompose_repopulates_rail_inspector_and_body(
     fake_rail_store,
@@ -428,6 +440,7 @@ class _CountingLabScreen(_ProbeLabScreen):
     header_status = "ready"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_idle_refresh_writes_nothing_but_a_changed_value_still_lands(
     monkeypatch,
@@ -477,6 +490,7 @@ async def test_an_idle_refresh_writes_nothing_but_a_changed_value_still_lands(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_recompose_clears_the_render_cache(monkeypatch):
     """Stale cache entries after a recompose could skip a write to a fresh widget."""

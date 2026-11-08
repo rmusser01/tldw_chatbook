@@ -420,6 +420,7 @@ class StaticArtifactsChatbookService:
         return list(self.chatbooks)[int(offset) : int(offset) + int(limit)]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_main_navigation_overflow_hint_does_not_overlap_settings_at_default_size():
     app = _build_test_app()
@@ -461,6 +462,7 @@ async def test_main_navigation_overflow_hint_does_not_overlap_settings_at_defaul
         assert ghosted, "Overflow hint shown but no destination is ghosted"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_destination_content_starts_immediately_below_nav():
     app = _build_test_app()
@@ -496,6 +498,7 @@ async def test_destination_workbench_renders_three_horizontal_panes():
         assert left.region.y == center.region.y == right.region.y
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_home_dashboard_regions_fit_default_viewport():
     app = _build_test_app()
@@ -531,6 +534,7 @@ async def test_home_dashboard_regions_fit_default_viewport():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_first_start_shows_left_rail_main_and_right_handle():
     app = _build_test_app()
@@ -573,6 +577,7 @@ async def test_console_first_start_shows_left_rail_main_and_right_handle():
         _assert_visible_in_viewport(composer, height=42, context="Console composer")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_grid_is_visible_in_viewport():
     # The retired horizontal mode-chip strip (#library-mode-bar,
@@ -602,6 +607,7 @@ async def test_library_shell_grid_is_visible_in_viewport():
         assert rail.region.y == canvas.region.y
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_workbench_prioritizes_canvas_width():
     # The retired browser/detail/inspector 3-pane width contract is gone
@@ -621,6 +627,7 @@ async def test_library_workbench_prioritizes_canvas_width():
         assert canvas.region.width >= rail.region.width * 1.35
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_canvas_stays_content_fit_at_wide_viewport():
     app = _build_test_app()
@@ -635,6 +642,7 @@ async def test_library_canvas_stays_content_fit_at_wide_viewport():
         assert canvas.region.width >= rail.region.width * 2.5
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_workbench_renders_terminal_borders():
     # The retired browser/detail/inspector panes each carried a border plus
@@ -655,6 +663,7 @@ async def test_library_workbench_renders_terminal_borders():
             assert widget.styles.border_top[0], f"{selector} has no top border"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_empty_state_reports_empty_with_next_action():
     # The retired #library-status-row / #library-source-empty marker and its
@@ -685,6 +694,7 @@ async def test_library_empty_state_reports_empty_with_next_action():
     assert "Search everything, pick a section, or add something new." in visible_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_source_browser_collections_action_switches_to_collections_mode():
     # The retired #library-open-collections button and #library-mode-*
@@ -709,6 +719,7 @@ async def test_library_source_browser_collections_action_switches_to_collections
     assert active_row.has_class("library-rail-row-selected")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_source_browser_search_action_switches_to_search_mode():
     # The retired #library-open-search button, #library-mode-* chip strip,
@@ -890,6 +901,7 @@ async def test_library_service_call_awaits_coroutine_functions_without_worker(
     assert result == "direct-result"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "route,host_factory,workbench,panes,actions,markers,marker_container",
     [
@@ -1034,6 +1046,7 @@ SOURCE_PREP_WORKBENCHES_HORIZONTAL = {
 }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "route,contract",
     SOURCE_PREP_WORKBENCHES_HORIZONTAL.items(),
@@ -1065,6 +1078,7 @@ async def test_source_prep_destinations_use_list_detail_inspector_workbench(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "route,contract",
     SOURCE_PREP_WORKBENCHES_HORIZONTAL.items(),
@@ -1090,6 +1104,7 @@ async def test_source_prep_default_empty_or_unavailable_states_preserve_workbenc
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_screen_matches_approved_control_plane_columns():
     app = _build_test_app()
@@ -1154,6 +1169,7 @@ async def test_watchlists_screen_matches_approved_control_plane_columns():
         assert not screen.query("#wl-region-feeds")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_read_body_is_horizontal_in_display_order():
     """Read lays side panes, grips, and the permanent Reader left-to-right."""
@@ -1191,6 +1207,7 @@ async def test_watchlists_read_body_is_horizontal_in_display_order():
         assert all(body.region.contains_region(widget.region) for widget in widgets)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_collapsing_both_rails_keeps_every_region_in_viewport():
     """Collapsed rail grips and the Reader remain inside the body."""
@@ -1231,6 +1248,7 @@ async def test_watchlists_collapsing_both_rails_keeps_every_region_in_viewport()
         assert screen.query_one("#wl-grip-right_rail").region.width == 5
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_read_regions_keep_their_idle_floors():
     """Expanded Feed Items and Reader retain their horizontal width floors."""
@@ -1259,6 +1277,7 @@ async def test_watchlists_read_regions_keep_their_idle_floors():
         assert content.region.height == body.region.height
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(160, 42), (235, 52)])
 @pytest.mark.asyncio
 async def test_watchlists_empty_state_fits_inside_the_centre_header(size):
@@ -1297,6 +1316,7 @@ _ROUND_CORNERS = "╭╮╰╯"
 _SQUARE_CORNERS = "┌┐└┘"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_every_region_draws_exactly_one_round_border():
     """Task 6 fix round 3, Finding 2: one box per region, all the same shape.
@@ -1381,6 +1401,7 @@ async def test_watchlists_every_region_draws_exactly_one_round_border():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_left_rail_is_labelled_when_expanded():
     """Task 6 fix round 3, Finding 1: title suppression keyed on
@@ -1406,6 +1427,7 @@ async def test_watchlists_left_rail_is_labelled_when_expanded():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_active_section_tab_label_is_visible():
     """Task 3 defect, folded into Task 6 fix round 3 by the reviewer
@@ -1457,6 +1479,7 @@ async def test_watchlists_active_section_tab_label_is_visible():
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(160, 42), (100, 40)])
 @pytest.mark.asyncio
 async def test_watchlists_article_focus_gives_the_reader_the_flexible_body(size):
@@ -1495,6 +1518,7 @@ async def test_watchlists_article_focus_gives_the_reader_the_flexible_body(size)
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(235, 52), (160, 42)])
 @pytest.mark.asyncio
 async def test_watchlists_right_rail_does_not_clip_action_labels(size):
@@ -1561,6 +1585,7 @@ async def test_watchlists_right_rail_does_not_clip_action_labels(size):
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("route", "workbench", "expected_titles"),
     (
@@ -1654,6 +1679,7 @@ async def test_destination_pane_titles_are_user_facing_not_ordinal(
         assert "Column 3:" not in visible_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_schedules_screen_matches_approved_control_plane_columns():
     app = _build_test_app()
@@ -1694,6 +1720,7 @@ async def test_schedules_screen_matches_approved_control_plane_columns():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workflows_screen_matches_approved_authoring_columns():
     app = _build_test_app()
@@ -1718,6 +1745,7 @@ async def test_workflows_screen_matches_approved_authoring_columns():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_artifacts_empty_state_exposes_full_artifact_workbench_taxonomy():
     app = _build_test_app()
@@ -1741,6 +1769,7 @@ async def test_artifacts_empty_state_exposes_full_artifact_workbench_taxonomy():
             assert expected in visible_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_personas_workbench_exposes_approved_three_column_ia():
     """The destination-native workbench renders library / work area / inspector.
@@ -1779,6 +1808,7 @@ async def test_personas_workbench_exposes_approved_three_column_ia():
         assert {"Characters", "Personas", "+ New", "Chat now"}.issubset(buttons)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_personas_workbench_separates_columns_without_legacy_dividers():
     """The workbench retired the 1-cell divider widgets: column separation now
@@ -1802,6 +1832,7 @@ async def test_personas_workbench_separates_columns_without_legacy_dividers():
         assert not list(workbench.query(".destination-pane-divider"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_artifacts_empty_state_labels_three_clear_columns():
     app = _build_test_app()
@@ -1821,6 +1852,7 @@ async def test_artifacts_empty_state_labels_three_clear_columns():
         assert "Column 3:" not in visible_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_artifacts_empty_state_keeps_console_library_import_recovery_visible():
     app = _build_test_app()
@@ -1835,6 +1867,7 @@ async def test_artifacts_empty_state_keeps_console_library_import_recovery_visib
         assert list(screen.query("#artifacts-open-console"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_artifacts_dynamic_metadata_renders_markup_as_literal_text():
     app = _build_test_app()
@@ -1886,6 +1919,7 @@ SOURCE_PREP_LOADING_CONTRACTS = [
 ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "route,screen_cls,refresh_method,loading_marker,contract,loading_container",
     SOURCE_PREP_LOADING_CONTRACTS,
@@ -1924,6 +1958,7 @@ async def test_source_prep_loading_states_preserve_workbench_geometry(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "route,strip,workbench,panes,actions",
     [
@@ -1972,6 +2007,7 @@ async def test_operational_destinations_use_timing_or_procedure_workbench(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "route,strip,workbench,panes,actions,markers,marker_container",
     [
@@ -2063,6 +2099,7 @@ OPERATIONAL_LOADING_CONTRACTS = [
 ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "route,screen_cls,refresh_method,loading_marker,loading_container,strip,workbench,panes,actions",
     OPERATIONAL_LOADING_CONTRACTS,
@@ -2328,6 +2365,7 @@ async def test_mcp_forced_loading_state_stays_inside_workbench(request, monkeypa
             release_load.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "route,strip,workbench,panes,actions",
     [
@@ -2370,6 +2408,7 @@ async def test_runtime_and_settings_destinations_use_pane_layouts(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "route,strip,workbench,panes,actions,markers,marker_container",
     [
@@ -2444,6 +2483,7 @@ def _inspector_parts(screen):
     return pane, body, header
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(140, 42), (211, 44), (235, 52)])
 @pytest.mark.asyncio
 async def test_settings_boundary_note_is_fully_visible_at_rest(size):
@@ -2467,6 +2507,7 @@ async def test_settings_boundary_note_is_fully_visible_at_rest(size):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_inspector_floor_yields_to_the_detail_pane_when_narrow():
     """TASK-33003.7: the 36-column inspector floor applies only from
@@ -2503,6 +2544,7 @@ async def test_settings_inspector_floor_yields_to_the_detail_pane_when_narrow():
                 assert inspector.region.width < 36, (width, inspector.region)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(140, 42), (211, 44), (235, 52)])
 @pytest.mark.asyncio
 async def test_settings_inspector_rows_stay_reachable_in_every_category(size):
@@ -2547,6 +2589,7 @@ async def test_settings_inspector_rows_stay_reachable_in_every_category(size):
             await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(120, 42), (140, 42), (211, 44), (235, 52)])
 @pytest.mark.asyncio
 async def test_settings_action_rows_keep_every_button_whole(size):
@@ -2583,6 +2626,7 @@ async def test_settings_action_rows_keep_every_button_whole(size):
         assert not clipped, (size, clipped)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_dirty_category_status_has_visual_marker_class():
     app = _build_test_app()
@@ -2614,6 +2658,7 @@ async def test_settings_dirty_category_status_has_visual_marker_class():
         assert banner.has_class("settings-dirty-category")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_advanced_config_controls_use_action_and_status_rows():
     app = _build_test_app()
@@ -2648,6 +2693,7 @@ async def test_settings_advanced_config_controls_use_action_and_status_rows():
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_acp_runtime_blocked_state_uses_setup_and_compatibility_columns():
     app = _build_test_app()
@@ -2825,6 +2871,7 @@ TOP_LEVEL_WORKBENCH_SELECTORS = {
 }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "route,contract",
     COMPACT_DESTINATION_CONTRACTS.items(),
@@ -2965,6 +3012,7 @@ TAB_ORDER_ATTEMPTS = {
 }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "route,targets",
     VISIBLE_FOCUS_TARGETS.items(),
@@ -3035,6 +3083,7 @@ async def test_tab_order_reaches_visible_primary_action(route, targets):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_tree_selection_is_visually_distinct_against_the_bundle():
     """task-876: the tree node matching `tree_scope` must be visually
@@ -3121,6 +3170,7 @@ def _row_reverse_video(strips, region, needle: str) -> bool | None:
     return None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_sources_pane_selected_row_renders_reverse_video_under_the_bundle():
     """task-876, AC #6: confirm the Sources selection highlight is real
@@ -3166,6 +3216,7 @@ async def test_sources_pane_selected_row_renders_reverse_video_under_the_bundle(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_runs_pane_selected_row_renders_reverse_video_under_the_bundle():
     """Same confirmation as the Sources pane test above, for `RunsPane`."""
@@ -3193,6 +3244,7 @@ async def test_runs_pane_selected_row_renders_reverse_video_under_the_bundle():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_notifications_pane_selected_row_renders_reverse_video_under_the_bundle():
     """Same confirmation as the Sources pane test above, for
@@ -3226,6 +3278,7 @@ async def test_notifications_pane_selected_row_renders_reverse_video_under_the_b
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_right_rail_says_inspector_exactly_once():
     """Post-branch live-capture finding: the RIGHT_RAIL rendered "Inspector"
@@ -3272,6 +3325,7 @@ async def test_watchlists_right_rail_says_inspector_exactly_once():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(160, 42), (235, 52)])
 @pytest.mark.asyncio
 async def test_watchlists_sources_toolbar_does_not_starve_its_table(size):
@@ -3333,6 +3387,7 @@ async def test_watchlists_sources_toolbar_does_not_starve_its_table(size):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_tree_action_labels_fit_the_rail_intact():
     """TASK-895: the tree's five write verbs must be readable in the real
@@ -3385,6 +3440,7 @@ async def test_watchlists_tree_action_labels_fit_the_rail_intact():
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_tree_blocked_verbs_render_as_disabled_under_the_bundle():
     """TASK-895 / AC #5's rendering half: a disabled action must not paint
@@ -3440,6 +3496,7 @@ async def test_watchlists_tree_blocked_verbs_render_as_disabled_under_the_bundle
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(160, 42), (235, 52)])
 @pytest.mark.asyncio
 async def test_watchlists_sources_toolbar_controls_are_actually_visible(size):
@@ -3519,6 +3576,7 @@ async def test_watchlists_sources_toolbar_controls_are_actually_visible(size):
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(160, 42), (235, 52)])
 @pytest.mark.asyncio
 async def test_watchlists_other_filter_strip_controls_are_visible(size):
@@ -3618,6 +3676,7 @@ async def test_watchlists_other_filter_strip_controls_are_visible(size):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(160, 42), (235, 52)])
 @pytest.mark.asyncio
 async def test_watchlists_tab_strip_hit_regions_match_its_painted_labels(size):
@@ -3687,6 +3746,7 @@ async def test_watchlists_tab_strip_hit_regions_match_its_painted_labels(size):
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(160, 42), (235, 52)])
 @pytest.mark.asyncio
 async def test_watchlists_tree_chevron_shares_a_row_with_its_watchlist(size):
@@ -3815,6 +3875,7 @@ def _pane_painted_text(screen, widget) -> str:
     return "\n".join(lines)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_first_run_replaces_empty_cards_with_guidance():
     """TASK-998: on a profile with nothing in it, the biggest region on the
@@ -3883,6 +3944,7 @@ async def test_watchlists_first_run_replaces_empty_cards_with_guidance():
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_populated_overview_and_inspector_are_unchanged():
     """TASK-998 AC#4: the first-run treatment must not leak into a populated
@@ -3930,6 +3992,7 @@ async def test_watchlists_populated_overview_and_inspector_are_unchanged():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(160, 42), (235, 52)])
 @pytest.mark.asyncio
 async def test_watchlists_overview_cards_paint_their_labels_and_numbers(size):

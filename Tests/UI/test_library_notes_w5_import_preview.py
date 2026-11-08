@@ -412,6 +412,7 @@ async def test_the_chooser_points_at_folder_files_as_the_third_answer():
     assert "imports nothing" in frame, frame
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_chooser_renders_its_documented_back_control():
     """AC#4, taken on the REAL screen rather than the canvas in isolation:
@@ -442,6 +443,7 @@ async def test_the_chooser_renders_its_documented_back_control():
 # --- task-32616: the open note's row, and one honest Next -----------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_rename_repaints_the_open_notes_row_without_losing_the_title():
     """AC#1 and AC#2 together. A caps 06/07: the editor heading read the new
@@ -476,6 +478,7 @@ async def test_a_rename_repaints_the_open_notes_row_without_losing_the_title():
         assert title_input.value == "My first note"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_body_only_save_does_not_ask_the_items_pane_to_repaint():
     """AC#2's cost control, COUNTED rather than read out of the source.
@@ -555,6 +558,7 @@ def _next_instructions(screen) -> list[tuple[str, str]]:
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_only_one_pane_at_a_time_issues_a_next_instruction():
     """AC#3. A cap 04: the list's "Next: Create a note or add from files."

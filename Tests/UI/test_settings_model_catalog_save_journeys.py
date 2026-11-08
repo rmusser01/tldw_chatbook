@@ -86,6 +86,7 @@ def _status(screen):
     return str(screen.query_one(STATUS, Static).renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
@@ -165,6 +166,7 @@ async def test_catalog_says_nothing_until_a_choice_is_saved(monkeypatch, request
         assert _status(screen) == settings_module.MODEL_CATALOG_SAVED_COPY
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_catalog_exception_preserves_choices_and_redacts_message(monkeypatch):
     writer = ConfigWriter(failure="raise")
@@ -183,6 +185,7 @@ async def test_catalog_exception_preserves_choices_and_redacts_message(monkeypat
         assert writer.config["model_catalog"]["write_to_config"] == ["OpenAI"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("latest", ["12", "24"])
 async def test_catalog_serializes_rapid_edits_including_saved_value_roundtrip(
@@ -214,6 +217,7 @@ async def test_catalog_serializes_rapid_edits_including_saved_value_roundtrip(
         assert "saved" in _status(screen).lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("value", ["", "abc", "-1", "nan", "inf", "-inf"])
 async def test_catalog_invalid_intervals_do_not_write_and_explain_recovery(
@@ -237,6 +241,7 @@ async def test_catalog_invalid_intervals_do_not_write_and_explain_recovery(
         assert writer.config["model_catalog"]["stale_after_hours"] == 6
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("size", [(170, 48), (120, 35), (80, 24)])

@@ -73,6 +73,7 @@ def _viewer_app(tmp_media_db, media_id, *, rows=(("S1", "Speaker 1"),)):
     return _App()
 
 
+@pytest.mark.bootstrap_profile
 def test_viewer_state_carries_the_rename_legend_for_a_meeting(
     tmp_media_db, meeting_folder_media_item
 ):
@@ -90,6 +91,7 @@ def test_viewer_state_carries_the_rename_legend_for_a_meeting(
     assert state.speaker_legend_rows == (("S1", "Speaker 1"),)
 
 
+@pytest.mark.bootstrap_profile
 def test_viewer_state_has_no_legend_for_a_plain_document(tmp_media_db):
     media_id, _uuid, _msg = tmp_media_db.add_media_with_keywords(
         title="A plain document", media_type="article", content="not a meeting",
@@ -105,6 +107,7 @@ def test_viewer_state_has_no_legend_for_a_plain_document(tmp_media_db):
     assert state.speaker_legend_rows == ()
 
 
+@pytest.mark.bootstrap_profile
 def test_the_empty_viewer_state_never_parses_a_transcript(
     tmp_media_db, meeting_folder_media_item
 ):
@@ -228,6 +231,7 @@ async def test_reader_rename_rewrites_the_item_and_refreshes_the_shown_content(
     assert "Alice:" in tmp_media_db.get_media_by_id(media_id)["content"]
 
 
+@pytest.mark.bootstrap_profile
 def test_a_later_viewer_sync_keeps_the_new_name(
     tmp_media_db, meeting_folder_media_item
 ):
@@ -267,6 +271,7 @@ def test_a_later_viewer_sync_keeps_the_new_name(
     assert refreshed.speaker_legend_rows == (("S1", "Alice"),)
 
 
+@pytest.mark.bootstrap_profile
 def test_a_rename_for_another_item_leaves_the_loaded_detail_alone(
     tmp_media_db, meeting_folder_media_item
 ):

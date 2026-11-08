@@ -77,6 +77,7 @@ async def _wait_until(pilot, predicate, description):
     raise AssertionError(f"Timed out waiting for {description}")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_regenerate_streams_first_chunk_while_in_flight():
     app = _build_test_app()
@@ -106,6 +107,7 @@ async def test_console_regenerate_streams_first_chunk_while_in_flight():
         await _wait_for_text(console, pilot, "final-chunk")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_failed_regenerate_auto_restores_previous_answer():
     app = _build_test_app()
@@ -198,6 +200,7 @@ async def test_console_failed_regenerate_auto_restores_previous_answer():
         assert replacements[0].status == "failed"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_retry_streams_first_chunk_while_in_flight():
     app = _build_test_app()
@@ -239,6 +242,7 @@ async def test_console_retry_streams_first_chunk_while_in_flight():
         await _wait_for_text(console, pilot, "final-chunk")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_continue_streams_first_chunk_while_in_flight():
     app = _build_test_app()

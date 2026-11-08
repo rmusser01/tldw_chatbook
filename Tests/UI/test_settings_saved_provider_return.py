@@ -55,6 +55,7 @@ def _assert_projection(screen, provider, model, endpoint):
     ), detail
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
@@ -106,6 +107,7 @@ async def test_clean_settings_follows_changed_saved_provider(theme, size, return
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("return_kind", ["restored", "retained"])
 @pytest.mark.parametrize(
@@ -158,6 +160,7 @@ async def test_saved_default_change_does_not_retarget_a_draft(
         }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("return_kind", ["restored", "retained"])
 async def test_api_mode_only_draft_keeps_its_provider_on_return(return_kind):
@@ -198,6 +201,7 @@ async def test_api_mode_only_draft_keeps_its_provider_on_return(return_kind):
         }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("finish", ["save", "revert"])
 async def test_second_edit_after_default_change_uses_draft_originals(
@@ -251,6 +255,7 @@ async def test_second_edit_after_default_change_uses_draft_originals(
         assert not screen._category_has_unsaved_changes(CATEGORY)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider", ["QwenCloud", "ReviewCloud"])
 async def test_unchanged_saved_provider_preserves_retained_widgets_and_verdict(

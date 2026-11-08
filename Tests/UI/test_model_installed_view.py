@@ -459,6 +459,7 @@ async def test_reveal_reference_inventory_error_keeps_retryable_identity(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_models_host_lazily_wires_parakeet_activation_and_deletion(
     tmp_path: Path,

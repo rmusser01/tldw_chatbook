@@ -57,6 +57,7 @@ def visit_spy(monkeypatch):
     return counts
 
 
+@pytest.mark.bootstrap_profile
 async def test_console_first_visit_refreshes_skills_and_task_resume_once(visit_spy):
     """AC#3: the mount and its own ScreenResume collapse into ONE of each."""
     app = _build_test_app()
@@ -79,6 +80,7 @@ async def test_console_first_visit_refreshes_skills_and_task_resume_once(visit_s
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_console_later_resume_still_refreshes(visit_spy):
     """The dedupe is per-visit, not permanent: a real suspend/resume refreshes."""
     app = _build_test_app()

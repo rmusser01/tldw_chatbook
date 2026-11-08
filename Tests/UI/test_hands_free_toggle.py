@@ -13,6 +13,7 @@ from Tests.UI.hands_free_consent_support import accept_hands_free_consent
 from tldw_chatbook.Chat.console_hands_free import HandsFreeController
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_switch_renders_and_toggles_hands_free(
     monkeypatch: pytest.MonkeyPatch,

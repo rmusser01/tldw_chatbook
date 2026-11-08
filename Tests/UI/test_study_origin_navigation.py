@@ -40,6 +40,7 @@ def _study_header_text(screen) -> tuple[str, str]:
     return str(title.renderable), str(subtitle.renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_home_origin_study_breadcrumbs_home_and_escape_returns_home():
     """task-4011 AC#1/#2: reached via Home's Review flashcards entry, Study
@@ -63,6 +64,7 @@ async def test_home_origin_study_breadcrumbs_home_and_escape_returns_home():
         await _wait_for_screen(app, pilot, HomeScreen, "home")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_origin_study_round_trip_still_returns_to_library():
     """task-4011 AC#3: the task-2854 behaviour must not regress -- Study
@@ -87,6 +89,7 @@ async def test_library_origin_study_round_trip_still_returns_to_library():
         await _wait_for_screen(app, pilot, LibraryScreen, "library")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_home_origin_does_not_leak_into_later_library_entry():
     """task-4011: origin is a single-use handoff, not sticky state -- after a

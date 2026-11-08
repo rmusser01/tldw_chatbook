@@ -1133,6 +1133,7 @@ async def test_console_live_resize_converges_to_cold_start_layout() -> None:
     assert cold["compact"] is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_resize_dismisses_stale_tooltip() -> None:
     """A live resize dismisses a visible tooltip overlay.
@@ -1258,6 +1259,7 @@ async def test_model_summary_sync_invalidates_mounted_context_allocation(
         assert rail._allocation_reconcile_scheduled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_height_resize_requests_one_coalesced_context_reconcile(
     monkeypatch: pytest.MonkeyPatch,
@@ -1351,6 +1353,7 @@ async def test_height_resize_requests_one_coalesced_context_reconcile(
         assert rail._allocation_reconcile_scheduled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_production_bounded_rail_resize_reconciles_geometry_and_focus() -> None:
     """Resize, recompose, and shrink preserve honest local geometry and focus."""
@@ -1450,6 +1453,7 @@ async def test_production_bounded_rail_resize_reconciles_geometry_and_focus() ->
         assert pilot.app.focused is replacement
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_public_close_active_falls_back_and_rail_reopen_keeps_local_state() -> (
     None
@@ -1503,6 +1507,7 @@ async def test_public_close_active_falls_back_and_rail_reopen_keeps_local_state(
         assert model.viewport.scroll_y == retained_offset
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_all_named_context_mutation_seams_request_the_mounted_allocator(
     monkeypatch: pytest.MonkeyPatch,

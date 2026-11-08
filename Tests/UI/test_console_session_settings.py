@@ -2038,6 +2038,7 @@ class RejectingConversationSettingsHarness(ConsoleHarness):
         message.report_completion(False)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_configure_rejection_restores_change_focus_through_production_route(
     monkeypatch,
@@ -2679,6 +2680,7 @@ def test_console_store_can_reserve_an_exact_first_chat_session_id() -> None:
         store.create_session(session_id=session.id, settings=settings)
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_target_eligibility_query_is_read_only() -> None:
     app = _build_test_app()
     console = ChatScreen(app)
@@ -2717,6 +2719,7 @@ def test_first_chat_target_eligibility_query_is_read_only() -> None:
     assert _first_chat_session_snapshot(session) == changed_before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("user_provenance", ["custom-workspace", "renamed-back"])
 def test_first_chat_eligibility_rejects_empty_user_owned_session_without_mutation(
     user_provenance: str,
@@ -2751,6 +2754,7 @@ def test_first_chat_eligibility_rejects_empty_user_owned_session_without_mutatio
     assert _first_chat_session_snapshot(preserved) == before
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_eligibility_rejects_user_created_default_named_session() -> None:
     app = _build_test_app()
     console = ChatScreen(app)
@@ -2769,6 +2773,7 @@ def test_first_chat_eligibility_rejects_user_created_default_named_session() -> 
     assert _first_chat_session_snapshot(preserved) == before
 
 
+@pytest.mark.bootstrap_profile
 def test_session_owner_refuses_session_switch_and_config_generation_races(
     monkeypatch,
 ) -> None:
@@ -2831,6 +2836,7 @@ def test_session_owner_refuses_session_switch_and_config_generation_races(
     assert "Review setup" not in notices[0]
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_unrelated_config_write_before_consume_still_applies(
     monkeypatch,
 ) -> None:
@@ -2869,6 +2875,7 @@ def test_first_chat_unrelated_config_write_before_consume_still_applies(
     assert notices == []
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_acknowledgement_survives_a_write_landing_mid_acknowledge(
     monkeypatch,
 ) -> None:
@@ -2928,6 +2935,7 @@ def test_first_chat_acknowledgement_survives_a_write_landing_mid_acknowledge(
     assert notices == []
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_consumer_activates_once_and_acknowledges_exact_target(
     monkeypatch,
 ) -> None:
@@ -2976,6 +2984,7 @@ def test_first_chat_consumer_activates_once_and_acknowledges_exact_target(
     assert owner.consume_pending_console_first_chat_intent() is False
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_consumer_refuses_absent_nonreserved_target(monkeypatch) -> None:
     app = _build_test_app()
     console = ChatScreen(app)
@@ -2998,6 +3007,7 @@ def test_first_chat_consumer_refuses_absent_nonreserved_target(monkeypatch) -> N
     assert _pending_first_chat(app) == intent
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_reserved_target_concurrent_id_claim_is_not_overwritten(
     monkeypatch,
 ) -> None:
@@ -3035,6 +3045,7 @@ def test_first_chat_reserved_target_concurrent_id_claim_is_not_overwritten(
     assert _pending_first_chat(app) == intent
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_reserved_target_never_adopts_preexisting_pristine_id(
     monkeypatch,
 ) -> None:
@@ -3067,6 +3078,7 @@ def test_first_chat_reserved_target_never_adopts_preexisting_pristine_id(
     assert _pending_first_chat(app) == intent
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_reserved_create_preserves_concurrent_active_session_switch(
     monkeypatch,
 ) -> None:
@@ -3149,6 +3161,7 @@ def test_first_chat_reserved_create_preserves_concurrent_active_session_switch(
     acknowledgement.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_generation_change_during_reserved_create_rolls_back(
     monkeypatch,
 ) -> None:
@@ -3217,6 +3230,7 @@ def test_first_chat_generation_change_during_reserved_create_rolls_back(
     assert len(notifications) == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_generation_change_during_refresh_restores_exact_target(
     monkeypatch,
 ) -> None:
@@ -3266,6 +3280,7 @@ def test_first_chat_generation_change_during_refresh_restores_exact_target(
     assert _pending_first_chat(app) == intent
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_generation_publish_at_ack_rolls_back_reserved_creation(
     monkeypatch,
 ) -> None:
@@ -3314,6 +3329,7 @@ def test_first_chat_generation_publish_at_ack_rolls_back_reserved_creation(
     assert _pending_first_chat(app) == intent
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_generation_publish_at_ack_restores_existing_refresh(
     monkeypatch,
 ) -> None:
@@ -3359,6 +3375,7 @@ def test_first_chat_generation_publish_at_ack_restores_existing_refresh(
     assert _pending_first_chat(app) == intent
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_replacement_and_session_switch_during_create_roll_back_old_target(
     monkeypatch,
 ) -> None:
@@ -3417,6 +3434,7 @@ def test_first_chat_replacement_and_session_switch_during_create_roll_back_old_t
     assert _first_chat_owner(console)._first_chat_handoff_notified_revision is None
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_guarded_ack_replacement_rolls_back_original_claim(
     monkeypatch,
 ) -> None:
@@ -3478,6 +3496,7 @@ def test_first_chat_guarded_ack_replacement_rolls_back_original_claim(
     assert _pending_first_chat(app) == replacement
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_current_claim_fence_blocks_replacement_target_projection(
     monkeypatch,
 ) -> None:
@@ -3555,6 +3574,7 @@ def test_first_chat_current_claim_fence_blocks_replacement_target_projection(
     assert notifications == []
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_failed_acknowledgement_rolls_back_and_requeues(
     monkeypatch,
 ) -> None:
@@ -3628,6 +3648,7 @@ def test_first_chat_failed_acknowledgement_rolls_back_and_requeues(
     assert _pending_first_chat(app) == intent
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_ack_exception_rolls_back_create_and_survives_release_error(
     monkeypatch,
 ) -> None:
@@ -3722,6 +3743,7 @@ def test_first_chat_exception_log_is_metadata_only() -> None:
     assert "SECRET-FIRST-CHAT-EXCEPTION" not in rendered
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_ack_exception_restores_refresh_and_retries(monkeypatch) -> None:
     app = _build_test_app()
     console = ChatScreen(app)
@@ -3775,6 +3797,7 @@ def test_first_chat_ack_exception_restores_refresh_and_retries(monkeypatch) -> N
     assert _pending_first_chat(app) is None
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_config_guard_exception_rolls_back_and_retries(monkeypatch) -> None:
     app = _build_test_app()
     console = ChatScreen(app)
@@ -3830,6 +3853,7 @@ def test_first_chat_config_guard_exception_rolls_back_and_retries(monkeypatch) -
     assert _pending_first_chat(app) is None
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_ack_exception_after_replacement_preserves_replacement(
     monkeypatch,
 ) -> None:
@@ -3894,6 +3918,7 @@ def test_first_chat_ack_exception_after_replacement_preserves_replacement(
     assert _pending_first_chat(app) is None
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_failed_notification_tracking_is_bounded_to_latest_revision(
     monkeypatch,
 ) -> None:
@@ -3939,6 +3964,7 @@ def test_first_chat_failed_notification_tracking_is_bounded_to_latest_revision(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_first_chat_preserves_restored_and_concurrent_sessions(
     monkeypatch,
@@ -4026,6 +4052,7 @@ async def test_mounted_first_chat_preserves_restored_and_concurrent_sessions(
         ] == sessions_after_success
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_first_chat_replacement_ack_exception_restores_prior_ui(
     monkeypatch,
@@ -4127,6 +4154,7 @@ async def test_mounted_first_chat_replacement_ack_exception_restores_prior_ui(
         assert _pending_first_chat(app) is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_first_chat_generation_publish_at_ack_restores_reserved_ui(
     monkeypatch,
@@ -4203,6 +4231,7 @@ async def test_mounted_first_chat_generation_publish_at_ack_restores_reserved_ui
         assert _pending_first_chat(app) == intent
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_first_chat_generation_publish_at_ack_restores_refresh_ui(
     monkeypatch,
@@ -4274,6 +4303,7 @@ async def test_mounted_first_chat_generation_publish_at_ack_restores_refresh_ui(
         assert _pending_first_chat(app) == intent
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_first_chat_ack_exception_during_mount_is_retryable(
     monkeypatch,
@@ -4326,6 +4356,7 @@ async def test_mounted_first_chat_ack_exception_during_mount_is_retryable(
         assert _pending_first_chat(app) is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_first_chat_ack_exception_during_resume_restores_ui(
     monkeypatch,
@@ -6078,6 +6109,7 @@ async def test_console_model_resolution_includes_runtime_discovered_models() -> 
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_model_resolution_failure_logs_provider_context(
     monkeypatch,
@@ -6108,6 +6140,7 @@ async def test_console_model_resolution_failure_logs_provider_context(
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_settings_model_resolution_preserves_configured_alternatives() -> (
     None
@@ -6136,6 +6169,7 @@ async def test_console_settings_model_resolution_preserves_configured_alternativ
     assert models["local_llamacpp"] == ["uat-local-model", "uat-alt-local-model"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_settings_model_resolution_keeps_empty_cloud_snapshot_authoritative() -> (
     None
@@ -9076,6 +9110,7 @@ async def test_console_settings_modal_provider_change_does_not_carry_base_url_to
     assert app.saved_settings.base_url is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_inspector_hosts_staged_context_above_source_readiness() -> None:
     """The pinned preamble precedes staged and readiness content.
@@ -9154,6 +9189,7 @@ async def test_console_inspector_hosts_staged_context_above_source_readiness() -
         assert staged_context.region.y < readiness.region.y
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_left_rail_body_scrolls_below_fixed_header_without_settings_summary() -> (
     None
@@ -9192,6 +9228,7 @@ async def test_console_left_rail_body_scrolls_below_fixed_header_without_setting
         assert viewport_width - workspace_context.region.width <= 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_settings_modal_save_updates_active_summary_only(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
@@ -9251,6 +9288,7 @@ async def test_console_settings_modal_save_updates_active_summary_only(monkeypat
         assert "Model: model-a" in summary_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_settings_modal_result_stays_bound_to_opening_session(
     monkeypatch,
@@ -9319,6 +9357,7 @@ async def test_console_settings_modal_result_stays_bound_to_opening_session(
         assert second.user_display_name_override == "Captain Rowan"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_settings_save_preserves_omitted_prompt_prefill_and_source() -> (
     None
@@ -9388,6 +9427,7 @@ async def test_console_settings_save_preserves_omitted_prompt_prefill_and_source
         assert roleplay_writes == []
 
 
+@pytest.mark.bootstrap_profile
 def test_console_settings_result_applies_name_override_without_losing_prompt_source(
     monkeypatch,
 ) -> None:
@@ -9445,6 +9485,7 @@ def test_console_settings_result_applies_name_override_without_losing_prompt_sou
     ) in notifications
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_global_name_refresh_coalesces_and_respects_session_override(
     monkeypatch,
@@ -9531,6 +9572,7 @@ async def test_console_global_name_refresh_coalesces_and_respects_session_overri
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_console_identity_refresh_request_dispatches_without_transcript_tick(
     monkeypatch,
 ) -> None:
@@ -9564,6 +9606,7 @@ def test_console_identity_refresh_request_dispatches_without_transcript_tick(
     assert store.get_message(greeting.id).content == "Hello Default Two."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_inactive_console_tab_activation_dispatches_identity_refresh(
     monkeypatch,
@@ -9631,6 +9674,7 @@ async def test_real_inactive_console_tab_activation_dispatches_identity_refresh(
         assert store.get_message(greeting.id).content == "Hello Default Two."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_roleplay_refresh_serializes_blocked_b_then_c_without_stale_win(
     monkeypatch,
@@ -9763,6 +9807,7 @@ async def test_console_roleplay_refresh_serializes_blocked_b_then_c_without_stal
     assert all(thread_id != owner_thread for thread_id in persistence.writer_threads)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_roleplay_refresh_skips_plan_stale_before_writer() -> None:
     class RecordingPersistence:
@@ -9824,6 +9869,7 @@ async def test_console_roleplay_refresh_skips_plan_stale_before_writer() -> None
     assert persistence.message_writes == ["Hello Cecelia."]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_roleplay_writer_cleanup_waits_for_owner_acceptance() -> None:
     class Persistence:
@@ -9882,6 +9928,7 @@ async def test_roleplay_writer_cleanup_waits_for_owner_acceptance() -> None:
     assert session.id not in store._fork_source_transitions
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure_point", ("constructor", "start"))
 async def test_roleplay_writer_startup_failure_releases_fork_transition(
@@ -9949,6 +9996,7 @@ async def test_roleplay_writer_startup_failure_releases_fork_transition(
     assert store.fork_eligibility(greeting.id).eligible is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cancelled_unmounted_drain_finishes_latest_plan(
     monkeypatch,
@@ -10020,6 +10068,7 @@ async def test_cancelled_unmounted_drain_finishes_latest_plan(
     assert persistence.durable_greeting == "Hello Cecelia."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_console_cancel_latest_waiter_keeps_durable_c() -> None:
     class BlockingPersistence:
@@ -10090,6 +10139,7 @@ async def test_mounted_console_cancel_latest_waiter_keeps_durable_c() -> None:
         assert persistence.durable_greeting == "Hello Cecelia."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_resume(
     monkeypatch: pytest.MonkeyPatch,
@@ -10246,6 +10296,7 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
         assert loop_errors == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_roleplay_repair_marker_retries_partial_then_consumes(monkeypatch):
     class PartialPersistence:
@@ -10324,6 +10375,7 @@ async def test_roleplay_repair_marker_retries_partial_then_consumes(monkeypatch)
     assert len([note for note in notifications if note[1] == "warning"]) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_global_name_refresh_failure_notifies_once(monkeypatch) -> None:
     class RefusingPersistence:
@@ -10435,6 +10487,7 @@ async def test_console_global_name_refresh_failure_notifies_once(monkeypatch) ->
     assert store.active_session_id == session.id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_system_prompt_editor_clears_character_template_source() -> None:
     """The dedicated prompt editor owns explicit prompt replacement."""
@@ -10484,6 +10537,7 @@ async def test_system_prompt_editor_clears_character_template_source() -> None:
         assert session.character_system_template is None
 
 
+@pytest.mark.bootstrap_profile
 def test_system_prompt_command_clears_character_template_through_store(
     monkeypatch,
 ) -> None:
@@ -10514,6 +10568,7 @@ def test_system_prompt_command_clears_character_template_through_store(
     assert session.character_system_template is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_settings_are_isolated_between_native_tabs(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
@@ -10562,6 +10617,7 @@ async def test_console_settings_are_isolated_between_native_tabs(monkeypatch) ->
         assert console._build_console_provider_selection().provider == "openai"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_tab_click_switches_without_programmatic_fallback() -> (
     None
@@ -10601,6 +10657,7 @@ async def test_console_native_tab_click_switches_without_programmatic_fallback()
         assert store.active_session_id != second_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workspace_conversation_row_switches_native_tab() -> None:
     app = _build_test_app()
@@ -10637,6 +10694,7 @@ async def test_console_workspace_conversation_row_switches_native_tab() -> None:
         assert store.active_session_id != second_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_provider_selection_includes_generation_controls() -> None:
     app = _build_test_app()
@@ -10683,6 +10741,7 @@ async def test_console_provider_selection_includes_generation_controls() -> None
     assert selection.thinking_budget_tokens == 2048
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_settings_modal_cancel_keeps_original_summary() -> None:
     app = _build_test_app()
@@ -10776,6 +10835,7 @@ async def test_console_settings_modal_save_disabled_during_active_run() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_settings_save_clears_stale_terminal_run_status() -> None:
     app = _build_test_app()
@@ -10834,6 +10894,7 @@ async def test_console_settings_save_clears_stale_terminal_run_status() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_send_blocker_uses_saved_unsupported_session_provider() -> None:
     app = _build_test_app()
@@ -10877,6 +10938,7 @@ async def test_console_send_blocker_uses_saved_unsupported_session_provider() ->
 # test_card_choose_model_opens_switch_model_and_sets_the_new_chat_default.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_llamacpp_saved_missing_model_blocks_before_send() -> None:
     app = _build_test_app()
@@ -10926,6 +10988,7 @@ async def test_console_llamacpp_saved_missing_model_blocks_before_send() -> None
         assert composer.draft_text() == "hello"
 
 
+@pytest.mark.bootstrap_profile
 def test_console_default_settings_keep_configured_model_without_legacy_model() -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
@@ -10945,6 +11008,7 @@ def test_console_default_settings_keep_configured_model_without_legacy_model() -
     assert settings.model == "configured-model"
 
 
+@pytest.mark.bootstrap_profile
 def test_console_settings_summary_uses_effective_config_endpoint_for_llamacpp_defaults() -> (
     None
 ):
@@ -11029,6 +11093,7 @@ def test_console_provider_chip_names_a_custom_endpoint_by_its_registry_entry(req
     assert screen._active_console_provider_model_display()[0] == "custom-ep:gpu-box"
 
 
+@pytest.mark.bootstrap_profile
 def test_console_control_state_reads_persona_label_without_storing_it_on_session(
     monkeypatch,
 ) -> None:
@@ -11058,6 +11123,7 @@ def test_console_control_state_reads_persona_label_without_storing_it_on_session
     assert session.assistant_name is None
 
 
+@pytest.mark.bootstrap_profile
 def test_console_saved_openai_with_key_shows_ready_readiness() -> None:
     app = _build_test_app()
     app.app_config["api_settings"] = {
@@ -11083,6 +11149,7 @@ def test_console_saved_openai_with_key_shows_ready_readiness() -> None:
     assert screen._console_send_blocked_reason() == ""
 
 
+@pytest.mark.bootstrap_profile
 def test_console_missing_key_recovery_action_is_provider_specific() -> None:
     app = _build_test_app()
     app.app_config["api_settings"] = {
@@ -11111,6 +11178,7 @@ def test_console_missing_key_recovery_action_is_provider_specific() -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_console_unsaved_generic_endpoint_blocks_with_safe_in_modal_recovery() -> (
     None
 ):
@@ -11153,6 +11221,7 @@ def test_console_unsaved_generic_endpoint_blocks_with_safe_in_modal_recovery() -
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_console_no_provider_recovery_action_and_card_step_are_provider_actions() -> (
     None
 ):
@@ -11189,6 +11258,7 @@ def test_console_no_provider_recovery_action_and_card_step_are_provider_actions(
     assert step_two.state == "pending"
 
 
+@pytest.mark.bootstrap_profile
 def test_console_missing_key_no_model_recovery_action_is_provider_action() -> None:
     """FR-05: with provider blocked AND model missing, the provider blocker wins."""
     app = _build_test_app()
@@ -11221,6 +11291,7 @@ def test_console_missing_key_no_model_recovery_action_is_provider_action() -> No
     assert step_two.state == "pending"
 
 
+@pytest.mark.bootstrap_profile
 def test_console_provider_ready_missing_model_keeps_choose_model_action() -> None:
     """FR-05 regression: provider ready + model missing -> Choose model, step 1 done."""
     app = _build_test_app()
@@ -11261,6 +11332,7 @@ def test_console_provider_ready_missing_model_keeps_choose_model_action() -> Non
     assert step_two.label == "Pick a model"
 
 
+@pytest.mark.bootstrap_profile
 def test_console_unsaved_endpoint_no_model_recovery_action_is_configure_endpoint() -> (
     None
 ):
@@ -11298,6 +11370,7 @@ def test_console_unsaved_endpoint_no_model_recovery_action_is_configure_endpoint
     assert step_two.state == "pending"
 
 
+@pytest.mark.bootstrap_profile
 def test_console_invalid_endpoint_no_model_recovery_action_is_configure_endpoint() -> (
     None
 ):
@@ -11334,6 +11407,7 @@ def test_console_invalid_endpoint_no_model_recovery_action_is_configure_endpoint
     assert step_two.state == "pending"
 
 
+@pytest.mark.bootstrap_profile
 def test_console_saved_llamacpp_missing_model_summary_is_not_ready_without_fallback() -> (
     None
 ):
@@ -11363,6 +11437,7 @@ def test_console_saved_llamacpp_missing_model_summary_is_not_ready_without_fallb
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_console_saved_llamacpp_missing_model_summary_ready_with_configured_fallback() -> (
     None
 ):
@@ -11390,6 +11465,7 @@ def test_console_saved_llamacpp_missing_model_summary_ready_with_configured_fall
     assert "Select a model before sending" not in summary_state.model_row
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_new_native_tab_receives_default_settings_snapshot() -> None:
     app = _build_test_app()
@@ -11428,6 +11504,7 @@ async def test_console_new_native_tab_receives_default_settings_snapshot() -> No
         assert settings.model == "configured-model"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_new_native_tab_uses_saved_global_default() -> None:
     app = _build_test_app()
@@ -11480,6 +11557,7 @@ async def test_console_new_native_tab_uses_saved_global_default() -> None:
         assert new_settings.model == "gpt-4.1"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_model_switch_inherits_selected_model_default_profile() -> None:
     app = _build_test_app()
@@ -11526,6 +11604,7 @@ async def test_console_model_switch_inherits_selected_model_default_profile() ->
         assert updated_settings.streaming is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_model_switch_preserves_explicit_session_overrides() -> None:
     app = _build_test_app()
@@ -11577,6 +11656,7 @@ def _disk_loaded_snapshot(**overrides) -> dict:
     return snapshot
 
 
+@pytest.mark.bootstrap_profile
 def test_provider_readiness_config_refreshes_disk_loaded_snapshot(monkeypatch) -> None:
     app = _build_test_app()
     app.app_config = _disk_loaded_snapshot()
@@ -11587,6 +11667,7 @@ def test_provider_readiness_config_refreshes_disk_loaded_snapshot(monkeypatch) -
     assert console._provider_readiness_app_config() is fresh
 
 
+@pytest.mark.bootstrap_profile
 def test_provider_readiness_config_honors_injected_test_snapshot(monkeypatch) -> None:
     """Fakes without the disk-loaded marker sections stay authoritative."""
     app = _build_test_app()
@@ -11603,6 +11684,7 @@ def test_provider_readiness_config_honors_injected_test_snapshot(monkeypatch) ->
     assert console._provider_readiness_app_config() is app.app_config
 
 
+@pytest.mark.bootstrap_profile
 def test_provider_readiness_config_falls_back_when_load_settings_fails(
     monkeypatch,
 ) -> None:
@@ -12572,6 +12654,7 @@ async def test_real_journey_settings_save_unblocks_console_without_restart(
         assert worked_settings.model == "Qwen3-Coder-Test.gguf"
 
 
+@pytest.mark.bootstrap_profile
 def test_console_stale_default_refresh_respects_user_marked_settings() -> None:
     """Blocked derived defaults refresh; explicit user selections never do."""
     app = _build_test_app()
@@ -12602,6 +12685,7 @@ def test_console_stale_default_refresh_respects_user_marked_settings() -> None:
     assert refreshed.source == "derived"
 
 
+@pytest.mark.bootstrap_profile
 def test_console_stale_default_refresh_respects_applied_system_prompt() -> None:
     """A stale-default refresh must not overwrite an applied `/system` prompt.
 

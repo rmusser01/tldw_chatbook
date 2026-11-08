@@ -57,6 +57,7 @@ async def _mounted_parts(host, pilot):
     return console, composer, popup
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_dismissal_survives_typing():
     """Typing after an Escape dismissal must not re-open the popup.
@@ -82,6 +83,7 @@ async def test_escape_dismissal_survives_typing():
         assert composer.draft_text() == "/p"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dismissal_rearms_after_leaving_completion_context():
     """Leaving slash context (a space, a clear) re-arms the trigger.
@@ -112,6 +114,7 @@ async def test_dismissal_rearms_after_leaving_completion_context():
         assert popup.is_open, "a fresh completion context did not re-arm the trigger"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bare_slash_enter_does_not_stage_the_first_command():
     """Enter on an unfiltered (empty-prefix) list falls through to send.
@@ -137,6 +140,7 @@ async def test_bare_slash_enter_does_not_stage_the_first_command():
         assert not popup.is_open
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_filtered_prefix_enter_still_accepts():
     """The guard must not over-reach: a non-empty prefix keeps Enter-accept."""
@@ -153,6 +157,7 @@ async def test_filtered_prefix_enter_still_accepts():
         assert composer.draft_text() == "/system "
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tab_accept_is_undoable():
     """Accepting a suggestion must leave the pre-accept draft on Ctrl+Z."""
@@ -176,6 +181,7 @@ async def test_tab_accept_is_undoable():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_enter_accept_is_undoable():
     """The Enter-accept path shares the undo-safe replacement."""
@@ -194,6 +200,7 @@ async def test_enter_accept_is_undoable():
         assert composer.draft_text() == "/pr"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_hands_free_escape_closes_an_open_popup_before_exiting_the_loop(
     monkeypatch,

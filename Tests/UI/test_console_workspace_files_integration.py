@@ -270,6 +270,7 @@ async def _ensure_rail_section_open(console, pilot, section_id: str) -> None:
     raise AssertionError(f"Console rail section {section_id!r} did not open")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", ((80, 24), (100, 30), (120, 40), (160, 50)))
 async def test_shipped_css_four_size_routes_keep_read_only_console_fingerprint(
@@ -406,6 +407,7 @@ async def test_shipped_css_four_size_routes_keep_read_only_console_fingerprint(
         assert _workspace_roots_fingerprint(active_root, other_root) == initial_workspace_trees
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_default_files_request_is_typed_and_preserves_console_state() -> None:
     """The Default action remains focusable and never infers identity from copy."""
@@ -423,6 +425,7 @@ async def test_default_files_request_is_typed_and_preserves_console_state() -> N
         assert app.workspace_registry_service.get_active_workspace().workspace_id == before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_files_action_refuses_below_minimum_without_context_mutation() -> None:
     app = _build_test_app()
@@ -442,6 +445,7 @@ async def test_files_action_refuses_below_minimum_without_context_mutation() -> 
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_two_named_workspace_files_routes_preserve_complete_console_fingerprint(
     tmp_path: Path,
@@ -491,6 +495,7 @@ async def test_two_named_workspace_files_routes_preserve_complete_console_finger
         assert _console_fingerprint(console, app) == before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("route", ["active", "tree"])
 async def test_typed_stale_files_routes_open_pinned_empty_recovery_without_activation(
@@ -541,6 +546,7 @@ async def test_typed_stale_files_routes_open_pinned_empty_recovery_without_activ
         assert _console_fingerprint(console, app) == before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_chat_screen_sync_publishes_private_monotonic_attention_without_resolution(
     tmp_path: Path,

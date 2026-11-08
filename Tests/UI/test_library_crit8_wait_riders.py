@@ -121,6 +121,7 @@ def test_cancelled_skill_import_refreshes_the_list_it_names() -> None:
     assert coordinator._cancelled_outcome().refresh_sources is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_settled_wait_never_repaints_on_the_mounted_screen() -> None:
     """The same rule, through the real screen and a real Textual timer.
@@ -163,6 +164,7 @@ async def test_a_settled_wait_never_repaints_on_the_mounted_screen() -> None:
         assert repaints == [], "a settled wait still repainted its surface"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_cancelled_import_receipt_actually_refreshes_the_sources() -> None:
     """The other half of the cancelled-import fix, across the boundary.

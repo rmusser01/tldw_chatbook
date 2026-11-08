@@ -11,6 +11,7 @@ from Tests.UI.test_settings_configuration_hub import _open_settings_category
 import tldw_chatbook.UI.Screens.settings_screen as settings_module
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("setting", ["show_thinking"])
 async def test_thinking_default_on_saves_off_and_reopens_off(monkeypatch, setting):
@@ -43,6 +44,7 @@ async def test_thinking_default_on_saves_off_and_reopens_off(monkeypatch, settin
         assert toggle.value is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider", ["llama_cpp", "local_vllm", "local_ollama"])
 async def test_reasoning_history_defaults_auto_and_remembers_current_model_override(

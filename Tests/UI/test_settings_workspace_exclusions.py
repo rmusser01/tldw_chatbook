@@ -13,6 +13,7 @@ from Tests.UI.test_settings_configuration_hub import (
 )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_exclusion_add_remove_and_inline_errors(tmp_path) -> None:
     """Per-binding exclusion rows: add via input+button, remove via button,
@@ -74,6 +75,7 @@ async def test_exclusion_add_remove_and_inline_errors(tmp_path) -> None:
         assert "Excluded (0)" in _visible_text(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_malformed_exclusion_metadata_still_renders(tmp_path) -> None:
     """Finding E (PR #2767): the pane never crashes on malformed metadata.

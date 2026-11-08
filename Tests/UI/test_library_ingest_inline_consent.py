@@ -1288,6 +1288,7 @@ def _pilot_app():
     return app
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_enter_enter_two_press_flow_renders_confirm_then_submits(
     monkeypatch, tmp_path
@@ -1349,6 +1350,7 @@ async def test_enter_enter_two_press_flow_renders_confirm_then_submits(
         assert not quiet_after.has_class("-ingest-start-confirm")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_declines_the_pending_confirm_and_stays(monkeypatch, tmp_path):
     """AC#4 rendered: Esc while armed clears the confirm copy and stays on
@@ -1383,6 +1385,7 @@ async def test_escape_declines_the_pending_confirm_and_stays(monkeypatch, tmp_pa
         assert submitted == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_editing_the_path_resets_the_pending_confirm(monkeypatch, tmp_path):
     """AC#4: editing the form (a genuine path change) invalidates the
@@ -1413,6 +1416,7 @@ async def test_editing_the_path_resets_the_pending_confirm(monkeypatch, tmp_path
 # --- xhigh review + live-verify round: consent state-machine defects --------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_enter_armed_consent_survives_the_start_click_and_submits(
     monkeypatch, tmp_path
@@ -1468,6 +1472,7 @@ async def test_enter_armed_consent_survives_the_start_click_and_submits(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_path_blur_alone_keeps_the_pending_confirm(monkeypatch, tmp_path):
     """Unit-level statement of the same rule: leaving the path field is
@@ -1497,6 +1502,7 @@ async def test_path_blur_alone_keeps_the_pending_confirm(monkeypatch, tmp_path):
         assert "Press Start again" in str(quiet.renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_browse_picking_a_new_file_disarms_the_pending_confirm(
     monkeypatch, tmp_path

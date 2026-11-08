@@ -401,6 +401,7 @@ async def _enter_media(host, pilot):
     return screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_migrated_press_still_reaches_the_controller_end_to_end() -> None:
     """The live half: a real press, dispatched at the canvas, still works.
@@ -432,6 +433,7 @@ async def test_a_migrated_press_still_reaches_the_controller_end_to_end() -> Non
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_migrated_input_row_still_reaches_the_controller() -> None:
     """The filter Input rows migrated too; `Input.Changed` still lands.
@@ -458,6 +460,7 @@ async def test_a_migrated_input_row_still_reaches_the_controller() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_hidden_resident_canvas_refuses_its_own_migrated_presses() -> None:
     """The hazard the migration creates, and the reason for the guard seam.

@@ -17,6 +17,7 @@ from Tests.UI.test_settings_category_sweep import (
 pytestmark = pytest.mark.ui
 
 
+@pytest.mark.bootstrap_profile
 async def test_network_category_rejects_missing_ca_and_saves_valid_one(
     tmp_path, monkeypatch
 ):
@@ -64,6 +65,7 @@ async def test_network_category_rejects_missing_ca_and_saves_valid_one(
         assert "Read-only" not in guided_text
 
 
+@pytest.mark.bootstrap_profile
 async def test_network_category_hop_reseeds_select_from_pending_mode():
     """Final-review fix: a category hop must not desync the Select from pending.
 

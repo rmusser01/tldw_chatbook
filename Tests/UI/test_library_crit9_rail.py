@@ -61,6 +61,7 @@ def _painted(host, region) -> str:
 _RAIL_FRAME_GLYPH = "│"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(235, 52), (100, 30), (60, 24)])
 async def test_the_rail_search_row_never_pushes_the_canvas_frame(size) -> None:
@@ -106,6 +107,7 @@ async def test_the_rail_search_row_never_pushes_the_canvas_frame(size) -> None:
 # --- task-32220: the rail heading is never cut mid-word --------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_rail_heading_is_never_cut_mid_word() -> None:
     """AC#1: at the compact rail width the heading ellipsises, never clips."""
@@ -121,6 +123,7 @@ async def test_the_rail_heading_is_never_cut_mid_word() -> None:
 # --- task-32226: unsubmitted rail text stays on its own canvas -------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unsubmitted_rail_text_never_seeds_the_rag_query_box() -> None:
     """AC#1: text typed into the rail box on a browse canvas is never
@@ -146,6 +149,7 @@ async def test_unsubmitted_rail_text_never_seeds_the_rag_query_box() -> None:
 # --- task-32230 AC#1: one DB source per Details line -----------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_details_db_sizes_render_one_source_per_line() -> None:
     """AC#1: at the compact rail WIDTH each DB size occupies exactly one
@@ -306,6 +310,7 @@ def test_the_handoff_row_generalises_across_a_mixed_blocked_set() -> None:
 # --- task-32219 AC#2: the rail says when Details runs past the fold --------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("size", "expected"), [((235, 52), True), ((235, 90), False)]

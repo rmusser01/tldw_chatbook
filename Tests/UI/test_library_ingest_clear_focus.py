@@ -121,6 +121,7 @@ async def _stage_warning_preflight(screen, pilot) -> None:
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clear_then_slash_lands_in_the_path_field_looped(monkeypatch):
     """AC#1: after Clear, focus deterministically lands on the path field
@@ -166,6 +167,7 @@ async def test_clear_then_slash_lands_in_the_path_field_looped(monkeypatch):
             await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_leading_slash_after_clear_edits_path_never_focus_search(
     monkeypatch,
@@ -203,6 +205,7 @@ async def test_leading_slash_after_clear_edits_path_never_focus_search(
 CLEAR_TYPE_RACE_ITERATIONS = 6
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_typing_into_the_pre_recompose_field_after_clear_survives(
     monkeypatch,
@@ -265,6 +268,7 @@ async def test_typing_into_the_pre_recompose_field_after_clear_survives(
             await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clear_keeps_generic_options_reachable_for_next_generic_path(
     monkeypatch,

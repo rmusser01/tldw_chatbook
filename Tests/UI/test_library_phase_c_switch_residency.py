@@ -259,6 +259,7 @@ def _assert_switch_did_something(label: str, tallies: dict, failures: list) -> N
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_rail_mode_switch_does_not_rebuild_the_screen(
     monkeypatch: pytest.MonkeyPatch,
@@ -339,6 +340,7 @@ async def test_library_rail_mode_switch_does_not_rebuild_the_screen(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_failed_resident_repaint_recovers_with_a_whole_screen_recompose(
     monkeypatch: pytest.MonkeyPatch,

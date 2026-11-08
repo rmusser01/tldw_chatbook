@@ -1192,6 +1192,7 @@ def _custom_policy_recovery_state(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("route", "title_id", "purpose_text"),
     [
@@ -1228,6 +1229,7 @@ async def test_primary_destination_wrappers_mount(route, title_id, purpose_text)
         assert screen.query_one(".ds-panel")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_collections_uses_compact_title_and_clear_sections():
     app = _build_test_app()
@@ -1276,6 +1278,7 @@ def test_watchlists_help_and_footer_bindings_only_advertise_live_pane_actions():
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_watchlists_context_help_names_permanent_reader_and_side_pane_actions():
     app = _build_test_app()
     app.notify = Mock()
@@ -1293,6 +1296,7 @@ def test_watchlists_context_help_names_permanent_reader_and_side_pane_actions():
     assert "collapsed header" not in copy.lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_collections_lists_local_snapshot_from_services():
     app = _build_test_app()
@@ -1343,6 +1347,7 @@ async def test_watchlists_collections_lists_local_snapshot_from_services():
     assert app.media_reading_scope_service.calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_collections_empty_state_disables_console_attach():
     app = _build_test_app()
@@ -1363,6 +1368,7 @@ async def test_watchlists_collections_empty_state_disables_console_attach():
         assert "Stage local Watchlists context" in str(button.tooltip)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_collections_service_failure_uses_recovery_copy():
     app = _build_test_app()
@@ -1383,6 +1389,7 @@ async def test_watchlists_collections_service_failure_uses_recovery_copy():
         assert "Watchlists services are unavailable" in str(button.tooltip)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_collections_loading_times_out_to_recovery_copy():
     app = _build_test_app()
@@ -1401,6 +1408,7 @@ async def test_watchlists_collections_loading_times_out_to_recovery_copy():
         assert button.disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_collections_initial_load_uses_distinct_loading_copy(
     monkeypatch,
@@ -1419,6 +1427,7 @@ async def test_watchlists_collections_initial_load_uses_distinct_loading_copy(
         assert "Watchlists services unavailable; retry Watchlists later." not in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_collections_policy_denial_uses_runtime_recovery_taxonomy():
     app = _build_test_app()
@@ -1444,6 +1453,7 @@ async def test_watchlists_collections_policy_denial_uses_runtime_recovery_taxono
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_collections_policy_denial_uses_recovery_state_selector(
     monkeypatch,
@@ -1467,6 +1477,7 @@ async def test_watchlists_collections_policy_denial_uses_recovery_state_selector
         assert button.tooltip == "Custom policy tooltip."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_collections_attach_to_console_uses_listed_context():
     app = _build_test_app()
@@ -1503,6 +1514,7 @@ async def test_watchlists_collections_attach_to_console_uses_listed_context():
     assert "collection_count" not in payload.metadata
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_collections_preserves_safe_comparison_titles_and_rejects_dangerous_text():
     app = _build_test_app()
@@ -1545,6 +1557,7 @@ async def test_watchlists_collections_preserves_safe_comparison_titles_and_rejec
 # The adoption-tracking evidence test was retired alongside dev's QA evidence archive.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_exposes_source_sections_and_ingest_media_canvas():
     app = _build_test_app()
@@ -1578,6 +1591,7 @@ async def test_library_exposes_source_sections_and_ingest_media_canvas():
         assert screen.query_one("#library-ingest-canvas")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_destination_lists_local_source_snapshot_from_services():
     app = _build_test_app()
@@ -1643,6 +1657,7 @@ async def test_library_destination_lists_local_source_snapshot_from_services():
     }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_destination_empty_state_disables_console_handoff():
     app = _build_test_app()
@@ -1674,6 +1689,7 @@ async def test_library_destination_empty_state_disables_console_handoff():
         assert "Stage Library source context" in str(button.tooltip)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_destination_labels_plain_list_notes_as_sample_snapshot():
     app = _build_test_app()
@@ -1734,6 +1750,7 @@ async def test_library_destination_labels_plain_list_notes_as_sample_snapshot():
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_destination_service_failure_uses_recovery_copy():
     app = _build_test_app()
@@ -1756,6 +1773,7 @@ async def test_library_destination_service_failure_uses_recovery_copy():
         assert "Library source services are unavailable" in str(button.tooltip)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_policy_denial_uses_runtime_recovery_taxonomy():
     app = _build_test_app()
@@ -1791,6 +1809,7 @@ async def test_library_policy_denial_uses_runtime_recovery_taxonomy():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_policy_denial_uses_recovery_state_selector(monkeypatch):
     monkeypatch.setattr(
@@ -1821,6 +1840,7 @@ async def test_library_policy_denial_uses_recovery_state_selector(monkeypatch):
         assert button.tooltip == "Custom policy tooltip."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_use_in_console_uses_source_snapshot_context():
     app = _build_test_app()
@@ -1875,6 +1895,7 @@ async def test_library_use_in_console_uses_source_snapshot_context():
     assert payload.metadata["conversations_count"] == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("route", "selector", "target_route"),
     [
@@ -1907,6 +1928,7 @@ async def test_destination_action_buttons_emit_compatibility_routes(
     assert seen_routes[-1] == target_route
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_action_switches_to_native_mode_without_route_handoff():
     app = _build_test_app()
@@ -1933,6 +1955,7 @@ async def test_library_media_action_switches_to_native_mode_without_route_handof
     assert seen_routes == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_notes_action_switches_to_canvas_without_route_handoff():
     app = _build_test_app()
@@ -1960,6 +1983,7 @@ async def test_library_notes_action_switches_to_canvas_without_route_handoff():
     assert seen_routes == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversations_action_switches_to_native_mode_without_route_handoff():
     app = _build_test_app()
@@ -1986,6 +2010,7 @@ async def test_library_conversations_action_switches_to_native_mode_without_rout
     assert seen_routes == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_ingest_import_media_row_mounts_ingest_canvas():
     """The Ingest ▸ Import/Export row (and its native "import-export" mode
@@ -2015,6 +2040,7 @@ async def test_library_ingest_import_media_row_mounts_ingest_canvas():
     assert seen_routes == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_action_switches_to_search_mode_without_route_handoff():
     app = _build_test_app()
@@ -2037,6 +2063,7 @@ async def test_library_search_action_switches_to_search_mode_without_route_hando
     assert seen_routes == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_acp_missing_runtime_explains_acp_owned_setup_recovery():
     app = _build_test_app()
@@ -2097,6 +2124,7 @@ def test_acp_runtime_session_state_preserves_numeric_zero_fields():
     assert state.session_status == "0"
 
 
+@pytest.mark.bootstrap_profile
 def test_app_acp_runtime_session_state_helper_normalizes_manager_snapshot():
     app = _build_test_app()
     app.acp_runtime_session_state = None
@@ -2118,6 +2146,7 @@ def test_app_acp_runtime_session_state_helper_normalizes_manager_snapshot():
     assert state.session_payload == {"pid": 1234}
 
 
+@pytest.mark.bootstrap_profile
 def test_acp_runtime_button_handlers_schedule_workers_without_blocking_manager():
     app = _build_test_app()
     app.acp_runtime_process_manager = Mock()
@@ -2136,6 +2165,7 @@ def test_acp_runtime_button_handlers_schedule_workers_without_blocking_manager()
     app.acp_runtime_process_manager.stop.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_acp_configured_runtime_without_session_disables_console_follow():
     app = _build_test_app()
@@ -2166,6 +2196,7 @@ async def test_acp_configured_runtime_without_session_disables_console_follow():
     assert follow_button.disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_acp_configured_runtime_process_enables_launch_and_creates_session_payload():
     app = _build_test_app()
@@ -2208,6 +2239,7 @@ async def test_acp_configured_runtime_process_enables_launch_and_creates_session
     assert app.acp_runtime_session_state.has_console_session_payload is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_acp_failed_runtime_process_surfaces_recovery_and_restart_action():
     app = _build_test_app()
@@ -2233,6 +2265,7 @@ async def test_acp_failed_runtime_process_surfaces_recovery_and_restart_action()
     assert restart_button.disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_acp_runtime_and_session_labels_are_markup_escaped():
     app = _build_test_app()
@@ -2277,6 +2310,7 @@ async def test_acp_runtime_and_session_labels_are_markup_escaped():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_acp_session_payload_enables_console_follow_live_work_handoff():
     app = _build_test_app()
@@ -2321,6 +2355,7 @@ async def test_acp_session_payload_enables_console_follow_live_work_handoff():
     }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_acp_running_runtime_presents_actionable_hierarchy_without_dead_actions():
     app = _build_test_app()
@@ -2380,6 +2415,7 @@ async def test_acp_running_runtime_presents_actionable_hierarchy_without_dead_ac
     assert stop_button.disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("route", SCREEN_BY_ROUTE)
 @pytest.mark.asyncio
 async def test_destination_action_buttons_explain_their_outcome(route):
@@ -2406,6 +2442,7 @@ async def test_destination_action_buttons_explain_their_outcome(route):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("route", "expected_sections"),
     [
@@ -2427,6 +2464,7 @@ async def test_automation_destination_wrappers_explain_ownership(
             await _wait_for_visible_text(screen, pilot, section)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_schedules_failed_run_exposes_consistent_retry_control_state():
     app = _build_test_app()
@@ -2457,6 +2495,7 @@ async def test_schedules_failed_run_exposes_consistent_retry_control_state():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_schedules_pending_run_uses_shared_approval_status_taxonomy():
     app = _build_test_app()
@@ -2487,6 +2526,7 @@ async def test_schedules_pending_run_uses_shared_approval_status_taxonomy():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workflows_existing_approval_is_followed_in_console_without_run_controls():
     app = _build_test_app()
@@ -2521,6 +2561,7 @@ async def test_workflows_existing_approval_is_followed_in_console_without_run_co
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_schedules_empty_state_reads_as_live_queue_with_recovery_path():
     app = _build_test_app()
@@ -2542,6 +2583,7 @@ async def test_schedules_empty_state_reads_as_live_queue_with_recovery_path():
     assert inspector_pane is not None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workflows_empty_state_offers_real_authoring_with_disabled_run():
     app = _build_test_app()
@@ -2569,6 +2611,7 @@ async def test_workflows_empty_state_offers_real_authoring_with_disabled_run():
         assert expected in visible_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("route", "expected_text"),
     [
@@ -3455,6 +3498,7 @@ class _CssTrueDestinationHarness(DestinationHarness):
     CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_meetings_workbench_and_transcript_pane_have_real_height():
     # TASK-31551 task-13 fix round: pins the CSS-collapse regression found
@@ -3475,6 +3519,7 @@ async def test_meetings_workbench_and_transcript_pane_have_real_height():
         assert screen.query_one("#meetings-transcript").region.height > 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_destination_uses_three_column_workbench_contract():
     app = _build_test_app()
@@ -3529,6 +3574,7 @@ async def test_settings_destination_uses_three_column_workbench_contract():
         assert screen.query_one("#settings-detail-impact-divider")
 
 
+@pytest.mark.bootstrap_profile
 def test_settings_sync_safety_state_failure_logs_context(caplog):
     class BrokenSyncScopeService:
         def list_write_sync_promotion_states(self, **_kwargs):
@@ -3547,6 +3593,7 @@ def test_settings_sync_safety_state_failure_logs_context(caplog):
     assert "secret-token-123" not in caplog.text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_appearance_action_routes_to_settings_theme_category():
     app = _build_test_app()
@@ -3562,6 +3609,7 @@ async def test_settings_appearance_action_routes_to_settings_theme_category():
     assert seen_routes[-1] == "settings"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("initial_value", "expected_checked", "expected_saved_value"),
     [
@@ -3676,6 +3724,7 @@ async def test_legacy_tools_settings_route_opens_tools_hub_not_global_settings(r
         assert "global preferences" not in _static_text(purpose)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workspace_import_sources_mounts_the_ingest_canvas_in_place():
     """The Workspaces "Import sources" action must not leave the Library.
@@ -3709,6 +3758,7 @@ async def test_workspace_import_sources_mounts_the_ingest_canvas_in_place():
     assert seen_routes == [], "Import sources must not hand off to another screen"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_models_shell_keeps_external_paths_inside_the_dedicated_edit_view(
     tmp_path: Path,

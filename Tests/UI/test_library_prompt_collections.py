@@ -1937,6 +1937,7 @@ async def test_prompt_editor_unsaved_identity_has_readable_apply_reason():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_screen_membership_load_retry_and_apply_retry_are_distinct(
     tmp_path, monkeypatch
@@ -2049,6 +2050,7 @@ async def test_library_screen_membership_load_retry_and_apply_retry_are_distinct
         assert screen._prompts_state.status == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_screen_collection_manager_selects_exact_browse_scope(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
@@ -2112,6 +2114,7 @@ async def test_library_screen_collection_manager_selects_exact_browse_scope(tmp_
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_library_screen_collection_manager_crosses_sqlite_page_100(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
@@ -2171,6 +2174,7 @@ async def test_real_library_screen_collection_manager_crosses_sqlite_page_100(tm
         assert load_more.disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_screen_manager_create_search_rename_and_explicit_all(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
@@ -2397,6 +2401,7 @@ async def test_library_screen_manager_create_search_rename_and_explicit_all(tmp_
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_screen_membership_apply_is_independent_from_dirty_prompt_save(
     tmp_path,
@@ -2505,6 +2510,7 @@ async def test_library_screen_membership_apply_is_independent_from_dirty_prompt_
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_membership_apply_refreshes_retained_items_before_clean_back_to_list(
     tmp_path, monkeypatch

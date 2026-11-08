@@ -120,6 +120,7 @@ async def _run_library_rag_search(screen, pilot) -> None:
 # --- task-32051: Escape leaves a focused text box ---------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_in_the_rail_search_box_hands_focus_to_the_canvas():
     """AC#1/#3: Escape leaves the rail box, and the next key is a canvas key."""
@@ -148,6 +149,7 @@ async def test_escape_in_the_rail_search_box_hands_focus_to_the_canvas():
         assert search_box.value == "", "`i` was typed into the rail search box."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_in_the_search_rag_query_box_hands_focus_to_the_canvas():
     """AC#1: the Search/RAG query box releases Escape the same way."""
@@ -170,6 +172,7 @@ async def test_escape_in_the_search_rag_query_box_hands_focus_to_the_canvas():
         assert query_box.value == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_still_belongs_to_the_surface_that_already_owns_it():
     """The Ingest canvas keeps its own Escape while its path field has focus.
@@ -191,6 +194,7 @@ async def test_escape_still_belongs_to_the_surface_that_already_owns_it():
         assert screen.check_action("library_blur_text_field", ()) is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_from_a_list_filter_box_still_goes_where_the_footer_says():
     """Fix round 1 (Important #1): the blur binding must not outrank a
@@ -231,6 +235,7 @@ async def test_escape_from_a_list_filter_box_still_goes_where_the_footer_says():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_still_claimed_when_the_rail_hop_would_be_a_no_op():
     """...but the rail search box itself keeps the blur, on the same canvas.
@@ -266,6 +271,7 @@ async def test_escape_still_claimed_when_the_rail_hop_would_be_a_no_op():
 # --- task-32052: the New-note canvas is keyboard-complete -------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_new_note_canvas_focuses_blank_note_on_entry_and_arrows_move():
     """AC#1/#2: entry parks focus on Blank note; Down/Up walk the templates."""
@@ -319,6 +325,7 @@ async def test_new_note_canvas_focuses_blank_note_on_entry_and_arrows_move():
         assert screen._library_note_session.snapshot is not None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tab_from_a_library_canvas_never_reaches_the_nav_bar():
     """AC#3: Tab cycles inside the Library screen content, not the app chrome."""
@@ -347,6 +354,7 @@ async def test_tab_from_a_library_canvas_never_reaches_the_nav_bar():
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_new_note_footer_enter_hint_follows_the_focused_control():
     """AC#4: "enter create note" only while a create row genuinely has focus."""
@@ -370,6 +378,7 @@ async def test_new_note_footer_enter_hint_follows_the_focused_control():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_retained_route_into_new_note_also_focuses_blank_note():
     """AC#1 covers *entering the canvas*, not one route into it.
@@ -406,6 +415,7 @@ async def test_the_retained_route_into_new_note_also_focuses_blank_note():
 # --- task-32053: keyboard-visible Search/RAG evidence -----------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_evidence_card_focus_is_a_shape_change_not_a_colour_swap():
     """AC#1: the focused card carries the house left-edge block cue."""
@@ -432,6 +442,7 @@ async def test_evidence_card_focus_is_a_shape_change_not_a_colour_swap():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_evidence_cards_are_reachable_and_enter_selects_them():
     """AC#2: Tab reaches a card and Enter selects it, matching the footer."""
@@ -460,6 +471,7 @@ async def test_evidence_cards_are_reachable_and_enter_selects_them():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_search_rag_footer_names_the_focused_controls_enter_action():
     """AC#3: "enter run search" in the query box, "enter toggle Notes" on a
@@ -489,6 +501,7 @@ async def test_search_rag_footer_names_the_focused_controls_enter_action():
         ) in screen._library_footer_shortcuts_for_current_state()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_run_button_has_a_visible_focus_state():
     """AC#4: focusing Run changes the painted rows, not just a colour token."""
@@ -515,6 +528,7 @@ async def test_run_button_has_a_visible_focus_state():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tab_stays_inside_library_in_the_emergency_return_state():
     """Fix round 1 (Important #2): the narrow-terminal Tab path was unscoped.
@@ -659,6 +673,7 @@ async def _open_notes_list(screen, pilot, *, folder_tree: bool = True):
     return screen.query_one("#library-notes-filter", Input)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_from_the_notes_filter_box_blurs_and_the_next_key_is_a_canvas_key():
     """AC#1: Escape must leave the Notes filter box, like every sibling list.
@@ -691,6 +706,7 @@ async def test_escape_from_the_notes_filter_box_blurs_and_the_next_key_is_a_canv
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("layout", ["database", "folder_tree"])
 async def test_escape_on_the_plain_notes_list_focuses_the_rail_search_box(layout):
@@ -718,6 +734,7 @@ async def test_escape_on_the_plain_notes_list_focuses_the_rail_search_box(layout
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_from_the_rail_box_on_the_notes_list_still_blurs_to_the_canvas():
     """AC#1: the Notes list completes the same two-step Escape ladder as Media.
@@ -752,6 +769,7 @@ async def test_escape_from_the_rail_box_on_the_notes_list_still_blurs_to_the_can
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_emergency_tab_from_a_note_field_still_reaches_on_key():
     """task-32106 (PR #2571 re-review, NEW-1): the priority Tab must yield here.
@@ -805,6 +823,7 @@ async def test_emergency_tab_from_a_note_field_still_reaches_on_key():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tab_from_a_note_field_still_counts_as_a_user_interaction():
     """task-32106 (PR #2571 re-review, NEW-1): the resize_settling clear.

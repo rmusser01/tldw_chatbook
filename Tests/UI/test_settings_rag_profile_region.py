@@ -91,6 +91,7 @@ class _FakeApp:
         return fn(*args, **kwargs)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_rag_renders_future_console_policy_defaults_separately(
     monkeypatch, tmp_path
@@ -309,6 +310,7 @@ def test_confirm_modal_save_from_a_preview_clears_preview_and_the_save_actually_
 # early return in the Save action's LIBRARY_RAG branch. ---
 
 
+@pytest.mark.bootstrap_profile
 def test_pending_activate_cleared_on_validation_failure(
     monkeypatch, tmp_path, fake_app
 ):
@@ -332,6 +334,7 @@ def test_pending_activate_cleared_on_validation_failure(
     assert screen._rag_profile_pending_activate is None
 
 
+@pytest.mark.bootstrap_profile
 def test_pending_activate_cleared_when_no_unsaved_changes(
     monkeypatch, tmp_path, fake_app
 ):
@@ -348,6 +351,7 @@ def test_pending_activate_cleared_when_no_unsaved_changes(
     assert screen._rag_profile_pending_activate is None
 
 
+@pytest.mark.bootstrap_profile
 def test_pending_activate_survives_into_worker_dispatch_on_valid_save(
     monkeypatch, tmp_path, fake_app
 ):
@@ -374,6 +378,7 @@ def test_pending_activate_survives_into_worker_dispatch_on_valid_save(
 # hard_config_errors()), not a Title Case prefix that message never uses. ---
 
 
+@pytest.mark.bootstrap_profile
 def test_invalid_field_key_matches_chunk_overlap_wording(monkeypatch, tmp_path):
     mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
     app = _build_test_app()
@@ -392,6 +397,7 @@ def test_invalid_field_key_matches_chunk_overlap_wording(monkeypatch, tmp_path):
     assert screen._library_rag_invalid_field_key() == "chunk_overlap"
 
 
+@pytest.mark.bootstrap_profile
 def test_invalid_field_key_matches_embedding_batch_size_wording(monkeypatch, tmp_path):
     mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
     app = _build_test_app()
@@ -405,6 +411,7 @@ def test_invalid_field_key_matches_embedding_batch_size_wording(monkeypatch, tmp
     assert screen._library_rag_invalid_field_key() == "embedding_batch_size"
 
 
+@pytest.mark.bootstrap_profile
 def test_invalid_field_key_matches_distance_metric_wording(monkeypatch, tmp_path):
     mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
     app = _build_test_app()
@@ -423,6 +430,7 @@ def test_invalid_field_key_matches_distance_metric_wording(monkeypatch, tmp_path
     assert screen._library_rag_invalid_field_key() == "distance_metric"
 
 
+@pytest.mark.bootstrap_profile
 def test_invalid_field_key_matches_chunk_size_wording(monkeypatch, tmp_path):
     mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
     app = _build_test_app()
@@ -442,6 +450,7 @@ def test_invalid_field_key_matches_chunk_size_wording(monkeypatch, tmp_path):
 # --- Worker completion path: `_rag_after_set_active` ---
 
 
+@pytest.mark.bootstrap_profile
 def test_after_set_active_success_clears_draft_and_notifies(
     monkeypatch, tmp_path, fake_app
 ):
@@ -456,6 +465,7 @@ def test_after_set_active_success_clears_draft_and_notifies(
     assert fake_app.notifications[-1][1] == "information"
 
 
+@pytest.mark.bootstrap_profile
 def test_after_set_active_failure_syncs_profile_widgets_and_notifies_error(
     monkeypatch, tmp_path, fake_app
 ):
@@ -485,6 +495,7 @@ def test_after_set_active_failure_syncs_profile_widgets_and_notifies_error(
 # _sync_library_rag_profile_widgets always re-selected active_id). ---
 
 
+@pytest.mark.bootstrap_profile
 def test_after_profile_action_clone_selects_the_clone_and_prompts_set_active(
     monkeypatch, tmp_path, fake_app
 ):
@@ -512,6 +523,7 @@ def test_after_profile_action_clone_selects_the_clone_and_prompts_set_active(
     assert severity == "information"
 
 
+@pytest.mark.bootstrap_profile
 def test_after_profile_action_rename_and_delete_still_call_sync_with_no_override(
     monkeypatch, tmp_path, fake_app
 ):
@@ -535,6 +547,7 @@ def test_after_profile_action_rename_and_delete_still_call_sync_with_no_override
     assert sync_profile_calls == [{}, {}]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clone_success_selects_the_clone_in_the_real_select_widget(
     monkeypatch, tmp_path
@@ -597,6 +610,7 @@ async def test_clone_success_selects_the_clone_in_the_real_select_widget(
 # happens to be showing. ---
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_editing_caption_names_the_active_profile_not_the_select_value(
     monkeypatch, tmp_path
@@ -638,6 +652,7 @@ async def test_editing_caption_names_the_active_profile_not_the_select_value(
         assert f"Editing: {profile.name}." in _visible_text(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_sync_profile_widgets_caption_ignores_select_override(
     monkeypatch, tmp_path
@@ -670,6 +685,7 @@ async def test_sync_profile_widgets_caption_ignores_select_override(
 # needs the new active id highlighted). ---
 
 
+@pytest.mark.bootstrap_profile
 def test_after_profile_action_delete_with_fallback_note_resyncs_and_notifies(
     monkeypatch, tmp_path, fake_app
 ):
@@ -693,6 +709,7 @@ def test_after_profile_action_delete_with_fallback_note_resyncs_and_notifies(
     assert severity == "information"
 
 
+@pytest.mark.bootstrap_profile
 def test_after_profile_action_delete_without_fallback_note_omits_it(
     monkeypatch, tmp_path, fake_app
 ):
@@ -713,6 +730,7 @@ def test_after_profile_action_delete_without_fallback_note_omits_it(
 # --- First-paint read-only rendering (pilot: real compose/mount) ---
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_rag_detail_renders_fields_disabled_for_readonly_active_profile(
     monkeypatch, tmp_path
@@ -747,6 +765,7 @@ async def test_library_rag_detail_renders_fields_disabled_for_readonly_active_pr
         ).disabled
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rerank_fields_disabled_for_readonly_builtin_omit_reranking_suffix(
     monkeypatch, tmp_path
@@ -783,6 +802,7 @@ async def test_rerank_fields_disabled_for_readonly_builtin_omit_reranking_suffix
 # reranking itself is off, distinct from the builtin read-only lock. ---
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_citation_and_reranking_toggles_are_checkboxes_mirroring_loaded_values(
     monkeypatch, tmp_path
@@ -811,6 +831,7 @@ async def test_citation_and_reranking_toggles_are_checkboxes_mirroring_loaded_va
         assert rerank_checkbox.value is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rerank_fields_dimmed_when_reranking_off_and_re_enable_on_toggle(
     monkeypatch, tmp_path
@@ -857,6 +878,7 @@ async def test_rerank_fields_dimmed_when_reranking_off_and_re_enable_on_toggle(
         assert "(enable reranking to edit)" in _visible_text(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rerank_fields_stay_dimmed_after_a_profile_switch_resync(
     monkeypatch, tmp_path
@@ -888,6 +910,7 @@ async def test_rerank_fields_stay_dimmed_after_a_profile_switch_resync(
         assert "Reranker model (enable reranking to edit)" in _visible_text(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_toggling_include_citations_checkbox_stages_draft_value_aware(
     monkeypatch, tmp_path
@@ -935,6 +958,7 @@ async def test_toggling_include_citations_checkbox_stages_draft_value_aware(
 # otherwise indistinguishable from a hand-authored profile. ---
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_active_profile_description_renders_as_a_subline_when_present(
     monkeypatch, tmp_path
@@ -960,6 +984,7 @@ async def test_active_profile_description_renders_as_a_subline_when_present(
         assert "Snapshot of your active RAG profile" in _visible_text(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_active_profile_description_hidden_when_blank(monkeypatch, tmp_path):
     mgr, profile, _state = _wire_rag_profile_adapter(monkeypatch, tmp_path)
@@ -979,6 +1004,7 @@ async def test_active_profile_description_hidden_when_blank(monkeypatch, tmp_pat
         assert row.display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_active_profile_description_resyncs_after_set_active(
     monkeypatch, tmp_path
@@ -1013,6 +1039,7 @@ async def test_active_profile_description_resyncs_after_set_active(
 # method, Distance metric) are otherwise unexplained. ---
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_warning_legend_is_rendered_under_the_profiles_block(
     monkeypatch, tmp_path
@@ -1036,6 +1063,7 @@ async def test_warning_legend_is_rendered_under_the_profiles_block(
 # from Set active/Clone/Rename. ---
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delete_button_has_error_variant_and_spacer_class(monkeypatch, tmp_path):
     _wire_rag_profile_adapter(monkeypatch, tmp_path)
@@ -1060,6 +1088,7 @@ async def test_delete_button_has_error_variant_and_spacer_class(monkeypatch, tmp
 # nothing is missing yet. ---
 
 
+@pytest.mark.bootstrap_profile
 def test_index_status_line_nudges_for_hybrid_mode_when_absent(
     monkeypatch, tmp_path, fake_app
 ):
@@ -1077,6 +1106,7 @@ def test_index_status_line_nudges_for_hybrid_mode_when_absent(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_index_status_line_nudges_for_semantic_mode_when_absent(
     monkeypatch, tmp_path, fake_app
 ):
@@ -1094,6 +1124,7 @@ def test_index_status_line_nudges_for_semantic_mode_when_absent(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_index_status_line_keeps_plain_notice_for_plain_mode_when_absent(
     monkeypatch, tmp_path, fake_app
 ):
@@ -1111,6 +1142,7 @@ def test_index_status_line_keeps_plain_notice_for_plain_mode_when_absent(
     assert line == settings_screen_module.RAG_INDEX_ABSENT_STATUS_TEXT
 
 
+@pytest.mark.bootstrap_profile
 def test_index_status_line_ignores_search_mode_when_not_absent(
     monkeypatch, tmp_path, fake_app
 ):
@@ -1128,6 +1160,7 @@ def test_index_status_line_ignores_search_mode_when_not_absent(
     assert line == "Index: empty · 0 vectors"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_rag_index_status_worker_updates_the_static(
     monkeypatch, tmp_path
@@ -1172,6 +1205,7 @@ async def test_library_rag_index_status_worker_updates_the_static(
         assert screen._library_rag_index_status_text == expected
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_rag_save_with_index_change_includes_the_warning(
     monkeypatch, tmp_path
@@ -1209,6 +1243,7 @@ async def test_library_rag_save_with_index_change_includes_the_warning(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_rag_save_without_index_change_omits_the_warning(
     monkeypatch, tmp_path
@@ -1245,6 +1280,7 @@ async def test_library_rag_save_without_index_change_omits_the_warning(
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_backfill_button_click_starts_a_worker_and_notifies(
     monkeypatch, tmp_path, fake_app
 ):
@@ -1263,6 +1299,7 @@ def test_backfill_button_click_starts_a_worker_and_notifies(
     assert fake_app.notifications[-1][1] == "information"
 
 
+@pytest.mark.bootstrap_profile
 def test_backfill_button_click_while_in_flight_does_not_start_a_second_worker(
     monkeypatch, tmp_path, fake_app
 ):
@@ -1288,6 +1325,7 @@ def test_backfill_button_click_while_in_flight_does_not_start_a_second_worker(
 # defaults. ---
 
 
+@pytest.mark.bootstrap_profile
 def test_test_category_action_dispatches_the_rag_check_worker_for_rag(
     monkeypatch, tmp_path, fake_app
 ):
@@ -1305,6 +1343,7 @@ def test_test_category_action_dispatches_the_rag_check_worker_for_rag(
     assert "No test action is available" not in all_messages
 
 
+@pytest.mark.bootstrap_profile
 def test_test_category_action_does_not_dispatch_rag_worker_for_other_categories(
     monkeypatch, tmp_path, fake_app
 ):
@@ -1326,6 +1365,7 @@ def test_test_category_action_does_not_dispatch_rag_worker_for_other_categories(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_rag_test_category_worker_completion_notifies_state_and_preview(
     monkeypatch, tmp_path, fake_app
 ):
@@ -1362,6 +1402,7 @@ def test_rag_test_category_worker_completion_notifies_state_and_preview(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_stale_test_category_worker_landing_after_nav_away_skips_the_toast(
     monkeypatch, tmp_path, fake_app
 ):
@@ -1634,6 +1675,7 @@ def test_rag_backfill_worker_guards_against_none_pre_resolved_service(
 # fake below pins the real shape. ---
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_backfill_streams_progress_to_index_status(monkeypatch, tmp_path):
     _wire_rag_profile_adapter(monkeypatch, tmp_path)
@@ -1721,6 +1763,7 @@ async def test_backfill_streams_progress_to_index_status(monkeypatch, tmp_path):
 # index" -- that's a false claim the index changed. ---
 
 
+@pytest.mark.bootstrap_profile
 def test_after_set_active_with_absent_index_status_includes_the_warning(
     monkeypatch, tmp_path, fake_app
 ):
@@ -1740,6 +1783,7 @@ def test_after_set_active_with_absent_index_status_includes_the_warning(
     assert severity == "warning"
 
 
+@pytest.mark.bootstrap_profile
 def test_after_set_active_with_unknown_index_status_shows_honest_notice_without_the_warning(
     monkeypatch, tmp_path, fake_app
 ):
@@ -1945,6 +1989,7 @@ def test_save_then_switch_reindex_confirm_survives_a_cancel(
     assert screen._rag_profile_pending_activate is None
 
 
+@pytest.mark.bootstrap_profile
 def test_save_with_no_cached_status_fetches_then_confirms_when_built(
     monkeypatch, tmp_path, fake_app
 ):
@@ -2005,6 +2050,7 @@ def test_save_with_no_cached_status_fetches_then_confirms_when_built(
     assert len(worker_calls) == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_save_with_no_cached_status_fetches_then_saves_directly_when_absent(
     monkeypatch, tmp_path, fake_app
 ):
@@ -2115,6 +2161,7 @@ def test_double_save_click_during_no_cache_fetch_does_not_drop_pending_activate(
 # --- task-566: cancel settings-rag-index-status workers on category nav ---
 
 
+@pytest.mark.bootstrap_profile
 def test_leaving_library_rag_cancels_the_index_status_worker_group(
     monkeypatch, tmp_path
 ):
@@ -2153,6 +2200,7 @@ def test_leaving_library_rag_cancels_the_index_status_worker_group(
     assert cancelled == [(screen, "settings-rag-index-status")]
 
 
+@pytest.mark.bootstrap_profile
 def test_apply_library_rag_index_status_no_ops_after_navigating_away(
     monkeypatch, tmp_path
 ):
@@ -2181,6 +2229,7 @@ def test_apply_library_rag_index_status_no_ops_after_navigating_away(
     assert refreshed == []
 
 
+@pytest.mark.bootstrap_profile
 def test_stale_reindex_confirm_worker_landing_after_nav_away_skips_the_modal(
     monkeypatch, tmp_path, fake_app
 ):
@@ -2228,6 +2277,7 @@ def test_stale_reindex_confirm_worker_landing_after_nav_away_skips_the_modal(
     assert worker_calls == []
 
 
+@pytest.mark.bootstrap_profile
 def test_reentering_library_rag_after_leaving_still_fetches_fresh_status(
     monkeypatch, tmp_path
 ):
@@ -2289,6 +2339,7 @@ def _flattened_guidance_text(rows) -> str:
     return " ".join(f"{label} {value}" for label, value in rows).lower()
 
 
+@pytest.mark.bootstrap_profile
 def test_rag_field_guidance_no_field_focused_matches_static_fallback(
     monkeypatch, tmp_path
 ):
@@ -2315,6 +2366,7 @@ def test_rag_field_guidance_no_field_focused_matches_static_fallback(
     screen._refresh_rag_field_guidance()
 
 
+@pytest.mark.bootstrap_profile
 def test_rag_field_guidance_reranking_field_focused_mentions_reranking(
     monkeypatch, tmp_path
 ):
@@ -2337,6 +2389,7 @@ def test_rag_field_guidance_reranking_field_focused_mentions_reranking(
     assert "backfill" not in text
 
 
+@pytest.mark.bootstrap_profile
 def test_rag_field_guidance_chunking_field_focused_mentions_reindex_backfill(
     monkeypatch, tmp_path
 ):
@@ -2359,6 +2412,7 @@ def test_rag_field_guidance_chunking_field_focused_mentions_reindex_backfill(
         assert "rebuild" in text, field_id
 
 
+@pytest.mark.bootstrap_profile
 def test_rag_field_guidance_embedding_and_vector_store_fields_flag_index_rebuild(
     monkeypatch, tmp_path
 ):
@@ -2393,6 +2447,7 @@ def test_rag_field_guidance_embedding_and_vector_store_fields_flag_index_rebuild
     assert "model + max length" in embedding_text
 
 
+@pytest.mark.bootstrap_profile
 def test_rag_field_guidance_profile_and_index_fields_have_dedicated_entries(
     monkeypatch, tmp_path
 ):
@@ -2414,6 +2469,7 @@ def test_rag_field_guidance_profile_and_index_fields_have_dedicated_entries(
     assert "backfill" in index_text
 
 
+@pytest.mark.bootstrap_profile
 def test_rag_field_guidance_focused_field_takes_priority_over_expanded_group(
     monkeypatch, tmp_path
 ):
@@ -2444,6 +2500,7 @@ def test_every_rag_field_group_has_a_guidance_entry():
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_every_library_rag_editable_field_id_has_a_guidance_group(
     monkeypatch, tmp_path
 ):
@@ -2491,6 +2548,7 @@ def test_every_library_rag_editable_field_id_has_a_guidance_group(
         assert checkbox_id in settings_screen_module._RAG_FIELD_GROUP_BY_ID
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_expanding_chunking_collapsible_switches_context_without_focus(
     monkeypatch, tmp_path
@@ -2537,6 +2595,7 @@ async def test_expanding_chunking_collapsible_switches_context_without_focus(
         await _wait_for_settings_text(screen, pilot, "Snippet/context:")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_focusing_reranker_model_input_updates_inspector_end_to_end(
     monkeypatch, tmp_path
@@ -2726,6 +2785,7 @@ async def test_set_active_from_preview_exits_preview_on_success(monkeypatch, tmp
         assert top_k.disabled is False
 
 
+@pytest.mark.bootstrap_profile
 def test_set_active_from_preview_with_dirty_draft_still_pushes_confirm_modal(
     monkeypatch, tmp_path, fake_app
 ):
@@ -2752,6 +2812,7 @@ def test_set_active_from_preview_with_dirty_draft_still_pushes_confirm_modal(
     assert screen._rag_preview_profile_id == other.id
 
 
+@pytest.mark.bootstrap_profile
 def test_save_is_blocked_with_a_notification_while_previewing(
     monkeypatch, tmp_path, fake_app
 ):
@@ -2771,6 +2832,7 @@ def test_save_is_blocked_with_a_notification_while_previewing(
     assert severity == "warning"
 
 
+@pytest.mark.bootstrap_profile
 def test_revert_is_blocked_with_a_notification_while_previewing(
     monkeypatch, tmp_path, fake_app
 ):
@@ -2792,6 +2854,7 @@ def test_revert_is_blocked_with_a_notification_while_previewing(
     assert severity == "warning"
 
 
+@pytest.mark.bootstrap_profile
 def test_cloning_while_previewing_uses_the_previewed_profile_as_the_source(
     monkeypatch, tmp_path, fake_app
 ):
@@ -2827,6 +2890,7 @@ def test_cloning_while_previewing_uses_the_previewed_profile_as_the_source(
     assert screen._rag_preview_profile_id is None
 
 
+@pytest.mark.bootstrap_profile
 def test_library_rag_save_enabled_is_false_while_previewing_even_with_a_dirty_draft(
     monkeypatch, tmp_path
 ):
@@ -2868,6 +2932,7 @@ async def test_profiles_and_editor_render_inside_their_own_titled_containers(
         assert editor_card.border_title == f"Editing: {profile.name}"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_preview_banner_and_title_escape_markup_significant_profile_names(
     monkeypatch, tmp_path
@@ -2895,6 +2960,7 @@ async def test_preview_banner_and_title_escape_markup_significant_profile_names(
         assert r"\[bold]Other\[/bold]" in str(banner.renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cloning_leaves_the_select_on_the_clone_without_auto_entering_preview(
     monkeypatch, tmp_path
@@ -2978,6 +3044,7 @@ async def test_genuine_profile_browse_right_after_a_resync_still_enters_preview(
         assert screen._rag_preview_profile_id == other.id
 
 
+@pytest.mark.bootstrap_profile
 def test_leaving_the_library_rag_category_clears_a_stale_preview(monkeypatch, tmp_path):
     _wire_rag_profile_adapter(monkeypatch, tmp_path)
     app = _build_test_app()
@@ -3056,6 +3123,7 @@ async def _wait_for_starter_panel(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_starter_panel_shown_when_builtin_active_no_users_and_index_absent(
     monkeypatch, tmp_path
@@ -3099,6 +3167,7 @@ async def test_starter_panel_shown_when_builtin_active_no_users_and_index_absent
         assert str(backfill_button.label) == "Backfill now"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_starter_panel_hidden_when_active_profile_is_not_a_builtin(
     monkeypatch, tmp_path
@@ -3128,6 +3197,7 @@ async def test_starter_panel_hidden_when_active_profile_is_not_a_builtin(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_starter_panel_hidden_when_a_user_profile_already_exists(
     monkeypatch, tmp_path
@@ -3150,6 +3220,7 @@ async def test_starter_panel_hidden_when_a_user_profile_already_exists(
         assert panel.display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_starter_panel_hidden_when_the_index_is_already_built(
     monkeypatch, tmp_path
@@ -3170,6 +3241,7 @@ async def test_starter_panel_hidden_when_the_index_is_already_built(
         assert panel.display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_starter_panel_disappears_after_a_clone_completes(monkeypatch, tmp_path):
     """State-driven, no dismissal persistence: a successful clone gives the
@@ -3217,6 +3289,7 @@ async def test_starter_panel_disappears_after_a_clone_completes(monkeypatch, tmp
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_starter_panel_disappears_after_backfill_completes(monkeypatch, tmp_path):
     """Backfill itself only fills the vector store; the fake status swap
@@ -3259,6 +3332,7 @@ async def test_starter_panel_disappears_after_backfill_completes(monkeypatch, tm
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_normal_state_status_refresh_never_reopens_a_deliberately_collapsed_search_group(
     monkeypatch, tmp_path
@@ -3307,6 +3381,7 @@ async def test_normal_state_status_refresh_never_reopens_a_deliberately_collapse
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_index_status_refresh_resyncs_stale_active_profile_identity_text(
     monkeypatch, tmp_path
@@ -3367,6 +3442,7 @@ async def test_index_status_refresh_resyncs_stale_active_profile_identity_text(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_preview_started_while_starter_panel_visible_leaves_panel_state_coherent(
     monkeypatch, tmp_path
@@ -3403,6 +3479,7 @@ async def test_preview_started_while_starter_panel_visible_leaves_panel_state_co
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_set_active_to_another_first_run_eligible_builtin_keeps_panel_visible(
     monkeypatch, tmp_path
@@ -3440,6 +3517,7 @@ async def test_set_active_to_another_first_run_eligible_builtin_keeps_panel_visi
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_starter_panel_clone_button_opens_the_same_clone_modal(
     monkeypatch, tmp_path, fake_app
 ):
@@ -3460,6 +3538,7 @@ def test_starter_panel_clone_button_opens_the_same_clone_modal(
     assert modal._modal_title == "Clone profile"
 
 
+@pytest.mark.bootstrap_profile
 def test_starter_panel_backfill_button_starts_the_same_backfill_worker(
     monkeypatch, tmp_path, fake_app
 ):
@@ -3488,6 +3567,7 @@ def test_starter_panel_backfill_button_starts_the_same_backfill_worker(
 # reimplementation. ---
 
 
+@pytest.mark.bootstrap_profile
 def test_settings_rag_set_active_action_dispatches_for_rag_category(
     monkeypatch, tmp_path, fake_app
 ):
@@ -3503,6 +3583,7 @@ def test_settings_rag_set_active_action_dispatches_for_rag_category(
     assert calls == [True]
 
 
+@pytest.mark.bootstrap_profile
 def test_settings_rag_clone_action_dispatches_for_rag_category(
     monkeypatch, tmp_path, fake_app
 ):
@@ -3518,6 +3599,7 @@ def test_settings_rag_clone_action_dispatches_for_rag_category(
     assert calls == [True]
 
 
+@pytest.mark.bootstrap_profile
 def test_settings_rag_backfill_action_dispatches_for_rag_category(
     monkeypatch, tmp_path, fake_app
 ):
@@ -3533,6 +3615,7 @@ def test_settings_rag_backfill_action_dispatches_for_rag_category(
     assert calls == [True]
 
 
+@pytest.mark.bootstrap_profile
 def test_settings_rag_accelerators_no_op_for_a_non_rag_category(
     monkeypatch, tmp_path, fake_app
 ):
@@ -3557,6 +3640,7 @@ def test_settings_rag_accelerators_no_op_for_a_non_rag_category(
     assert fake_app.notifications == []
 
 
+@pytest.mark.bootstrap_profile
 def test_settings_rag_accelerators_no_op_while_text_entry_has_focus(
     monkeypatch, tmp_path, fake_app
 ):
@@ -3581,6 +3665,7 @@ def test_settings_rag_accelerators_no_op_while_text_entry_has_focus(
     assert calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_typing_accelerator_letters_into_the_top_k_input_does_not_fire_them(
     monkeypatch, tmp_path
@@ -3629,6 +3714,7 @@ async def test_typing_accelerator_letters_into_the_top_k_input_does_not_fire_the
         assert calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rag_category_footer_advertises_the_new_accelerators(
     monkeypatch, tmp_path
@@ -3676,6 +3762,7 @@ async def test_rag_category_footer_advertises_the_new_accelerators(
 # --- PR #863 review: Select blank-sentinel handling ---
 
 
+@pytest.mark.bootstrap_profile
 def test_blank_select_row_exits_preview_instead_of_becoming_a_bogus_id(
     monkeypatch, tmp_path, fake_app
 ):
@@ -3794,6 +3881,7 @@ async def test_set_active_with_blank_selection_shows_friendly_notice_not_adapter
         assert dispatch_calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stale_active_profile_pointer_composes_blank_instead_of_crashing(
     monkeypatch, tmp_path
@@ -3843,6 +3931,7 @@ async def test_stale_active_profile_pointer_composes_blank_instead_of_crashing(
 # breaks app-wide clicks. ---
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_recompose_releases_a_capture_that_lands_in_the_deferred_teardown_window():
     """A REAL, exploitable gap in ``BaseAppScreen.refresh``'s mouse-capture
@@ -3937,6 +4026,7 @@ async def test_recompose_releases_a_capture_that_lands_in_the_deferred_teardown_
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_post_recompose_sweep_releases_a_capture_dispatched_during_the_teardown_drain():
     """task-627 code-review finding (Important, confirmed reproducible at
@@ -4008,6 +4098,7 @@ async def test_post_recompose_sweep_releases_a_capture_dispatched_during_the_tea
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_builtin_profile_delete_is_annotated_and_disabled():
     """A built-in profile's Delete is annotated and disabled.
@@ -4032,6 +4123,7 @@ async def test_builtin_profile_delete_is_annotated_and_disabled():
 # flipped. ---
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reranker_provider_select_enumerates_the_dispatch_table(
     monkeypatch, tmp_path
@@ -4068,6 +4160,7 @@ async def test_reranker_provider_select_enumerates_the_dispatch_table(
         assert provider_select.disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reranker_provider_select_shows_the_profiles_stored_provider(
     monkeypatch, tmp_path
@@ -4108,6 +4201,7 @@ async def test_reranker_provider_select_shows_the_profiles_stored_provider(
         assert screen._library_rag_setting_values()["reranker_provider"] == "openai"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reranker_cost_disclosure_is_visible_without_enabling_reranking(
     monkeypatch, tmp_path
@@ -4142,6 +4236,7 @@ async def test_reranker_cost_disclosure_is_visible_without_enabling_reranking(
         assert "20" in _visible_text(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reranker_cost_disclosure_tracks_the_staged_top_k_and_provider(
     monkeypatch, tmp_path
@@ -4178,6 +4273,7 @@ async def test_reranker_cost_disclosure_tracks_the_staged_top_k_and_provider(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "stored_provider",
     [None, "openai"],
@@ -4238,6 +4334,7 @@ async def test_opening_the_category_does_not_dirty_the_draft_via_the_provider_se
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_unrecognised_stored_provider_is_repairable_from_the_picker(
     monkeypatch, tmp_path

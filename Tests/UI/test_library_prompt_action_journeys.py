@@ -39,6 +39,7 @@ def _saved_prompt_host(tmp_path, theme):
     return db, service, prompt_id, host
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
@@ -103,6 +104,7 @@ async def _answer_delete(host, pilot, *, confirm):
     await pilot.press("enter")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
@@ -250,6 +252,7 @@ async def test_duplicate_delete_cancel_failure_undo_and_dismiss_journey(
         assert db.fetch_prompt_details(original_id) == original
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 async def test_new_prompt_route_can_delete_and_restore_its_saved_item(tmp_path, size):
@@ -304,6 +307,7 @@ async def test_new_prompt_route_can_delete_and_restore_its_saved_item(tmp_path, 
         assert db.fetch_prompt_details(original_id) == original
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_replaced_prompt_work_pane_ignores_pending_resize_callback(tmp_path):
     _, _, prompt_id, host = _saved_prompt_host(tmp_path, "textual-dark")

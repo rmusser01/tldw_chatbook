@@ -55,6 +55,7 @@ def _collections_row_label(screen) -> str:
     return str(button.label)
 
 
+@pytest.mark.bootstrap_profile
 async def test_collections_row_carries_its_count_before_the_row_is_visited() -> None:
     """The rail's Collections count no longer waits for a canvas visit.
 
@@ -84,6 +85,7 @@ async def test_collections_row_carries_its_count_before_the_row_is_visited() -> 
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_selecting_collections_leaves_every_other_section_disclosure_alone() -> None:
     """Selecting a rail row is not a disclosure or a persistence event.
 
@@ -116,6 +118,7 @@ async def test_selecting_collections_leaves_every_other_section_disclosure_alone
         assert writes == []
 
 
+@pytest.mark.bootstrap_profile
 async def test_legacy_collections_disclosure_names_the_read_only_recovery_path() -> None:
     """A profile holding legacy Collections records says they are read-only.
 
@@ -144,6 +147,7 @@ async def test_legacy_collections_disclosure_names_the_read_only_recovery_path()
         assert LegacyCollectionsReadOnlyError.recovery in text
 
 
+@pytest.mark.bootstrap_profile
 async def test_rail_count_never_falls_back_to_the_unfiltered_total_after_a_visit() -> None:
     """Fix round 1, finding 1: the fallback is "never visited", not "no total".
 
@@ -221,6 +225,7 @@ async def test_rail_count_never_falls_back_to_the_unfiltered_total_after_a_visit
             )
 
 
+@pytest.mark.bootstrap_profile
 async def test_prefetched_total_is_dropped_when_the_capture_authority_goes_away() -> None:
     """Fix round 1, finding 2: a total must not outlive its authority.
 
@@ -287,6 +292,7 @@ async def test_prefetched_total_is_dropped_when_the_capture_authority_goes_away(
         assert screen._library_collections_prefetched_total is None
 
 
+@pytest.mark.bootstrap_profile
 async def test_the_collections_count_read_does_not_stack_its_deadline_on_the_gather() -> None:
     """Fix round 2, finding 3: the count read runs WITH the source gather.
 
@@ -322,6 +328,7 @@ async def test_the_collections_count_read_does_not_stack_its_deadline_on_the_gat
         await asyncio.wait_for(screen._list_local_source_snapshot(), timeout=20)
 
 
+@pytest.mark.bootstrap_profile
 async def test_one_page_one_read_serves_both_the_count_and_the_evidence() -> None:
     """task-32103 AC#1: one page-1 read per snapshot pass, not two.
 
@@ -366,6 +373,7 @@ async def test_one_page_one_read_serves_both_the_count_and_the_evidence() -> Non
     assert len(calls) == 3
 
 
+@pytest.mark.bootstrap_profile
 async def test_re_entering_a_scoped_canvas_never_flashes_the_unfiltered_total() -> None:
     """task-32103 AC#2: the scope outlives the page, so the gate must see it.
 
@@ -426,6 +434,7 @@ async def test_re_entering_a_scoped_canvas_never_flashes_the_unfiltered_total() 
         assert screen._build_library_shell_input().collections_count is None
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_page_from_a_departed_authority_is_never_painted() -> None:
     """task-32103 AC#3: ``exact_total`` outlives its authority; the rail must not.
 
@@ -466,6 +475,7 @@ async def test_a_page_from_a_departed_authority_is_never_painted() -> None:
         assert screen._build_library_shell_input().collections_count is None
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_count_that_times_out_says_so_on_the_row() -> None:
     """task-32103 AC#3: a deadline is visible, not a silently absent number.
 
@@ -526,6 +536,7 @@ async def test_a_count_that_times_out_says_so_on_the_row() -> None:
         assert len(shell_input.details_lines) <= 3, shell_input.details_lines
 
 
+@pytest.mark.bootstrap_profile
 async def test_details_stops_saying_unavailable_once_the_canvas_supplies_a_count() -> None:
     """task-32103 AC#3 (fix round 1): the row and Details share one gate.
 
@@ -589,6 +600,7 @@ async def test_details_stops_saying_unavailable_once_the_canvas_supplies_a_count
         ), shell_input.details_lines
 
 
+@pytest.mark.bootstrap_profile
 async def test_the_prefetched_total_is_fenced_to_the_authority_it_was_read_from() -> None:
     """task-32103 AC#3 (fix round 1): fence the PREFETCH path too.
 
@@ -648,6 +660,7 @@ async def test_the_prefetched_total_is_fenced_to_the_authority_it_was_read_from(
         ), shell_input.details_lines
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_count_deadline_never_cancels_the_evidence_read() -> None:
     """task-32103 AC#1 (fix round 1): the shield is what makes sharing safe.
 
@@ -690,6 +703,7 @@ async def test_a_count_deadline_never_cancels_the_evidence_read() -> None:
     assert await evidence_task is LibraryContentEvidence.HAS_USER_CONTENT
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_wedged_shared_read_is_not_inherited_by_the_next_pass() -> None:
     """task-32103 (fix round 1): the shared slot ages out.
 
@@ -733,6 +747,7 @@ async def test_a_wedged_shared_read_is_not_inherited_by_the_next_pass() -> None:
     assert page.total == 0
 
 
+@pytest.mark.bootstrap_profile
 async def test_an_instant_transport_timeout_does_not_claim_the_deadline() -> None:
     """task-32103 (fix round 2): the "(waited 5 s)" claim is about the clock.
 

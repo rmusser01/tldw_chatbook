@@ -1263,6 +1263,7 @@ async def test_flat_rows_render_the_same_single_line_age() -> None:
 # -- review round 2 (PR #2544) --------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_list_toolbar_uses_the_width_the_pane_has_after_a_round_trip() -> None:
     """The toolbar composes from THIS view's width, not the previous view's.

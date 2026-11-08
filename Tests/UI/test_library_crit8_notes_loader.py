@@ -118,6 +118,7 @@ async def _click_note_row(pilot, screen, note_id: str) -> None:
     raise AssertionError(f"note row {note_id!r} never settled in the Notes list")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_existing_note_opens_from_the_list_through_the_real_port(real_notes_app):
     app, note_id = real_notes_app
@@ -141,6 +142,7 @@ async def test_existing_note_opens_from_the_list_through_the_real_port(real_note
         assert screen._notes_state.load_state == "loaded"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_stuck_note_load_fails_with_retry_and_the_next_note_still_opens(
     real_notes_app, monkeypatch
@@ -234,6 +236,7 @@ def _stall_note_session(monkeypatch, screen, *, deadline: float = 0.05) -> None:
     monkeypatch.setattr(screen._library_note_session, "open_session", never_opens)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_timed_out_load_fails_the_note_the_user_is_still_on(monkeypatch):
     app = _build_test_app()
@@ -250,6 +253,7 @@ async def test_a_timed_out_load_fails_the_note_the_user_is_still_on(monkeypatch)
         assert screen._notes_state.load_message == LIBRARY_NOTE_LOAD_TIMEOUT_COPY
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_timed_out_load_leaves_the_destination_the_user_moved_to(monkeypatch):
     """A deadline that expires after the user routed away owns nothing.
@@ -336,6 +340,7 @@ async def _filter_notes(pilot, screen, query: str) -> None:
     await pilot.press("enter")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_opening_a_filtered_note_reveals_its_folder_in_the_tree(tmp_path):
     app, db, folder, (note_id,), placements = _folder_notes_app(
@@ -378,6 +383,7 @@ async def test_opening_a_filtered_note_reveals_its_folder_in_the_tree(tmp_path):
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_second_open_supersedes_the_older_locator_not_its_own_load(tmp_path):
     """The second click cancels the first reveal and still opens its note.

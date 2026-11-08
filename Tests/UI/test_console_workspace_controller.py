@@ -3647,6 +3647,7 @@ async def test_search_refresh_ignores_stale_token(request):
         assert console._console_workspace_conversation_search_rows == ()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_resume_workspace_conversation_restores_native_session():
     """Resuming a real persisted conversation creates a matching native session."""
@@ -3679,6 +3680,7 @@ async def test_resume_workspace_conversation_restores_native_session():
         assert active_session.workspace_id == active_workspace.workspace_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_resume_workspace_conversation_missing_record_returns_false():
     """A missing conversation record is reported honestly as False."""
@@ -3952,6 +3954,7 @@ async def test_id_only_public_opener_keeps_active_matching_duplicate():
     assert active.draft == "active draft"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_fresh_screen_already_active_resume_performs_final_presentation_sync():
     """Ordered mount still paints an already-active matching target."""
@@ -4023,6 +4026,7 @@ async def test_resume_missing_returns_false_with_id_only_copy():
     assert notifications == [(RESUME_FAILURE_COPY, "warning", {"timeout": 15})]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("failure_boundary", "expected_outcome", "expected_severity"),
@@ -4308,6 +4312,7 @@ async def test_resume_retry_is_scheduled_only_after_successful_composer_focus():
     assert events == ["focus:True", "retry"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_active_workspace_id_for_conversation_search_reads_registry():
     """Falls back to the registry's active workspace when none is staged."""
@@ -4325,6 +4330,7 @@ async def test_active_workspace_id_for_conversation_search_reads_registry():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_fresh_console_runtime_starts_in_registry_active_workspace():
     """TASK-2033: a prebuilt empty runtime must not fall back to Default."""
@@ -4382,6 +4388,7 @@ def _mounted_section_budgets(console):
     return budgets
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rail_height_drives_adaptive_cap_through_the_mounted_ui(tmp_path):
     """Mounted integration: measure -> accessor wiring -> caps -> resize.

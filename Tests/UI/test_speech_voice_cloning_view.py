@@ -21,6 +21,7 @@ def test_voice_cloning_is_no_longer_a_non_view():
     assert "voice-cloning" not in SPEECH_NON_VIEW_KEYS
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_choosing_it_switches_the_view_rather_than_pushing_a_screen():
     """The frame must survive. If a screen is pushed, the rail that the user
@@ -52,6 +53,7 @@ async def test_choosing_it_switches_the_view_rather_than_pushing_a_screen():
         assert screen.stts_window.current_view == "voice-cloning"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_profile_surface_is_inside_the_frame():
     """The point of the move: its controls live in the Lab body."""

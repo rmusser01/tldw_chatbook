@@ -412,6 +412,7 @@ async def test_scope_change_path_attaches_and_invokes_controller_seams():
     window._schedule_quizzes_refresh.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workspace_scope_mount_does_not_refresh_hidden_views(monkeypatch):
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
@@ -548,6 +549,7 @@ async def test_handle_runtime_backend_changed_recomputes_workspace_scope_state()
     assert "schedule_quizzes" not in call_order
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_app_level_runtime_backend_callback_updates_backend_and_forwards(
     tmp_path,
@@ -603,6 +605,7 @@ def test_return_to_workspace_routes_to_notes_details():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_study_window_renders_workspace_scope_banner_and_exit_controls():
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
@@ -641,6 +644,7 @@ async def test_study_window_renders_workspace_scope_banner_and_exit_controls():
         assert str(switch_button.label) == "Switch To Global Study"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_study_window_hides_workspace_banner_for_global_scope():
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
@@ -664,6 +668,7 @@ async def test_study_window_hides_workspace_banner_for_global_scope():
         assert banner.display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_study_window_back_to_workspace_button_routes_via_notes_details_seam():
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
@@ -697,6 +702,7 @@ async def test_study_window_back_to_workspace_button_routes_via_notes_details_se
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_study_window_switch_to_global_button_clears_scope_and_hides_banner_in_place():
     StudyScopeContext, StudyScopeType = _load_study_scope_models()
@@ -730,6 +736,7 @@ async def test_study_window_switch_to_global_button_clears_scope_and_hides_banne
         app_instance.open_notes_workspace.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_structured_learning_pane_composes_no_orphaned_add_topic_controls():
     """task-16195: the Study rebuild left the legacy add-topic flow without a
@@ -852,6 +859,7 @@ async def _pane_assertions(pilot, app, nav_button_id, removed_ids, empty_state_i
     assert "no way to" in _text(empty_state).lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mindmaps_pane_composes_only_the_honest_empty_state():
     """task-16845 removed `#add-child-btn`; task-19041 finished the pane.
@@ -895,6 +903,7 @@ async def test_mindmaps_pane_composes_only_the_honest_empty_state():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_course_creation_pane_composes_only_the_honest_empty_state():
     """task-16845 removed `#create-course-btn` and the course-* form (no
@@ -939,6 +948,7 @@ async def test_course_creation_pane_composes_only_the_honest_empty_state():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_study_guide_pane_composes_only_the_honest_empty_state():
     """task-16845 removed `#generate-guide-btn`; task-19041 finished the
@@ -982,6 +992,7 @@ async def test_study_guide_pane_composes_only_the_honest_empty_state():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_learning_map_pane_composes_only_the_honest_empty_state():
     """task-16845 removed `#add-milestone-btn`; task-19041 finished the

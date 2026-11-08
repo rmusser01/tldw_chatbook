@@ -259,6 +259,7 @@ async def test_direct_native_core_routes_default_preroll_by_speech_onset(
         await exercise(core)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "edge",
@@ -342,6 +343,7 @@ async def test_native_failure_copy_is_actionable_and_content_free(monkeypatch, e
         assert len(notices) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_late_native_cleanup_cannot_notify_or_repaint_replacement(monkeypatch):
     monkeypatch.setattr(hands_free_module, "speculative_voice_qualified", lambda: True)

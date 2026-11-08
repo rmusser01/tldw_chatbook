@@ -247,6 +247,7 @@ async def _wait_for_quiz_refresh(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_study_section_bar_explains_compact_labels():
     app = _build_full_study_app(_build_app_instance())
@@ -271,6 +272,7 @@ async def test_study_section_bar_explains_compact_labels():
             assert str(button.tooltip) == tooltip
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_study_dashboard_surfaces_due_and_recent_items():
     app = _build_full_study_app(_build_app_instance())
@@ -294,6 +296,7 @@ async def test_study_dashboard_surfaces_due_and_recent_items():
         assert "Open flashcards or quizzes" in str(resume_button.tooltip)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_study_dashboard_resume_action_returns_to_last_session():
     app = _build_full_study_app(_build_app_instance())
@@ -316,6 +319,7 @@ async def test_study_dashboard_resume_action_returns_to_last_session():
         assert getattr(app.screen, "current_section", None) == "quizzes"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_study_quizzes_section_offers_shell_level_start_flow():
     app_instance = _build_app_instance()
@@ -355,6 +359,7 @@ async def test_study_quizzes_section_offers_shell_level_start_flow():
         assert "Question 1 of 1." in _text(quiz_status)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_study_quizzes_start_action_explains_no_quiz_recovery():
     app_instance = _build_app_instance()
@@ -386,6 +391,7 @@ async def test_study_quizzes_start_action_explains_no_quiz_recovery():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_study_quizzes_review_in_chat_stages_selected_quiz_context():
     app_instance = _build_app_instance()
@@ -430,6 +436,7 @@ async def test_study_quizzes_review_in_chat_stages_selected_quiz_context():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_study_quizzes_review_in_chat_preserves_workspace_scope_metadata():
     app_instance = _build_app_instance()

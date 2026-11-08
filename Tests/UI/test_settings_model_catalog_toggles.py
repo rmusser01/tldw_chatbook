@@ -72,6 +72,7 @@ async def _wait_for_save_calls(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_model_catalog_toggles_render_for_all_providers_with_defaults():
     app = _build_settings_app()
@@ -104,6 +105,7 @@ async def test_model_catalog_toggles_render_for_all_providers_with_defaults():
         assert not save_mock.called
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_model_catalog_toggles_initialize_from_saved_config():
     app = _build_settings_app()
@@ -173,6 +175,7 @@ async def test_model_catalog_toggles_initialize_from_saved_config():
                 ), provider
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_model_catalog_toggle_change_persists_immediately():
     app = _build_settings_app()
@@ -224,6 +227,7 @@ async def test_model_catalog_toggle_change_persists_immediately():
             assert payload["model_catalog"]["stale_after_hours"] == 6
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_model_catalog_invalid_hours_input_skips_persist():
     app = _build_settings_app()
@@ -253,6 +257,7 @@ async def test_model_catalog_invalid_hours_input_skips_persist():
             assert save_mock.call_count == calls_before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_model_catalog_fractional_hours_persist_as_float():
     """A hand-edited fractional TTL must persist, not silently no-op."""
@@ -284,6 +289,7 @@ async def test_model_catalog_fractional_hours_persist_as_float():
             assert isinstance(payload["model_catalog"]["stale_after_hours"], int)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_model_catalog_empty_hours_skips_persist():
     """Clearing the hours field keeps the last persisted value (no 24 rewrite)."""
@@ -312,6 +318,7 @@ async def test_model_catalog_empty_hours_skips_persist():
             assert save_mock.call_count == calls_before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_model_catalog_ignores_unrelated_checkbox_events():
     app = _build_settings_app()
@@ -335,6 +342,7 @@ async def test_model_catalog_ignores_unrelated_checkbox_events():
             assert not save_mock.called
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_model_catalog_saved_values_load_back_on_recompose():
     app = _build_settings_app()

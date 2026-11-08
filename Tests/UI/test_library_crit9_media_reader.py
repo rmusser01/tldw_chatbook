@@ -60,6 +60,7 @@ _GUIDE = (
 )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_more_strip_paints_every_label_at_the_narrowest_stage():
     """task-32237 AC#1: the 60x24 stage, where the strip wraps to two rows.
@@ -125,6 +126,7 @@ def test_the_rendered_view_rule_reads_content_not_the_media_type():
     assert _is_markdown_media("plaintext", "Just a line.\n") is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_document_with_real_markdown_renders_and_drops_the_false_note():
     """task-32234 AC#1/#2: a `document` with Markdown renders it.
@@ -298,6 +300,7 @@ async def _open_analysis_tab(screen, pilot):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "size", [(235, 52), (100, 30), (60, 24)], ids=["wide", "mid", "narrow"]
 )
@@ -335,6 +338,7 @@ async def test_analysis_actions_sit_directly_under_a_short_analysis(size):
         assert edit.region.y < viewer.region.bottom - 8, (edit.region, viewer.region)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_long_analysis_scrolls_its_pane_with_the_actions_at_the_end():
     """The long-document half: actions ride the scroll, and stay REACHABLE.

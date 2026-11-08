@@ -536,6 +536,7 @@ async def test_library_landing_composes_explore_only_when_rail_action_is_absent(
         assert len(app.query("#library-hub-explore-all")) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_landing_late_sync_cannot_replace_a_new_route_owner():
     app = _build_test_app()
@@ -558,6 +559,7 @@ async def test_library_landing_late_sync_cannot_replace_a_new_route_owner():
         assert not screen.query("#library-landing-canvas")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_graduation_toast_is_not_repeated_by_reconcile_or_same_route_replace():
     """task-32063 made the graduation notice a toast and only a toast; task-32555
@@ -648,6 +650,7 @@ async def test_library_graduation_toast_is_not_repeated_by_reconcile_or_same_rou
         assert screen.focused.id == focus.id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ("reconcile", "replace", "route_swap"))
 async def test_library_notes_recompose_does_not_steal_newer_focus(
@@ -845,6 +848,7 @@ def _entry_worker_terminal(case: _EntryWorkerCase, screen: LibraryScreen) -> boo
     return False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(60, 20), (170, 48)])
 @pytest.mark.parametrize("case", _ENTRY_WORKER_CASES, ids=lambda case: case.name)
@@ -1110,6 +1114,7 @@ def _assert_new_route_unchanged(
     assert screen.focused is focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stale_prompt_token_cannot_project_after_route_switch(
     monkeypatch: pytest.MonkeyPatch,
@@ -1168,6 +1173,7 @@ async def test_stale_prompt_token_cannot_project_after_route_switch(
         _assert_new_route_unchanged(active_screen, owner=owner, focus=focus)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stale_prompt_token_is_rejected_on_the_same_route(
     tmp_path: Path,
@@ -1198,6 +1204,7 @@ async def test_stale_prompt_token_is_rejected_on_the_same_route(
         assert active_screen.focused is row
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unmounted_prompt_screen_cannot_apply_into_a_fresh_visit(
     monkeypatch: pytest.MonkeyPatch,
@@ -1258,6 +1265,7 @@ async def test_unmounted_prompt_screen_cannot_apply_into_a_fresh_visit(
         assert fresh_result.items[0]["name"] == "Entry prompt"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_late_broad_snapshot_cannot_replace_the_dedicated_prompt_page(
     tmp_path: Path,
@@ -1330,6 +1338,7 @@ async def test_late_broad_snapshot_cannot_replace_the_dedicated_prompt_page(
         assert not active.query("#library-prompt-row-999")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skills_rail_starts_trust_posture_after_canvas_mount(
     monkeypatch: pytest.MonkeyPatch,
@@ -1369,6 +1378,7 @@ async def test_skills_rail_starts_trust_posture_after_canvas_mount(
         assert observed_owner_state == [True]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skills_rail_without_trust_service_clears_mounted_header(
     monkeypatch: pytest.MonkeyPatch,
@@ -1398,6 +1408,7 @@ async def test_skills_rail_without_trust_service_clears_mounted_header(
         assert not active_screen.query("#library-skills-trust-header")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_missing_trust_service_supersedes_in_flight_posture_worker(
     monkeypatch: pytest.MonkeyPatch,
@@ -1467,6 +1478,7 @@ async def test_missing_trust_service_supersedes_in_flight_posture_worker(
         assert not active_screen.query("#library-skills-trust-header")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_missing_trust_service_already_clear_list_skips_repaint(
     monkeypatch: pytest.MonkeyPatch,
@@ -1520,6 +1532,7 @@ async def test_missing_trust_service_already_clear_list_skips_repaint(
         assert sync_calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stale_skills_posture_cannot_project_after_route_switch() -> None:
     app = _build_test_app()
@@ -1559,6 +1572,7 @@ async def test_stale_skills_posture_cannot_project_after_route_switch() -> None:
         _assert_new_route_unchanged(screen, owner=owner, focus=focus)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stale_skills_generation_cannot_project_on_the_same_route() -> None:
     app = _build_test_app()
@@ -1606,6 +1620,7 @@ async def test_stale_skills_generation_cannot_project_on_the_same_route() -> Non
         assert active_screen.focused is focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skills_posture_sync_composes_focus_with_render_completion(
     monkeypatch: pytest.MonkeyPatch,
@@ -1675,6 +1690,7 @@ async def test_skills_posture_sync_composes_focus_with_render_completion(
         assert active_screen._library_entry_reconcile_pending is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("surface", ["media", "export"])
 async def test_superseded_entry_result_converges_on_current_dirty_generation(
@@ -1775,6 +1791,7 @@ async def test_superseded_entry_result_converges_on_current_dirty_generation(
         release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_replace_canvas_child_repairs_current_route_after_remove_race(
     monkeypatch: pytest.MonkeyPatch,
@@ -1825,6 +1842,7 @@ async def test_replace_canvas_child_repairs_current_route_after_remove_race(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_entry_reconcile_repairs_current_route_after_remove_race(
     monkeypatch: pytest.MonkeyPatch,
@@ -1861,6 +1879,7 @@ async def test_entry_reconcile_repairs_current_route_after_remove_race(
         assert isinstance(screen._library_entry_canvas_owner(), LibraryMediaCanvas)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_entry_reconcile_repairs_current_route_after_mount_race(
     monkeypatch: pytest.MonkeyPatch,
@@ -1901,6 +1920,7 @@ async def test_entry_reconcile_repairs_current_route_after_mount_race(
         assert isinstance(screen._library_entry_canvas_owner(), LibraryMediaCanvas)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_replace_canvas_child_repairs_owner_after_mount_failure(
     monkeypatch: pytest.MonkeyPatch,
@@ -1946,6 +1966,7 @@ async def test_replace_canvas_child_repairs_owner_after_mount_failure(
         assert active_screen.query("#library-media-viewer")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_reader_sync_rereads_state_without_replacing_items() -> None:
     app = _build_test_app()
@@ -1982,6 +2003,7 @@ async def test_media_reader_sync_rereads_state_without_replacing_items() -> None
         assert active_screen.query("#library-media-edit-title")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stale_media_detail_cannot_project_after_route_switch() -> None:
     app = _build_test_app()
@@ -2021,6 +2043,7 @@ async def test_stale_media_detail_cannot_project_after_route_switch() -> None:
         assert not screen.query(".library-media-route")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stale_media_generation_reconciles_on_the_current_same_route() -> None:
     app = _build_test_app()
@@ -2070,6 +2093,7 @@ async def test_stale_media_generation_reconciles_on_the_current_same_route() -> 
         assert reader.viewer.title == "Interview Recording"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stale_pending_conversation_open_cannot_project_after_route_switch() -> (
     None
@@ -2117,6 +2141,7 @@ async def test_stale_pending_conversation_open_cannot_project_after_route_switch
         _assert_new_route_unchanged(screen, owner=owner, focus=focus)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pending_conversation_open_cannot_overwrite_same_route_user_selection(
     monkeypatch: pytest.MonkeyPatch,
@@ -2214,6 +2239,7 @@ async def test_pending_conversation_open_cannot_overwrite_same_route_user_select
         assert screen.focused is focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pending_conversation_open_retries_initial_snapshot_generation(
     monkeypatch: pytest.MonkeyPatch,
@@ -2307,6 +2333,7 @@ async def test_pending_conversation_open_retries_initial_snapshot_generation(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_trash_replaces_only_items_and_keeps_reader() -> None:
     """Media Trash swaps the Items subview while retaining the Reader."""
@@ -2326,6 +2353,7 @@ async def test_media_trash_replaces_only_items_and_keeps_reader() -> None:
         assert isinstance(screen._library_entry_canvas_owner(), LibraryMediaTrashCanvas)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_canvas_owner_repair_converges_after_repeated_supersession(
     monkeypatch: pytest.MonkeyPatch,
@@ -2365,6 +2393,7 @@ async def test_canvas_owner_repair_converges_after_repeated_supersession(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_export_counts_reject_same_route_stale_generation(tmp_path: Path) -> None:
     app = _build_test_app()
@@ -2403,6 +2432,7 @@ async def test_export_counts_reject_same_route_stale_generation(tmp_path: Path) 
         assert str(scope_line.renderable) == rendered_before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_export_counts_leave_return_same_scope_rejects_older_request(
     monkeypatch: pytest.MonkeyPatch,
@@ -2591,6 +2621,7 @@ def _apply_changed_snapshot(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(60, 20), (170, 48)])
 async def test_uat_warm_landing_fresh_reconcile_retains_frame_and_focus(
@@ -2680,6 +2711,7 @@ async def test_uat_warm_landing_fresh_reconcile_retains_frame_and_focus(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(60, 20), (170, 48)])
 async def test_uat_cold_conversations_loading_to_rows_is_compositor_visible(
@@ -2749,6 +2781,7 @@ async def test_uat_cold_conversations_loading_to_rows_is_compositor_visible(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_landing_snapshot_sync_retains_actions_focus_and_updates_recents():
     """Recomposing the inline landing branch would replace all three actions."""
@@ -2787,6 +2820,7 @@ async def test_landing_snapshot_sync_retains_actions_focus_and_updates_recents()
         assert getattr(recent, "record_id", "") == "chat-2"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_landing_deferred_recents_converge_on_latest_state(monkeypatch):
     """Capturing recents before the deferred await would mount stale rows."""
@@ -2846,6 +2880,7 @@ async def test_landing_deferred_recents_converge_on_latest_state(monkeypatch):
         assert [getattr(recent, "record_id", "") for recent in recents] == ["latest"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stale_landing_deferred_sync_performs_zero_dom_mutation():
     """A route-stale deferred replacement must leave mounted rows untouched."""
@@ -2886,6 +2921,7 @@ async def test_stale_landing_deferred_sync_performs_zero_dom_mutation():
         assert children_before[0].parent is recents_owner
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_study_handoff_snapshot_sync_retains_open_action_and_paints_readiness():
     """A source/readiness change must patch the mounted handoff owner in place."""
@@ -2928,6 +2964,7 @@ async def test_study_handoff_snapshot_sync_retains_open_action_and_paints_readin
         assert "Retained source" in painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(60, 20), (170, 48)])
 @pytest.mark.parametrize("surface", ["landing", "handoff"])
@@ -2983,6 +3020,7 @@ async def test_retained_entry_actions_paint_before_and_after_sync(size, surface)
             _assert_widget_text_is_painted(screen, selector, expected)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_source_worker_completion_during_resume_dispatch_reconciles_once(
     monkeypatch: pytest.MonkeyPatch,
@@ -3083,6 +3121,7 @@ async def test_source_worker_completion_during_resume_dispatch_reconciles_once(
         assert "Conversations (2)" in _compositor_text(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(60, 20), (170, 48)])
 async def test_snapshot_timeout_is_repaired_by_blocked_fresh_success(
@@ -3191,6 +3230,7 @@ async def test_snapshot_timeout_is_repaired_by_blocked_fresh_success(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_two_changed_generations_render_only_the_newer_generation(
     monkeypatch: pytest.MonkeyPatch,
@@ -3306,6 +3346,7 @@ async def test_two_changed_generations_render_only_the_newer_generation(
         assert "Superseded generation" not in _compositor_text(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_queued_reconcile_supersedes_after_route_switch(
     monkeypatch: pytest.MonkeyPatch,
@@ -3354,6 +3395,7 @@ async def test_queued_reconcile_supersedes_after_route_switch(
         assert screen._library_entry_reconcile_pending is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_detached_queued_reconcile_completion_is_a_noop(
     monkeypatch: pytest.MonkeyPatch,
@@ -3413,6 +3455,7 @@ async def test_detached_queued_reconcile_completion_is_a_noop(
     assert screen._library_entry_reconcile_pending is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_warm_repeat_visit_composes_once_before_fresh_reconcile(monkeypatch):
     app = _build_test_app()
@@ -3485,6 +3528,7 @@ async def test_warm_repeat_visit_composes_once_before_fresh_reconcile(monkeypatc
     assert recompose_calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_source_snapshot_changed_reconciles_conversations_below_screen(
     monkeypatch,
@@ -3564,6 +3608,7 @@ async def test_library_source_snapshot_changed_reconciles_conversations_below_sc
         assert recompose_calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_source_snapshot_changed_retains_conversation_row_focus():
     """Dropping the Conversations follow-up moves focus outside its canvas."""
@@ -3620,6 +3665,7 @@ async def test_library_source_snapshot_changed_retains_conversation_row_focus():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_source_snapshot_equal_clean_refreshes_cache_without_dom_work(
     monkeypatch,
@@ -3690,6 +3736,7 @@ async def test_library_source_snapshot_equal_clean_refreshes_cache_without_dom_w
         assert recompose_calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_source_snapshot_equal_dirty_repairs_with_targeted_sync(
     monkeypatch,
@@ -3755,6 +3802,7 @@ async def test_library_source_snapshot_equal_dirty_repairs_with_targeted_sync(
         assert recompose_calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_source_snapshot_stale_route_clears_retry_markers():
     """Leaving the retry generation armed would skip the new route's retry."""
@@ -3784,6 +3832,7 @@ async def test_library_source_snapshot_stale_route_clears_retry_markers():
         assert screen._library_entry_reconcile_retry_generation is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_same_generation_new_route_receives_its_own_first_retry(
     monkeypatch: pytest.MonkeyPatch,
@@ -3828,6 +3877,7 @@ async def test_same_generation_new_route_receives_its_own_first_retry(
         assert len(queued) == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_source_snapshot_missing_skills_repairs_then_equal_is_noop():
     """A missing Skills owner is rebuilt once; an equal snapshot stays a no-op."""
@@ -3870,6 +3920,7 @@ async def test_library_source_snapshot_missing_skills_repairs_then_equal_is_noop
         assert screen._library_entry_reconcile_pending is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure_site", ["rail", "header"])
 async def test_library_source_snapshot_shell_exception_releases_retry_markers(
@@ -3928,6 +3979,7 @@ async def test_library_source_snapshot_shell_exception_releases_retry_markers(
         assert len(queued) == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_constructor_seeds_cached_snapshot_before_restore_state_wins_selection():
     """Changing pre-compose cache seeding to mount-time seeding would leave
     this fresh screen unloaded before its first composition.
@@ -3971,6 +4023,7 @@ def test_constructor_seeds_cached_snapshot_before_restore_state_wins_selection()
     assert screen._media_state.view == "viewer"
 
 
+@pytest.mark.bootstrap_profile
 def test_cache_seed_rejects_future_and_ttl_boundary_stamps():
     """Changing either cache-age guard would accept a future or expired seed."""
     app = _build_test_app()
@@ -4010,6 +4063,7 @@ def test_cache_seed_rejects_future_and_ttl_boundary_stamps():
     assert screen._library_loaded is True
 
 
+@pytest.mark.bootstrap_profile
 def test_cache_seed_rejects_non_finite_timestamp():
     """A NaN stamp must not bypass both cache-age comparisons."""
     app = _build_test_app()

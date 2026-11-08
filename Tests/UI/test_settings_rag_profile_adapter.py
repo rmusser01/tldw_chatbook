@@ -33,6 +33,7 @@ def _user_profile(mgr, state, **search_over):
     return p
 
 
+@pytest.mark.bootstrap_profile
 def test_load_reads_the_active_profile(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         load_rag_defaults_from_active_profile,
@@ -45,6 +46,7 @@ def test_load_reads_the_active_profile(wired):
     assert d.hybrid_alpha == 0.25
 
 
+@pytest.mark.bootstrap_profile
 def test_save_writes_the_active_profile_file_not_config(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         load_rag_defaults_from_active_profile,
@@ -65,6 +67,7 @@ def test_save_writes_the_active_profile_file_not_config(wired):
     assert mgr2.get_profile(p.id).rag_config.search.default_top_k == 77
 
 
+@pytest.mark.bootstrap_profile
 def test_save_refuses_builtin_active(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         load_rag_defaults_from_active_profile,
@@ -77,6 +80,7 @@ def test_save_refuses_builtin_active(wired):
     assert not ok and reason == "builtin"
 
 
+@pytest.mark.bootstrap_profile
 def test_active_profile_info(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         active_profile_info,
@@ -94,6 +98,7 @@ def test_active_profile_info(wired):
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_active_profile_info_includes_a_cloned_profiles_description(wired):
     """A user clone inherits its source's description verbatim (clone_profile
     copies the whole dict) -- the sub-line must show it too, not just for
@@ -113,6 +118,7 @@ def test_active_profile_info_includes_a_cloned_profiles_description(wired):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_active_profile_info_description_empty_string_when_blank(wired):
     """An explicitly blank description (e.g. a hand-crafted/imported profile
     with none) must report "" rather than "None" or raise -- the screen uses
@@ -131,6 +137,7 @@ def test_active_profile_info_description_empty_string_when_blank(wired):
     assert info["description"] == ""
 
 
+@pytest.mark.bootstrap_profile
 def test_list_profiles_grouped_separates_builtin_and_user_name_sorted(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         list_profiles_grouped,
@@ -158,6 +165,7 @@ def test_list_profiles_grouped_separates_builtin_and_user_name_sorted(wired):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_activate_profile_rejects_unsafe_id_without_raising(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import activate_profile
 
@@ -166,6 +174,7 @@ def test_activate_profile_rejects_unsafe_id_without_raising(wired):
     assert reason
 
 
+@pytest.mark.bootstrap_profile
 def test_activate_profile_flips_the_pointer_on_a_valid_user_id(wired, monkeypatch):
     import tldw_chatbook.UI.Screens.settings_rag_profile_adapter as ad
 
@@ -187,6 +196,7 @@ def test_activate_profile_flips_the_pointer_on_a_valid_user_id(wired, monkeypatc
     assert state["active"] == user.id
 
 
+@pytest.mark.bootstrap_profile
 def test_delete_user_profile_refuses_builtin_without_raising(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         delete_user_profile,
@@ -197,6 +207,7 @@ def test_delete_user_profile_refuses_builtin_without_raising(wired):
     assert reason
 
 
+@pytest.mark.bootstrap_profile
 def test_delete_user_profile_removes_a_user_profile(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         delete_user_profile,
@@ -223,6 +234,7 @@ def test_delete_user_profile_removes_a_user_profile(wired):
 # above), so the fallback activation never touches a real config file. ---
 
 
+@pytest.mark.bootstrap_profile
 def test_delete_user_profile_of_the_active_profile_falls_back_to_hybrid_basic(
     wired, monkeypatch
 ):
@@ -244,6 +256,7 @@ def test_delete_user_profile_of_the_active_profile_falls_back_to_hybrid_basic(
     assert "Hybrid Basic" in message
 
 
+@pytest.mark.bootstrap_profile
 def test_delete_user_profile_of_a_non_active_profile_leaves_the_pointer_untouched(
     wired, monkeypatch
 ):
@@ -270,6 +283,7 @@ def test_delete_user_profile_of_a_non_active_profile_leaves_the_pointer_untouche
     assert state["active"] == user.id
 
 
+@pytest.mark.bootstrap_profile
 def test_clone_profile_as_creates_a_new_writable_profile(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import clone_profile_as
 
@@ -286,6 +300,7 @@ def test_clone_profile_as_creates_a_new_writable_profile(wired):
     mgr.save_profile(clone)
 
 
+@pytest.mark.bootstrap_profile
 def test_clone_profile_as_reports_unknown_source_without_raising(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import clone_profile_as
 
@@ -294,6 +309,7 @@ def test_clone_profile_as_reports_unknown_source_without_raising(wired):
     assert reason
 
 
+@pytest.mark.bootstrap_profile
 def test_rename_user_profile_updates_the_display_name(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         rename_user_profile,
@@ -309,6 +325,7 @@ def test_rename_user_profile_updates_the_display_name(wired):
     assert mgr.get_profile(user.id).name == "Renamed RAG"
 
 
+@pytest.mark.bootstrap_profile
 def test_rename_user_profile_refuses_builtin_without_raising(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         rename_user_profile,
@@ -325,6 +342,7 @@ def test_rename_user_profile_refuses_builtin_without_raising(wired):
 # default exit_on_error=True, so an uncaught OSError crashes the whole app. ---
 
 
+@pytest.mark.bootstrap_profile
 def test_clone_profile_as_converts_os_error_without_raising(wired, monkeypatch):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import clone_profile_as
 
@@ -341,6 +359,7 @@ def test_clone_profile_as_converts_os_error_without_raising(wired, monkeypatch):
     assert "disk full" in reason
 
 
+@pytest.mark.bootstrap_profile
 def test_rename_user_profile_converts_os_error_without_raising(wired, monkeypatch):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         rename_user_profile,
@@ -360,6 +379,7 @@ def test_rename_user_profile_converts_os_error_without_raising(wired, monkeypatc
     assert "no write access" in reason
 
 
+@pytest.mark.bootstrap_profile
 def test_delete_user_profile_converts_os_error_without_raising(wired, monkeypatch):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         delete_user_profile,
@@ -383,6 +403,7 @@ def test_delete_user_profile_converts_os_error_without_raising(wired, monkeypatc
 # + rerank presence semantics. ---
 
 
+@pytest.mark.bootstrap_profile
 def test_load_round_trips_the_extended_fields_from_a_distinctive_profile(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         load_rag_defaults_from_active_profile,
@@ -417,6 +438,7 @@ def test_load_round_trips_the_extended_fields_from_a_distinctive_profile(wired):
     assert d.reranker_top_k == 13
 
 
+@pytest.mark.bootstrap_profile
 def test_load_reports_reranking_disabled_when_reranking_config_is_none(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         load_rag_defaults_from_active_profile,
@@ -432,6 +454,7 @@ def test_load_reports_reranking_disabled_when_reranking_config_is_none(wired):
     assert d.reranker_model == ""
 
 
+@pytest.mark.bootstrap_profile
 def test_save_with_reranking_enabled_creates_a_reranking_config_on_reload(wired):
     """Rerank presence semantics: the service reads
     ``profile.reranking_config is not None`` (rag_factory.py) to decide
@@ -461,6 +484,7 @@ def test_save_with_reranking_enabled_creates_a_reranking_config_on_reload(wired)
     assert reloaded.rag_config.search.enable_reranking is True
 
 
+@pytest.mark.bootstrap_profile
 def test_save_with_reranking_disabled_clears_an_existing_reranking_config(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         load_rag_defaults_from_active_profile,
@@ -485,6 +509,7 @@ def test_save_with_reranking_disabled_clears_an_existing_reranking_config(wired)
     assert reloaded.rag_config.search.enable_reranking is False
 
 
+@pytest.mark.bootstrap_profile
 def test_save_with_reranking_enabled_and_blank_model_leaves_the_default_model_name(
     wired,
 ):
@@ -510,6 +535,7 @@ def test_save_with_reranking_enabled_and_blank_model_leaves_the_default_model_na
     assert reloaded.reranking_config.model_name == RerankingConfig().model_name
 
 
+@pytest.mark.bootstrap_profile
 def test_rerank_toggle_reaches_the_real_service_enable_reranking_flag(
     wired, monkeypatch
 ):
@@ -545,6 +571,7 @@ def test_rerank_toggle_reaches_the_real_service_enable_reranking_flag(
     assert service.enable_reranking is True
 
 
+@pytest.mark.bootstrap_profile
 def test_rerank_toggle_off_reaches_the_real_service_enable_reranking_flag(
     wired, monkeypatch
 ):
@@ -584,6 +611,7 @@ def test_rerank_toggle_off_reaches_the_real_service_enable_reranking_flag(
 # outside this file's own (now-removed) tests ever imported it. ---
 
 
+@pytest.mark.bootstrap_profile
 def test_hard_config_errors_reports_a_real_ragconfig_violation(wired):
     """`RAGConfig.validate()` had zero callers before this; `hard_config_errors`
     is the first. Pick a violation it genuinely reports (chunk_overlap must
@@ -604,6 +632,7 @@ def test_hard_config_errors_reports_a_real_ragconfig_violation(wired):
     assert "chunk_overlap must be less than chunk_size" in errors
 
 
+@pytest.mark.bootstrap_profile
 def test_hard_config_errors_and_soft_config_warnings_empty_for_a_valid_config(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         hard_config_errors,
@@ -619,6 +648,7 @@ def test_hard_config_errors_and_soft_config_warnings_empty_for_a_valid_config(wi
     assert soft_config_warnings(d) == []
 
 
+@pytest.mark.bootstrap_profile
 def test_hard_config_errors_flags_reranker_top_k_below_one_when_enabled(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         hard_config_errors,
@@ -640,6 +670,7 @@ def test_hard_config_errors_flags_reranker_top_k_below_one_when_enabled(wired):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_hard_config_errors_ignores_reranker_top_k_when_reranking_disabled(wired):
     """Behavior change from the old `validate_full_config`: it used to flag
     reranker_top_k < 1 unconditionally, even with reranking off. Gated on
@@ -658,6 +689,7 @@ def test_hard_config_errors_ignores_reranker_top_k_when_reranking_disabled(wired
     assert hard_config_errors(d) == []
 
 
+@pytest.mark.bootstrap_profile
 def test_soft_config_warnings_flags_reranker_top_k_exceeding_default_top_k(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         load_rag_defaults_from_active_profile,
@@ -680,6 +712,7 @@ def test_soft_config_warnings_flags_reranker_top_k_exceeding_default_top_k(wired
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_soft_config_warnings_empty_when_reranking_disabled(wired):
     """The advisory is reranking-specific; it must never fire while
     reranking itself is off, however default_top_k/reranker_top_k compare."""
@@ -698,6 +731,7 @@ def test_soft_config_warnings_empty_when_reranking_disabled(wired):
     assert soft_config_warnings(d) == []
 
 
+@pytest.mark.bootstrap_profile
 def test_hard_config_errors_never_mutates_the_cached_active_profile(wired):
     """`hard_config_errors` must scratch-copy the active profile -- never
     mutate the live cached object the manager hands back to every other
@@ -723,6 +757,7 @@ def test_hard_config_errors_never_mutates_the_cached_active_profile(wired):
     assert mgr.get_profile(p.id).reranking_config is None
 
 
+@pytest.mark.bootstrap_profile
 def test_hard_config_errors_filters_out_unexposed_field_violations(wired):
     """vector_store.type isn't editable in the Library/RAG category -- a
     violation the ACTIVE PROFILE already carries on that field must not leak
@@ -757,6 +792,7 @@ def test_hard_config_errors_filters_out_unexposed_field_violations(wired):
     assert not any("vector store type" in e.lower() for e in errors)
 
 
+@pytest.mark.bootstrap_profile
 def test_hard_config_errors_tolerates_float_like_numeric_strings(wired):
     """A still-stringly-typed, float-like value (e.g. from a loose TOML load
     or a test-constructed dataclass) must validate tolerantly, matching
@@ -776,6 +812,7 @@ def test_hard_config_errors_tolerates_float_like_numeric_strings(wired):
     assert hard_config_errors(d) == []
 
 
+@pytest.mark.bootstrap_profile
 def test_hard_config_errors_reports_instead_of_crashing_on_unparseable_numeric_value(
     wired,
 ):
@@ -799,6 +836,7 @@ def test_hard_config_errors_reports_instead_of_crashing_on_unparseable_numeric_v
 # instead of re-implementing them. ---
 
 
+@pytest.mark.bootstrap_profile
 def test_validate_library_rag_defaults_blocks_save_with_ragconfigs_own_wording(wired):
     from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
         validate_library_rag_defaults,
@@ -819,6 +857,7 @@ def test_validate_library_rag_defaults_blocks_save_with_ragconfigs_own_wording(w
     assert result.message == "chunk_overlap must be less than chunk_size"
 
 
+@pytest.mark.bootstrap_profile
 def test_validate_library_rag_defaults_does_not_gate_on_an_unexposed_field_violation(
     wired,
 ):
@@ -860,6 +899,7 @@ def test_reranker_top_k_dataclass_default_matches_rerankingconfig_default():
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_load_defaults_reranker_top_k_falls_back_to_rerankingconfig_default(wired):
     """When the active profile has no reranking_config yet, the load path
     must fall back to RerankingConfig().top_k_to_rerank (20) -- NOT
@@ -879,6 +919,7 @@ def test_load_defaults_reranker_top_k_falls_back_to_rerankingconfig_default(wire
     assert d.reranker_top_k == RerankingConfig().top_k_to_rerank == 20
 
 
+@pytest.mark.bootstrap_profile
 def test_enabling_rerank_without_touching_top_k_persists_the_rerankingconfig_default(
     wired,
 ):
@@ -905,6 +946,7 @@ def test_enabling_rerank_without_touching_top_k_persists_the_rerankingconfig_def
 # blank-guard), not stomp it with an empty string. ---
 
 
+@pytest.mark.bootstrap_profile
 def test_apply_defaults_with_blank_embedding_device_leaves_profile_device_unchanged(
     wired,
 ):
@@ -928,6 +970,7 @@ def test_apply_defaults_with_blank_embedding_device_leaves_profile_device_unchan
 # --- Task 4: index status readout + backfill + honest re-index warnings ---
 
 
+@pytest.mark.bootstrap_profile
 def test_index_change_pending_false_for_a_query_time_only_change(wired):
     """default_top_k is a query-time-only field (not in the fingerprint's
     index-determining set) -- changing it must never claim a pending
@@ -945,6 +988,7 @@ def test_index_change_pending_false_for_a_query_time_only_change(wired):
     assert index_change_pending(d) is False
 
 
+@pytest.mark.bootstrap_profile
 def test_index_change_pending_true_for_a_chunk_size_change(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         index_change_pending,
@@ -959,6 +1003,7 @@ def test_index_change_pending_true_for_a_chunk_size_change(wired):
     assert index_change_pending(d) is True
 
 
+@pytest.mark.bootstrap_profile
 def test_index_change_pending_true_for_an_embedding_model_change(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         index_change_pending,
@@ -973,6 +1018,7 @@ def test_index_change_pending_true_for_an_embedding_model_change(wired):
     assert index_change_pending(d) is True
 
 
+@pytest.mark.bootstrap_profile
 def test_index_change_pending_true_for_a_distance_metric_change(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         index_change_pending,
@@ -988,6 +1034,7 @@ def test_index_change_pending_true_for_a_distance_metric_change(wired):
     assert index_change_pending(d) is True
 
 
+@pytest.mark.bootstrap_profile
 def test_index_change_pending_never_mutates_the_cached_active_profile(wired):
     """Same scratch-copy discipline as ``hard_config_errors`` -- must never
     mutate the live cached profile object the manager hands to every other
@@ -1009,6 +1056,7 @@ def test_index_change_pending_never_mutates_the_cached_active_profile(wired):
     assert mgr.get_profile(p.id).rag_config.chunking.chunk_size == original_chunk_size
 
 
+@pytest.mark.bootstrap_profile
 def test_index_change_pending_returns_false_without_raising_when_manager_raises(
     wired, monkeypatch
 ):
@@ -1030,6 +1078,7 @@ def test_index_change_pending_returns_false_without_raising_when_manager_raises(
     assert index_change_pending(d) is False
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_index_status_absent_for_a_memory_store_active_profile(wired):
     """SP1 behavior: a non-persistent (in-memory) store is always "absent" --
     there is no on-disk collection to check."""
@@ -1047,6 +1096,7 @@ def test_fetch_index_status_absent_for_a_memory_store_active_profile(wired):
     assert status == {"state": "absent", "count": 0, "provenance": {}}
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_index_status_returns_unknown_without_raising_on_error(
     wired, monkeypatch
 ):
@@ -1075,6 +1125,7 @@ def test_fetch_index_status_returns_unknown_without_raising_on_error(
 # without touching the real ingestion_indexing singleton. ---
 
 
+@pytest.mark.bootstrap_profile
 def test_save_resets_the_shared_rag_service_on_success(wired, monkeypatch):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         load_rag_defaults_from_active_profile,
@@ -1097,6 +1148,7 @@ def test_save_resets_the_shared_rag_service_on_success(wired, monkeypatch):
     assert len(reset_calls) == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_save_refused_for_a_builtin_does_not_reset_the_shared_rag_service(
     wired, monkeypatch
 ):
@@ -1119,6 +1171,7 @@ def test_save_refused_for_a_builtin_does_not_reset_the_shared_rag_service(
     assert reset_calls == []
 
 
+@pytest.mark.bootstrap_profile
 def test_save_failure_does_not_reset_the_shared_rag_service(wired, monkeypatch):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         load_rag_defaults_from_active_profile,
@@ -1154,6 +1207,7 @@ def test_save_failure_does_not_reset_the_shared_rag_service(wired, monkeypatch):
 # (now-transactional, see config_profiles.save_profile) write succeeds. ---
 
 
+@pytest.mark.bootstrap_profile
 def test_save_failure_leaves_the_cached_active_profile_at_its_original_values(
     wired, monkeypatch
 ):
@@ -1186,6 +1240,7 @@ def test_save_failure_leaves_the_cached_active_profile_at_its_original_values(
 # non-active profile. ---
 
 
+@pytest.mark.bootstrap_profile
 def test_get_profile_defaults_reads_a_non_active_profile_by_id(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         get_profile_defaults,
@@ -1213,6 +1268,7 @@ def test_get_profile_defaults_reads_a_non_active_profile_by_id(wired):
     assert load_rag_defaults_from_active_profile().default_top_k == 11
 
 
+@pytest.mark.bootstrap_profile
 def test_get_profile_defaults_round_trips_distinctive_values(wired):
     """Round-trip check mirroring
     ``test_load_round_trips_the_extended_fields_from_a_distinctive_profile``,
@@ -1255,6 +1311,7 @@ def test_get_profile_defaults_round_trips_distinctive_values(wired):
     assert d.reranker_top_k == 13
 
 
+@pytest.mark.bootstrap_profile
 def test_get_profile_defaults_reads_a_builtin_profile(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         get_profile_defaults,
@@ -1265,6 +1322,7 @@ def test_get_profile_defaults_reads_a_builtin_profile(wired):
     assert d.default_search_mode == "hybrid"
 
 
+@pytest.mark.bootstrap_profile
 def test_get_profile_defaults_unknown_id_returns_none(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         get_profile_defaults,
@@ -1273,6 +1331,7 @@ def test_get_profile_defaults_unknown_id_returns_none(wired):
     assert get_profile_defaults("does-not-exist") is None
 
 
+@pytest.mark.bootstrap_profile
 def test_get_profile_defaults_never_mutates_the_managers_cached_profile(wired):
     """Reading a preview must be side-effect-free: the manager's cached
     ``ProfileConfig`` for `other.id` must be the SAME object (identity) and
@@ -1362,6 +1421,7 @@ def test_is_first_run_state_false_when_index_is_not_absent():
 # the top-k but never the provider the per-candidate calls are billed to. ---
 
 
+@pytest.mark.bootstrap_profile
 def test_load_reads_the_profiles_reranker_provider(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         load_rag_defaults_from_active_profile,
@@ -1378,6 +1438,7 @@ def test_load_reads_the_profiles_reranker_provider(wired):
     assert d.reranker_provider == "anthropic"
 
 
+@pytest.mark.bootstrap_profile
 def test_load_reports_blank_reranker_provider_when_reranking_config_is_none(wired):
     """Same blank-means-default shape `reranker_model` already has: no
     reranking_config -> no provider to report, and the Select renders the
@@ -1395,6 +1456,7 @@ def test_load_reports_blank_reranker_provider_when_reranking_config_is_none(wire
     assert d.reranker_provider == ""
 
 
+@pytest.mark.bootstrap_profile
 def test_save_with_a_reranker_provider_writes_model_provider(wired):
     from tldw_chatbook.UI.Screens.settings_rag_profile_adapter import (
         load_rag_defaults_from_active_profile,
@@ -1414,6 +1476,7 @@ def test_save_with_a_reranker_provider_writes_model_provider(wired):
     assert reloaded.reranking_config.model_provider == "anthropic"
 
 
+@pytest.mark.bootstrap_profile
 def test_save_with_reranking_enabled_and_blank_provider_leaves_the_default(wired):
     """A blank ``reranker_provider`` means "use the reranker's own default"
     -- exactly `reranker_model`'s rule -- and must never stomp
@@ -1439,6 +1502,7 @@ def test_save_with_reranking_enabled_and_blank_provider_leaves_the_default(wired
     assert reloaded.reranking_config.model_provider == RerankingConfig().model_provider
 
 
+@pytest.mark.bootstrap_profile
 def test_save_preserves_an_existing_provider_when_the_field_is_blank(wired):
     """Blank means "leave it alone", not "reset to openai": a profile whose
     provider was already set to anthropic keeps it across a save that never

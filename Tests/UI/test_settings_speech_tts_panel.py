@@ -295,6 +295,7 @@ class _StyledPanelHarness(_PanelHarness):
     CSS_PATH = [_BUNDLE, _SETTINGS_SHEET]
 
 
+@pytest.mark.bootstrap_profile
 def test_speech_tts_is_a_first_class_core_settings_category() -> None:
     screen = SettingsScreen(_build_test_app())
 
@@ -309,6 +310,7 @@ def test_speech_tts_is_a_first_class_core_settings_category() -> None:
     assert SettingsCategoryId.SPEECH_TTS in dict(screen._category_groups())["Core"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
 async def test_production_settings_actions_cross_the_pushed_screen_boundary(
@@ -413,6 +415,7 @@ async def test_production_settings_actions_cross_the_pushed_screen_boundary(
             await pilot.pause(0.01)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "query",
     (
@@ -440,6 +443,7 @@ def test_settings_search_indexes_required_speech_vocabulary(query: str) -> None:
     assert screen._category_matches_search(summary, query)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bounded_speech_settings_deep_link_restores_provider_without_action() -> (
     None
@@ -477,6 +481,7 @@ async def test_bounded_speech_settings_deep_link_restores_provider_without_actio
         assert panel._latest_request_id is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("trigger", ("deep-link", "search"))
 async def test_dirty_same_category_provider_target_cancel_survives_recompose(
@@ -543,6 +548,7 @@ async def test_dirty_same_category_provider_target_cancel_survives_recompose(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "extra",
     (
@@ -568,6 +574,7 @@ def test_speech_settings_deep_link_rejects_extra_payload(
     assert screen._speech_tts_configure_provider is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_provider_search_opens_speech_tts_with_named_provider_selected() -> None:
     host = DestinationHarness(_build_test_app(), "settings")
@@ -592,6 +599,7 @@ async def test_provider_search_opens_speech_tts_with_named_provider_selected() -
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_global_panel_states_scope_and_mounts_only_selected_provider() -> None:
     host = DestinationHarness(_build_test_app(), "settings")
@@ -1246,6 +1254,7 @@ async def test_dirty_provider_switch_discard_removes_hidden_draft(request) -> No
         ).value == str(original_timeout)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_dismissal_cancel_preserves_dirty_speech_owner() -> None:
     host = DestinationHarness(_build_test_app(), "settings")
@@ -1473,6 +1482,7 @@ async def test_delayed_save_completion_cannot_replace_newer_lab_runtime_evidence
         assert "Unavailable" not in runtime
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_stylesheet_keeps_fields_usable_and_outer_detail_scrollable() -> (
     None
@@ -1527,6 +1537,7 @@ async def test_real_stylesheet_keeps_fields_usable_and_outer_detail_scrollable()
         assert 0 <= save.region.y < pilot.app.size.height
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_size", ((120, 40), (80, 24)))
 async def test_real_stylesheet_keeps_managed_setup_reachable_at_supported_widths(
@@ -1576,6 +1587,7 @@ async def test_real_stylesheet_keeps_managed_setup_reachable_at_supported_widths
         assert 0 <= save.region.y < pilot.app.size.height
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_category_reloads_the_latest_runtime_config_snapshot(monkeypatch) -> None:
     monkeypatch.setattr(
@@ -1612,6 +1624,7 @@ async def test_category_reloads_the_latest_runtime_config_snapshot(monkeypatch) 
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_each_provider_form_mounts_its_complete_bounded_inventory() -> None:
     host = DestinationHarness(_build_test_app(), "settings")
@@ -1633,6 +1646,7 @@ async def test_each_provider_form_mounts_its_complete_bounded_inventory() -> Non
                 ), f"{provider_id} is missing {field_id}"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_panel_exposes_mode_specific_managed_audio_cpp_setup_controls() -> None:
     host = DestinationHarness(_build_test_app(), "settings")
@@ -2278,6 +2292,7 @@ async def test_invalid_managed_binary_is_adjacent_safe_and_posts_no_save(
         assert str(missing) not in error
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_normal_panel_actions_do_not_contact_or_initialize_tts(
     monkeypatch,
@@ -2306,6 +2321,7 @@ async def test_normal_panel_actions_do_not_contact_or_initialize_tts(
     assert calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounting_external_audio_cpp_settings_never_starts_managed_child(
     monkeypatch: pytest.MonkeyPatch,
@@ -2333,6 +2349,7 @@ async def test_mounting_external_audio_cpp_settings_never_starts_managed_child(
     assert launches == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_reads_only_existing_cached_audio_cpp_observation(
     monkeypatch,
@@ -3216,6 +3233,7 @@ async def test_dirty_provider_switch_cancel_preserves_visible_owner_and_draft(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_generic_save_and_revert_actions_route_to_speech_panel() -> None:
     host = DestinationHarness(_build_test_app(), "settings")

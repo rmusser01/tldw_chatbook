@@ -145,6 +145,7 @@ _FOCUS_TERMINAL_SIZE = (120, 40)
 
 
 class TestFocusChromeSuppression:
+    @pytest.mark.bootstrap_profile
     async def test_focus_mode_hides_chrome_keeps_status_line(self):
         app_instance = _make_app_instance(focus=True)
         harness = FocusConsoleHarness(app_instance)
@@ -159,6 +160,7 @@ class TestFocusChromeSuppression:
             footer = screen.query_one("#screen-footer-status", AppFooterStatus)
             assert footer.display is not False
 
+    @pytest.mark.bootstrap_profile
     async def test_default_mount_shows_all_chrome(self):
         app_instance = _make_app_instance(focus=False)
         harness = FocusConsoleHarness(app_instance)
@@ -171,6 +173,7 @@ class TestFocusChromeSuppression:
             footer = screen.query_one("#screen-footer-status", AppFooterStatus)
             assert footer.display is not False
 
+    @pytest.mark.bootstrap_profile
     async def test_apply_focus_chrome_flips_in_place(self):
         app_instance = _make_app_instance(focus=False)
         harness = FocusConsoleHarness(app_instance)
@@ -188,6 +191,7 @@ class TestFocusChromeSuppression:
 
 
 class TestFocusFooterHint:
+    @pytest.mark.bootstrap_profile
     async def test_footer_advertises_toggle_in_both_states(self):
         app_instance = _make_app_instance(focus=True)
         harness = FocusConsoleHarness(app_instance)
@@ -278,6 +282,7 @@ class TestAppToggleAndNavigationExit:
 
 
 class TestPaletteQuickAction:
+    @pytest.mark.bootstrap_profile
     async def test_focus_toggle_is_searchable_and_executable(self):
         from tldw_chatbook.app import QuickActionsProvider
 
@@ -300,6 +305,7 @@ class TestDeferredFocusRestore:
     """Qodo finding 3: a first-run launch with --focus must deliver the
     chrome-free Console when the wizard completes and navigates to Chat."""
 
+    @pytest.mark.bootstrap_profile
     async def test_wizard_completion_restores_deferred_focus(self):
         # Boot WITHOUT the focus request (the resolver would apply it
         # immediately on a non-first-run launch); then model the state the
@@ -329,6 +335,7 @@ class TestDeferredFocusRestore:
             # remount shortcut skips navigation (Console already current).
             assert app_instance.screen.has_class("-focus")
 
+    @pytest.mark.bootstrap_profile
     def test_wizard_exit_to_settings_does_not_restore_focus(self):
         app_instance = _build_test_app()
         app_instance._deferred_focus_request = True
@@ -349,6 +356,7 @@ class TestNavigationVetoKeepsFocus:
     """Qodo finding 4: an aborted navigation must leave the flag, the
     -focus class, and the footer untouched and synchronized."""
 
+    @pytest.mark.bootstrap_profile
     async def test_flush_veto_keeps_focus_state_synchronized(self):
         app_instance = _build_test_app(configured_default="chat")
 

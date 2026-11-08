@@ -145,6 +145,7 @@ def _assert_no_bytes(node, crumb="state"):
             _assert_no_bytes(value, f"{crumb}[{index}]")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pending_attachments_survive_screen_recreation():
     """Stage a path-backed pending AND a clipboard-style one (no file path),
@@ -192,6 +193,7 @@ async def test_pending_attachments_survive_screen_recreation():
         assert "2 files" in (composer._pending_attachment_label or "")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stash_prunes_dead_sessions_and_empties_after_adoption():
     """A stash entry for a session that no longer exists must not crash the
@@ -370,6 +372,7 @@ def test_h3_completion_waits_for_durable_message_presence_before_cleanup():
     assert store.session_draft(session.id) == "captured edit draft"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_h3_completion_for_session_a_never_clears_identical_visible_draft_b(
     monkeypatch, tmp_path
@@ -617,6 +620,7 @@ async def test_actual_unmount_is_nonblocking_and_fresh_screen_shows_stopping(
         await active.task
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_app_shutdown_cancels_and_drains_owned_h3_operation():
     app = _build_test_app()
@@ -1196,6 +1200,7 @@ async def test_late_first_persisted_h3_failure_reconciles_through_normal_restore
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "success_timing",
     ("before_stash", "after_stash_before_adoption", "after_adoption"),
@@ -1333,6 +1338,7 @@ def test_two_fresh_screens_reconcile_real_persisted_h3_success_at_every_boundary
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_confirmed_session_delete_drops_active_and_completion():
     app = _build_test_app()

@@ -637,6 +637,7 @@ async def _assert_trash_rows_and_restore_reachable(host, pilot):
     assert "Trashed item 20" in painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_trash_page_past_fold_reachable_wide_split_layout():
     """Wide (>= the compact breakpoint) on a 24-row terminal: the full page
@@ -657,6 +658,7 @@ async def test_trash_page_past_fold_reachable_wide_split_layout():
         await _assert_trash_rows_and_restore_reachable(host, pilot)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_trash_page_past_fold_reachable_stacked_layout():
     """Below the breakpoint (the ``library-notes-compact`` stacked regime),
@@ -684,6 +686,7 @@ async def test_trash_page_past_fold_reachable_stacked_layout():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_trash_entry_requests_one_independent_initial_page():
     """Entry ignores normal Media filters and exposes no fabricated result."""
@@ -774,6 +777,7 @@ async def test_media_trash_entry_requests_one_independent_initial_page():
         feed.release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("trash_items", "expected_focus"),
@@ -834,6 +838,7 @@ async def test_media_trash_focus_initial_success_and_empty_fallback(
         assert len(feed.calls) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_trash_initial_entry_failure_sets_retry_focus_intent():
     """An initial read failure mounts one Retry and gives it real DOM focus."""
@@ -904,6 +909,7 @@ async def test_media_trash_initial_entry_failure_sets_retry_focus_intent():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_trash_focus_falls_back_when_next_becomes_disabled():
     """A real Next Enter lands on Previous when the last page removes Next."""
@@ -966,6 +972,7 @@ async def test_media_trash_focus_falls_back_when_next_becomes_disabled():
         assert screen.query_one("#library-media-trash-next", Button).disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_trash_filter_retry_page_and_type_use_applied_scope():
     """Real submitted/chooser events preserve requested/applied separation."""
@@ -1103,6 +1110,7 @@ async def test_media_trash_filter_retry_page_and_type_use_applied_scope():
         assert controller.state.selected_id == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_trash_filter_type_focus_and_escape_use_real_keyboard_inputs():
     """Search/type intents reacquire current controls; chooser Escape is inert."""
@@ -1222,6 +1230,7 @@ async def test_media_trash_filter_type_focus_and_escape_use_real_keyboard_inputs
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_trash_type_filter_uses_complete_production_facets():
     """The mounted chooser includes facets absent from the visible page."""
@@ -1291,6 +1300,7 @@ async def test_media_trash_type_filter_uses_complete_production_facets():
         assert chooser.highlighted == 60
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_trash_focus_completion_does_not_steal_newer_tab_intent():
     """A gated page completion yields to a later real keyboard focus choice."""
@@ -1352,6 +1362,7 @@ async def test_media_trash_focus_completion_does_not_steal_newer_tab_intent():
         feed.release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_trash_render_retry_matches_recoverable_browse_authority():
     """Retry copy, control, and focus exist only for a retryable browse."""
@@ -1451,6 +1462,7 @@ async def test_media_trash_render_retry_matches_recoverable_browse_authority():
         assert screen._media_state.trash_focus_identity == "#library-media-trash-retry"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_trash_filter_draft_survives_background_recompose():
     """A typed, unsubmitted draft survives an unrelated request completion."""
@@ -1524,6 +1536,7 @@ async def test_media_trash_filter_draft_survives_background_recompose():
         feed.release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_trash_compact_status_folds_after_two_readable_rows():
     """An overflowing compact status paints two rows plus a clear fold."""
@@ -1613,6 +1626,7 @@ async def test_media_trash_compact_status_folds_after_two_readable_rows():
         assert "▼ more status" in painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_trash_focus_recovers_after_suppressed_canvas_sync(monkeypatch):
     """A suppressed sync releases focus authority to a later real Tab."""
@@ -1678,6 +1692,7 @@ async def test_media_trash_focus_recovers_after_suppressed_canvas_sync(monkeypat
         assert getattr(screen.focused, "id", None) == "library-media-trash-type-filter"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_trash_disabled_browse_controls_name_mutation_interlock():
     """Every conflicting browse control is visibly disabled during mutation."""
@@ -1739,6 +1754,7 @@ async def test_media_trash_disabled_browse_controls_name_mutation_interlock():
         screen._media_state.bulk_delete_in_flight = False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_trash_confirmation_focus_cancel_escape_and_explicit_commit():
     """Cancel owns initial focus and the opener Enter never commits deletion."""
@@ -1834,6 +1850,7 @@ async def test_media_trash_confirmation_focus_cancel_escape_and_explicit_commit(
         assert permanent_calls == [{"mode": "local", "media_id": 1}]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_trash_restore_refreshes_normal_page_without_forging_rank():
     """task-31275: Restore refreshes the page it fenced, from the service.
@@ -1936,6 +1953,7 @@ async def test_media_trash_restore_refreshes_normal_page_without_forging_rank():
         assert trash.state.freshness == "fresh"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_trash_commit_unknown_blocks_back_but_refresh_can_be_abandoned():
     """Only the irreversible-call phase owns the temporary Back exclusion."""
@@ -2049,6 +2067,7 @@ async def test_media_trash_commit_unknown_blocks_back_but_refresh_can_be_abandon
         release_refresh.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("operation", "error_copy", "expected_focus_id"),
@@ -2186,6 +2205,7 @@ async def test_media_trash_precommit_failure_releases_mounted_controls_without_r
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("operation", "outcome"),
@@ -2342,6 +2362,7 @@ def test_media_trash_restore_summary_accepts_blank_persisted_type():
     }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_trash_restore_bounds_request_and_retained_summary():
     """A successful restore never requests or retains unbounded detail."""
@@ -2459,6 +2480,7 @@ async def test_media_trash_restore_bounds_request_and_retained_summary():
         assert "private-" not in repr(normal.retained_items)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", ((160, 50), (120, 35), (100, 30), (80, 24)))
 async def test_media_trash_geometry_four_sizes_paints_all_fixed_controls(size):
@@ -2685,6 +2707,7 @@ async def test_media_trash_geometry_four_sizes_paints_all_fixed_controls(size):
                 assert "List may be out of date" in painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("exit_key", ("button", "escape"))
 async def test_media_trash_back_and_escape_restore_distinct_media_return(exit_key):
@@ -2806,6 +2829,7 @@ async def test_media_trash_back_and_escape_restore_distinct_media_return(exit_ke
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_trash_back_generation_fences_late_reactivated_completion():
     """Back invalidation survives a later reactivation of the same subview."""
@@ -2858,6 +2882,7 @@ async def test_media_trash_back_generation_fences_late_reactivated_completion():
         feed.release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_trash_unmount_generation_fences_late_completion():
     """Unmount invalidation rejects a local read even if its route reactivates."""
@@ -2928,6 +2953,7 @@ async def test_media_trash_unmount_generation_fences_late_completion():
             release_after_unmount.cancel()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_trash_unmount_fences_inflight_restore_completion():
     """A detached Trash route releases its interlock without projecting success."""
@@ -4464,6 +4490,7 @@ async def test_trashed_item_excluded_from_search_until_restored(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_restore_from_trash_returns_a_fresh_media_list(tmp_path):
     """Restore in Trash, press "‹ Media": the list is current, with no Retry."""
@@ -4624,6 +4651,7 @@ def _trash_production_host():
     return LibraryProductionCSSHarness(app)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_trash_actions_sit_under_the_last_row():
     """Restore renders beside the item, not ~36 rows below it (task-28015).
@@ -4656,6 +4684,7 @@ async def test_trash_actions_sit_under_the_last_row():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_trash_header_paints_in_full():
     """The heading paints its whole label at the Items pane width (task-28015)."""
@@ -4669,6 +4698,7 @@ async def test_trash_header_paints_in_full():
         assert "Local Trash · 1 item" in painted, painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_trash_status_fold_recaps_the_list_so_actions_stay_inside():
     """A status fold appearing re-measures the cap (task-28015 review).
@@ -4720,6 +4750,7 @@ async def test_trash_status_fold_recaps_the_list_so_actions_stay_inside():
         assert "Restore" in painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_trash_list_cap_follows_a_resize():
     """Shrinking the terminal re-measures the cap and keeps Restore inside."""
@@ -4759,6 +4790,7 @@ async def test_trash_list_cap_follows_a_resize():
         assert "Restore" in painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tab_reaches_restore_from_a_trash_row():
     """AC#2: a keyboard path leads from a trash row to Restore."""
@@ -4878,6 +4910,7 @@ async def test_media_trash_delete_is_gapped_and_classed_apart_from_restore(
         assert "Delete forever" in painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_trash_keys_restore_and_arm_permanent_delete():
     """Item 3: "r" and "x" do what the two Trash row actions do.
@@ -4933,6 +4966,7 @@ async def test_media_trash_keys_restore_and_arm_permanent_delete():
         assert restored[0]["media_id"] == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_trash_footer_advertises_the_restore_and_delete_keys():
     """Item 3: the keys are announced where every other Library key is.

@@ -217,6 +217,7 @@ async def test_home_console_model_setup_routes_to_settings_provider_defaults(
             _assert_core_render_is_healthy(app, route="home model setup")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_latest_dev_library_to_console_staged_context_smoke() -> None:
     app = _build_test_app()

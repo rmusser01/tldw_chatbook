@@ -21,6 +21,7 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_status_surfaces_reflect_active_run_end_to_end():
     app = _build_test_app()

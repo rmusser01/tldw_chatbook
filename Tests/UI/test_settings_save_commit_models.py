@@ -119,6 +119,7 @@ async def test_the_save_row_claims_no_staged_edit_when_none_is_staged(request):
         assert "staged" not in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_display_name_documents_staged_save_in_the_inspector():
     app = _build_test_app()
@@ -158,6 +159,7 @@ async def test_model_catalog_fields_document_instant_apply_in_the_inspector(requ
         assert INSTANT_SAVE_ROW in _visible_text(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_splash_category_labels_its_instant_save_model():
     """Splash auto-save stays, but is labeled inline and in the inspector."""
@@ -272,6 +274,7 @@ async def test_guidance_row_builders_keep_a_uniform_row_count(request):
     assert counts == {expected_count}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_model_catalog_stale_hours_has_its_own_inspector_branch():
     """The stale-hours Input is not lumped under the checkbox copy: it gets

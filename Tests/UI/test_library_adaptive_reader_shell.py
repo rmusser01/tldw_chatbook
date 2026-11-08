@@ -698,6 +698,7 @@ from Tests.UI.test_library_shell import (  # noqa: E402
 )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)])
 @pytest.mark.asyncio
 async def test_space_on_a_focused_media_row_never_collapses_a_pane(size):
@@ -777,6 +778,7 @@ def _painted_lines(host, region) -> list[str]:
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("size", "expected_items_width", "expected_title_characters"),
     [
@@ -856,6 +858,7 @@ def _dead_gutters(host, screen, shell) -> tuple[str, str]:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_full_width_collapse_controls_flank_the_media_items_pane_at_235x52() -> None:
     app = _build_media_test_app()

@@ -207,6 +207,7 @@ async def _click_scope_action(console, pilot, button_id: str) -> None:
     assert landed, f"scope action #{button_id} remained obscured after reveal"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_retrieval_scope_row_sits_directly_below_sources_tray_above_run_inspector():
     """Placement pinned: sibling of the tray in the Inspector rail body,
@@ -229,6 +230,7 @@ async def test_retrieval_scope_row_sits_directly_below_sources_tray_above_run_in
         assert tray.region.y < row.region.y < inspector.region.y
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_retrieval_scope_row_default_state_is_unscoped():
     app = _build_test_app()
@@ -244,6 +246,7 @@ async def test_retrieval_scope_row_default_state_is_unscoped():
         assert not list(row.query(f"#{CLEAR_BTN_ID}"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_retrieval_scope_row_reflects_held_scope_for_unpersisted_session():
     app = _build_test_app()
@@ -271,6 +274,7 @@ async def test_retrieval_scope_row_reflects_held_scope_for_unpersisted_session()
         assert not list(row.query(f"#{NARROW_BTN_ID}"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_retrieval_scope_row_zero_db_on_forced_recompose():
     """A persisted-but-not-yet-cached conversation id must render the safe
@@ -319,6 +323,7 @@ async def test_retrieval_scope_row_zero_db_on_forced_recompose():
         assert _scope_segment(console).visible is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_retrieval_scope_row_empty_state_matches_chip_rendering():
     """task-10 review finding 1: row/chip renderer divergence on EMPTY.
@@ -367,6 +372,7 @@ async def test_retrieval_scope_row_empty_state_matches_chip_rendering():
         assert not list(row.query(f"#{CLEAR_BTN_ID}"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_narrow_button_opens_modal_with_real_listers_wired():
     app = _build_test_app()
@@ -398,6 +404,7 @@ async def test_narrow_button_opens_modal_with_real_listers_wired():
         assert media_spy.calls
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversation_scope_picker_projects_raw_session_title_to_one_line():
     app = _build_test_app()
@@ -426,6 +433,7 @@ async def test_conversation_scope_picker_projects_raw_session_title_to_one_line(
         assert session.title == raw_title
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversation_inspector_projects_raw_title_and_workspace_to_one_line():
     app = _build_test_app()
@@ -452,6 +460,7 @@ async def test_conversation_inspector_projects_raw_title_and_workspace_to_one_li
         assert session.workspace_id == raw_workspace
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversation_inspector_projection_does_not_reactivate_session():
     app = _build_test_app()
@@ -470,6 +479,7 @@ async def test_conversation_inspector_projection_does_not_reactivate_session():
         assert store.active_session_epoch() == active_session_epoch
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_edit_button_seeds_modal_from_held_scope():
     app = _build_test_app()
@@ -503,6 +513,7 @@ async def test_edit_button_seeds_modal_from_held_scope():
         assert ("media", "m1") in modal._selected
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_save_unpersisted_stores_in_holder_and_refreshes_row():
     app = _build_test_app()
@@ -528,6 +539,7 @@ async def test_save_unpersisted_stores_in_holder_and_refreshes_row():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scope_saved_unpersisted_then_first_send_flush_refreshes_row():
     """task-9 review finding 1: narrow-then-first-send must not leave the
@@ -597,6 +609,7 @@ async def test_scope_saved_unpersisted_then_first_send_flush_refreshes_row():
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_save_persisted_writes_through_refreshes_row_and_run_recipe():
     db = CharactersRAGDB(":memory:", "test-client")
@@ -632,6 +645,7 @@ async def test_save_persisted_writes_through_refreshes_row_and_run_recipe():
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_save_persisted_corrupt_metadata_surfaces_honest_notify():
     db = CharactersRAGDB(":memory:", "test-client")
@@ -677,6 +691,7 @@ async def test_save_persisted_corrupt_metadata_surfaces_honest_notify():
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_save_persisted_conflict_error_surfaces_specific_notify():
     """task-9 review finding 4: a version-conflict write (``ConflictError``
@@ -721,6 +736,7 @@ async def test_save_persisted_conflict_error_surfaces_specific_notify():
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_save_persisted_conversation_not_found_surfaces_specific_notify():
     """task-9 review finding 4: a ``ValueError`` (conversation not found --
@@ -757,6 +773,7 @@ async def test_save_persisted_conversation_not_found_surfaces_specific_notify():
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clear_button_unpersisted_session():
     app = _build_test_app()
@@ -787,6 +804,7 @@ async def test_clear_button_unpersisted_session():
         assert list(row.query(f"#{NARROW_BTN_ID}"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clear_button_persisted_session():
     db = CharactersRAGDB(":memory:", "test-client")
@@ -824,6 +842,7 @@ async def test_clear_button_persisted_session():
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_resume_console_workspace_conversation_refreshes_row_and_chip():
     """task-10 review finding 2: resuming a scoped saved conversation must
@@ -904,6 +923,7 @@ async def test_resume_console_workspace_conversation_refreshes_row_and_chip():
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_initial_mount_of_restored_persisted_scoped_session_warms_row_and_chip():
     """PR#757 review (comment 4): a persisted, scoped conversation that is
@@ -1007,6 +1027,7 @@ async def test_initial_mount_of_restored_persisted_scoped_session_warms_row_and_
 # and ``ConsoleStatusChips.sync_scope_chip``/``_scope_chip_render``.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scope_chip_hidden_when_unscoped():
     app = _build_test_app()
@@ -1018,6 +1039,7 @@ async def test_scope_chip_hidden_when_unscoped():
         assert _scope_segment(console).visible is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scope_chip_shows_count_and_tooltip_when_scoped():
     app = _build_test_app()
@@ -1048,6 +1070,7 @@ async def test_scope_chip_shows_count_and_tooltip_when_scoped():
         assert _scope_segment(console).alert is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scope_chip_refreshes_on_modal_save():
     app = _build_test_app()
@@ -1070,6 +1093,7 @@ async def test_scope_chip_refreshes_on_modal_save():
         assert _scope_strip(console).segment_text("scope") == "Scope: 1"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scope_chip_refreshes_on_persist_transition_flush():
     """Mirrors ``test_scope_saved_unpersisted_then_first_send_flush_refreshes_row``:
@@ -1111,6 +1135,7 @@ async def test_scope_chip_refreshes_on_persist_transition_flush():
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scope_chip_click_opens_picker_modal():
     """Same handler seam as the Inspector row's Edit button (task-9):
@@ -1157,6 +1182,7 @@ async def test_scope_chip_click_opens_picker_modal():
         assert len(modals) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scope_chip_empty_state_action_required_styling_and_cause_tooltip():
     """EMPTY is not reachable from the real conversation-only path yet --
@@ -1200,6 +1226,7 @@ async def test_scope_chip_empty_state_action_required_styling_and_cause_tooltip(
 WORKSPACE_SCOPE_BTN_ID = "console-workspace-rag-scope-open"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workspace_rag_scope_button_disabled_when_registry_unavailable():
     """No real workspace context (no registry service at all) -> the
@@ -1216,6 +1243,7 @@ async def test_workspace_rag_scope_button_disabled_when_registry_unavailable():
         assert button.disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workspace_rag_scope_button_enabled_for_real_default_workspace():
     """The built-in Default workspace HAS a real registry row
@@ -1232,6 +1260,7 @@ async def test_workspace_rag_scope_button_enabled_for_real_default_workspace():
         assert button.disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workspace_rag_scope_button_opens_modal_with_universe_none():
     """Workspace target: the modal offers the FULL library (``universe=
@@ -1291,6 +1320,7 @@ async def test_workspace_rag_scope_button_opens_modal_with_universe_none():
         assert modal._target_label == f"workspace '{active.name}'"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workspace_rag_scope_save_persists_via_registry():
     """Save writes through ``LocalWorkspaceRegistryService.set_workspace_
@@ -1314,6 +1344,7 @@ async def test_workspace_rag_scope_save_persists_via_registry():
         assert registry.get_workspace_scope(active.workspace_id) == scope
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workspace_rag_scope_save_catches_workspace_not_found():
     """``WorkspaceNotFound`` (the workspace was archived/deleted between
@@ -1347,6 +1378,7 @@ async def test_workspace_rag_scope_save_catches_workspace_not_found():
         assert kwargs.get("severity") == "error"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversation_picker_universe_is_workspace_scope_when_set():
     """D3: the CONVERSATION-target picker restricts its universe to the
@@ -1381,6 +1413,7 @@ async def test_conversation_picker_universe_is_workspace_scope_when_set():
         assert modal._universe == frozenset({("media", "m1"), ("note", "n1")})
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_chip_tooltip_shows_intersection_breakdown_when_both_levels_set():
     """Both a conversation scope AND the workspace scope active -> the
@@ -1430,6 +1463,7 @@ async def test_chip_tooltip_shows_intersection_breakdown_when_both_levels_set():
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_chip_tooltip_shows_workspace_only_breakdown():
     """A workspace scope with NO conversation scope -> single-level
@@ -1460,6 +1494,7 @@ async def test_chip_tooltip_shows_workspace_only_breakdown():
         assert _scope_tooltip(console) == "Only searching: workspace scope (1 item)."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_no_workspace_overlap_renders_empty_state_on_row_and_chip():
     """Fork-into-scoped-workspace: a conversation scope disjoint from the
@@ -1513,6 +1548,7 @@ async def test_no_workspace_overlap_renders_empty_state_on_row_and_chip():
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_switch_between_resumed_sessions_refreshes_stale_workspace_scope():
     """Task-13 review finding 2: ``_apply_console_workspace_scope_save``
@@ -1594,6 +1630,7 @@ async def test_switch_between_resumed_sessions_refreshes_stale_workspace_scope()
 # --- TASK-24607 -------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "state",
     [

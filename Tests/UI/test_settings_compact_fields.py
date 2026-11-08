@@ -52,6 +52,7 @@ async def _reveal(pilot, widget) -> None:
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", THEMES)
 @pytest.mark.parametrize("category", ("providers-models", "network"))
@@ -129,6 +130,7 @@ async def test_compact_fields_keep_labels_focus_and_values_across_resize(
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", THEMES)
 async def test_compact_network_closed_select_paints_every_full_policy(theme):

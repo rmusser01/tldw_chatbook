@@ -2602,6 +2602,7 @@ class _PaneScreen(Screen):
         yield body
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_size", ((120, 40), (80, 24)))
 async def test_runtime_card_actions_remain_scroll_reachable_at_supported_widths(
@@ -2645,6 +2646,7 @@ async def test_runtime_card_actions_remain_scroll_reachable_at_supported_widths(
         assert pane.max_scroll_y >= 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "terminal_size", ((134, 34), (100, 30), (94, 28), (94, 22), (80, 24))
@@ -2717,6 +2719,7 @@ async def test_clone_setup_controls_and_status_remain_scroll_reachable(
         assert pane.max_scroll_y > 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ready_clone_setup_preserves_editable_text_and_current_result_geometry(
     monkeypatch: pytest.MonkeyPatch,
@@ -5266,6 +5269,7 @@ async def test_provider_edit_during_initial_profile_catalog_load_ends_preset(
 # =====================================================================
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_save_profile_action_is_visible_and_focusable_at_narrow_width(
     audio_cpp_playground: FakeTTSService,

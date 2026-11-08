@@ -238,6 +238,7 @@ def _highlighted_words_in_raw(raw: VirtualizedRawContent) -> set[str]:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_match_navigation_takes_no_document_pass_per_click():
     """Six Prev/Next clicks after a submitted query re-read nothing."""
@@ -265,6 +266,7 @@ async def test_match_navigation_takes_no_document_pass_per_click():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_match_navigation_patches_the_highlight_instead_of_rebuilding_it():
     """The mounted Raw view keeps its identity; only its search state moves.
@@ -306,6 +308,7 @@ async def test_match_navigation_patches_the_highlight_instead_of_rebuilding_it()
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_new_query_rehighlights_the_document():
     """A second query must not reuse the first query's cached match list."""
@@ -334,6 +337,7 @@ async def test_a_new_query_rehighlights_the_document():
         assert _status_text(screen) == "Match 2 of 20"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_new_document_rescans_for_the_same_query():
     """Traversing to another item with a live query must rescan the document."""
@@ -364,6 +368,7 @@ async def test_a_new_document_rescans_for_the_same_query():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clearing_the_search_mid_navigation_drops_every_highlight():
     """Submitting an empty query mid-navigation restores the plain document."""
@@ -400,6 +405,7 @@ async def test_clearing_the_search_mid_navigation_drops_every_highlight():
         assert _highlighted_words_in_raw(_raw_static(screen)) == set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_cleared_detail_releases_the_cached_match_list():
     """The memo must not pin a document the reader has already let go of.
@@ -426,6 +432,7 @@ async def test_a_cleared_detail_releases_the_cached_match_list():
         await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.timeout(600)
 async def test_multi_megabyte_document_match_navigation_timings():

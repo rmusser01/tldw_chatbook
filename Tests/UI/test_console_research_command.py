@@ -153,6 +153,7 @@ async def test_research_worker_survives_a_corrupt_research_store(tmp_path):
     assert any("Deep research started" in text for text in screen.system_messages)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_invalid_saved_backend_is_shown_before_console_research_launch(
     monkeypatch,

@@ -169,6 +169,7 @@ def _markdown_wrapping_document(
     return "\n".join(lines)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_match_scroll_moves_the_visible_scroller_after_a_mode_round_trip():
     """FINDING 2 regression: rendered -> raw -> rendered must scroll Rendered again.
@@ -266,6 +267,7 @@ async def test_match_scroll_moves_the_visible_scroller_after_a_mode_round_trip()
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_capture_progress_resolves_the_real_scroller_and_snapshots_its_offset():
     """``_capture_library_media_loaded_progress`` must find the real scroller.
@@ -301,6 +303,7 @@ async def test_capture_progress_resolves_the_real_scroller_and_snapshots_its_off
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_restore_progress_resolves_the_real_scroller_and_applies_the_saved_offset():
     """``_restore_library_media_loaded_progress`` must scroll the real target.
@@ -329,6 +332,7 @@ async def test_restore_progress_resolves_the_real_scroller_and_applies_the_saved
         assert body.scroller.scroll_y == 41
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_match_scroll_resolves_the_real_scroller_and_maps_through_the_wrap_index():
     """``_scroll_library_media_content_to_line`` must land exactly, post-wrap.
@@ -403,6 +407,7 @@ async def _open_rendered_body_ready(screen, pilot) -> LibraryMediaContentBody:
     return screen.query_one("#library-media-viewer-content", LibraryMediaContentBody)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_read_analysis_read_round_trip_restores_the_rendered_scroll_offset():
     """task-31968: Read -> Analysis -> Read must land back on the saved offset.
@@ -482,6 +487,7 @@ async def test_read_analysis_read_round_trip_restores_the_rendered_scroll_offset
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mode_change_restore_lands_synchronously_on_the_laid_out_body():
     """task-31968: the restore must apply against the current layout at once.

@@ -18,6 +18,7 @@ from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 SECRET = "secret-token https://private.invalid/provider voice_provider_unavailable"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "result", ["unavailable", "missing", "unknown", "timeout", "ready"]
@@ -98,6 +99,7 @@ async def test_visible_control_validates_before_factory_and_preserves_draft(
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "change",
@@ -210,6 +212,7 @@ async def test_pending_readiness_cannot_enter_or_notify_after_owner_changes(
             release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("changes_during_load", [False, True])
 async def test_default_factory_and_voice_worker_wait_for_current_readiness(
@@ -267,6 +270,7 @@ async def test_default_factory_and_voice_worker_wait_for_current_readiness(
         release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_exception_in_final_readiness_check_closes_unentered_engine(monkeypatch):
     monkeypatch.setattr(hands_free_module, "speculative_voice_qualified", lambda: True)

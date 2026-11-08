@@ -107,6 +107,7 @@ def test_lab_screen_composes_mode_strip_under_destination_header(
     assert strip.active_route == route
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_evals_composes_mode_strip_under_destination_header_via_real_app():
     """Equivalent of test_lab_screen_composes_mode_strip_under_destination_header
@@ -142,6 +143,7 @@ async def test_evals_composes_mode_strip_under_destination_header_via_real_app()
         assert header_index < strip_index
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_llm_composes_mode_strip_under_destination_header_via_real_app():
     """Equivalent of test_lab_screen_composes_mode_strip_under_destination_header

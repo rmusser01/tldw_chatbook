@@ -694,6 +694,7 @@ async def test_summary_prompt_route_focuses_existing_internal_prompt_editor(
         assert focused.id == "prompt-row-console__rewind_summarize"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_provider_context_window_repair_saves_to_model_capability_authority(
     monkeypatch,
@@ -747,6 +748,7 @@ async def test_provider_context_window_repair_saves_to_model_capability_authorit
     } == connection_before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_provider_context_window_reset_preserves_other_capabilities(
     monkeypatch,

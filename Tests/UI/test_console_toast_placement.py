@@ -18,6 +18,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_toast_rack_docks_top_not_over_composer() -> None:
     """Textual docks notification toasts bottom-right by default — directly over

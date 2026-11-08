@@ -432,6 +432,7 @@ def _list_item_for_card(list_view: ListView, backing_id: str):
     raise AssertionError(f"No list item found for card {backing_id}")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_study_screen_passes_app_instance_to_study_window():
     app_instance = SimpleNamespace(
@@ -450,6 +451,7 @@ async def test_study_screen_passes_app_instance_to_study_window():
         assert app.study_scope_service is app_instance.study_scope_service
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_flashcards_view_loads_scope_backed_decks_without_default_fallback():
     scope = FakeStudyScopeService()
@@ -478,6 +480,7 @@ async def test_flashcards_view_loads_scope_backed_decks_without_default_fallback
         assert "Select a deck" in _text(status)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_flashcards_view_creates_deck_and_card_through_scope_service():
     scope = FakeStudyScopeService()
@@ -535,6 +538,7 @@ async def test_flashcards_view_creates_deck_and_card_through_scope_service():
         assert card_list.children
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_flashcards_view_exposes_delete_and_move_controls():
     scope = FakeStudyScopeService()
@@ -567,6 +571,7 @@ async def test_flashcards_view_exposes_delete_and_move_controls():
         assert delete_selected_button is not None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_server_mode_keeps_delete_deck_visible_but_disabled():
     scope = FakeStudyScopeService()
@@ -597,6 +602,7 @@ async def test_server_mode_keeps_delete_deck_visible_but_disabled():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_flashcards_lifecycle_controls_noop_handlers_do_not_raise():
     scope = FakeStudyScopeService()
@@ -621,6 +627,7 @@ async def test_flashcards_lifecycle_controls_noop_handlers_do_not_raise():
         window.handle_move_card_target_changed(SimpleNamespace())
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_flashcards_lifecycle_controls_disable_without_selected_card_or_target():
     scope = FakeStudyScopeService()
@@ -656,6 +663,7 @@ async def test_flashcards_lifecycle_controls_disable_without_selected_card_or_ta
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delete_selected_card_uses_selected_card_version_and_refreshes_list():
     scope = FakeStudyScopeService()
@@ -696,6 +704,7 @@ async def test_delete_selected_card_uses_selected_card_version_and_refreshes_lis
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_move_selected_card_refreshes_current_deck_and_exits_review_when_needed():
     scope = FakeStudyScopeService()
@@ -750,6 +759,7 @@ async def test_move_selected_card_refreshes_current_deck_and_exits_review_when_n
         assert _text(app.screen.query_one("#review-status", Static)) != ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delete_selected_card_preserves_unrelated_active_review_state():
     scope = FakeStudyScopeService()
@@ -793,6 +803,7 @@ async def test_delete_selected_card_preserves_unrelated_active_review_state():
         assert "Next card" in _text(app.screen.query_one("#review-status", Static))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_move_selected_card_preserves_unrelated_active_review_state():
     scope = FakeStudyScopeService()
@@ -844,6 +855,7 @@ async def test_move_selected_card_preserves_unrelated_active_review_state():
         assert "Next card" in _text(app.screen.query_one("#review-status", Static))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_lifecycle_actions_reconcile_live_deck_after_deck_change_before_refresh_finishes():
     scope = FakeStudyScopeService()
@@ -891,6 +903,7 @@ async def test_lifecycle_actions_reconcile_live_deck_after_deck_change_before_re
         assert controller.selected_card_record is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_local_delete_deck_uses_selected_deck_version_and_resets_review_state():
     scope = FakeStudyScopeService()
@@ -929,6 +942,7 @@ async def test_local_delete_deck_uses_selected_deck_version_and_resets_review_st
         assert "Select a deck" in _text(app.screen.query_one("#review-status", Static))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_flashcards_review_flow_uses_scope_service_and_ends_server_session_when_queue_empties():
     scope = FakeStudyScopeService()
@@ -979,6 +993,7 @@ async def test_flashcards_review_flow_uses_scope_service_and_ends_server_session
         assert "No cards due" in _text(status)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_flashcards_view_shows_explicit_empty_state_when_no_decks_exist():
     app_instance = SimpleNamespace(
@@ -1006,6 +1021,7 @@ async def test_flashcards_view_shows_explicit_empty_state_when_no_decks_exist():
         assert create_button.display is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workspace_flashcards_scope_uses_workspace_filtered_decks_and_server_scoped_create():
     scope = WorkspaceFilteredStudyScopeService()
@@ -1063,6 +1079,7 @@ async def test_workspace_flashcards_scope_uses_workspace_filtered_decks_and_serv
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workspace_flashcards_local_mode_fail_closed_ui_state():
     scope = WorkspaceFilteredStudyScopeService()
@@ -1117,6 +1134,7 @@ async def test_workspace_flashcards_local_mode_fail_closed_ui_state():
             assert "Workspace Flashcards require server mode" in str(button.tooltip)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scope_transition_resets_review_state_and_clears_flashcards_panel():
     scope = WorkspaceFilteredStudyScopeService()
@@ -1191,6 +1209,7 @@ async def test_scope_transition_resets_review_state_and_clears_flashcards_panel(
         assert "switch to Global Study" in status_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_backend_flip_keeps_server_review_session_teardown_before_workspace_unavailable_reset():
     scope = WorkspaceFilteredStudyScopeService()
@@ -1235,6 +1254,7 @@ async def test_backend_flip_keeps_server_review_session_teardown_before_workspac
         assert "server mode" in _text(review_status).lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_end_review_session_is_retried_after_review_panel_reset():
     scope = FlakyEndReviewStudyScopeService()
@@ -1279,6 +1299,7 @@ async def test_failed_end_review_session_is_retried_after_review_panel_reset():
         assert len(end_review_calls) == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_start_review_blocks_when_pending_session_teardown_keeps_failing():
     scope = FlakyEndReviewStudyScopeService()
@@ -1507,6 +1528,7 @@ async def _enter_review(pilot, app):
     return window, controller
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_flashcard_rating_survives_a_sibling_study_worker():
     """TASK-19559(a): the named bug -- a sibling Study worker ate the save.
@@ -1544,6 +1566,7 @@ async def test_flashcard_rating_survives_a_sibling_study_worker():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_consecutive_ratings_on_distinct_cards_all_persist():
     """TASK-19559: rating card after card in quick succession loses nothing.
@@ -1574,6 +1597,7 @@ async def test_consecutive_ratings_on_distinct_cards_all_persist():
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rating_in_flight_survives_leaving_the_flashcards_sub_view():
     """TASK-19559 review R1: switching sub-view mid-save must not crash.
@@ -1616,6 +1640,7 @@ async def test_rating_in_flight_survives_leaving_the_flashcards_sub_view():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_deck_change_and_refresh_do_not_interleave_the_card_list():
     """TASK-19559 review R2: two card-list rebuilds must not interleave.
@@ -2022,6 +2047,7 @@ async def test_two_awaited_card_list_rebuilds_do_not_interleave():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_double_press_on_one_card_applies_sm2_once(tmp_path):
     """TASK-19559 review R3: SM-2 is compounding, so a double-submit doubles it.
@@ -2182,6 +2208,7 @@ def _rating_buttons_enabled(window) -> bool:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cancelled_rating_leaves_the_card_retryable(tmp_path):
     """Qodo #1 on PR #1951: a cancelled rating locked the card out for good.
@@ -2233,6 +2260,7 @@ async def test_cancelled_rating_leaves_the_card_retryable(tmp_path):
     assert scope.submissions == [(card_id, 3)], f"submissions={scope.submissions}"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_direct_submit_rating_call_cannot_double_apply_sm2(tmp_path):
     """Review property 2: the durable gate holds for callers that skip the UI.
@@ -2269,6 +2297,7 @@ async def test_direct_submit_rating_call_cannot_double_apply_sm2(tmp_path):
     assert scope.submissions == [(card_id, 3)], f"submissions={scope.submissions}"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_re_dealt_card_records_every_genuine_re_review(tmp_path):
     """Review property 3: the gate is per-*presentation*, never per-card.

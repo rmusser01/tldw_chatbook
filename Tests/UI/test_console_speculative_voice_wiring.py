@@ -29,6 +29,7 @@ from tldw_chatbook.Widgets.Console import (
 from textual.widgets import Switch
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("exit_kind", ["toggle", "navigation", "suspend", "unmount"])
 async def test_visible_default_factory_selects_attested_private_process(
@@ -135,6 +136,7 @@ async def test_visible_default_factory_selects_attested_private_process(
             await cleanup(engine)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("state", ["starting", "recording"])
 async def test_qualified_entry_refuses_existing_legacy_capture(monkeypatch, state):
@@ -189,6 +191,7 @@ def _preview(*, epoch: int, text: str) -> VoicePreviewProjection:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_hard_off_gate_keeps_legacy_hands_free_controller(monkeypatch):
     fake_dictation = FakeDictationSession()
@@ -221,6 +224,7 @@ async def test_hard_off_gate_keeps_legacy_hands_free_controller(monkeypatch):
         assert factory_calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_qualified_path_uses_one_view_session_and_runtime_owners(monkeypatch):
     factory_calls: list[dict[str, Any]] = []
@@ -283,6 +287,7 @@ async def test_qualified_path_uses_one_view_session_and_runtime_owners(monkeypat
         assert session.close_reasons[-1] is ControlKind.STOP
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_qualified_path_uses_production_factory_when_no_test_seam_is_injected(
     monkeypatch,
@@ -321,6 +326,7 @@ async def test_qualified_path_uses_production_factory_when_no_test_seam_is_injec
         assert session.entered_with == [False]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cold_default_factory_load_keeps_visible_toggle_responsive(monkeypatch):
     session = _QualifiedSession()
@@ -381,6 +387,7 @@ async def test_cold_default_factory_load_keeps_visible_toggle_responsive(monkeyp
         release_load.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_duplicate_visible_state_requests_do_not_spawn_replacement_sessions(
     monkeypatch,
@@ -417,6 +424,7 @@ async def test_duplicate_visible_state_requests_do_not_spawn_replacement_session
         assert sessions[0].close_reasons == [ControlKind.HANDS_FREE_EXIT]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_qualified_unmount_fences_view_session_not_runtime_owners(monkeypatch):
     session = _QualifiedSession()
@@ -445,6 +453,7 @@ async def test_qualified_unmount_fences_view_session_not_runtime_owners(monkeypa
     assert runtime.voice_dispatch_supervisor is dispatch_supervisor
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_replaced_qualified_session_cannot_repaint_or_clear_new_preview(
     monkeypatch,
@@ -491,6 +500,7 @@ async def test_replaced_qualified_session_cannot_repaint_or_clear_new_preview(
         assert sessions[0].close_reasons == [ControlKind.ESCAPE]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_qualified_enter_failure_clears_session_and_allows_retry(monkeypatch):
     sessions: list[_QualifiedSession] = []
@@ -528,6 +538,7 @@ async def test_qualified_enter_failure_clears_session_and_allows_retry(monkeypat
         assert sessions[1].entered_with == [False]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_qualified_runtime_failure_closes_session_and_switch(monkeypatch):
     factory_calls: list[dict[str, Any]] = []
@@ -558,6 +569,7 @@ async def test_qualified_runtime_failure_closes_session_and_switch(monkeypatch):
         assert console.query_one("#console-hands-free-switch", Switch).value is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_qualified_facade_tolerates_legacy_key_and_send_callbacks(monkeypatch):
     session = _QualifiedSession()
@@ -581,6 +593,7 @@ async def test_qualified_facade_tolerates_legacy_key_and_send_callbacks(monkeypa
         assert session.close_reasons == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stale_async_entry_failure_cannot_close_replacement(monkeypatch):
     release_failure = asyncio.Event()
@@ -623,6 +636,7 @@ async def test_stale_async_entry_failure_cannot_close_replacement(monkeypatch):
         assert sessions[1].close_reasons == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_confirmed_navigation_fences_qualified_view_before_unmount(monkeypatch):
     session = _QualifiedSession()

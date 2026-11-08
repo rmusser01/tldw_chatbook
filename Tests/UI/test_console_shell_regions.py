@@ -259,6 +259,7 @@ async def _seed_resize_transcript(screen, pilot):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("stacked", "left_width", "right_width", "left_label", "right_label"),
@@ -313,6 +314,7 @@ async def test_fresh_console_composes_saved_rail_label_style(
         assert console.query_one("#console-right-rail").display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_pilot_uses_the_exact_production_css_stack() -> None:
     """Geometry evidence loads every production stylesheet in production order."""
@@ -320,6 +322,7 @@ async def test_console_pilot_uses_the_exact_production_css_stack() -> None:
         assert pilot.app.CSS_PATH == pilot.app.app_instance.CSS_PATH
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(160, 45), (235, 52), (120, 30)])
 @pytest.mark.parametrize(
@@ -364,6 +367,7 @@ async def test_region_geometry_is_stable(
         assert hit is node or node in hit.ancestors or hit in node.walk_children()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_compact_workspace_grid_children_are_contained() -> None:
     """The real 120x30 workspace keeps every displayed pane horizontally in bounds."""
@@ -412,6 +416,7 @@ async def test_compact_workspace_grid_children_are_contained() -> None:
         }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("size", "expected_displayed"),
@@ -460,6 +465,7 @@ async def test_bounded_rail_default_shell_matrix_is_compositor_contained(
             assert right.display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     (
@@ -602,6 +608,7 @@ async def test_exact_100_workspace_state_matrix_is_contained(
         save_spy.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("start_width", "destination_width"),

@@ -3094,6 +3094,7 @@ async def test_media_edit_save_releases_the_interlock_when_its_warning_raises():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_every_click_on_a_media_row_toggles_it_in_select_mode():
     """task-31631 AC#2: marker cell and title cells are the same target."""
@@ -3138,6 +3139,7 @@ async def test_every_click_on_a_media_row_toggles_it_in_select_mode():
         assert screen._media_state.row_selection.count == 0, "right-edge click"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_row_title_click_still_opens_the_item_in_browse_mode():
     """Browse mode is untouched: a title click opens the item (task-31631)."""
@@ -3321,6 +3323,7 @@ def _label_column(host, button, word: str) -> int:
     return button.region.x + painted.index(word)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)], ids=["wide", "narrow"])
 async def test_bulk_action_labels_hold_their_column_across_the_first_selection(size):

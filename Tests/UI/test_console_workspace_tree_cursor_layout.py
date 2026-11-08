@@ -205,6 +205,7 @@ def _arm_counters(monkeypatch, screen, rail) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_non_boundary_cursor_move_arms_zero_screen_layout_passes(
     monkeypatch: pytest.MonkeyPatch,
@@ -254,6 +255,7 @@ async def test_non_boundary_cursor_move_arms_zero_screen_layout_passes(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_boundary_crossing_reconciles_only_the_workspace_section(
     monkeypatch: pytest.MonkeyPatch,
@@ -422,6 +424,7 @@ def _tray_harness():
     return TrayApp()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tree_tooltip_recomputes_only_when_node_or_width_changes(
     monkeypatch: pytest.MonkeyPatch,
@@ -464,6 +467,7 @@ async def test_tree_tooltip_recomputes_only_when_node_or_width_changes(
         assert len(measurements) == after_move, measurements
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tree_tooltip_stays_correct_across_width_changes() -> None:
     """The memo must not freeze truncation decisions across width changes."""
@@ -504,6 +508,7 @@ async def test_tree_tooltip_stays_correct_across_width_changes() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cursor_move_paths_are_safe_during_teardown() -> None:
     app = _build_test_app()
@@ -523,6 +528,7 @@ async def test_cursor_move_paths_are_safe_during_teardown() -> None:
         await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tooltip_target_removed_by_projection_push_is_not_served_stale() -> None:
     app = _build_test_app()
@@ -568,6 +574,7 @@ async def test_tooltip_target_removed_by_projection_push_is_not_served_stale() -
         assert tree.tooltip is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_boundary_flip_coexists_with_an_in_flight_allocation_pass(
     monkeypatch: pytest.MonkeyPatch,
@@ -606,6 +613,7 @@ async def test_boundary_flip_coexists_with_an_in_flight_allocation_pass(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_projection_content_changes_still_reach_the_allocator(
     monkeypatch: pytest.MonkeyPatch,

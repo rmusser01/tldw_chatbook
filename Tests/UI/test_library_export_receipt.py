@@ -356,6 +356,7 @@ async def test_update_library_export_canvas_after_run_patches_receipt_and_toolti
 # --- Receipt survives leaving/re-entering the canvas (LIB-12) ----------------
 
 
+@pytest.mark.bootstrap_profile
 def test_reset_library_export_transient_state_preserves_the_receipt():
     """task-2858 AC#3 (LIB-12): every OTHER export field resets on entry
     (a fresh form each visit is correct), but the receipt must NOT --
@@ -378,6 +379,7 @@ def test_reset_library_export_transient_state_preserves_the_receipt():
     assert screen._export_state.form["name"] != "edited but about to be reset"
 
 
+@pytest.mark.bootstrap_profile
 def test_build_library_export_state_includes_receipt_after_reset():
     """The receipt must actually reach the rendered state -- not just
     survive as a dangling, unused instance attribute."""
@@ -394,6 +396,7 @@ def test_build_library_export_state_includes_receipt_after_reset():
     assert state.last_export_line.startswith("Last export: /tmp/prior.zip")
 
 
+@pytest.mark.bootstrap_profile
 def test_build_library_export_state_has_no_receipt_before_any_export():
     from Tests.UI.app_factory import _build_test_app
 
@@ -408,6 +411,7 @@ def test_build_library_export_state_has_no_receipt_before_any_export():
 # --- Receipt round-trips through save_state/restore_state --------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_save_state_and_restore_state_round_trip_the_receipt():
     """task-2858 AC#3 (LIB-12): extends the receipt's durability past a
     full navigate-away-and-back to Library (not just an in-session canvas
@@ -429,6 +433,7 @@ def test_save_state_and_restore_state_round_trip_the_receipt():
     assert restored._export_state.last_at == 12345.0
 
 
+@pytest.mark.bootstrap_profile
 def test_restore_state_degrades_gracefully_with_no_prior_receipt():
     from Tests.UI.app_factory import _build_test_app
 
@@ -467,6 +472,7 @@ async def test_submit_button_offers_retry_after_a_failed_run():
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_restore_state_rejects_impossible_receipt_counts():
     """PR #2568 review: a foreign/corrupted saved-state dict must not
     restore impossible artifact facts (a negative item count or byte size),

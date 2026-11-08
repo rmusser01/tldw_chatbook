@@ -16,6 +16,7 @@ from tldw_chatbook.UI.Library_Modules.library_collections_state import (
 )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_saved_search_continuation_keeps_window_for_retry(monkeypatch):
     _app, scope, _ = await _seed()
@@ -47,6 +48,7 @@ async def test_failed_saved_search_continuation_keeps_window_for_retry(monkeypat
     assert state.saved_searches_error == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("switch_authority", [False, True])
 async def test_late_saved_search_window_cannot_replace_newer_window(

@@ -132,6 +132,7 @@ def _generated_artifact(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(120, 40), (80, 24)])
 async def test_the_primary_action_is_above_the_fold(
@@ -160,6 +161,7 @@ async def test_the_primary_action_is_above_the_fold(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(120, 40), (80, 24)])
 async def test_no_control_is_clipped_by_its_container(
@@ -201,6 +203,7 @@ async def test_no_control_is_clipped_by_its_container(
         assert not escaped, f"clipped by container at {size}: {escaped}"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(120, 40), (80, 24)])
 async def test_delivered_result_actions_are_visible_inside_result_and_viewport(
@@ -408,6 +411,7 @@ async def test_save_profile_button_opens_the_name_dialog(
         await _wait_until(pilot, lambda: app.screen is not modal)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(120, 40), (80, 24)])
 async def test_no_chip_text_is_truncated(
@@ -430,6 +434,7 @@ async def test_no_chip_text_is_truncated(
             assert text in chip.render_line(0).text, f"truncated at {size}: {text!r}"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_pane_scrolls_rather_than_clipping_when_stacked(
     monkeypatch: pytest.MonkeyPatch,
@@ -451,6 +456,7 @@ async def test_the_pane_scrolls_rather_than_clipping_when_stacked(
         assert pane.virtual_size.height > pane.container_size.height
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_axes_and_the_text_input_are_both_present(
     monkeypatch: pytest.MonkeyPatch,
@@ -1068,6 +1074,7 @@ async def test_audio_cpp_hides_its_non_applicable_language_axis(
         assert language.disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_speech_disclosures_are_compact_when_collapsed(
     monkeypatch: pytest.MonkeyPatch,

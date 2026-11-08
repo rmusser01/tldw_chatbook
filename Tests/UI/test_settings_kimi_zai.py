@@ -47,6 +47,7 @@ def _hosted_app(provider: str, model: str):
     return app
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider", "model", "expected_endpoint", "expected_env", "reasoning"),
@@ -128,6 +129,7 @@ async def test_settings_hosted_provider_controls_are_exact_and_actionable(
             assert "private" in guidance
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_hosted_provider_switch_isolates_drafts_and_keeps_old_model():
     app = _hosted_app("Moonshot", "moonshot-v1-128k")
@@ -216,6 +218,7 @@ def test_model_profile_reasoning_effort_options_follow_family_predicates(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_hosted_navigation_focuses_reasoning_control():
     host = DestinationHarness(_hosted_app("Moonshot", "kimi-k3"), "settings")

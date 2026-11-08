@@ -53,6 +53,7 @@ def _assert_extends(new_rows, previous_rows) -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_second_send_in_one_visit_extends_the_persisted_chain(tmp_path):
     """The everyday case: two turns in a row, no navigation involved."""
@@ -71,6 +72,7 @@ async def test_a_second_send_in_one_visit_extends_the_persisted_chain(tmp_path):
         _assert_extends(after[len(before) :], before)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_send_after_navigating_away_extends_the_persisted_chain(tmp_path):
     """The same invariant across the app-owned runtime's unmount/remount."""

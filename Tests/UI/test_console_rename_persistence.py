@@ -30,6 +30,7 @@ class _TitleRecorder:
         return "msg-render"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rename_modal_persists_saved_conversation_title():
     app = _build_test_app()

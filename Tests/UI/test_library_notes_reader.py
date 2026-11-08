@@ -42,6 +42,7 @@ from tldw_chatbook.Widgets.Library import (
 )
 
 
+@pytest.mark.bootstrap_profile
 def test_folder_files_reader_authority_scaffold_is_distinct() -> None:
     app = _build_test_app()
     library = app.app_config.setdefault("library", {})
@@ -96,6 +97,7 @@ def test_folder_files_reader_authority_scaffold_is_distinct() -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_database_notes_capability_inventory_and_modes(
     monkeypatch: pytest.MonkeyPatch,
@@ -514,6 +516,7 @@ def test_notes_header_status_channels_follow_approved_precedence(
     assert "\n" not in channels.authority_git
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_discard_new_note_appearing_never_shifts_the_mode_row() -> None:
     """task-32623: Edit/Preview/Info must not move under the pointer.
@@ -597,6 +600,7 @@ async def test_discard_new_note_appearing_never_shifts_the_mode_row() -> None:
         assert discard not in screen._compositor.visible_widgets
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_database_note_status_header_paints_actionable_detail() -> None:
     """Detailed failure/recovery copy survives the pure status projection."""
@@ -741,6 +745,7 @@ def test_folder_status_projects_reachable_read_only_recovery_and_bounds_git() ->
     assert "Git action failed" in git_states[0].authority_git
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_notes_reader_persistence_authorities_reconcile_independently(
     monkeypatch: pytest.MonkeyPatch,
@@ -832,6 +837,7 @@ async def test_notes_reader_persistence_authorities_reconcile_independently(
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_notes_reader_opposite_generation_races_stay_authority_local(
     monkeypatch: pytest.MonkeyPatch,
@@ -920,6 +926,7 @@ async def test_notes_reader_opposite_generation_races_stay_authority_local(
     assert notes_reader["files_tree_width"] == initial_files_tree_width
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_database_notes_work_session_activates_once_and_resets_exactly(
     monkeypatch: pytest.MonkeyPatch,
@@ -1043,6 +1050,7 @@ async def test_database_notes_work_session_activates_once_and_resets_exactly(
         assert screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_notes_global_f6_cycles_only_visible_regions_when_library_collapsed() -> (
     None
@@ -1076,6 +1084,7 @@ async def test_notes_global_f6_cycles_only_visible_regions_when_library_collapse
         assert screen.query_one("#library-note-save", Button).has_focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_database_notes_mount_three_retained_roles_once() -> None:
     app = _build_test_app()
@@ -1108,6 +1117,7 @@ async def test_database_notes_mount_three_retained_roles_once() -> None:
         assert len(shell.query(".library-adaptive-reader-pane-grip")) == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_list_and_work_identity_survive_open_preview_info_and_edit() -> None:
     app = _build_test_app()
@@ -1143,6 +1153,7 @@ async def test_list_and_work_identity_survive_open_preview_info_and_edit() -> No
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reader_route_parks_dirty_note_selection_and_preview_without_saving(
     monkeypatch: pytest.MonkeyPatch,
@@ -1228,6 +1239,7 @@ async def test_reader_route_parks_dirty_note_selection_and_preview_without_savin
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reader_route_invalidates_autosave_queued_before_park(
     monkeypatch: pytest.MonkeyPatch,
@@ -1314,6 +1326,7 @@ async def test_reader_route_invalidates_autosave_queued_before_park(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_work_pane_focus_is_classified_as_notes_stage() -> None:
     app = _build_test_app()
@@ -1338,6 +1351,7 @@ async def test_work_pane_focus_is_classified_as_notes_stage() -> None:
         assert identity.semantic_role == "body"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_create_replaces_only_work_content_and_keeps_list_mounted() -> None:
     app = _build_test_app()
@@ -1359,6 +1373,7 @@ async def test_create_replaces_only_work_content_and_keeps_list_mounted() -> Non
         assert screen.query_one("#library-notes-create-blank").is_mounted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_editor_back_preserves_shell_list_and_work_owners() -> None:
     app = _build_test_app()
@@ -1392,6 +1407,7 @@ async def test_editor_back_preserves_shell_list_and_work_owners() -> None:
         assert screen.query_one("#library-note-work-pane") is work
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_create_back_preserves_shell_list_and_work_owners() -> None:
     app = _build_test_app()
@@ -1417,6 +1433,7 @@ async def test_create_back_preserves_shell_list_and_work_owners() -> None:
         assert screen.query_one("#library-note-work-pane") is work
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_create_success_preserves_shell_list_and_work_owners() -> None:
     app = _build_test_app()
@@ -1442,6 +1459,7 @@ async def test_create_success_preserves_shell_list_and_work_owners() -> None:
         assert screen.query_one("#library-note-work-pane") is work
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delete_and_receipt_preserve_shell_list_and_work_owners() -> None:
     app = _build_test_app()
@@ -1469,6 +1487,7 @@ async def test_delete_and_receipt_preserve_shell_list_and_work_owners() -> None:
         assert screen.query_one("#library-note-work-pane") is work
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_eighty_columns_protect_editor_and_keep_both_restore_grips() -> None:
     app = _build_test_app()
@@ -1493,6 +1512,7 @@ async def test_eighty_columns_protect_editor_and_keep_both_restore_grips() -> No
         assert shell.items_grip.region.x + shell.items_grip.region.width <= 80
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_emergency_width_preserves_manual_collapse_and_notes_adaptive_owner() -> (
     None
@@ -1536,6 +1556,7 @@ async def test_emergency_width_preserves_manual_collapse_and_notes_adaptive_owne
         assert shell.work.display is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_wide_editor_deep_link_keeps_reader_navigation_and_local_back() -> None:
     """A first-paint editor uses the adaptive shell, never legacy task mode."""
@@ -1626,6 +1647,7 @@ async def test_wide_editor_deep_link_keeps_reader_navigation_and_local_back() ->
         assert "Use in Console" in painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bulk_mode_keeps_last_note_as_labelled_read_only_preview() -> None:
     app = _build_test_app()
@@ -1695,6 +1717,7 @@ async def test_bulk_mode_keeps_last_note_as_labelled_read_only_preview() -> None
         assert screen._notes_state.view == "editor"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("exit_route", ["escape", "filter-submit", "filter-clear"])
 async def test_leaving_select_mode_beside_an_open_note_restores_its_editor(

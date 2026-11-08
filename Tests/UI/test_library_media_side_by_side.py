@@ -87,6 +87,7 @@ async def _wait_for_compact_class(screen, pilot, *, compact: bool):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_narrow_media_paints_five_two_line_rows_without_embedded_preview() -> (
     None
@@ -112,6 +113,7 @@ async def test_narrow_media_paints_five_two_line_rows_without_embedded_preview()
         assert open_viewer.can_focus is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_wide_media_keeps_two_line_rows_and_permanent_reader() -> None:
     app = _build_media_test_app()
@@ -132,6 +134,7 @@ async def test_wide_media_keeps_two_line_rows_and_permanent_reader() -> None:
         assert screen.query_one("#library-media-viewer").region.area > 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reader_mode_toolbar_has_one_body_and_reachable_primary_actions_at_80x24() -> (
     None
@@ -166,6 +169,7 @@ async def test_reader_mode_toolbar_has_one_body_and_reachable_primary_actions_at
         assert sum(bool(screen.query(selector)) for selector in bodies) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_resize_preserves_scope_focus_scroll_without_reads() -> None:
     app = _build_media_test_app()
@@ -206,6 +210,7 @@ async def test_media_resize_preserves_scope_focus_scroll_without_reads() -> None
         assert (len(service.search_calls), len(service.type_calls)) == initial_calls
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_row_focus_moves_to_items_grip_when_resize_hides_items() -> None:
     app = _build_media_test_app()
@@ -244,6 +249,7 @@ async def test_media_row_focus_moves_to_items_grip_when_resize_hides_items() -> 
         assert row is not screen.focused
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_resize_focus_restore_yields_to_newer_user_focus(
     monkeypatch: pytest.MonkeyPatch,
@@ -312,6 +318,7 @@ async def _open_scrolled_compact_media_viewer(host, pilot, *, row_index=15):
     return screen, media_id, offset
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_compact_media_viewer_back_restores_semantic_row_and_scroll() -> None:
     app = _build_media_test_app()
@@ -343,6 +350,7 @@ async def test_compact_media_viewer_back_restores_semantic_row_and_scroll() -> N
         assert len(service.search_calls) == reads_before_back
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_compact_media_viewer_back_survives_authoritative_recompose() -> None:
     app = _build_media_test_app()
@@ -382,6 +390,7 @@ async def test_compact_media_viewer_back_survives_authoritative_recompose() -> N
         assert (int(scroll.scroll_x), int(scroll.scroll_y)) == scroll_offset
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_compact_media_viewer_back_wheel_scroll_cancels_stored_restore() -> None:
     app = _build_media_test_app()
@@ -420,6 +429,7 @@ async def test_compact_media_viewer_back_wheel_scroll_cancels_stored_restore() -
         assert int(scroll.scroll_y) == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_compact_media_viewer_back_survives_targeted_reorder() -> None:
     app = _build_media_test_app()
@@ -473,6 +483,7 @@ async def test_compact_media_viewer_back_survives_targeted_reorder() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_reader_back_keeps_a_retained_row_after_origin_removed() -> None:
     app = _build_media_test_app()
@@ -526,6 +537,7 @@ async def test_media_reader_back_keeps_a_retained_row_after_origin_removed() -> 
         assert getattr(screen.focused, "media_id", None) != media_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_compact_media_viewer_back_follows_single_page_clamp() -> None:
     app = _build_media_test_app()
@@ -603,6 +615,7 @@ async def test_compact_media_viewer_back_follows_single_page_clamp() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_compact_media_viewer_back_empty_page_focuses_recovery_control() -> None:
     app = _build_media_test_app()
@@ -640,6 +653,7 @@ async def test_compact_media_viewer_back_empty_page_focuses_recovery_control() -
         assert len(service.search_calls) == reads_before_back
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_compact_media_viewer_back_restore_yields_to_newer_user_focus(
     monkeypatch: pytest.MonkeyPatch,
@@ -684,6 +698,7 @@ async def test_compact_media_viewer_back_restore_yields_to_newer_user_focus(
         assert screen.focused is type_filter
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_items_and_reader_are_side_by_side_at_wide_width() -> None:
     """At 170 columns Items and the permanent Reader occupy one row band."""
@@ -705,6 +720,7 @@ async def test_media_items_and_reader_are_side_by_side_at_wide_width() -> None:
         assert reader.region.width >= 44
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_toolbar_actions_fit_the_items_panel_at_wide_width() -> None:
     """task-28025: Trash/Select fit the narrow Items panel, not clipped off it."""
@@ -744,6 +760,7 @@ async def test_media_toolbar_actions_fit_the_items_panel_at_wide_width() -> None
             assert button.region.x + button.region.width <= _panel_right(), selector
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_list_hides_preview_below_breakpoint() -> None:
     """At 100 cols the list owns the canvas and the preview is unpainted."""
@@ -768,6 +785,7 @@ async def test_media_list_hides_preview_below_breakpoint() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_trash_view_stays_single_column_at_wide_width() -> None:
     """The split applies to the LIST view only: Trash is a list-only surface
@@ -788,6 +806,7 @@ async def test_trash_view_stays_single_column_at_wide_width() -> None:
         assert trash_list.region.width >= int(canvas.region.width * 0.9)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_trash_collapse_choices_survive_filter_and_page_refresh() -> None:
     """Real pane-grip activation remains durable across Trash recomposes."""
@@ -875,6 +894,7 @@ async def test_media_trash_collapse_choices_survive_filter_and_page_refresh() ->
         assert screen._media_state.reader_layout.items_open is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_trash_compact_pane_priority_survives_page_and_filter_refresh() -> (
     None
@@ -1020,11 +1040,13 @@ async def _assert_keyboard_traversal_and_viewer_entry(size):
         assert title == "Product Demo Video"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_keyboard_traversal_and_viewer_entry_wide() -> None:
     await _assert_keyboard_traversal_and_viewer_entry(WIDE_SIZE)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_keyboard_traversal_and_viewer_entry_narrow() -> None:
     await _assert_keyboard_traversal_and_viewer_entry(NARROW_SIZE)
@@ -1095,11 +1117,13 @@ async def _assert_select_mode_bulk_toolbar_usable(size):
         assert not screen.query("#library-media-bulk-delete-confirm-copy")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_select_mode_bulk_toolbar_usable_wide() -> None:
     await _assert_select_mode_bulk_toolbar_usable(WIDE_SIZE)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_select_mode_bulk_toolbar_usable_narrow() -> None:
     await _assert_select_mode_bulk_toolbar_usable(NARROW_SIZE)
@@ -1169,16 +1193,19 @@ async def _assert_select_mode_keyboard_toggle_and_footer(size):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_select_mode_keyboard_toggle_and_footer_wide() -> None:
     await _assert_select_mode_keyboard_toggle_and_footer(WIDE_SIZE)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_select_mode_keyboard_toggle_and_footer_narrow() -> None:
     await _assert_select_mode_keyboard_toggle_and_footer(NARROW_SIZE)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_compact_media_stale_and_retry_actions_remain_truthful() -> None:
     media = _many_media_items()
@@ -1287,6 +1314,7 @@ async def test_compact_media_stale_and_retry_actions_remain_truthful() -> None:
         service.page_two_release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_compact_media_pager_receipt_and_empty_states_remain_contained() -> None:
     app = _build_media_test_app()
@@ -1376,6 +1404,7 @@ class NonMappingRestoreScopeService(ReversibleLibraryMediaScopeService):
         return dict(item) if item is not None else {}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bulk_undo_counts_a_non_mapping_restore_as_a_still_failed_id() -> None:
     """task-31982 AC#3: a restore that returns a non-Mapping is a failure.
@@ -1432,6 +1461,7 @@ async def test_bulk_undo_counts_a_non_mapping_restore_as_a_still_failed_id() -> 
         assert screen._media_state.delete_receipt_ids == ("local:media:1",)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_full_success_bulk_delete_focuses_undo_and_enter_restores() -> None:
     """task-31220 AC: the confirmation promises "You can undo right away", so
@@ -1509,6 +1539,7 @@ async def test_full_success_bulk_delete_focuses_undo_and_enter_restores() -> Non
         assert screen._media_state.delete_receipt_ids == ()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_receipt_dismiss_clears_the_failed_undo_copy_too() -> None:
     """task-31220: Dismiss retires the WHOLE receipt, failure copy included --
@@ -1540,6 +1571,7 @@ async def test_receipt_dismiss_clears_the_failed_undo_copy_too() -> None:
         assert screen._media_state.delete_receipt_undo_failure == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_single_page_media_list_drops_pager_boundary_noise() -> None:
     # task-28016: one page of results has nowhere to page to, so the
@@ -1561,6 +1593,7 @@ async def test_single_page_media_list_drops_pager_boundary_noise() -> None:
         assert not screen.query("#library-media-previous")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_multi_page_media_list_keeps_pager_controls() -> None:
     """A second page brings Previous/Next back (task-31237 negative control)."""
@@ -1580,6 +1613,7 @@ async def test_multi_page_media_list_keeps_pager_controls() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_wide_select_mode_keeps_permanent_reader() -> None:
     """Select mode changes Items controls without removing the Reader."""
@@ -1607,6 +1641,7 @@ async def test_wide_select_mode_keeps_permanent_reader() -> None:
         assert reader.region.area > 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_narrow_select_mode_keeps_placeholder_hidden() -> None:
     """The placeholder is a wide-layout affordance only -- the preserved

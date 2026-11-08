@@ -453,6 +453,7 @@ async def test_real_runtime_resumes_a_root_the_old_resume_left_paused_on_disk(
         await _close_real_conflict_stack(owner, database, interop)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_activating_a_lasting_root_refreshes_a_seeded_notes_list(
     tmp_path: Path,
@@ -822,6 +823,7 @@ def test_session_git_journey_does_not_delegate_to_other_pytest_tests() -> None:
     assert delegated == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", ((120, 36), (60, 20)))
 async def test_database_notes_import_once_journey_is_painted_focused_and_retained(
@@ -899,6 +901,7 @@ async def test_database_notes_import_once_journey_is_painted_focused_and_retaine
         assert len(dialogs) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", ((120, 36), (60, 20)))
 async def test_import_once_checks_cancels_then_persists_a_reviewed_receipt(
@@ -1038,6 +1041,7 @@ async def test_import_once_checks_cancels_then_persists_a_reviewed_receipt(
         database.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", ((120, 36), (60, 20)))
 async def test_lasting_setup_keeps_server_unavailable_copy_painted(
@@ -1082,6 +1086,7 @@ async def test_lasting_setup_keeps_server_unavailable_copy_painted(
         assert screen._notes_state.view == "list"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_lasting_conflict_comparison_uses_named_worker_without_stealing_moved_focus() -> (
     None
@@ -1240,6 +1245,7 @@ def test_library_unmount_invalidates_lasting_review_before_first_await() -> None
     assert invalidation_index < first_await_index
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("recovery_action", ("apply", "undo"))
 async def test_lasting_recovery_returns_to_roots_without_blank_add_canvas(
@@ -1351,6 +1357,7 @@ async def test_lasting_recovery_returns_to_roots_without_blank_add_canvas(
         assert screen._library_notes_sync_controller.snapshot.phase == "roots"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_lasting_review_activation_receipt_and_remount_recovery_journey(
     tmp_path: Path,
@@ -1513,6 +1520,7 @@ async def test_lasting_review_activation_receipt_and_remount_recovery_journey(
         assert runtime.roots[0].status == "up_to_date"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("source", ("setup", "root", "migration"))
 async def test_check_again_routes_to_its_rendered_review_source(
@@ -1643,6 +1651,7 @@ async def test_check_again_routes_to_its_rendered_review_source(
         assert screen._library_notes_sync_controller.snapshot.review.source == source
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("source", ("root", "migration"))
 @pytest.mark.parametrize("outcome", ("exception", "malformed"))
@@ -1725,6 +1734,7 @@ async def test_failed_persisted_check_again_uses_rendered_source_in_mounted_scre
     assert runtime.calls == [("check_root", root_id), ("check_root", root_id)]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_lasting_attention_survives_a_fresh_screen_and_prioritizes_review() -> (
     None
@@ -1931,6 +1941,7 @@ async def test_real_authority_conflict_choice_journey_is_durable_and_undoable(
         await _close_real_conflict_stack(fresh_owner, fresh_database, fresh_interop)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_folder_files_and_session_git_use_supported_40x20_navigator(
     tmp_path: Path,
@@ -2003,6 +2014,7 @@ async def test_folder_files_and_session_git_use_supported_40x20_navigator(
         replica.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_session_git_executes_stage_commit_cancel_push_cancel_and_result(
     tmp_path: Path,
@@ -2430,6 +2442,7 @@ async def test_check_changes_on_a_clean_root_says_nothing_to_review(
         await _close_real_conflict_stack(owner, database, interop)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_check_changes_lands_on_the_review_it_built_in_a_mounted_screen(
     tmp_path: Path,

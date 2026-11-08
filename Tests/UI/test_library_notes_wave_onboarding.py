@@ -119,6 +119,7 @@ async def _mount_wizard_notes_handoff():
     return LibraryHarness(app, screen=screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_wizard_notes_handoff_parks_focus_on_blank_note() -> None:
     """task-32245 AC#1/AC#3: the hand-off lands ready for the first Enter.
@@ -154,6 +155,7 @@ async def test_wizard_notes_handoff_parks_focus_on_blank_note() -> None:
         assert ("enter", "create note") in screen._library_notes_footer_shortcuts()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_wizard_notes_handoff_items_pane_leaves_the_loading_state() -> None:
     """task-32245 AC#2: the Items pane resolves once the snapshot lands.

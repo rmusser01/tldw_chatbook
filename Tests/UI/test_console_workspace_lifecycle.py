@@ -30,6 +30,7 @@ async def _open_switcher(host, pilot):
     return modal
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rename_flow_renames_workspace() -> None:
     app = _build_test_app()
@@ -64,6 +65,7 @@ async def test_rename_flow_renames_workspace() -> None:
         assert any("Client A" in message for message in notifications)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_archive_flow_confirms_and_falls_back_to_default() -> None:
     app = _build_test_app()
@@ -100,6 +102,7 @@ async def test_archive_flow_confirms_and_falls_back_to_default() -> None:
         assert any("stay saved" in message for message in notifications)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_default_workspace_has_no_lifecycle_buttons() -> None:
     app = _build_test_app()
@@ -113,6 +116,7 @@ async def test_default_workspace_has_no_lifecycle_buttons() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_default_row_labeled_everyday_chats() -> None:
     """ADR-027 (TASK-723): the switcher annotates Default so it agrees with
@@ -142,6 +146,7 @@ async def test_default_row_labeled_everyday_chats() -> None:
         }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_owner_tokens_fall_back_while_rail_widgets_are_unmounted(
     monkeypatch: pytest.MonkeyPatch,
@@ -170,6 +175,7 @@ async def test_owner_tokens_fall_back_while_rail_widgets_are_unmounted(
             assert controller._flat_conversation_owner_token() is console
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_page_request_publishes_loading_and_suppresses_duplicate() -> (
     None
@@ -258,6 +264,7 @@ async def test_mounted_page_request_publishes_loading_and_suppresses_duplicate()
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(100, 30), (160, 44)])
 async def test_switcher_shows_archived_and_restores_as_without_switching(
@@ -300,6 +307,7 @@ async def test_switcher_shows_archived_and_restores_as_without_switching(
 
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_archive_receipt_undo_restores_without_activation() -> None:
     app = _build_test_app()
@@ -323,6 +331,7 @@ async def test_archive_receipt_undo_restores_without_activation() -> None:
 
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workspace_archive_rechecks_draft_after_confirmation() -> None:
     app = _build_test_app()

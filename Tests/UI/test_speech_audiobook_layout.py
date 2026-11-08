@@ -34,6 +34,7 @@ async def _open_audiobook(app, pilot):
     return screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(200, 60), (80, 24)])
 async def test_generate_is_reachable_without_scrolling(size):
@@ -48,6 +49,7 @@ async def test_generate_is_reachable_without_scrolling(size):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_export_stays_beside_generate():
     """Export acts on what Generate produced; separating them puts the
@@ -60,6 +62,7 @@ async def test_export_stays_beside_generate():
         assert body.region.contains_region(export.region)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_collapsible_structure_survives():
     """The spec keeps this view's grouping. Only the actions move."""

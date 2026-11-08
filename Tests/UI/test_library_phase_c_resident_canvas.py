@@ -67,6 +67,7 @@ async def _enter_media_then_notes(host, pilot):
     return screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_hidden_resident_media_canvas_does_not_process_row_presses() -> None:
     """A row press inside the off-route resident canvas must not navigate.
@@ -105,6 +106,7 @@ async def test_hidden_resident_media_canvas_does_not_process_row_presses() -> No
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_off_route_media_sync_is_refused_rather_than_repainting() -> None:
     """TASK-32089: the dispatcher refuses a canvas its route does not own.
@@ -143,6 +145,7 @@ async def test_off_route_media_sync_is_refused_rather_than_repainting() -> None:
         assert screen.query_one("#library-notes-canvas").display
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ownership_guard_alone_refuses_a_displayed_off_route_sync() -> None:
     """I1 isolating pin: the one refusal only ``_library_canvas_kind_owns_route``
@@ -190,6 +193,7 @@ async def test_ownership_guard_alone_refuses_a_displayed_off_route_sync() -> Non
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_suspend_and_resume_keep_the_resident_set_and_its_selection() -> None:
     """TASK-31521 composition: screen reuse does not disturb residency."""
@@ -221,6 +225,7 @@ async def test_suspend_and_resume_keep_the_resident_set_and_its_selection() -> N
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_route_marker_class_tracks_the_selection_across_switches() -> None:
     """The marker classes are a state projection, so pin them to the state.
@@ -264,6 +269,7 @@ async def test_route_marker_class_tracks_the_selection_across_switches() -> None
             assert bool(screen.query(".library-notes-route")) is not media_selected
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_on_route_sync_is_not_refused_by_the_ownership_guard() -> None:
     """The guard must refuse OFF-route syncs only -- pin both directions.

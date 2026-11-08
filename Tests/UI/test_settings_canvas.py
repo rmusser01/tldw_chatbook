@@ -31,6 +31,7 @@ def _isolate_canvas_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(key, raising=False)
 
 
+@pytest.mark.bootstrap_profile
 async def test_privacy_settings_present_canvas_controls_status_and_read_only_quotas() -> (
     None
 ):
@@ -67,6 +68,7 @@ async def test_privacy_settings_present_canvas_controls_status_and_read_only_quo
         assert draft.values["canvas.enabled"] is False
 
 
+@pytest.mark.bootstrap_profile
 async def test_privacy_settings_show_effective_environment_preferences(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -91,6 +93,7 @@ async def test_privacy_settings_show_effective_environment_preferences(
         assert "effective values" in text
 
 
+@pytest.mark.bootstrap_profile
 async def test_failed_canvas_reconciliation_forces_disable_despite_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -128,6 +131,7 @@ async def test_failed_canvas_reconciliation_forces_disable_despite_environment(
         }
 
 
+@pytest.mark.bootstrap_profile
 async def test_canvas_disable_save_persists_both_values_and_revokes_live_runtime(
     monkeypatch,
 ) -> None:
@@ -193,6 +197,7 @@ async def test_canvas_disable_save_persists_both_values_and_revokes_live_runtime
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_accepted_disable_stays_latched_when_config_is_reenabled_before_callback(
     monkeypatch,
 ) -> None:

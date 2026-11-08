@@ -35,6 +35,7 @@ from Tests.UI.test_library_notes_wave_editor_keys import (
 # --- task-32177 AC#1: one back-cue wording rule everywhere ------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_new_note_view_back_cue_reads_back_to_list_when_compact():
     """The New-note view's own Back button was left out of task-32139's
@@ -56,6 +57,7 @@ async def test_new_note_view_back_cue_reads_back_to_list_when_compact():
         assert str(back.label) == "‹ Back to list", back.label
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_new_note_view_back_cue_reads_notes_when_wide():
     host = _build_notes_host()
@@ -75,6 +77,7 @@ async def test_new_note_view_back_cue_reads_notes_when_wide():
         assert str(back.label) == "‹ Notes", back.label
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_load_retry_back_cue_reads_back_to_list_when_compact():
     """The note-loading/retry view's own Back button was also left out of
@@ -95,6 +98,7 @@ async def test_load_retry_back_cue_reads_back_to_list_when_compact():
         assert str(back.label) == "‹ Back to list", back.label
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_load_retry_back_cue_reads_notes_when_wide():
     app = _build_test_app()
@@ -181,6 +185,7 @@ def test_seed_local_source_snapshot_from_cache_is_defined_exactly_once():
 # that. These cross the breakpoint in both directions.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_new_note_view_back_cue_follows_the_compact_breakpoint():
     host = _build_notes_host()
@@ -217,6 +222,7 @@ async def test_new_note_view_back_cue_follows_the_compact_breakpoint():
         ), "New note kept the compact wording after widening"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_load_retry_back_cue_follows_the_compact_breakpoint():
     app = _build_test_app()

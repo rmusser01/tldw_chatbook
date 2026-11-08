@@ -2120,6 +2120,7 @@ async def test_test_provider_button_runs_with_provider_input_focused(request):
         _assert_labelled_rows(_provider_test_result_text(screen))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_t_hotkey_does_not_run_test_while_input_focused():
     """AC#3 rationale: the 't' hotkey does not run the test while a text

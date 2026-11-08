@@ -12,6 +12,7 @@ from Tests.UI.test_library_shell import LibraryProductionCSSHarness, _wait_for_c
 from Tests.UI.test_library_skill_editor_journeys import _activate
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 async def test_compact_reader_tab_actions_remain_readable_and_operate(
@@ -56,6 +57,7 @@ async def test_compact_reader_tab_actions_remain_readable_and_operate(
         await _focus(screen, host, pilot, "#library-collections-favorite", "Favorite")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 async def test_reader_resize_preserves_visible_mode_focus_and_note_draft(
@@ -102,6 +104,7 @@ async def test_reader_resize_preserves_visible_mode_focus_and_note_draft(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("empty", ["", "   "])

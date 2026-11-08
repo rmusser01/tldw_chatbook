@@ -54,6 +54,7 @@ def _media_host() -> LibraryProductionCSSHarness:
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_focused_search_box_keeps_the_canvas_verbs_behind_one_named_key():
     host = _library_host()
@@ -77,6 +78,7 @@ async def test_a_focused_search_box_keeps_the_canvas_verbs_behind_one_named_key(
         assert not [key for key, _label in chips if len(key) == 1 and key.isprintable()], chips
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_media_filter_box_keeps_the_list_verbs_the_same_way():
     host = _media_host()
@@ -133,6 +135,7 @@ async def _open_first_media_reader(host, pilot):
     return screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ctrl_f_opens_the_reader_find_bar_and_the_footer_names_it():
     host = _media_host()
@@ -153,6 +156,7 @@ async def test_ctrl_f_opens_the_reader_find_bar_and_the_footer_names_it():
         assert screen._media_state.find_open is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_t_never_arms_the_trash_while_find_is_open():
     host = _media_host()
@@ -167,6 +171,7 @@ async def test_t_never_arms_the_trash_while_find_is_open():
         assert screen.check_action("library_media_move_to_trash", ()) is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_find_is_refused_on_the_info_tab():
     """task-32348, B D4: the Info tab has no bar to mount, so Find refuses it.
@@ -215,6 +220,7 @@ def _analysis_host(analysis: str) -> LibraryProductionCSSHarness:
     return LibraryProductionCSSHarness(app)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_stored_analysis_renders_its_markdown_with_a_raw_toggle():
     host = _analysis_host(_MARKDOWN_ANALYSIS)
@@ -234,6 +240,7 @@ async def test_a_stored_analysis_renders_its_markdown_with_a_raw_toggle():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_plain_text_analysis_is_offered_no_toggle():
     """Nothing to render, so no affordance for it (the Read tab's rule)."""
@@ -245,6 +252,7 @@ async def test_a_plain_text_analysis_is_offered_no_toggle():
         assert not screen.query("#library-media-analysis-content-mode-raw")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_active_find_query_drops_the_rendered_analysis_to_the_view_that_marks():
     """Review finding 1: rendered mode mounts only the Markdown widget, whose
@@ -291,6 +299,7 @@ async def test_an_active_find_query_drops_the_rendered_analysis_to_the_view_that
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_below_64_columns_a_focused_input_leaves_the_single_chip_alone():
     """Coordinator ruling (Task 6 measurement): below 64 columns the footer
@@ -327,6 +336,7 @@ async def test_below_64_columns_a_focused_input_leaves_the_single_chip_alone():
         assert screen._library_footer_shortcuts_for_current_state() == blurred
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_below_64_columns_the_viewer_names_escape_not_a_bare_status_word():
     """Task 6's re-review, applied to the surface its own gate stands down on.
@@ -424,6 +434,7 @@ def test_an_external_detail_is_searchable_whatever_mode_it_inherited():
     ) == "This tab has no text to search · switch to Read or Analysis."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_raw_during_a_search_does_not_outlive_the_search():
     """Qodo 3: the toggle strip's press handler wrote analysis_content_mode
@@ -458,6 +469,7 @@ async def test_pressing_raw_during_a_search_does_not_outlive_the_search():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_find_button_matches_the_key_on_an_external_document():
     """Coordinator ruling after Qodo 4: the button's own gate call had not

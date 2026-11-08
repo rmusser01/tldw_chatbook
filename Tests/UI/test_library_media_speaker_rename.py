@@ -91,6 +91,7 @@ def test_render_overlap_segment_uses_the_meetings_stored_display_name(
     assert "Alice + Others:" in row["content"]
 
 
+@pytest.mark.bootstrap_profile
 def test_presentation_reachability_reflects_meeting_folder(
     tmp_media_db, meeting_folder_media_item
 ):
@@ -460,6 +461,7 @@ def test_successful_rename_records_a_reversible_document_version(
 
 # ---- I3: the non-meeting hot path -----------------------------------------
 
+@pytest.mark.bootstrap_profile
 def test_presentation_never_fetches_content_and_memoizes_per_selection(
     tmp_media_db, meeting_folder_media_item
 ):

@@ -162,6 +162,7 @@ def _count_state_builds():
         yield counts
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_no_change_traversal_builds_no_preview_and_copies_no_content():
     """Pass-through keystrokes past a loaded image item: 0 factory calls, 0 state builds."""
@@ -243,6 +244,7 @@ async def test_no_change_traversal_builds_no_preview_and_copies_no_content():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_new_image_item_still_rebuilds_preview_from_new_source():
     """Settling a DIFFERENT image item rebuilds the preview from the new image."""
@@ -286,6 +288,7 @@ async def test_new_image_item_still_rebuilds_preview_from_new_source():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.timeout(600)
 async def test_image_item_traversal_wall_time_probe():

@@ -66,6 +66,7 @@ def library(tmp_path):
             instance_lock.close()
 
 
+@pytest.mark.bootstrap_profile
 def test_inspection_fixture_disposes_held_handles_only_after_ownership_ends(tmp_path):
     import sqlite3
     from concurrent.futures import ThreadPoolExecutor
@@ -122,6 +123,7 @@ def test_inspection_fixture_disposes_held_handles_only_after_ownership_ends(tmp_
         observer.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cold_inspection_prepares_display_neutrally_then_commits_exact_once(
     library,
@@ -161,6 +163,7 @@ async def test_cold_inspection_prepares_display_neutrally_then_commits_exact_onc
     assert released == ["own"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "change", ["database", "service", "generation", "cancel", "authority"]
@@ -211,6 +214,7 @@ async def test_inspection_rejects_changed_owner_after_real_locator_without_displ
     ) == before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_missing_inspection_does_not_replace_existing_selection(library):
     _, screen, db = library
@@ -223,6 +227,7 @@ async def test_missing_inspection_does_not_replace_existing_selection(library):
     assert screen._selected_conversation_id != "missing"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "newer", ["none", "route", "page", "reader", "notes", "service", "marker"]
@@ -294,6 +299,7 @@ async def test_inspection_finish_restores_only_its_owned_projection(library, new
     assert releases == ["own"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("committed", [False, True])
 async def test_inspection_finish_disposes_once_without_undoing_owned_target(
@@ -316,6 +322,7 @@ async def test_inspection_finish_disposes_once_without_undoing_owned_target(
     assert releases == ["own"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_inspection_partial_commit_exception_restores_before_disposal(
     library, monkeypatch
@@ -351,6 +358,7 @@ async def test_inspection_partial_commit_exception_restores_before_disposal(
         prepared.discard()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("warm", [False, True])
 @pytest.mark.parametrize(
@@ -646,6 +654,7 @@ async def test_switcher_waits_for_real_library_admission_and_cancellation(
             assert app.screen is not modal
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "veto", ["file", "note", "prompt", "skill", "cancel-save", "exception"]

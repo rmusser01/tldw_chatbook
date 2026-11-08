@@ -160,6 +160,7 @@ async def test_external_view_emits_exact_change_stop_and_copy_actions(
     assert all(event.key is ParakeetSourceKey.V2_INT8 for event in app.requests)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_external_view_keeps_actions_and_status_reachable_at_80_columns(
     tmp_path: Path,

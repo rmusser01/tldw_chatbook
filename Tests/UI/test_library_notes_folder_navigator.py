@@ -4465,6 +4465,7 @@ async def _capture_mounted_duplicate_receipt(screen, pilot, service):
     return receipt
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_create_flow_fences_and_refreshes_every_exact_placement_parent():
     app = _build_test_app()
@@ -4542,6 +4543,7 @@ async def test_mounted_create_flow_fences_and_refreshes_every_exact_placement_pa
         assert screen._notes_state.tree_pending_target_placement_id == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_topology_changed_back_restores_exact_duplicate_ranges_and_scroll():
     app = _build_test_app()
@@ -4610,6 +4612,7 @@ async def test_mounted_topology_changed_back_restores_exact_duplicate_ranges_and
         assert not screen.query("#library-notes-navigation-status")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("abandon", (False, True))
 async def test_mounted_topology_changed_removed_receipt_falls_back_without_focus_theft(
@@ -4704,6 +4707,7 @@ async def _open_mounted_personal_pager(screen, pilot):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("blocked_stage", ("folders", "placements"))
 @pytest.mark.parametrize("late_failure", (False, True))
@@ -4763,6 +4767,7 @@ async def test_mounted_abandoned_locator_never_applies_blocked_stage_or_steals_f
         assert getattr(screen.focused, "id", None) == "library-notes-filter"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_editor_back_supersedes_blocked_locator_before_completion() -> (
     None
@@ -4811,6 +4816,7 @@ async def test_mounted_editor_back_supersedes_blocked_locator_before_completion(
         assert not screen.query("#library-notes-navigation-status")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_user_focus_change_abandons_blocked_locator_without_private_call() -> (
     None
@@ -4862,6 +4868,7 @@ async def test_mounted_user_focus_change_abandons_blocked_locator_without_privat
         assert not screen.query("#library-notes-navigation-status")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_stale_receipt_reload_cannot_steal_newer_user_focus() -> None:
     class _BlockedReceiptRangeService(_MountedReceiptTopologyService):
@@ -4946,6 +4953,7 @@ async def test_mounted_stale_receipt_reload_cannot_steal_newer_user_focus() -> N
         assert screen.focused is newer_target
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("filter_action", ("clear", "replace"))
 async def test_mounted_new_filter_intent_supersedes_blocked_old_receipt(
@@ -5009,6 +5017,7 @@ async def test_mounted_new_filter_intent_supersedes_blocked_old_receipt(
             assert state is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_locator_status_appears_and_clears_on_success() -> None:
     app = _build_test_app()
@@ -5047,6 +5056,7 @@ async def test_mounted_locator_status_appears_and_clears_on_success() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("receipt_kind", ("filter", "browse"))
 @pytest.mark.parametrize("late_failure", (False, True))
@@ -5116,6 +5126,7 @@ async def test_mounted_abandoned_receipt_reload_ignores_late_page_or_filter_resu
         assert getattr(screen.focused, "id", None) == "library-notes-filter"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("initial_offset", "action", "failed_offset"),
@@ -5182,6 +5193,7 @@ async def test_mounted_filter_retry_repeats_exact_failed_offset_and_direction(
         assert len(screen._notes_state.tree_filter_state.placements) == 40
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_committed_filter_retry_failure_stays_stale_until_success() -> (
     None
@@ -5283,6 +5295,7 @@ async def test_mounted_committed_filter_retry_failure_stays_stale_until_success(
         assert not screen.query_one("#library-notes-placement-add", Button).disabled
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("authority", ("branch", "filter"))
 async def test_mounted_nonzero_equality_shrink_clamps_to_last_aligned_range(
@@ -5332,6 +5345,7 @@ async def test_mounted_nonzero_equality_shrink_clamps_to_last_aligned_range(
         assert not stale
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_initial_root_slices_settle_independently_on_one_side_failure():
     app = _build_test_app()
@@ -5379,6 +5393,7 @@ async def test_mounted_initial_root_slices_settle_independently_on_one_side_fail
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_expansion_failure_stays_beneath_folder_and_collapse_retains_it():
     app = _build_test_app()
@@ -5470,6 +5485,7 @@ async def test_mounted_expansion_failure_stays_beneath_folder_and_collapse_retai
         assert getattr(screen.focused, "folder_id", "") == "personal"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_real_repository_statuses_protect_actions_before_page_membership(
     tmp_path,
@@ -5634,6 +5650,7 @@ async def test_mounted_real_repository_statuses_protect_actions_before_page_memb
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_collapse_retains_fresh_branch_without_another_read():
     app = _build_test_app()
@@ -5686,6 +5703,7 @@ async def test_mounted_collapse_retains_fresh_branch_without_another_read():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_sibling_branch_workers_overlap_and_both_apply():
     app = _build_test_app()
@@ -5752,6 +5770,7 @@ async def test_mounted_sibling_branch_workers_overlap_and_both_apply():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_newer_same_slice_worker_supersedes_the_pending_one():
     app = _build_test_app()
@@ -5791,6 +5810,7 @@ async def test_mounted_newer_same_slice_worker_supersedes_the_pending_one():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_target_drift_recovers_the_same_nonzero_range():
     app = _build_test_app()
@@ -5824,6 +5844,7 @@ async def test_mounted_target_drift_recovers_the_same_nonzero_range():
         assert screen._notes_state.tree_branches[key].start_offset == 40
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("recovery_mode", ("second_drift", "failure"))
 async def test_mounted_broken_target_recovery_stales_only_its_local_slice(
@@ -5867,6 +5888,7 @@ async def test_mounted_broken_target_recovery_stales_only_its_local_slice(
         assert service.target_offsets[-1] == 40
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("late_failure", (False, True))
 async def test_mounted_true_unmount_fences_late_branch_success_and_failure(
@@ -5929,6 +5951,7 @@ async def test_mounted_true_unmount_fences_late_branch_success_and_failure(
         assert fresh._notes_state.tree_request_generations == {}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("more_mode", ("success", "failure", "exhausted"))
 async def test_mounted_pager_completion_uses_ordered_semantic_focus(more_mode: str):
@@ -5974,6 +5997,7 @@ async def test_mounted_pager_completion_uses_ordered_semantic_focus(more_mode: s
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("more_mode", ("success", "failure"))
 async def test_mounted_pager_completion_does_not_steal_moved_focus(more_mode: str):
@@ -6017,6 +6041,7 @@ async def test_mounted_pager_completion_does_not_steal_moved_focus(more_mode: st
         assert screen.focused.id == "library-notes-filter"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("more_mode", ("success", "failure"))
 async def test_mounted_pager_completion_does_not_restore_after_sync_guard_stales(
@@ -6093,6 +6118,7 @@ async def test_mounted_pager_completion_does_not_restore_after_sync_guard_stales
         assert screen.focused.id == "library-notes-filter"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("more_mode", ("success", "failure"))
 async def test_mounted_pager_completion_rechecks_focus_after_inner_recompose(
@@ -6185,6 +6211,7 @@ async def test_mounted_pager_completion_rechecks_focus_after_inner_recompose(
         assert screen.focused is newest_target
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_live_host_renders_duplicate_placements_and_preserves_focus_at_60x20():
     app = _build_test_app()

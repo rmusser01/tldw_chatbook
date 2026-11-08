@@ -30,6 +30,7 @@ from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
 )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_provider_switch_updates_dependent_fields_with_no_stale_window():
     """Selecting a new provider flips readiness/source/model in the same tick."""
@@ -69,6 +70,7 @@ async def test_provider_switch_updates_dependent_fields_with_no_stale_window():
         assert screen._provider_form_values_from_widgets()["model"] == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_provider_switch_uses_only_the_new_providers_remembered_model():
     app = _build_test_app()
@@ -98,6 +100,7 @@ async def test_provider_switch_uses_only_the_new_providers_remembered_model():
         assert values["model"] != "gpt-4o"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "result",
@@ -165,6 +168,7 @@ async def test_provider_save_partial_failure_keeps_memory_and_draft(
     assert app.app_config["api_settings"]["llama_cpp"] == before["llama_cpp"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_provider_save_writer_exception_fails_closed_and_settles_lease(
     monkeypatch,
@@ -222,6 +226,7 @@ async def test_provider_save_writer_exception_fails_closed_and_settles_lease(
     assert app.app_config["api_settings"]["openai"] == "malformed-provider-table"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_provider_save_uses_one_atomic_writer_for_all_owned_values(monkeypatch):
     app = _build_test_app()
@@ -274,6 +279,7 @@ async def test_provider_save_uses_one_atomic_writer_for_all_owned_values(monkeyp
     assert SettingsCategoryId.PROVIDERS_MODELS not in screen._settings_drafts
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_exact_probe_evidence_survives_returned_model_selection_and_save(
     monkeypatch,
@@ -342,6 +348,7 @@ async def test_exact_probe_evidence_survives_returned_model_selection_and_save(
         assert rebound.model_ids == ("model-a", "model-b")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_exact_draft_key_probe_evidence_survives_successful_commit(
     monkeypatch,

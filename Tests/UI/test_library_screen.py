@@ -39,6 +39,7 @@ async def library_screen():
         yield host.screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ingest_button_present(library_screen):
     """The rail-top primary button names the action in plain language
@@ -745,6 +746,7 @@ def test_backend_switch_returns_to_local(monkeypatch) -> None:
     assert saved == [("library.ingest", "backend", "local")]
 
 
+@pytest.mark.bootstrap_profile
 def test_save_library_ingest_backend_writes_the_real_dotted_section() -> None:
     """task-15470 review round: the sibling tests above patch
     `_save_library_ingest_backend` itself (unavoidable -- it is

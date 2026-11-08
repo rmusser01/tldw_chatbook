@@ -490,6 +490,7 @@ def test_chat_screen_forwards_install_decided_to_controller_with_request_id(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_restored_pending_install_never_mounts_an_actionable_card_through_the_real_screen():
     """Drive the drop through the REAL screen boundary, not just `from_dict` in isolation.

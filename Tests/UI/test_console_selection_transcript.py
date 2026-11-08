@@ -153,6 +153,7 @@ async def _drag_over_body(
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_transcript_exposes_selection_manager():
     app = _SelectionTranscriptApp()

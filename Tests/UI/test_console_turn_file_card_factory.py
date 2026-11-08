@@ -29,6 +29,7 @@ def _append_summary_message(store):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_summary_row_renders_card_when_enabled(monkeypatch):
     from Tests.UI.test_console_native_chat_flow import (
@@ -52,6 +53,7 @@ async def test_summary_row_renders_card_when_enabled(monkeypatch):
         assert console.query(ConsoleTurnFileCard)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_summary_row_stays_plain_marker_when_disabled(monkeypatch):
     from Tests.UI.test_console_native_chat_flow import (

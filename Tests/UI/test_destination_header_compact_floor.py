@@ -89,6 +89,7 @@ class _StudyApp(ConsolidatedCSSApp):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_destination_header_is_compact_at_the_80x24_floor(tmp_path):
     """At the floor the header drops its subtitle row: 5 -> 4 of 24 rows."""
@@ -103,6 +104,7 @@ async def test_destination_header_is_compact_at_the_80x24_floor(tmp_path):
         assert subtitle.styles.display == "none"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_destination_header_is_unchanged_at_a_standard_size(tmp_path):
     """Pin: normal density at a standard size is byte-identical to today."""
@@ -117,6 +119,7 @@ async def test_destination_header_is_unchanged_at_a_standard_size(tmp_path):
         assert subtitle.styles.display == "block"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_destination_header_floor_threshold_is_exactly_24(tmp_path):
     """One row above the pinned floor must already be normal density."""
@@ -134,6 +137,7 @@ async def test_destination_header_floor_threshold_is_exactly_24(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_destination_header_is_compact_from_first_paint(tmp_path):
     """A screen mounted directly at the floor is compact on its first
@@ -154,6 +158,7 @@ async def test_destination_header_is_compact_from_first_paint(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_destination_header_is_compact_on_study_too():
     """Study never references `shell-header-compact`, `VERTICAL_BREAKPOINTS`,
@@ -173,6 +178,7 @@ async def test_destination_header_is_compact_on_study_too():
         assert subtitle.styles.display == "none"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_destination_header_is_normal_on_study_at_a_standard_size():
     app = _StudyApp()

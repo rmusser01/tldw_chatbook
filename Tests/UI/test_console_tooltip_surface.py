@@ -83,6 +83,7 @@ def test_generated_bundle_carries_the_tooltip_surface():
     assert re.search(r"\bborder\s*:", body)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_provider_test_live_probe_guidance_is_static_not_hover_only():
     """TASK-386-AC#2: the readiness/live-probe explanation must exist as visible
