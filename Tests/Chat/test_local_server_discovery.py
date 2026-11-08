@@ -1124,6 +1124,7 @@ def test_an_ipv6_zone_id_is_refused_by_discover_the_save_and_console():
     [
         (_ZONE_ID_HOST, "unknown"),
         ("[fe80::1%en0]", "unknown"),
+        ("localhost..", "unknown"),  # review r12s-rev1 M3: refused as typed
         ("[fe80::1]", "private_network"),
         ("[fd12:3456::9]", "private_network"),
     ],

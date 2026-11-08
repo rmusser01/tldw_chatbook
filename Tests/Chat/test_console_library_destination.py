@@ -89,6 +89,10 @@ def _resolution(
             "external/unknown",
         ),
         ("http://[fe80::1%en0]:8080/v1", ConsoleEgressClass.UNKNOWN, "external/unknown"),
+        # Review r12s-rev1 M3: the contract refuses "localhost..", so the
+        # classifier must not strip the dots before asking it.
+        ("http://localhost..:8080/v1", ConsoleEgressClass.UNKNOWN, "external/unknown"),
+        ("http://localhost.:8080/v1", ConsoleEgressClass.ON_DEVICE, "http://localhost:8080"),
         (
             "http://[fe80::1]:8080/v1",
             ConsoleEgressClass.PRIVATE_NETWORK,

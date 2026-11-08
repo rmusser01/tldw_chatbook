@@ -263,10 +263,11 @@ def _parse_endpoint_origin(
             or not _userinfo_is_well_formed(parsed.netloc)
         ):
             return None
-        hostname = parsed.hostname.lower().rstrip(".")
-        # TASK-39137: the contract's host rule, which refuses an IPv6 zone id.
-        if not hostname or canonical_endpoint_host(hostname) is None:
+        # TASK-39137: the contract's host rule (it refuses an IPv6 zone id and
+        # "localhost.."), on the host as typed; only the identity drops a dot.
+        if canonical_endpoint_host(parsed.hostname.lower()) is None:
             return None
+        hostname = parsed.hostname.lower().rstrip(".")
         port = parsed.port
     except (TypeError, ValueError):
         return None
