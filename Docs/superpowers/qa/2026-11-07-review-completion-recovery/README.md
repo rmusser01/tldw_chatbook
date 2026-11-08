@@ -517,3 +517,75 @@ Logs and both scratch controls are retained at
 `/private/tmp/task39147-admission-ci-20261107/`. Fresh hosted CI is still required.
 The one approved full qualification remains unused: zero new requests/children,
 cumulative actual 201/16. No live completion or settled-accounting claim is added.
+
+
+## Recovered post-CI qualification — 2026-11-08
+
+The single approved invocation completed on source head
+`19e28a408226db220a28cabef9a4abd76f5e2d9e` after all four normal same-head
+pull-request workflows succeeded: Derived Artifacts `42450049777`, Tool Recovery
+`42450049888`, Perf Guard `42450049868`, and Merge Queue `42450049826`.
+The complete PR rollup was settled; only the two one-off evidence workflows were
+intentionally skipped. `CI-ADMISSION.json` records that observation, the clean
+local/PR head, all 3,416 source hashes and 18 runner/support hashes, the saved team,
+Python 3.12 without optimization, and no previous claim, attempt or process.
+
+The temporary preparations had disappeared while CI was pending. Recovery used
+the durable reviewed baseline and reproduced the historical runner, source-manifest
+and original-grant hashes. Independent audit of 154 root calls/results and 14
+reviewer calls/results found no post-grant launch or generation probe. Missing
+paths alone were not treated as unused-budget proof; their disappearance cause
+remains unknown. The rebuilt runner differs only in its artifact directory and
+expected head. Lost temporary CI-repair logs remain lost; their committed reports
+and execution history survive. The original grant was preserved byte-for-byte,
+with reviewed supersession records rather than a new allowance.
+
+**Actual consumption: 49 new generation requests, three fresh children, no retries.**
+The request/child ceilings remained 60/3, with native two-child turns `[2,1]`.
+Cumulative actual for the November 7 recovery sequence is **250 requests / 19
+children** (the 201/16 historical baseline plus this invocation). The remaining
+11 request slots are retired. Four metadata GETs are separate from generation.
+A pre-launch automatic approval rejection created no process or claim; after
+read-only inspection established the synthetic fixture and scoped destinations,
+review approved the unchanged command. The runner then claimed and ran once.
+
+Both independent originals sealed and were actually presented before fresh Haiku
+V1 started. R1 returned an empty report and missed the seeded regression; R2
+submitted three originals. V1 disposed of `R2-F1`, `R2-F2`, and `R2-F3` exactly
+once. All three participants have complete capture, terminal and seal receipts.
+The completed coordinator's final response matches the retained final raw response
+and delivers the accepted dispositions: the empty-input regression is confirmed;
+the iterator failure is confirmed as pre-existing with an unspecified input
+contract; the false string-acceptance claim is refuted. Boolean acceptance is
+kept separate and qualified. The complete native unified report is readable.
+This is actual final delivery, not only a saved intermediate snapshot.
+
+The initial coordinator received `child_budget_unavailable`, ended its turn, and
+the host admitted the exact next V1 slot on the same work chain. The continuation
+completed successfully. Two earlier invalid source-read calls recovered within
+the existing limits; no provider retry, replacement child or verifier-only primary
+submission occurred. No product change was made during qualification.
+
+All 49 raw responses were captured completely. Known durable budget tokens equal
+captured usage for every completed run: initial coordinator **273,668**, Luna R1
+**12,357**, DeepSeek R2 **46,791**, coordinator continuation **74,239**, and Haiku
+V1 **45,285**; total **452,340**. The continuation's 14 token reservations settled; its committed model-call,
+generation and child reservations have normal terminal states, with no reserved
+or uncertain entries. Earlier requests reconcile through durable per-run totals;
+the exported reservation rows are not a 49-request reservation history. Native shutdown completed with zero active
+runs, fleet threads, workspace connections/leases or registered chat connections.
+Saved settings, fixture and all pinned source/runner bytes remained unchanged.
+
+Private evidence: `/Users/macbook-dev/.codex/artifacts/task-39147/recovered-final60-20261108/`.
+`live-luna/` retains raw responses, exact tool arguments/results, presentations,
+SQLite records, final transcript, unified pages and accounting receipts. The
+credential-scanned 239-file raw archive has SHA-256
+`5189abded4114f174bac467bc74da7775d0a2331db04df473fc9cce89386b7c5`.
+Independent outcome review found no terminal blocker and verified final response
+49 against the delivered coordinator result, all raw hashes/usage, causal report
+presentation and exact mapping. Its receipt is retained beside the raw archive.
+Historical failed runs, unknown aborted accounting and unavailable payloads are
+unchanged. This qualifies the bounded synthetic-fixture workflow, not reviewer
+recall or arbitrary repositories; unchanged offline adverse-case controls remain
+separate evidence. Repository closeout still requires current-head review, normal
+CI for these documentation changes, resolved threads and an actual queue merge.

@@ -5777,3 +5777,17 @@ recapturing it; delete an image no page uses. A real-`TldwCli` capture in
 executor joining a worker thread). End a capture script with `os._exit(0)` after
 saving. Parallel capture runs need separate HOME/profile directories: a capture
 that resets its profile wipes a concurrent run's.
+
+
+## A missing one-use runner is not proof its allowance is unused (TASK-39147, 2026-11-08)
+
+While PR3473 waited for CI, three prepared qualification scopes under /private/tmp
+disappeared; their cause and exact deletion time remain unknown. Recovery did not
+reset claims or infer unused allowance from absent paths. A durable reviewed
+baseline, previously recorded output hashes and an independent audit of 154 root
+plus 14 reviewer calls/results established the owned history before rebuilding
+the same unused grant in ~/.codex/artifacts. Fresh CI, process, claim and hash
+checks then admitted exactly one run (49 requests/3 children). Keep one-use
+preparations, grants and evidence durable; recover provenance and execution history
+before treating a lost scope as safe to replace. Missing historical raw logs stay
+missing. See Docs/superpowers/qa/2026-11-07-review-completion-recovery/README.md.
