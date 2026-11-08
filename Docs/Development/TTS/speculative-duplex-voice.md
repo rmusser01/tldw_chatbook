@@ -103,7 +103,16 @@ From this checkout, validate its exact full HEAD without starting the app:
 ```
 
 The launcher resolves this checkout and refuses a foreign package, detached
-checkout, abbreviated hash, or mismatched HEAD. The visible **Hands-free** switch
+checkout, abbreviated hash, or mismatched HEAD. The check reports the expected
+profile name without opening a profile. For a demo session, set
+`TLDW_CONFIG_PATH` to an existing private configuration whose
+`[general] users_name` is `speculative_voice_dev_<HEAD12>`, then run the same
+command without `--check`. The normal startup unlock owns encrypted profiles
+and recovery. The launcher verifies the loaded profile and its normal data and
+default database paths before enabling the demo. Configured data or database
+overrides continue to use their saved paths.
+
+The visible **Hands-free** switch
 is the normal entry; do not rely on Ctrl+Shift+H in a macOS terminal. Navigation
 and screen suspension stop provisional audio; already-claimed winning saves and
 ordinary accepted turns remain with the app runtime under ADR-336.

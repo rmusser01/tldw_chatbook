@@ -2,8 +2,8 @@
 """Run speculative Console voice from one exact local source checkout.
 
 This file is deliberately outside the application package and excluded from release
-artifacts. It changes only process-local UI selection seams and selects a
-commit-scoped data profile; packaged installs keep using their configured engine,
+artifacts. It changes only process-local UI selection seams after validating an
+explicitly selected commit-scoped data profile; packaged installs keep using their configured engine,
 qualification manifest, and normal profile without an environment, config, or CLI
 override.
 """
@@ -15,12 +15,14 @@ import asyncio
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from importlib.machinery import PathFinder
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
 import tempfile
+import tomllib
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -49,6 +51,7 @@ def _git(repo_root: Path, *args: str) -> str:
             check=True,
             capture_output=True,
             text=True,
+            env=dict(os.environ, GIT_OPTIONAL_LOCKS="0"),
         )
     except (OSError, subprocess.CalledProcessError) as exc:
         raise DevelopmentVoiceEntryError(
@@ -183,26 +186,146 @@ async def _check_macos_say_tts() -> int:
     return frame_count
 
 
+def _checkout_identity(expected_head: str) -> SourceCheckoutIdentity:
+    """Validate source identity without importing the application package."""
+    package = sys.modules.get("tldw_chatbook")
+    if package is None:
+        spec = PathFinder.find_spec("tldw_chatbook", [str(REPO_ROOT)])
+        package_file = None if spec is None else spec.origin
+    else:
+        package_file = getattr(package, "__file__", None)
+    expected_package = REPO_ROOT / "tldw_chatbook" / "__init__.py"
+    if package_file is None or Path(package_file).resolve() != expected_package:
+        raise DevelopmentVoiceEntryError("The package is not from this worktree.")
+    identity = validate_source_checkout(
+        repo_root=REPO_ROOT,
+        package_root=expected_package.parent,
+        expected_head=expected_head,
+    )
+    config = sys.modules.get("tldw_chatbook.config")
+    if config is not None:
+        config_file = getattr(config, "__file__", None)
+        if (
+            config_file is None
+            or Path(config_file).resolve()
+            != (identity.root / "tldw_chatbook" / "config.py").resolve()
+        ):
+            raise DevelopmentVoiceEntryError(
+                "The imported config is not from this worktree."
+            )
+    return identity
+
+
+def _check_selected_config(identity: SourceCheckoutIdentity) -> Path:
+    """Read the explicit input without creating it or admitting startup."""
+    if not os.environ.get("TLDW_CONFIG_PATH", "").strip():
+        raise DevelopmentVoiceEntryError(
+            "Select the prepared commit profile with TLDW_CONFIG_PATH before launch."
+        )
+    from tldw_chatbook.Backup_Recovery import bootstrap, profile_paths
+    from tldw_chatbook.Backup_Recovery.storage_admission import _read_recovery_file
+
+    selected = profile_paths.effective_config_path()
+    allowed, _reason = bootstrap.startup_permission(
+        selected, bootstrap.default_bootstrap_root()
+    )
+    if not allowed:
+        return selected
+    config = sys.modules.get("tldw_chatbook.config")
+    if config is not None:
+        # The guarded read must refuse source drift before reading a new selector.
+        try:
+            snapshot = config.read_cli_config_snapshot()
+        except (OSError, ValueError):
+            return selected
+        if snapshot.path != selected:
+            raise DevelopmentVoiceEntryError(
+                "The loaded config source is not selected."
+            )
+    try:
+        data = _read_recovery_file("config", selected, max_bytes=16 * 1024**2)
+    except FileNotFoundError:
+        raise DevelopmentVoiceEntryError(
+            "The selected commit config must already exist."
+        ) from None
+    except (OSError, ValueError, RuntimeError):
+        # Ordinary unlock owns unsafe/unreadable input and its recovery outcome.
+        return selected
+    try:
+        document = tomllib.loads(data.decode("utf-8"))
+    except (UnicodeError, ValueError):
+        return selected
+    encryption = document.get("encryption", {})
+    if (
+        not isinstance(encryption, dict)
+        or encryption.get("enabled", False) is not False
+    ):
+        return selected
+    general = document.get("general", {})
+    if not isinstance(general, dict):
+        return selected
+    name = general.get("users_name")
+    if isinstance(name, str) and name.startswith("enc:"):
+        return selected
+    if name != identity.profile:
+        raise DevelopmentVoiceEntryError(
+            f"The selected config must have general.users_name={identity.profile}."
+        )
+    return selected
+
+
 @contextmanager
 def development_voice_enabled(
     *, expected_head: str, macos_say_tts: bool = False
 ) -> Iterator[SourceCheckoutIdentity]:
-    """Enable speculative selection only for this guarded process lifetime."""
+    """Enable speculative selection only after ordinary startup preparation."""
 
     original_path = sys.path[:]
     sys.path.insert(0, str(REPO_ROOT))
     try:
-        import tldw_chatbook
+        identity = _checkout_identity(expected_head)
+        config = sys.modules.get("tldw_chatbook.config")
+        if config is None:
+            raise DevelopmentVoiceEntryError(
+                "Use the source main entry to prepare the selected config first."
+            )
+        if not os.environ.get("TLDW_CONFIG_PATH", "").strip():
+            raise DevelopmentVoiceEntryError("The prepared config must be explicit.")
+        from tldw_chatbook.Backup_Recovery import profile_paths
 
-        package_file = getattr(tldw_chatbook, "__file__", None)
-        if package_file is None:
-            raise DevelopmentVoiceEntryError("The imported package has no source path.")
-        identity = validate_source_checkout(
-            repo_root=REPO_ROOT,
-            package_root=Path(package_file).resolve().parent,
-            expected_head=expected_head,
-        )
-        from tldw_chatbook import config
+        selected = profile_paths.effective_config_path()
+        snapshot = config.read_cli_config_snapshot()
+        if (
+            config.get_cli_config_path() != selected
+            or snapshot.path != selected
+            or snapshot.serialized is None
+        ):
+            raise DevelopmentVoiceEntryError(
+                "The prepared config source is not selected."
+            )
+        installed = config.load_cli_config_and_ensure_existence()
+        atomic = config.get_atomic_config_snapshot().values
+        for values in (installed, atomic):
+            if (
+                profile_paths.setting(values, "general", "users_name")
+                != identity.profile
+            ):
+                raise DevelopmentVoiceEntryError(
+                    "The loaded commit profile does not match."
+                )
+        if config.get_user_folder_name() != identity.profile:
+            raise DevelopmentVoiceEntryError("The loaded commit profile does not match.")
+        # Let the normal owner resolve any durable fallback before comparing paths.
+        data_dir = config.get_user_data_dir()
+        if any(profile_paths.user_data_dir(values) != data_dir for values in (installed, atomic)):
+            raise DevelopmentVoiceEntryError("The loaded profile data paths disagree.")
+        if (
+            config.get_chachanotes_db_path(ignore_override=True)
+            != data_dir / profile_paths.database_leaf("chachanotes_db_path")
+        ):
+            raise DevelopmentVoiceEntryError(
+                "The loaded profile default paths disagree."
+            )
         from tldw_chatbook.Chat.console_speculative_voice_session import (
             _LazyHandsFreeTts,
         )
@@ -210,18 +333,15 @@ def development_voice_enabled(
 
         original_gate = hands_free.speculative_voice_qualified
         original_resolver = hands_free.resolve_handsfree_engine
-        original_profile = config.get_user_folder_name
         original_tts = _LazyHandsFreeTts.synthesize_hands_free
         hands_free.speculative_voice_qualified = lambda: True
         hands_free.resolve_handsfree_engine = lambda: "pipeline"
-        config.get_user_folder_name = lambda: identity.profile
         if macos_say_tts:
             _LazyHandsFreeTts.synthesize_hands_free = _synthesize_macos_say
         try:
             yield identity
         finally:
             _LazyHandsFreeTts.synthesize_hands_free = original_tts
-            config.get_user_folder_name = original_profile
             hands_free.speculative_voice_qualified = original_gate
             hands_free.resolve_handsfree_engine = original_resolver
     finally:
@@ -268,34 +388,62 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Validate, enable the process-local gate, and run the ordinary app entry."""
 
     args = _parser().parse_args(argv)
-    with development_voice_enabled(
-        expected_head=args.expect_head,
-        macos_say_tts=args.macos_say_tts or args.check_macos_say_tts,
-    ) as identity:
+    identity = _checkout_identity(args.expect_head)
+    if args.check:
         print("mode=source-checkout-only")
-        print("engine=speculative-pipeline")
         print(f"root={identity.root}")
         print(f"branch={identity.branch}")
         print(f"head={identity.head}")
-        print(f"profile={identity.profile}")
-        print(
-            "tts="
-            f"{'macos-say-local' if args.macos_say_tts or args.check_macos_say_tts else 'configured'}"
-        )
-        if args.check_macos_say_tts:
-            print(f"tts_normalized_frames={asyncio.run(_check_macos_say_tts())}")
-            return 0
-        if args.check:
-            return 0
-        from tldw_chatbook.cli import main_cli_runner
+        print(f"expected_profile={identity.profile}")
+        print("profile_admission=not-performed")
+        return 0
+    original_argv = sys.argv
+    original_path = sys.path[:]
+    try:
+        sys.path.insert(0, str(REPO_ROOT))
+        sys.argv = [original_argv[0]]
+        from tldw_chatbook.Utils.private_paths import PrivatePathError
+        from tldw_chatbook.Utils.startup_errors import emit_private_path_startup_error
+        from tldw_chatbook.Utils.startup_logging import quiet_startup_stderr
 
-        original_argv = sys.argv
-        try:
-            sys.argv = [original_argv[0]]
-            result = main_cli_runner()
-        finally:
-            sys.argv = original_argv
-        return result if isinstance(result, int) else 0
+        quiet_startup_stderr()
+        selected = _check_selected_config(identity)
+        from tldw_chatbook.Backup_Recovery.launcher import startup_unlock
+        from tldw_chatbook.Backup_Recovery.profile_paths import effective_config_path
+
+        stopped = startup_unlock()
+        if stopped is not None:
+            return stopped
+        if effective_config_path() != selected:
+            raise DevelopmentVoiceEntryError("The selected config changed during startup.")
+        __import__("tldw_chatbook.config")
+        from tldw_chatbook.cli import _run_prepared_app
+
+        with development_voice_enabled(
+            expected_head=args.expect_head,
+            macos_say_tts=args.macos_say_tts or args.check_macos_say_tts,
+        ) as identity:
+            print("mode=source-checkout-only")
+            print("engine=speculative-pipeline")
+            print(f"root={identity.root}")
+            print(f"branch={identity.branch}")
+            print(f"head={identity.head}")
+            print(f"profile={identity.profile}")
+            print(
+                "tts="
+                f"{'macos-say-local' if args.macos_say_tts or args.check_macos_say_tts else 'configured'}"
+            )
+            if args.check_macos_say_tts:
+                print(f"tts_normalized_frames={asyncio.run(_check_macos_say_tts())}")
+                return 0
+            result = _run_prepared_app()
+            return result if isinstance(result, int) else 0
+    except PrivatePathError as exc:
+        emit_private_path_startup_error(exc)
+        raise SystemExit(1) from None
+    finally:
+        sys.argv = original_argv
+        sys.path[:] = original_path
 
 
 if __name__ == "__main__":

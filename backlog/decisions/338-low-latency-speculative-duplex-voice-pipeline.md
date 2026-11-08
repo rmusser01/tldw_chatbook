@@ -764,6 +764,19 @@ checked app-only distribution. Restoring the dependency requires returning to th
 combined-release order. This exception avoids both an uninstallable ordinary
 recording extra and any claim that software-only evidence qualifies duplex voice.
 
+## Source-only commit profile (0.2.4)
+
+The approved development launcher requires an existing profile selected by
+`TLDW_CONFIG_PATH`, with loaded `general.users_name` matching
+`speculative_voice_dev_<HEAD12>`. It verifies the actual normal data and default
+database paths, preserving configured legacy/custom overrides. It does not
+replace profile getters, write configuration, or supply a new launch flag.
+Normal unlock and recovery retain ownership of encrypted, unreadable, unsafe,
+and pending profiles. The source launcher enters the existing prepared app tail
+after one unlock. `--check` only validates checkout identity; it performs no
+config selection, unlock, voice or App imports. This does not qualify a native
+route or alter packaged availability.
+
 ## Renumbering provenance
 
 Renumbered from ADR-338 to ADR-338 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-098 now refers to 098-visible-bounded-console-prompt-queue.md.

@@ -85,6 +85,20 @@ def main_cli_runner() -> Any:
         if stopped is not None:
             return stopped
 
+        return _run_prepared_app()
+    except PrivatePathError as exc:
+        emit_private_path_startup_error(exc)
+        raise SystemExit(1) from None
+
+
+def _run_prepared_app() -> Any:
+    """Run the App/restart tail after the caller has prepared startup."""
+    from tldw_chatbook.Utils.private_paths import PrivatePathError
+    from tldw_chatbook.Utils.startup_errors import (
+        emit_private_path_startup_error,
+    )
+
+    try:
         from tldw_chatbook.app import main_cli_runner as app_main_cli_runner
 
         result = app_main_cli_runner()
