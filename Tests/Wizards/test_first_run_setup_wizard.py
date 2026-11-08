@@ -13669,14 +13669,18 @@ async def test_a_401_to_a_request_that_sent_no_key_asks_for_a_key(monkeypatch) -
         assert str(auth.title) == "Authentication"
 
         await container._advance()
-        # The line mounts before the step records the outcome, and the step's
-        # repeated show can re-render the list once more: wait for both.
+        # Provider's handoff can report failure before Model records it;
+        # Back clears that handoff, so wait for Model's own rendered outcome.
         for _ in range(40):
             await pilot.pause(0.05)
-            if container.provider_probe_failure() and model_step.query(
+            if model_step._rendered_probe_failure and model_step.query(
                 "#setup-model-connection-failed"
             ):
                 break
+        assert (
+            model_step._rendered_probe_failure
+            == wizard_state.PROVIDER_PROBE_KEY_REQUIRED
+        )
         assert _model_status_line(model_step, "setup-model-connection-failed") == (
             "llama.cpp needs an API key and none was set. Go Back to add one, or "
             "enter a model ID below."

@@ -495,3 +495,25 @@ reviewers and Haiku verifier, no retries or extra generation probes. That grant
 remains unused through this CI correction: zero new requests/children, November 7
 actual still 201/16. Repinning this unconsumed grant adds no allowance. The earlier
 failed full run and its unknown aborted accounting remain historical limitations.
+
+## Hosted CI wizard synchronization correction
+
+Derived Artifacts run `42423661679`, admission job `128611492184`, failed the
+keyless-401 wizard test's returned-to Provider notice assertion: the strip was
+empty. The test passed alone unchanged. Delaying the real failed-row mount's
+completion by 250 ms reproduced the exact hosted assertion: the wait accepted
+Provider's handoff failure before Model recorded its own rendered outcome, then
+Back cleared the handoff and cancelled the unfinished Model render.
+
+The test now waits for Model's recorded failure and asserts `key_required` before
+returning. All original semantic assertions and the existing wait bound remain.
+No production code, workflow or timeout changed. The delayed-mount control passes;
+removing the actual return notice still fails the original assertion. All 23 cases
+selected by the admission lane's 13 wizard selectors pass. Changed-function
+formatting and whitespace pass; file lint has the same 53 baseline findings and
+zero new findings. No new ADR is required for this test synchronization fix.
+
+Logs and both scratch controls are retained at
+`/private/tmp/task39147-admission-ci-20261107/`. Fresh hosted CI is still required.
+The one approved full qualification remains unused: zero new requests/children,
+cumulative actual 201/16. No live completion or settled-accounting claim is added.
