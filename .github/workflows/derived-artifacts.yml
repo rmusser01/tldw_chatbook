@@ -522,6 +522,10 @@ jobs:
             Tests/Workspaces/test_change_revert.py \
             Tests/Workspaces/test_git_workspace_commit.py \
             Tests/Backup_Recovery/test_startup_unlock.py::test_fresh_profile_without_a_config_folder_starts_normally \
+            Tests/TTS/test_audio_player.py \
+            Tests/DB/test_base_db_connection_lifecycle.py \
+            Tests/MCP/test_stdio_request_timeout.py \
+            Tests/MCP/test_stdio_settlement_hardening.py \
             --timeout=180 \
             --tb=short
 

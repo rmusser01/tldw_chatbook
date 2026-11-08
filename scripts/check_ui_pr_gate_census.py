@@ -1284,6 +1284,9 @@ MINIMUM_FILES = 2198
 # PR #3345: include both complete UI regression files.
 MINIMUM_FILES = 2200
 
+# PR3345 approved upstream retirement retains 2095 survivors plus five incoming cases.
+MINIMUM_FILES = 2100
+
 
 MINIMUM_FILES = 2038
 MINIMUM_FILES = 2045

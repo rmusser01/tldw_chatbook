@@ -292,7 +292,7 @@ def _original_history_inventory(
     originals = (reads._source_archive, reads._canonical_archive)
     if not any(row[0] is partition for row in originals):
         raise ValueError("scope_changed")
-    for original_partition, document, sealed in originals:
+    for original_partition, _document, sealed in originals:
         original_partition.check()
         source = (
             reads.captured.source

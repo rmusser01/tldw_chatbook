@@ -387,6 +387,11 @@ FAST_LANE_TARGETS = (
     # (Linux reports the folder as missing_parent). Not bootstrap_profile;
     # three cases, under 1 s.
     "Tests/Backup_Recovery/test_startup_unlock.py::test_fresh_profile_without_a_config_folder_starts_normally",
+    # PR3345 incoming audio, native BaseDB and MCP timeout/custody regressions.
+    "Tests/TTS/test_audio_player.py",
+    "Tests/DB/test_base_db_connection_lifecycle.py",
+    "Tests/MCP/test_stdio_request_timeout.py",
+    "Tests/MCP/test_stdio_settlement_hardening.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
