@@ -55,6 +55,9 @@ if TYPE_CHECKING:
     from ..Screens.settings_screen import SettingsScreen
 
 NO_CHANGES_TO_REVERT_COPY = "No Settings changes to revert."
+#: Providers & Models' Revert while snapshot preferences cannot be read (``r``
+#: then reloads them); set when the pair is composed and on every refresh.
+RELOAD_PREFERENCES_REVERT_LABEL = "Revert (r) — reload preferences"
 
 
 @dataclass(frozen=True)
@@ -1287,7 +1290,7 @@ class ProvidersModelsPanel(SettingsCategoryPanel):
         except QueryError:
             return
         button.disabled = False
-        button.label = "Revert (r) — reload preferences"
+        button.label = RELOAD_PREFERENCES_REVERT_LABEL
 
     def help_notes(self, screen: SettingsScreen) -> tuple[str, ...]:
         from ..Screens.settings_screen import PROVIDER_TEST_GUIDANCE
@@ -1309,7 +1312,7 @@ class ProvidersModelsPanel(SettingsCategoryPanel):
             save.disabled = revert.disabled = True
         elif screen._snapshot_preferences_unavailable:
             revert.disabled = False
-            revert.label = "Revert (r) — reload preferences"
+            revert.label = RELOAD_PREFERENCES_REVERT_LABEL
         recovery_status = Static(
             screen._vllm_default_recovery_copy(recovery),
             id="settings-vllm-handoff-recovery-status",
