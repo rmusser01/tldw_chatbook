@@ -1,6 +1,5 @@
 import dataclasses
 import inspect
-from pathlib import Path
 
 import pytest
 
@@ -8,6 +7,7 @@ from tldw_chatbook.RAG_Search.config_profiles import (
     ConfigProfileManager,
     reset_profile_manager_cache,
 )
+from tldw_chatbook.RAG_Search.simplified import active_config
 from tldw_chatbook.RAG_Search.simplified import config as rag_config_module
 from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
 from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
@@ -22,28 +22,24 @@ from tldw_chatbook.UI.Screens.settings_library_rag_defaults import (
 
 @pytest.fixture(autouse=True)
 def _hermetic_profile_manager(tmp_path, monkeypatch):
-    """Keep validate_library_rag_defaults's profile read inside tmp_path.
-
-    validate_library_rag_defaults routes hard-error checks through the
-    adapter's hard_config_errors(), which reads the active profile via
-    get_profile_manager(). Left unpatched, that resolves to the real
-    ~/.local/share/tldw_cli/.../rag_profiles dir (get_user_data_dir's
-    Path.home() is frozen at import time, before any HOME patching a test
-    might do) -- reading real files and mkdir-ing a real tree as a side
-    effect of running this test file. Point the adapter's manager/active-id
-    seams at a tmp-dir-backed manager instead, for every test here.
-    """
+    """Keep manager construction and validation on disposable inputs."""
+    _patch_rag_settings(monkeypatch, {})
+    monkeypatch.setattr(rag_config_module, "get_user_data_dir", lambda: tmp_path)
     mgr = ConfigProfileManager(profiles_dir=tmp_path / "rag_profiles")
     import tldw_chatbook.UI.Screens.settings_rag_profile_adapter as ad
 
+    monkeypatch.setattr(active_config, "_manager", lambda: mgr)
     monkeypatch.setattr(ad, "_manager", lambda: mgr, raising=False)
     monkeypatch.setattr(ad, "_active_profile_id", lambda: "hybrid_basic", raising=False)
     yield
     reset_profile_manager_cache()
 
 
-def _patch_rag_settings(monkeypatch, rag_settings):
-    app_config = {"AppRAGSearchConfig": {"rag": rag_settings}}
+def _patch_rag_settings(monkeypatch, rag_settings, *, profile="hybrid_basic"):
+    app_config = {
+        "AppRAGSearchConfig": {"rag": rag_settings},
+        "rag": {"service": {"profile": profile}},
+    }
 
     def fake_get_cli_setting(section, key, default=None):
         return app_config.get(section, {}).get(key, default)
@@ -52,14 +48,12 @@ def _patch_rag_settings(monkeypatch, rag_settings):
         rag_config_module, "load_cli_config_and_ensure_existence", lambda: app_config
     )
     monkeypatch.setattr(rag_config_module, "get_cli_setting", fake_get_cli_setting)
-    monkeypatch.setattr(
-        rag_config_module, "get_user_data_dir", lambda: Path("/tmp/tldw-rag-test")
-    )
+    monkeypatch.setattr(active_config, "get_cli_setting", fake_get_cli_setting)
     monkeypatch.delenv("RAG_TOP_K", raising=False)
     monkeypatch.delenv("RAG_SEARCH_MODE", raising=False)
 
 
-def test_rag_config_uses_fallbacks_for_invalid_display_default_ints(monkeypatch):
+def test_active_profile_display_limits_ignore_malformed_legacy_settings(monkeypatch):
     _patch_rag_settings(
         monkeypatch,
         {
@@ -68,12 +62,13 @@ def test_rag_config_uses_fallbacks_for_invalid_display_default_ints(monkeypatch)
                 "max_context_size": "also-not-an-int",
             }
         },
+        profile="hybrid_full",
     )
 
     config = RAGConfig.from_settings()
 
     assert config.search.snippet_max_chars == 240
-    assert config.search.max_context_size == 16000
+    assert config.search.max_context_size == 32000
 
 
 @pytest.mark.parametrize(
