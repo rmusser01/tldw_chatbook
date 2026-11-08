@@ -1,7 +1,7 @@
 ---
 id: TASK-36769
 title: Qualify shared served Console control and document release limits
-status: In Progress
+status: Done
 created_date: 2026-10-25 17:40
 dependencies:
 - TASK-36768
@@ -17,7 +17,7 @@ documentation:
 - backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
 assignee:
 - '@codex'
-updated_date: 2026-11-08 16:56
+updated_date: 2026-11-08 19:15
 ---
 
 ## Description
@@ -420,12 +420,24 @@ The same source067bb automatic ConsoleP0 job128781139771/run42494856756 passed23
 Meaningful803 first failed that exact token contract on the original workflow (one failure/no other exceptions0.50s); all3PIDs were absent before the repair.804 passed THREE whole CI contract/roster files363cases/no exceptions41.45s;805 passed the WHOLE byte-identical native modal file28cases/no exceptions55.21s with the real already-installed pytest_mock3.15.1. All eight saved-edit variants and the two keyboard-save variants use the genuine returned worker; no custom spy or assertion bypass. Every owned root/runner/pytest PID is physically absent; full guarded hashes/modes/membership and HEAD/raw+canonical index unchanged. Both changed Test files Ruff0; changed functions formatted. Actual raw XML/proofs bind the final audio Test10d66f4d339549b9b1e3d79e6dd49717b726dc0a23c2d430af5a87904e84f732; the earlier77ea scope hash is preserved as pre-format history.
 
 All3476 runtime inputs and all packages/scripts/pyproject/artifacts/browser and mounted UAT modules/helpers remain exact067bb; the9805 runtime/Test map differs only audio-player and CI-pressure Tests. Original795/796 remain retained by that explicit consumed-source projection, no freshUAT or complete old-map claim. Source067bb own successful Windows/platform/Perf and pendingUI results never qualify the successor. Keep In Progress/all8AC checked. Normal six-path source repair commit/hooks, exactNEWhead review/register/publication, OWN full required/UI/admission/Windows/Perf/actionable gates, and the reserved later final four-path completion metadata remain mandatory. No new ADR: existing dependency provisioning plus fixture-only compatibility.
+
+### Final source software qualification and completion reconciliation (2026-11-08 UTC)
+
+The final source d6f494767bd38fe7462a4200f93ec39658035d81, based on integration dev4967890f3e1b4e5b3fbf5b9b7b8dd17dd23a9549, is normally committed, independently accepted with zero findings, registered and published to the actual PR ref. Its OWN automatic PRattempt1 Derived42502880088 required aggregate128829310062 and all43 software jobs passed, including all32UI shards. Own FastLane3729passes/three existing skips, both P0 steps257/247passes, admission1 624passes/three unchanged strictxfails, admission2 positive74passes plus original expected-red missingREADME evidence control and native1437passes, admission3 213passes, architecture/Dreams and every actual platform/Windows/managed/GGUF/Perf/Voice/lint/recovery gate passed. All existing exceptions were individually reviewed and retained; no new skip, weaker assertion, increased runtime cap, buffer or permission, unchanged-head retry or native ownership/durability bypass. The sole pending Merge queue tick at admission was orchestration, not a software gate. There are no actionable failed checks or unresolved threads.
+
+Actual own Windows Eval42502880149/job128799223321 passed138cases plus one unchanged unavailable-FIFO skip; original complete-rebackup passed119.594s WHOLE NODE, not restore-child time, with original45-second default and no call override. All26policy and both native-pool controls passed unskipped. Actual ZIPf49781b12e8bedda6e36437011f0a20ae5478e591a41aa90eacf20371642d513 matches hosted digest; raw log/JUnit/source and independent bounded evidence review reconcile. Own current UI17/UI18 passed132/204cases; the original complete picker file now belongs exactly once to UI16 and all three cases passed there. Perf's hosted130passes/four existing platform-or-optional-dependency skips are reported separately from local qualification.
+
+Original whole browser795 passed15cases without skips in658.03s. Original mounted796 final-mounted-manual-3ww0ayaw, operationdbfe593e46da477fa1b519247ccce69c, has parent/all3children0, all nine original-retained hash pairs, all five empty guard records, unchanged HOME/legacy fingerprints, one scripted provider call/no tools, persisted-message reopen, runtime disposal and gateway closure. These are retained through measured unchanged runtime/package/UAT-module/helper identity; changed Tests were separately qualified. This is V1/common dependency closure with native child profile-core origin unobserved, not a later UAT, full old Test-map identity or a V2-UAT claim. The separate780native V2/API controls retain their own scope. Physical phones, VPN, live providers, real profiles, native phone attachment phase2 and full repository suite remain unverified and outside these software claims.
+
+Independent exact-head source review directly covers the final six committed repair paths and connected consumers, with actual9805tested SHA/Git-blob/mode bindings, and retains the full feature/rebase review chain by measured continuity. It is not a fresh whole-codebase reread, GitHub approval/status or merge approval. Existing architecture/ADR references, user/architecture/recovery documentation, incident lessons, meaningful RED/GREEN controls and all historical mixed/invalid/unattributed failures remain. Source-count ceilings were explicitly waived by the owner; runtime/auth/focus/job/case/worker/buffer/security/permission/native ownership/FTS/durability limits were preserved. The owner separately accepted the upstream MediaViewer and Outputs/Sharing retirements; exact originals are archived.
+
+All eight software acceptance criteria and software DoD are now satisfied. This finite completion changes ONLY the three actual task records and QA README, preserves older upstream Done histories and every122 original artifact, ref, object, stash, source, log and capture. ADR required:no new ADR for completion bookkeeping; the implementation retains its existing linked decisions. Product/Test/workflow/script/packaging trees must remain exactly this qualified source. The completion successor still requires independent metadata-only EXACT NEW-head review/registration, normal hooks, fresh exact-leased actual-ref publication while auto is off, and its OWN full genuine hosted CI. Source statuses never qualify the metadata successor. Live merge state remains on PR #3345; auto-merge is conditional on all current-head gates and thread/queue rules, not asserted here. G/completion-metadata-20261108/source-admission-and-preservation.json and current checkpoint identify all source-bound receipts.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Source `91b5ae17` is based on dev `88af9f93`. Original full UAT: 15 passed in 727.72s, with native cleanup/source/index verified. Cold startup, reconnect/mouse/paste/resize, fleet/decisions/lost-ACK/security and all four lifecycle cases pass. AC1/2 qualify; AC3 remains open. All 24 size-pin/UI 1044/1031 blockers and CI/review/hardware limitations stay explicit; status In Progress. Publish draft PR #3345/base dev/noauto with unchanged 9,742 executable/test/script hashes; no merge.
+Shared served Console software qualification is complete on source d6f494767bd38fe7462a4200f93ec39658035d81. All eight software ACs, independent exact-source review and its own required/UI/admission/Windows/platform/Perf gates pass. Original795browser15passes and796mounted are retained by measured consumed-source identity, with their documented V1/native-origin limitation. Runtime/security/ownership/durability limits remain; source-count ceilings and archived upstream retirements follow the owner's explicit decisions. Physical phones/VPN/live providers/real profiles/native phone attachment phase2/full repository suite remain unverified. The finite completion successor requires its own exact review and genuine CI before conditional auto-merge; live state is on PR #3345.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done
