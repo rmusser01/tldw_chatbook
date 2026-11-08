@@ -695,11 +695,6 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     ): "NOT-PER-TICK: the new prompt-summary path passes INTERNAL_PROMPTS only after the config-identity gate or worker completion. Dirty status changes preserve their natural layout.",
     (
         "tldw_chatbook/UI/Screens/settings_screen.py",
-        "SettingsScreen._update_draft_status_widgets",
-        "note",
-    ): "NOT-PER-TICK: this write is inside the PROVIDERS_MODELS branch; the new clock-reachable prompt-summary path passes INTERNAL_PROMPTS and cannot execute it. Explicit provider draft edits may change wrapped note height.",
-    (
-        "tldw_chatbook/UI/Screens/settings_screen.py",
         "SettingsScreen._update_provider_return_widgets",
         "existing",
     ): "NOT-PER-TICK: the new prompt-summary path cannot enter the PROVIDERS_MODELS branch calling this helper; actual provider return events change variable-length handoff copy.",

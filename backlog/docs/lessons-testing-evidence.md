@@ -27,6 +27,12 @@ refusal with appropriately scoped evidence, or state that its payload is unavail
 - If the holder may release before you capture it, record each acquirer through a delegating proxy over the module's lock. A `Condition` built on the original lock still works, because the proxy takes the same underlying lock.
 - Load the probe with `PYTEST_PLUGINS`, from a runner that adds its directory to `PYTHONPATH`. That reaches xdist workers and private-profile children in both worktrees, without putting a file in either.
 
+## A caller search for `name()` misses a method scheduled by reference (TASK-1378.2, 2026-11-07)
+
+**Incident.** TASK-1378.2 moved the "Revert (r) — reload preferences" relabel out of `SettingsScreen._update_guided_action_widgets` and paired it with that method's callers. The caller search was `grep "_update_guided_action_widgets()"`, which found two. The third, `providers_models_card.py`'s `screen.call_after_refresh(screen._update_guided_action_widgets)`, passes the method without parentheses, so the search never saw it. That unpaired deferred call could reset Revert to "no changes", disabled, while snapshot preferences were unreadable. Review I1 found it with a probe; no test covered the relabel.
+
+**What to do.** Search for the bare name (`grep -rn "_name\b"`), untruncated, before you move behaviour out of a method or claim you have listed its callers: a method handed to `call_after_refresh`, `set_timer`, `run_worker` or a `lambda` has no `()` at the call site. Better still, keep the behaviour inside the method (here, the method now asks the panel's `refresh_inspector_actions` hook itself), so a caller cannot skip it.
+
 ## A census's "gone" row can be a live producer the scanner stopped seeing (TASK-39053, 2026-11-06)
 
 **Incident.** The backup owner inventory reported 194 gone producer rows, and the task that filed it read them as removed or moved code. But 24 of them were live `os.replace` / `os.unlink` calls. Their modules had switched to `from tldw_chatbook.Utils.platform_files import os`, and the census only bound `os` from `import os`. Other reviewed rows looked gone for the same kind of reason:

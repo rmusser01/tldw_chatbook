@@ -982,3 +982,44 @@ async def test_providers_models_model_typed_back_after_a_save_is_staged_and_save
         assert _saved_chat_model() == "model-a"
         assert screen._category_has_unsaved_changes(_PM) is False
         assert not _rail_marked(screen)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_providers_models_unreadable_snapshot_preferences_keep_the_reload_revert(
+    request, monkeypatch
+) -> None:
+    """TASK-1378.2 review I1: while snapshot preferences cannot be read, ``r``
+    reloads them, and the Inspector's Revert says so and stays enabled after
+    every refresh of the Save/Revert pair, the card's own deferred one too."""
+    from tldw_chatbook.LLM_Management import snapshot_settings
+
+    def _unreadable(*args, **kwargs):
+        raise ValueError("unreadable snapshot preferences")
+
+    monkeypatch.setattr(snapshot_settings, "load_snapshot_preferences", _unreadable)
+    host = DestinationHarness(_providers_app(), "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        screen = await _open_providers(host, pilot)
+        assert screen._snapshot_preferences_unavailable is True
+
+        def revert_state() -> tuple[str, bool]:
+            revert = screen.query_one("#settings-revert-category", Button)
+            return str(revert.label), revert.disabled
+
+        reload = ("Revert (r) — reload preferences", False)
+        assert revert_state() == reload
+        screen._update_guided_action_widgets()  # the card schedules it alone
+        assert revert_state() == reload
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_revert_category_refuses_a_category_its_panel_serves(request) -> None:
+    """TASK-1378.2 review M3: ``_revert_category`` would pop a registered
+    category's draft and toast "reverted" without repainting it; the panel's
+    ``revert`` owns that discard, so the screen's path refuses."""
+    screen = SettingsScreen(_providers_app())
+    for category in CATEGORY_PANELS:
+        with pytest.raises(ValueError, match="registered panel"):
+            screen._revert_category(category)
