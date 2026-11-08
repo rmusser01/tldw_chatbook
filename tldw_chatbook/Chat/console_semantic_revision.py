@@ -451,7 +451,9 @@ def project_semantic_revision_trace_message(
                 row.detector_version,
             )
         )
-    masked = apply_frozen_pii_masks(projected, by_path)
+    masked = apply_frozen_pii_masks(
+        projected, by_path, widen_over_v2_credentials=legacy_spans
+    )
     if not isinstance(masked, dict):
         raise ValueError("semantic_revision_materialization_unavailable")
     if legacy_spans:

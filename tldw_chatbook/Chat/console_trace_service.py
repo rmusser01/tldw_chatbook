@@ -74,6 +74,7 @@ from tldw_chatbook.Chat.console_trace_provenance import (
 from tldw_chatbook.Chat.console_trace_redaction import (
     CredentialSanitizer,
     PIIRedactionSpan,
+    trace_policies_agree,
 )
 from tldw_chatbook.Chat.console_trace_repository import (
     ConsoleTraceRepository,
@@ -2822,8 +2823,8 @@ class ConsoleTraceService:
                 policy.policy_id != current_policy_id
                 for policy in parent.surface_policies
             ):
-                if current_policy is None or any(
-                    replace(policy, policy_id=current_policy_id) != current_policy
+                if current_policy is None or not all(
+                    trace_policies_agree(policy, current_policy)
                     for policy in parent.surface_policies
                 ):
                     raise ValueError("trace_policy_mismatch")
@@ -3843,14 +3844,8 @@ class ConsoleTraceService:
                 1
             ]
             prior_policy = _artifact_policy(prior_descriptor)
-            if prior_policy is None or (
-                prior_policy.credential_filter_version,
-                prior_policy.pii_redaction_enabled,
-                prior_policy.pii_ruleset_revision_id,
-            ) != (
-                slot.descriptor.policy.credential_filter_version,
-                slot.descriptor.policy.pii_redaction_enabled,
-                slot.descriptor.policy.pii_ruleset_revision_id,
+            if prior_policy is None or not trace_policies_agree(
+                prior_policy, slot.descriptor.policy
             ):
                 raise ValueError("trace_policy_mismatch")
             retained_artifact_values[slot.sequence] = system_value
@@ -4970,8 +4965,7 @@ class ConsoleTraceService:
             raise ValueError("completed_replay_terminal")
         prior_policy = self.repository.get_policy(cursor, terminal.policy_id)
         if policy is not None and (
-            prior_policy is None
-            or replace(prior_policy, policy_id=policy.policy_id) != policy
+            prior_policy is None or not trace_policies_agree(prior_policy, policy)
         ):
             raise ValueError("completed_replay_policy")
         value = self._resolve_reference_value(

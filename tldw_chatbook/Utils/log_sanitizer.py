@@ -404,6 +404,16 @@ _UNDERSCORE_KEY_CREDENTIALS = (
 )
 
 
+def trace_credentials_v2_spans(text: str) -> list[tuple[int, int]]:
+    """Code-point spans the v2 projection masks beyond v1 in ``text``.
+
+    A stored v1 policy's frozen PII spans are applied to its v1 projection;
+    a span that cuts one of these keys is widened over it first, so no key
+    fragment survives the v2 masks (TASK-39123).
+    """
+    return [m.span() for p in _UNDERSCORE_KEY_CREDENTIALS for m in p.finditer(text)]
+
+
 def sanitize_trace_credentials_v2(text: str) -> str:
     """The credentials-v2 trace projection: v1 plus bare `sk_`/`rk_` keys.
 
@@ -420,6 +430,8 @@ def sanitize_trace_credentials_v2(text: str) -> str:
     for pattern in _UNDERSCORE_KEY_CREDENTIALS:
         result = pattern.sub(REDACTION_MARKER, result)
     return result
+
+
 _DIAGNOSTIC_PII_PATTERNS = (
     re.compile(r"(?i)(?<![\w.%+-])[a-z0-9._%+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+"),
     re.compile(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)"),

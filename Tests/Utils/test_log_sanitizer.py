@@ -1088,11 +1088,16 @@ def test_trace_credentials_v1_projection_stays_byte_identical() -> None:
     assert sanitize_trace_credentials_v1(line) == line
 
 
-def _stored_v1_trace(db, *, user_text: str, response: bytes, pii: bool = False):
+def _stored_v1_trace(
+    db, *, user_text: str, response: bytes, pii: bool = False, cut: str | None = None
+):
     """Store one completed native call under a credentials-v1 policy, as an
     app before TASK-39123 did: its provider-response artifact holds a bare key
     that v1 never masked. Returns (assistant message id, policy id, artifact id).
     """
+    from tldw_chatbook.Chat.console_semantic_revision import (
+        project_semantic_revision_provider_message,
+    )
     from tldw_chatbook.Chat.console_trace_models import (
         FrozenTracePolicy,
         SemanticRevisionRef,
@@ -1103,9 +1108,6 @@ def _stored_v1_trace(db, *, user_text: str, response: bytes, pii: bool = False):
     from tldw_chatbook.Chat.console_trace_redaction import (
         BUILTIN_PII_RULESET_REVISION_ID,
         redact_pii_value,
-    )
-    from tldw_chatbook.Chat.console_semantic_revision import (
-        project_semantic_revision_provider_message,
     )
     from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
 
@@ -1152,6 +1154,19 @@ def _stored_v1_trace(db, *, user_text: str, response: bytes, pii: bool = False):
             for item in redaction.field_redactions:
                 spans.setdefault(item.field_path, []).append(item.span)
             assert spans
+            if cut is not None:
+                # A custom rule's span frozen beside the built-in one, in the
+                # same field (one string here): it may land inside a key.
+                import dataclasses
+                import re
+
+                ((field_path, found),) = spans.items()
+                found.extend(
+                    dataclasses.replace(
+                        found[0], start_codepoint=m.start(), end_codepoint=m.end()
+                    )
+                    for m in re.finditer(cut, user_text)
+                )
             for field_path, items in spans.items():
                 repository.ensure_redaction_spans(
                     cursor,
@@ -1337,4 +1352,30 @@ def test_stored_v1_pii_masks_still_land_with_the_v2_key_mask(tmp_path) -> None:
             "role": "user",
             "content": "key [credential omitted] then mail [PII omitted] please",
         }
+    ]
+
+
+def test_stored_v1_custom_span_inside_a_key_leaves_no_key_fragment(tmp_path) -> None:
+    """TASK-39123 review r12b-rev1: a frozen span that cuts a bare key (here a
+    custom digit rule) split it into fragments the v2 masks no longer match.
+    The span is widened over the key, so the read shows no fragment."""
+    from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    key = _TRACE_KEY_PREFIXES[0] + "DONOTUSE" + "123456" + "EXAMPLEONLYabcdefghij"
+    db = CharactersRAGDB(tmp_path / "trace.sqlite", "stored-v1-cut")
+    try:
+        assistant_id, _policy_id, _artifact_id = _stored_v1_trace(
+            db,
+            user_text=f"key {key} then mail ada@example.com please",
+            response=b'{"content":"ok","role":"assistant"}',
+            pii=True,
+            cut=r"\d{4,}",
+        )
+        (call,) = ConsoleTraceNativeReader(db).read_calls(assistant_id)
+    finally:
+        db.close()
+
+    assert call.capture.request.get("messages_payload") == [
+        {"role": "user", "content": "key [PII omitted] then mail [PII omitted] please"}
     ]

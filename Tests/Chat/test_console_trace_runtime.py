@@ -301,6 +301,9 @@ async def test_console_runtime_wires_production_boundary_for_durable_database(
         "valid",
         "cold",
         "equal_policy_fresh_id",
+        # TASK-39123: a turn stored under credentials-v1, continued under the
+        # production default after the upgrade, with a bare key in its values.
+        "upgraded_policy",
         "credential_value",
         "wrong_policy",
         "wrong_pii_enabled",
@@ -334,8 +337,14 @@ async def test_completed_tool_turn_compound_admission_checks_durable_proof(
     conversation = database.add_conversation({"title": "completed tool"})
     user_id, user = _saved_message(database, conversation, "calculate")
     answer_id, answer = _saved_message(database, conversation, "42", sender="assistant")
+    # Split at the prefix so no line holds a contiguous key shape.
+    bare_key = "sk" + "_live_" + "DONOTUSEEXAMPLEONLY" + "a1B2c3D4e5" * 2
     next_text = (
-        "Bearer sk-proj-" + "x" * 48 if scenario == "credential_value" else "next"
+        "Bearer sk-proj-" + "x" * 48
+        if scenario == "credential_value"
+        else f"next {bare_key}"
+        if scenario == "upgraded_policy"
+        else "next"
     )
     _, next_user = _saved_message(database, conversation, next_text)
     policy = FrozenTracePolicy(
@@ -485,7 +494,12 @@ async def test_completed_tool_turn_compound_admission_checks_durable_proof(
         )
     tool_count = 2
     tool_messages = [
-        {"role": "tool", "content": f"result-{index}", "tool_call_id": f"call-{index}"}
+        {
+            "role": "tool",
+            "content": f"result-{index}"
+            + (f" {bare_key}" if scenario == "upgraded_policy" else ""),
+            "tool_call_id": f"call-{index}",
+        }
         for index in range(tool_count)
     ]
     tool_descriptors = [ProviderArtifactTraceProvenance(source, policy)] * tool_count
@@ -558,8 +572,21 @@ async def test_completed_tool_turn_compound_admission_checks_durable_proof(
         factory = ConsoleTraceBoundaryFactory(database)
     elif scenario == "equal_policy_fresh_id":
         next_policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    elif scenario == "upgraded_policy":
+        from tldw_chatbook.Chat.console_trace_redaction import (
+            CREDENTIAL_FILTER_VERSION,
+        )
+
+        assert CREDENTIAL_FILTER_VERSION != policy.credential_filter_version
+        next_policy = FrozenTracePolicy(
+            new_opaque_id(), CREDENTIAL_FILTER_VERSION, False, None
+        )
     elif scenario == "wrong_policy":
-        next_policy = FrozenTracePolicy(new_opaque_id(), "credentials-v2", False, None)
+        # A version no reader knows is still refused (TASK-39123: v1 and v2
+        # agree, so this case moved off "credentials-v2").
+        next_policy = FrozenTracePolicy(
+            new_opaque_id(), "credentials-v999", False, None
+        )
     elif scenario == "wrong_pii_enabled":
         next_policy = FrozenTracePolicy(
             new_opaque_id(), "credentials-v1", True, policy.pii_ruleset_revision_id
@@ -909,6 +936,7 @@ async def test_completed_tool_turn_compound_admission_checks_durable_proof(
         "valid",
         "cold",
         "equal_policy_fresh_id",
+        "upgraded_policy",
         "credential_value",
         "stopped_terminal",
     }:

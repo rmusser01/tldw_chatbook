@@ -758,16 +758,7 @@ def validate_completed_tool_turn(
     if (
         previous_policy is None
         or current_policy is None
-        or (
-            previous_policy.credential_filter_version,
-            previous_policy.pii_redaction_enabled,
-            previous_policy.pii_ruleset_revision_id,
-        )
-        != (
-            current_policy.credential_filter_version,
-            current_policy.pii_redaction_enabled,
-            current_policy.pii_ruleset_revision_id,
-        )
+        or not trace.trace_policies_agree(previous_policy, current_policy)
     ):
         raise ValueError("completed_tool_turn_policy")
     origin_surface_head = (
@@ -900,16 +891,7 @@ def validate_completed_tool_turn(
         not isinstance(value, trace.Mapping)
         or value.get("role") != "user"
         or value.get("_chatbook_ephemeral_origin") != "project_instructions"
-        or (
-            descriptor.policy.credential_filter_version,
-            descriptor.policy.pii_redaction_enabled,
-            descriptor.policy.pii_ruleset_revision_id,
-        )
-        != (
-            current_policy.credential_filter_version,
-            current_policy.pii_redaction_enabled,
-            current_policy.pii_ruleset_revision_id,
-        )
+        or not trace.trace_policies_agree(descriptor.policy, current_policy)
         for descriptor, value in zip(
             descriptors[
                 witness.descriptor_count
