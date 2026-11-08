@@ -28,6 +28,7 @@ from tldw_chatbook.Sync_Interop.chat_outbox_producer import ChatSyncV2OutboxProd
 from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+from tldw_chatbook.Sync_Interop.chat_sync_source import CharactersRAGDBChatSyncSource
 
 
 SCHEMA_NAME = "rag_char_chat_schema"
@@ -297,7 +298,7 @@ def test_v49_tombstone_migration_marks_content_free_legacy_reconciliation(
             }
         )
         delete_hash = canonical_payload_hash({"deleted": True})
-        intent = db.read_committed_chat_delete_intent(
+        intent = CharactersRAGDBChatSyncSource(db).read_committed_chat_delete_intent(
             message_id=message_id,
             message_version=2,
             payload_hash=delete_hash,
@@ -322,7 +323,7 @@ def test_v49_tombstone_migration_marks_content_free_legacy_reconciliation(
         result = ChatSyncV2OutboxProducer(
             state_repository=repo,
             dataset_keys={"dataset-1": dataset_key},
-            source=db,
+            source=CharactersRAGDBChatSyncSource(db),
         ).reconcile_chat_message_delete_intent(
             server_profile_id="server-a",
             authenticated_principal_id="user-a",
@@ -379,7 +380,7 @@ def test_delete_intent_rejects_invalid_or_ambiguous_legacy_marker(
     db.get_connection().commit()
 
     assert (
-        db.read_committed_chat_delete_intent(
+        CharactersRAGDBChatSyncSource(db).read_committed_chat_delete_intent(
             message_id=message_id,
             message_version=2,
             payload_hash=canonical_payload_hash({"deleted": True}),

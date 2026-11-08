@@ -51,13 +51,13 @@ user-facing ownership chain and must be reviewed when a route changes.
 | Console character-greeting projection and repair | model-visible | `ConsoleChatStore.persist_roleplay_projection_plan`; producer `_snapshot_roleplay_message_projection_write` | frozen `_RoleplayMessageProjectionWrite.writer` invokes `ChatPersistenceService.update_message_content` |
 | Import | model-visible plus visibility | `ChatbookImporter.import_chatbook` via `_import_conversations` / `_import_conversations_with_database`; `Character_Chat_Lib.load_chat_history_from_file_and_save_to_db` | creates messages/attachments; V2 graph restoration writes variant/selection/tombstone fields |
 | Provider-continuation fallback create/update/discard | model-visible | `ConsoleChatStore.persist_provider_continuation_event`, `ConsoleChatStore.discard_provider_continuation` | `CharactersRAGDB.create_assistant_with_continuation` or `update_provider_continuation` through the persistence DB handle |
-| Sync create/update/delete | model-visible plus visibility | `SyncEnvelopeApplier.apply` → `ChatSyncAdapter.apply` → `_ContinuationValidatingChatStore` → `CharactersRAGDB.append_chat_message`/`delete_chat_message` | create/update changes the canonical envelope; delete retains those bytes and changes only tombstone visibility/ownership plus graph epoch |
+| Sync create/update/delete | model-visible plus visibility | `SyncEnvelopeApplier.apply` → `ChatSyncAdapter.apply` → `_ContinuationValidatingChatStore` → `CharactersRAGDBChatSyncSource.append_chat_message`/`delete_chat_message` | create/update changes the canonical envelope; delete retains those bytes and changes only tombstone visibility/ownership plus graph epoch |
 | Regeneration variants in legacy DB API | model-visible plus visibility | `CharactersRAGDB.create_message_variant`, `select_message_variant` | new variant row plus selected/total flags |
 | Research completion handoff | model-visible | `insert_research_completion_message` | assistant `add_message` |
 | Voice pair promotion | model-visible | `ChatPersistenceService.commit_completed_voice_pair` | inserts the completed USER/assistant pair with `add_message` |
 | Agent chat fork copy | model-visible | `ChatConversationService.copy_conversation_active_path` | re-inserts the source's active path into the target conversation with `add_message` |
 | Prompt mix-in attempt | model-visible (pending row) plus presentation-only (marker) | `ChatPersistenceService.save_conversation_mixin_attempt`; `console_prompt_mixins._mark_assistant`, `write_fork_state` | creates the pending assistant row through `create_message`; writes only the `metadata_json` mix-in attempt marker |
-| Message and subtree soft delete, including Sync tombstones | visibility/ownership-only | `ConsoleChatStore.delete_message`; classic/persona delete APIs; `CharactersRAGDB.delete_chat_message` | retained semantic bytes and semantic-revision lineage stay unchanged; only tombstone visibility/ownership state and graph epoch advance |
+| Message and subtree soft delete, including Sync tombstones | visibility/ownership-only | `ConsoleChatStore.delete_message`; classic/persona delete APIs; `CharactersRAGDBChatSyncSource.delete_chat_message` | retained semantic bytes and semantic-revision lineage stay unchanged; only tombstone visibility/ownership state and graph epoch advance |
 | Console Delete Undo (subtree undelete) | visibility/ownership-only | `restore_deleted_subtree` / off-loop `restore_subtree_off_loop` → `ChatPersistenceService.restore_message_subtree` → `CharactersRAGDB.restore_message_subtree` | clears exactly the tombstones one subtree delete wrote, version-checked; semantic bytes were never touched, so only visibility and graph epoch change |
 | Usage, feedback/ranking, message UI metadata | presentation-only | `ConsoleChatStore.set_message_usage`, `ConsoleChatStore.set_message_feedback`, `ConsoleChatStore.set_message_metadata`; classic ranking; DB feedback helper | local/version-neutral metadata or restricted `update_message` call |
 | Reasoning/tool trajectory diagnostics | presentation-only | `ConsoleChatStore.write_trajectory_rows`; `ChatPersistenceService.write_trajectory_rows`; `LibraryActivityContribution.write`, `LibraryPreparationContribution.write` | `message_trajectory_metadata`; tool/reasoning payload is diagnostic and is not replayed into provider kwargs |
@@ -253,7 +253,7 @@ FTS and Sync-log triggers are derived indexes/logs, not canonical semantic owner
 - `tldw_chatbook/Chatbooks/chatbook_importer.py::ChatbookImporter._import_conversations_with_database::sql:update:messages` — visibility/ownership-only
 - `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB._messages_insert_statement::sql:insert:messages` — model-visible
 - `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB._update_message_uncoordinated::sql:update:messages` — model-visible
-- `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.append_chat_message.apply_sync_message::sql:update:messages` — model-visible
+- `tldw_chatbook/Sync_Interop/chat_sync_source.py::CharactersRAGDBChatSyncSource.append_chat_message.apply_sync_message::sql:update:messages` — model-visible
 - `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.append_message_attachment_with_metadata.append_attachment::sql:insert:message_attachments` — model-visible
 - `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.append_message_attachment_with_metadata.append_attachment::sql:insert:message_generation_metadata` — presentation-only
 - `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.append_message_attachment_with_metadata.append_attachment::sql:update:messages` — model-visible
@@ -340,8 +340,8 @@ FTS and Sync-log triggers are derived indexes/logs, not canonical semantic owner
 - `tldw_chatbook/Chatbooks/chatbook_importer.py::ChatbookImporter._import_conversations_with_database::call:db:add_message` — model-visible
 - `tldw_chatbook/Chatbooks/chatbook_importer.py::ChatbookImporter._import_conversations_with_database::call:db:add_message_with_semantic_sidecars` — model-visible
 - `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB._add_message_with_semantic_sidecars::call:db:set_message_generation_metadata` — presentation-only
-- `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.append_chat_message::call:db:add_message` — model-visible
-- `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.delete_chat_message::call:db:soft_delete_message` — visibility/ownership-only
+- `tldw_chatbook/Sync_Interop/chat_sync_source.py::CharactersRAGDBChatSyncSource.append_chat_message::call:db:add_message` — model-visible
+- `tldw_chatbook/Sync_Interop/chat_sync_source.py::CharactersRAGDBChatSyncSource.delete_chat_message::call:db:soft_delete_message` — visibility/ownership-only
 - `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.update_message_feedback::call:db:update_message` — presentation-only
 - `tldw_chatbook/Research_Interop/chat_handoff.py::insert_research_completion_message::call:db:add_message` — model-visible
 - `tldw_chatbook/Sync_Interop/domain_adapters/chat.py::ChatSyncAdapter.apply::call:db:append_chat_message` — model-visible

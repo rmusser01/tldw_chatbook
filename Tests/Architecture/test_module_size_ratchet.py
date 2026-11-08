@@ -282,7 +282,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-08, TASK-39119 review (owner size waiver): +9, the store adopts a reply row saved before provider entry.
     # 2026-11-08, TASK-39119 review r12p-rev2 (owner size waiver): +10, the
     # adopted reply row writes the durable active-leaf cursor and legacy mix-in state.
-    "tldw_chatbook/Chat/console_chat_store.py": 22464,
+    # 2026-11-08, TASK-36949.4: 22445 -> 22440 (-5), chat-sync reads go
+    # through the Sync_Interop adapter instead of getattr method lookups.
+    "tldw_chatbook/Chat/console_chat_store.py": 22458,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).
@@ -832,7 +834,11 @@ _BUDGETS: dict[str, int] = {
     # comment): +2, the store's @declare_store backup-participant declaration and import.
     # TASK-36949.3: 25870 -> 25863 (-7) -- semantic-revision coordination reached through the DB-layer port.
     # 2026-11-03, TASK-36949.5: +3 shared store-error import.
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 23512,
+    # 2026-11-06, TASK-36949.3: 25870 -> 25863 (-7), coordinator reached
+    # through the DB-layer port.
+    # 2026-11-08, TASK-36949.4: 25863 -> 24870 (-993), chat-sync methods moved
+    # to Sync_Interop/chat_sync_source.py; tombstone hashing via the DB port.
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22519,
     #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
     #: The OS notification defaults add 12 lines; pin the exact measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.

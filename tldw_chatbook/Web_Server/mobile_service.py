@@ -483,8 +483,10 @@ class MobileChatService:
         """Construct the engine graph verbatim per the spike recipe."""
         self._data_dir.mkdir(parents=True, exist_ok=True)
         from tldw_chatbook.Chat.console_semantic_revision import install_semantic_coordination
+        from tldw_chatbook.Sync_Interop.chat_sync_source import install_chat_sync_hashing
 
         install_semantic_coordination()  # DB-layer port; composition root
+        install_chat_sync_hashing()  # DB-layer port; composition root
         # The isolated mobile files (ADR-234), opened with the shared options
         # (ADR-250 section 6); shutdown() closes them.
         storage = open_profile_storage(

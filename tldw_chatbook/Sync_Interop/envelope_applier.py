@@ -231,7 +231,10 @@ class _ContinuationValidatingChatStore:
         claimed_payload_hash: str,
         payload: dict[str, Any] | None,
     ) -> None:
-        self.store = store
+        from tldw_chatbook.Sync_Interop.chat_sync_source import chat_sync_source_for
+
+        # A CharactersRAGDB local store applies Chat through its sync adapter.
+        self.store = chat_sync_source_for(store) or store
         self.warning: str | None = None
         if (
             payload is not None

@@ -1,5 +1,6 @@
 """Process-local completion callbacks for managed SQLite transactions, and the
-semantic-revision coordination port CharactersRAGDB calls inside them."""
+semantic-revision coordination and chat-record hashing ports CharactersRAGDB
+calls inside them."""
 
 from __future__ import annotations
 
@@ -132,3 +133,37 @@ def semantic_coordinator_for(db: Any) -> Any:
             "once at process startup (the composition root) before writing messages."
         )
     return factory(db)
+
+
+# --- Chat-record hashing port (TASK-36949.4) --------------------------------
+# A tombstone write must stamp the deleted message's Sync v2 record hash on its
+# delete intent before the row's content is cleared, inside the same write
+# transaction. The hash rules belong to Sync_Interop, which imports the DB, so
+# the DB holds only this slot. ``Sync_Interop.chat_sync_source`` installs it on
+# import, and every composition root installs it at startup. Fail closed: a
+# tombstone write with nothing installed raises inside its transaction, which
+# rolls back, instead of committing a delete Sync can never project.
+
+_chat_record_hasher: Callable[[Any], str] | None = None
+
+
+class ChatRecordHashingNotInstalledError(RuntimeError):
+    """A message tombstone write ran before any root installed the port."""
+
+
+def install_chat_record_hasher(hasher: Callable[[Any], str]) -> None:
+    """Install ``hasher(row) -> payload hash`` for this process. Idempotent."""
+    global _chat_record_hasher
+    _chat_record_hasher = hasher
+
+
+def chat_record_hash(row: Any) -> str:
+    """Return the Sync record hash of one live message row or raise if not installed."""
+    hasher = _chat_record_hasher  # read once, like semantic_coordinator_for
+    if hasher is None:
+        raise ChatRecordHashingNotInstalledError(
+            "Chat-record hashing is not installed. Call "
+            "tldw_chatbook.Sync_Interop.chat_sync_source.install_chat_sync_hashing() "
+            "once at process startup (the composition root) before deleting messages."
+        )
+    return hasher(row)

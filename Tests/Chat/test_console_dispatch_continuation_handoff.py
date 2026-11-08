@@ -68,6 +68,7 @@ from tldw_chatbook.Sync_Interop.chat_outbox_producer import (
 from tldw_chatbook.Sync_Interop.crypto import generate_dataset_key
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
+from tldw_chatbook.Sync_Interop.chat_sync_source import CharactersRAGDBChatSyncSource
 
 _SCOPE = {
     "server_profile_id": "server-a",
@@ -208,7 +209,7 @@ def _portable_store(
     producer = ChatSyncV2OutboxProducer(
         state_repository=repository,
         dataset_keys={"dataset-a": generate_dataset_key()},
-        source=db,
+        source=CharactersRAGDBChatSyncSource(db),
     )
     rows = db.get_messages_for_conversation(conversation_id, limit=100)
     from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
@@ -413,7 +414,7 @@ def test_first_tool_batch_uses_atomic_handoff_and_publishes_committed_proof(
     ) == ("continuation_active", 3, canonical)
     assert _checkpoint_count(db) == 0
     assert (
-        db.read_committed_chat_sync_intent(
+        CharactersRAGDBChatSyncSource(db).read_committed_chat_sync_intent(
             message_id="assistant-1",
             message_version=3,
             payload_hash=expected_hash,
@@ -809,7 +810,7 @@ def test_legacy_continuation_normalizes_and_rebinds_before_actions(
         }
     )
     assert (
-        db.read_committed_chat_sync_intent(
+        CharactersRAGDBChatSyncSource(db).read_committed_chat_sync_intent(
             message_id="assistant-1",
             message_version=8,
             payload_hash=expected_hash,

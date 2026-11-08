@@ -11,6 +11,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Sync_Interop.chat_sync_source import CharactersRAGDBChatSyncSource
 
 
 def _store_with_session():
@@ -168,7 +169,7 @@ def test_delete_persists_whole_subtree_and_restart_cannot_restore_it(tmp_path):
     producer = ChatSyncV2OutboxProducer(
         state_repository=sync_repo,
         dataset_keys={"dataset-1": generate_dataset_key()},
-        source=db,
+        source=CharactersRAGDBChatSyncSource(db),
     )
     store = ConsoleChatStore(
         persistence=ChatPersistenceService(db),
@@ -263,7 +264,7 @@ def test_persisted_ancestor_edit_tombstones_and_projects_old_descendants(tmp_pat
     producer = ChatSyncV2OutboxProducer(
         state_repository=sync_repo,
         dataset_keys={"dataset-1": generate_dataset_key()},
-        source=db,
+        source=CharactersRAGDBChatSyncSource(db),
     )
     store = ConsoleChatStore(
         persistence=ChatPersistenceService(db),

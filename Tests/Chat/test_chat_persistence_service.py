@@ -53,6 +53,7 @@ from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+from tldw_chatbook.Sync_Interop.chat_sync_source import CharactersRAGDBChatSyncSource
 
 
 @pytest.fixture
@@ -2963,7 +2964,7 @@ def test_terminal_update_produces_one_current_sync_intent_with_lifecycle_state(
     ]
     assert len(current_entries) == 1
     assert current_entries[0]["payload"]["assistant_generation_state"] == "complete"
-    intents = db_instance.list_current_committed_chat_sync_intents(conversation_id)
+    intents = CharactersRAGDBChatSyncSource(db_instance).list_current_committed_chat_sync_intents(conversation_id)
     assert len(intents) == 1
     assert intents[0]["message_id"] == message_id
     assert intents[0]["message_version"] == 2
