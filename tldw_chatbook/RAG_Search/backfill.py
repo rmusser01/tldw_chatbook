@@ -105,11 +105,18 @@ def main(argv=None) -> int:
     from ..config import get_chachanotes_db_path, get_media_db_path
     from ..Chat.console_semantic_revision import install_semantic_coordination
     from ..Sync_Interop.chat_sync_source import install_chat_sync_hashing
-    from ..Chat.console_exchange_capture import install_safe_capture_trimming
+    from ..DB.transaction_observer import install_safe_capture_trimmer
+
+    def _trim_safe_capture(blob: bytes) -> bytes | None:
+        # Lazy: the capture codec (~150 modules) loads only when a v52->v53
+        # upgrade meets a stored Safe capture (TASK-36949.6).
+        from ..Chat.console_exchange_capture import trim_safe_capture_blob
+
+        return trim_safe_capture_blob(blob)
 
     install_semantic_coordination()  # DB-layer port; composition root
     install_chat_sync_hashing()  # DB-layer port; composition root
-    install_safe_capture_trimming()  # DB-layer port; composition root
+    install_safe_capture_trimmer(_trim_safe_capture)  # DB-layer port; composition root
 
     # Only the databases the requested item types read (ADR-250 section 6).
     storage = open_profile_storage(

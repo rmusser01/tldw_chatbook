@@ -849,7 +849,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-08, TASK-36949.4 fix round 1 (coordinator-directed re-pin):
     # 24870 -> 24908 (+38), the two validators and coordinate_semantic_mutation
     # became documented public seams for Sync_Interop and the dispatch repo.
-    # 2026-11-08, TASK-36949.6: 24870 -> 24871 (+1). The seven Chat imports
+    # 2026-11-08, TASK-36949.6: 24908 -> 24909 (+1). The seven Chat imports
     # go; ConsoleLibraryMigrationSeed moves in beside the v47->v48 migration
     # that consumes it, and the v52->v53 step names the trimming port's errors.
     "tldw_chatbook/DB/ChaChaNotes_DB.py": 22558,

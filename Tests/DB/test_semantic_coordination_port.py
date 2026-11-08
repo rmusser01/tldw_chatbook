@@ -309,15 +309,23 @@ SCRIPT_EXEMPTIONS: dict[str, str] = {}
 def test_every_composition_root_installs_the_port_during_startup(
     root, monkeypatch, tmp_path
 ):
+    from tldw_chatbook.Chat import console_exchange_capture
     from tldw_chatbook.Sync_Interop.chat_sync_source import chat_record_payload_hash
 
     start = root(monkeypatch, tmp_path)
     monkeypatch.setattr(port, "_factory", None)
     monkeypatch.setattr(port, "_chat_record_hasher", None)  # TASK-36949.4
+    monkeypatch.setattr(port, "_safe_capture_trimmer", None)  # TASK-36949.6
     with pytest.raises(_StartupReached):
         start()
     assert port._factory is SemanticRevisionCoordinator
     assert port._chat_record_hasher is chat_record_payload_hash
+    # The installed trimmer, eager or lazy, forwards to the capture codec.
+    assert port._safe_capture_trimmer is not None
+    monkeypatch.setattr(
+        console_exchange_capture, "trim_safe_capture_blob", lambda blob: b"codec"
+    )
+    assert port._safe_capture_trimmer(b"stored") == b"codec"
 
 
 def test_every_console_script_is_a_tested_root_or_exempt():
