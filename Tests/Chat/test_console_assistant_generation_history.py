@@ -10,8 +10,8 @@ import pytest
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
     process_db_messages_to_ui_history,
 )
-from tldw_chatbook.Chat import assistant_generation_state as generation_state
-from tldw_chatbook.Chat.assistant_generation_state import (
+from tldw_chatbook.DB import assistant_generation_state as generation_state
+from tldw_chatbook.DB.assistant_generation_state import (
     AssistantGenerationState,
     render_exported_assistant_content,
 )

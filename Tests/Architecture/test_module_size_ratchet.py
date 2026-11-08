@@ -860,7 +860,15 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-08, TASK-36949.4: 25863 -> 24908 (-955), chat-sync methods moved
     # to Sync_Interop/chat_sync_source.py; tombstone hashing via the DB port; the
     # two validators and coordinate_semantic_mutation are documented public seams.
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22557,
+    # 2026-11-08, TASK-36949.4: 25863 -> 24870 (-993), chat-sync methods moved
+    # to Sync_Interop/chat_sync_source.py; tombstone hashing via the DB port.
+    # 2026-11-08, TASK-36949.4 fix round 1 (coordinator-directed re-pin):
+    # 24870 -> 24908 (+38), the two validators and coordinate_semantic_mutation
+    # became documented public seams for Sync_Interop and the dispatch repo.
+    # 2026-11-08, TASK-36949.6: 24870 -> 24871 (+1). The seven Chat imports
+    # go; ConsoleLibraryMigrationSeed moves in beside the v47->v48 migration
+    # that consumes it, and the v52->v53 step names the trimming port's errors.
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22558,
     # TASK-39147: the rebased report reader and workflow migrations cross 4000.
     # 2026-11-12, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
     # comment): +2, the store's @declare_store backup-participant declaration and import.
@@ -882,7 +890,9 @@ _BUDGETS: dict[str, int] = {
     # release and the interval constant, with their comments).
     # 2026-11-10, restack onto dev e78b62f0e7 (owner size waiver): dev's 8,842
     # plus TASK-38987's +20; exact measurement.
-    "tldw_chatbook/config.py": 8862,
+    # 2026-11-08, TASK-36949.6: 8983 -> 8967, the exact measurement (the seed
+    # type now comes from the ChaChaNotes_DB import; no TYPE_CHECKING block).
+    "tldw_chatbook/config.py": 8864,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):

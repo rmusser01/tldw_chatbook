@@ -27,6 +27,7 @@ from pathlib import Path
 import pytest
 
 from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
+from tldw_chatbook.DB import transaction_observer as port
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, SchemaError
 from tldw_chatbook.Chat.console_exchange_capture import (
     CAPTURE_SAFE_HISTORY_TAIL_ROWS,
@@ -36,6 +37,7 @@ from tldw_chatbook.Chat.console_exchange_capture import (
     capture_from_storage,
     capture_to_blob,
     history_elision_marker,
+    install_safe_capture_trimming,
     trim_safe_capture_blob,
 )
 
@@ -445,6 +447,51 @@ def test_fresh_database_lands_on_current_with_no_exchange_rows(tmp_path: Path) -
             .execute("SELECT COUNT(*) FROM message_exchanges")
             .fetchone()[0]
             == 0
+        )
+    finally:
+        db.close_connection()
+
+
+def test_v53_without_the_trimming_port_fails_closed_and_stays_v52(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """TASK-36949.6: ChaChaNotes_DB reaches the Chat capture codec only through
+    the DB-layer port. An uncomposed process that meets a stored Safe blob
+    refuses the upgrade (rolled back: still v52, blobs byte-identical); once
+    the port is installed the same file upgrades completely."""
+    db_path = tmp_path / "uncomposed-v52.sqlite"
+    message_id = _seed_v52(db_path)
+    with chachanotes_db_at_version(db_path, 52, client_id="v53-port-before") as db52:
+        before = _blobs_by_run_tag(db52, message_id)
+
+    monkeypatch.setattr(port, "_safe_capture_trimmer", None)
+    with pytest.raises(SchemaError, match="SafeCaptureTrimmingNotInstalledError"):
+        CharactersRAGDB(db_path, client_id="v53-uncomposed")
+    assert _version(db_path) == 52
+    with chachanotes_db_at_version(db_path, 52, client_id="v53-port-inspect") as db52:
+        assert _blobs_by_run_tag(db52, message_id) == before
+
+    install_safe_capture_trimming()
+    db = CharactersRAGDB(db_path, client_id="v53-composed")
+    try:
+        assert _version(db_path) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        after = _blobs_by_run_tag(db, message_id)
+        assert after["oversized-safe"] != before["oversized-safe"]
+        assert after["corrupt"] == before["corrupt"]
+    finally:
+        db.close_connection()
+
+
+def test_fresh_database_opens_without_the_trimming_port(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A fresh database walks the v52->v53 step with no stored blob, so a bare
+    library open (the installed-wheel canary) never needs the port."""
+    monkeypatch.setattr(port, "_safe_capture_trimmer", None)
+    db = CharactersRAGDB(tmp_path / "fresh-uncomposed.sqlite", client_id="v53-bare")
+    try:
+        assert _version(tmp_path / "fresh-uncomposed.sqlite") == (
+            CharactersRAGDB._CURRENT_SCHEMA_VERSION
         )
     finally:
         db.close_connection()

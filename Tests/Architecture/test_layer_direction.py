@@ -276,6 +276,35 @@ def test_allowlist_has_no_stale_rows() -> None:
     )
 
 
+def test_chachanotes_db_imports_no_chat_module() -> None:
+    """TASK-36949.6: ChaChaNotes_DB imports no ``tldw_chatbook.Chat`` module.
+
+    Every kind counts, ``if TYPE_CHECKING:`` included, unlike the allowlist scan.
+    """
+    path = REPO_ROOT / PACKAGE / "DB" / "ChaChaNotes_DB.py"
+    chat = f"{PACKAGE}.Chat"
+    offenders: list[str] = []
+    for node, kind in _imports(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Call):
+            names = [node.args[0].value]
+        elif isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        else:
+            base = (
+                ".".join([PACKAGE, "DB"][: 2 - (node.level - 1)] + [node.module or ""])
+                if node.level
+                else node.module or ""
+            ).strip(".")
+            names = [base] + [f"{base}.{alias.name}" for alias in node.names]
+        if any(name == chat or name.startswith(chat + ".") for name in names):
+            offenders.append(f"line {node.lineno} ({kind}): {names[0]}")
+    assert not offenders, (
+        "tldw_chatbook/DB/ChaChaNotes_DB.py must not import tldw_chatbook.Chat; move "
+        "pure code down to the DB layer or have the caller pass it in (a port):\n  "
+        + "\n  ".join(offenders)
+    )
+
+
 def _widgets_screen_imports_at_module_level() -> list[str]:
     """Module-level imports in Widgets/** that target UI/Screens (TASK-36944.8)."""
     found: list[str] = []

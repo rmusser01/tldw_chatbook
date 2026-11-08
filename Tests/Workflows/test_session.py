@@ -15,7 +15,7 @@ from Tests.Workflows.test_session_admission import file_definition, revision_of
 @pytest.fixture
 async def harness(tmp_path, monkeypatch):
     from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
-    from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
+    from tldw_chatbook.DB.ChaChaNotes_DB import ConsoleLibraryMigrationSeed
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.DB.Workflows_DB import WorkflowsDB
     from tldw_chatbook.MCP.permission_store import MCPPermissionStore

@@ -75,7 +75,6 @@ if TYPE_CHECKING:
         PerformanceSource,
         PortraitPerformanceRecord,
     )
-    from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
     from tldw_chatbook.DB.portrait_region_settings import PortraitRegionSettings
     from tldw_chatbook.Library.library_artifacts_state import (
         ArtifactKey,
@@ -114,6 +113,7 @@ from .sql_validation import (
     validate_column_name,
 )
 from .sql_logging import preview_params
+from .assistant_generation_state import normalize_assistant_generation_state
 from tldw_chatbook.Backup_Recovery.participants import (
     core_cached_connection,
     core_closing,
@@ -130,10 +130,13 @@ from .base_db import (
     sqlite_connection_quiescence_registry,
 )
 from .transaction_observer import (
+    SafeCaptureTrimmingNotInstalledError,
+    UnreadableCaptureBlobError,
     begin_managed_transaction,
     chat_record_hash,
     complete_managed_transaction,
     semantic_coordinator_for,
+    trim_stored_safe_capture,
 )
 from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
 from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
@@ -696,6 +699,18 @@ class TrajectoryRowRead:
     model: Optional[str] = None
     provider: Optional[str] = None
     payload_json: Optional[str] = None
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleLibraryMigrationSeed:
+    """Sanitized legacy automatic-retrieval value for the v47->v48 migration."""
+
+    auto_retrieve_on_send: bool
+
+    def __post_init__(self) -> None:
+        """Reject values that have not passed config-layer boolean coercion."""
+        if type(self.auto_retrieve_on_send) is not bool:
+            raise TypeError("auto_retrieve_on_send must be a bool")
 
 
 # --- Database Class ---
@@ -2812,7 +2827,7 @@ DELETE FROM keywords
         db_path: Union[str, Path],
         client_id: str,
         check_integrity_on_startup: bool = False,
-        console_library_migration_seed: "ConsoleLibraryMigrationSeed | None" = None,
+        console_library_migration_seed: ConsoleLibraryMigrationSeed | None = None,
     ):
         """
         Initializes the CharactersRAGDB instance.
@@ -6779,10 +6794,6 @@ DELETE FROM keywords
                 applied, or the guarded version update fails.
         """
         self._require_migration_entry_version(conn, 47, "V47→V48")
-        from tldw_chatbook.Chat.console_library_policy import (
-            ConsoleLibraryMigrationSeed,
-        )
-
         seed = self.console_library_migration_seed
         if seed is not None and not isinstance(seed, ConsoleLibraryMigrationSeed):
             raise SchemaError(
@@ -7087,8 +7098,9 @@ DELETE FROM keywords
         purge is user-invoked and Full-filtered). ``build_request_capture``
         now bounds Safe retention at capture time (first system row, last
         user row, final eight rows, one content-free aggregate marker);
-        this step applies the identical compaction
-        (``trim_safe_capture_blob``, a pure helper) to every already-stored
+        this step applies the identical compaction (the Console codec's
+        ``trim_safe_capture_blob``, reached through the DB-layer
+        ``trim_stored_safe_capture`` port, TASK-36949.6) to every already-stored
         Safe blob so existing databases reclaim the space without the user
         knowing a manual purge exists. Full captures are the deliberate,
         consent-gated, purgeable verbatim mode (ADR-092) and are never
@@ -7101,9 +7113,9 @@ DELETE FROM keywords
         outer immediate transaction: a crash or SIGKILL anywhere in the
         walk rolls the blob rewrites AND the version stamp back to v52
         together, and the deterministic compaction re-runs on the next
-        open (idempotent — a recognized marker is a fixed point). Only the
-        ``CaptureUnavailableError``/``CaptureCorruptError`` family is a
-        per-row skip (retrying unreadable data cannot reclaim it, so the
+        open (idempotent — a recognized marker is a fixed point). Only
+        ``UnreadableCaptureBlobError`` (the codec's ``CaptureUnavailableError``
+        family) is a per-row skip (retrying unreadable data cannot reclaim it, so the
         version may still advance); any unexpected programming or SQLite
         error aborts and rolls back everything. Diagnostics report
         aggregate counts only — never capture bodies, blob bytes, row
@@ -7115,17 +7127,13 @@ DELETE FROM keywords
 
         Raises:
             SchemaError: If the entry version is wrong, the rewrite hits an
-                unexpected error, or the guarded version update fails.
+                unexpected error, a Safe blob needs the trimming port and
+                nothing installed it, or the guarded version update fails.
         """
         self._require_migration_entry_version(conn, 52, "V52→V53")
         logger.info(
             f"Migrating schema from V52 to V53 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
-        from tldw_chatbook.Chat.console_exchange_capture import (
-            CaptureUnavailableError,
-            trim_safe_capture_blob,
-        )
-
         examined = changed = skipped = 0
         try:
             with self.transaction() as cursor:
@@ -7150,8 +7158,8 @@ DELETE FROM keywords
                             continue
                         examined += 1
                         try:
-                            new_blob = trim_safe_capture_blob(bytes(blob))
-                        except CaptureUnavailableError:
+                            new_blob = trim_stored_safe_capture(bytes(blob))
+                        except UnreadableCaptureBlobError:
                             # Recognized undecodable blob (corrupt or over
                             # the safety limits): left byte-identical and
                             # counted — retrying cannot reclaim it. Any
@@ -7188,7 +7196,13 @@ DELETE FROM keywords
                 f"db_sha256={self._db_diagnostic_ref} (examined {examined}, compacted {changed}, "
                 f"skipped {skipped} unreadable)."
             )
-        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+        except (
+            OSError,
+            sqlite3.Error,
+            CharactersRAGDBError,
+            SchemaError,
+            SafeCaptureTrimmingNotInstalledError,
+        ) as exc:
             raise SchemaError(
                 f"Migration from V52 to V53 failed for '{self._SCHEMA_NAME}': "
                 f"{type(exc).__name__}"
@@ -14117,9 +14131,6 @@ DELETE FROM keywords
             raise InputError(
                 "Assistant generation state requires an assistant message."
             ) from None
-        from tldw_chatbook.Chat.assistant_generation_state import (
-            normalize_assistant_generation_state,
-        )
 
         try:
             normalized_generation_state = normalize_assistant_generation_state(
@@ -14778,9 +14789,6 @@ DELETE FROM keywords
                 provider_continuation_json
             )
             _validate_continuation_owner_content(checkpoint, content)
-        from tldw_chatbook.Chat.assistant_generation_state import (
-            normalize_assistant_generation_state,
-        )
 
         try:
             normalize_assistant_generation_state(
@@ -14878,10 +14886,6 @@ DELETE FROM keywords
                 provider_continuation_json
             )
             _validate_continuation_owner_content(checkpoint, content)
-
-        from tldw_chatbook.Chat.assistant_generation_state import (
-            normalize_assistant_generation_state,
-        )
 
         try:
             normalized_state = normalize_assistant_generation_state(
@@ -15942,9 +15946,6 @@ DELETE FROM keywords
                         raise InputError(
                             "Assistant generation state requires an assistant message."
                         )
-                    from tldw_chatbook.Chat.assistant_generation_state import (
-                        normalize_assistant_generation_state,
-                    )
 
                     checkpoint = None
                     if current["provider_continuation_json"] is not None:

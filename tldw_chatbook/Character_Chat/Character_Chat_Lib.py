@@ -38,7 +38,7 @@ from tldw_chatbook.Provider_Contract.provider_continuation import (  # noqa: E40
     dump_provider_continuation_json,
     read_provider_continuation_json,
 )
-from tldw_chatbook.Chat.assistant_generation_state import (  # noqa: E402
+from tldw_chatbook.DB.assistant_generation_state import (  # noqa: E402
     assistant_state_allows_provider_history,
     normalize_assistant_generation_state,
     render_exported_assistant_content,

@@ -682,23 +682,32 @@ def _lazy_real_chat_record_hash(row):
     return chat_record_payload_hash(row)
 
 
+def _lazy_real_safe_capture_trim(blob):
+    """The real Safe-capture trimmer, imported on first use (TASK-36949.6)."""
+    from tldw_chatbook.Chat import console_exchange_capture
+
+    return console_exchange_capture.trim_safe_capture_blob(blob)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def semantic_coordination_installed() -> None:
-    """Install the DB layer's semantic and chat-record hashing ports for the session.
+    """Install the DB layer's semantic, chat-record hashing and Safe-capture ports.
 
     Production composition roots install them at startup (TASK-36949.3,
-    TASK-36949.4); tests construct databases directly, so the suite installs
-    the real implementations. Session scope sets them up before any module- or
-    class-scoped fixture that writes or deletes a message; tests that clear a
-    port do so through monkeypatch.
+    TASK-36949.4, TASK-36949.6); tests construct databases directly, so the
+    suite installs the real implementations. Session scope sets them up before
+    any module- or class-scoped fixture that writes or deletes a message or
+    upgrades a database; tests that clear a port do so through monkeypatch.
     """
     from tldw_chatbook.DB.transaction_observer import (
         install_chat_record_hasher,
+        install_safe_capture_trimmer,
         install_semantic_coordinator_factory,
     )
 
     install_semantic_coordinator_factory(_lazy_real_semantic_coordinator)
     install_chat_record_hasher(_lazy_real_chat_record_hash)
+    install_safe_capture_trimmer(_lazy_real_safe_capture_trim)
 
 
 @pytest.fixture(scope="session", autouse=True)

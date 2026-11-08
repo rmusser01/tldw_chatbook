@@ -105,9 +105,11 @@ def main(argv=None) -> int:
     from ..config import get_chachanotes_db_path, get_media_db_path
     from ..Chat.console_semantic_revision import install_semantic_coordination
     from ..Sync_Interop.chat_sync_source import install_chat_sync_hashing
+    from ..Chat.console_exchange_capture import install_safe_capture_trimming
 
     install_semantic_coordination()  # DB-layer port; composition root
     install_chat_sync_hashing()  # DB-layer port; composition root
+    install_safe_capture_trimming()  # DB-layer port; composition root
 
     # Only the databases the requested item types read (ADR-250 section 6).
     storage = open_profile_storage(

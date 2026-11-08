@@ -22,6 +22,10 @@ from tldw_chatbook.Chat.console_project_instructions import (
     canonical_provider_endpoint_identity,
 )
 from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
+from tldw_chatbook.DB.transaction_observer import (
+    UnreadableCaptureBlobError,
+    install_safe_capture_trimmer,
+)
 
 #: Value ``EPHEMERAL_ORIGIN_KEY`` carries on an automatically-injected
 #: project-instruction row (``Agents/project_instruction_runtime.py``'s
@@ -211,8 +215,11 @@ class CaptureBudget:
         return True
 
 
-class CaptureUnavailableError(ValueError):
-    """Capture bytes cannot be safely decoded or retained."""
+class CaptureUnavailableError(UnreadableCaptureBlobError):
+    """Capture bytes cannot be safely decoded or retained.
+
+    A ``ValueError``; its DB-layer base is what the v52->v53 migration skips.
+    """
 
 
 class CaptureDecodeLimitError(CaptureUnavailableError):
@@ -1154,3 +1161,16 @@ def trim_safe_capture_blob(blob: bytes) -> bytes | None:
     return capture_to_blob(
         replace(capture, request=new_request, omitted_keys=merged_omitted)
     )
+
+
+def install_safe_capture_trimming() -> None:
+    """Install this codec as the DB layer's Safe-capture trimming port (TASK-36949.6).
+
+    Call from every composition root (idempotent); importing this module also
+    installs it.
+    """
+    # The lambda looks the function up per call, so a patched one is seen.
+    install_safe_capture_trimmer(lambda blob: trim_safe_capture_blob(blob))
+
+
+install_safe_capture_trimming()

@@ -31,7 +31,7 @@ from textual.widget import Widget
 from textual.widgets import Button, Markdown, Static
 from textual_diff_view import DiffView
 
-from tldw_chatbook.Chat.assistant_generation_state import (
+from tldw_chatbook.DB.assistant_generation_state import (
     render_exported_assistant_content,
 )
 from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility

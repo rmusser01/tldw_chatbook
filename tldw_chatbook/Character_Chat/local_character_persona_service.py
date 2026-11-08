@@ -19,7 +19,7 @@ from loguru import logger
 
 from ..Utils.path_validation import validate_path_simple
 from ..Chat.chat_conversation_service import ChatConversationService
-from ..Chat.assistant_generation_state import render_exported_assistant_content
+from ..DB.assistant_generation_state import render_exported_assistant_content
 from .world_book_manager import WorldBookManager
 
 

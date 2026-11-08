@@ -106,7 +106,7 @@ from ..Provider_Contract.provider_continuation import (  # noqa: E402
     dump_provider_continuation_json,
     read_provider_continuation_json,
 )
-from .assistant_generation_state import (  # noqa: E402
+from ..DB.assistant_generation_state import (  # noqa: E402
     normalize_assistant_generation_state,
 )
 from ..Provider_Contract.thinking_blocks import (  # noqa: E402

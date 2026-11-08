@@ -32,18 +32,6 @@ _POLICY_READ_ERROR_CODE = "policy_read_error"
 
 
 @dataclass(frozen=True, slots=True)
-class ConsoleLibraryMigrationSeed:
-    """Sanitized legacy automatic-retrieval value for a schema migration."""
-
-    auto_retrieve_on_send: bool
-
-    def __post_init__(self) -> None:
-        """Reject values that have not passed config-layer boolean coercion."""
-        if type(self.auto_retrieve_on_send) is not bool:
-            raise TypeError("auto_retrieve_on_send must be a bool")
-
-
-@dataclass(frozen=True, slots=True)
 class ConsoleLibraryPolicyDefaults:
     """Policy captured when a new local Console session is created."""
 

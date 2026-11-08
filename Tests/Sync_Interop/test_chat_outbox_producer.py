@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from tldw_chatbook.Chat.assistant_generation_state import AssistantGenerationState
+from tldw_chatbook.DB.assistant_generation_state import AssistantGenerationState
 from tldw_chatbook.Chat.provider_continuation import (
     dump_provider_continuation_json,
     parse_provider_continuation_json,

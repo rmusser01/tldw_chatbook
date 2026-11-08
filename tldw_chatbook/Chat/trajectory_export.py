@@ -35,7 +35,7 @@ from typing import Any
 
 from loguru import logger
 
-from .assistant_generation_state import normalize_assistant_generation_state
+from ..DB.assistant_generation_state import normalize_assistant_generation_state
 
 # One object, re-imported from the stdlib-only leaf (TASK-23020): Chat-leg
 # modules (console_exchange_export and the exchange export dialog) read the
