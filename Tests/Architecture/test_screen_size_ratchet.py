@@ -1599,7 +1599,15 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: dev after TASK-41757), 1288 -> 1289 methods.
     #: 2026-11-23, TASK-42473 review: the override records only a reset that
     #: moved focus: 32849 -> 32852 lines, 1289 methods.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32852, 1289),
+    #: 2026-11-08, TASK-38227 (owner decision "expand limits, never contort
+    #: code"): the note-export docstring now says shell metacharacters are legal
+    #: file-name characters since the validate_path_simple flip: 38161 -> 38162
+    #: lines, 1376 methods.
+    #: 2026-11-24, TASK-38227 rebased onto dev b51b7a15cd (dev's row 32812/1288
+    #: plus this PR's one docstring line): measured 32813 lines, 1288 methods.
+    #: 2026-11-25, TASK-38227 rebased onto dev 692acb43dc (dev's row 32852/1289
+    #: plus this PR's one docstring line): measured 32853 lines, 1289 methods.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32853, 1289),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
