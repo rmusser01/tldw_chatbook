@@ -617,13 +617,24 @@ async def test_console_chat_controller_holds_no_app_after_construction(
 #: Paths the walk does not enter, each with its reason. The owning runtime is
 #: built around the app (ADR-250 rule 4) and outlives the controller.
 _REACHABILITY_EXEMPT_TYPES = {"ConsoleRuntime": "the owning runtime (ADR-250 rule 4)"}
-_NOT_WALKED = (
-    "asyncio", "threading", "logging", "loguru", "sqlite3", "concurrent",
-    "weakref", "_weakrefset", "textual", "rich", "pathlib", "re",
-)
+#: Top-level modules whose objects the walk does not enter, and why.
+_NOT_WALKED = {
+    "asyncio": "loops, tasks and futures reference every pending frame",
+    "threading": "locks, events and threads: no service state",
+    "concurrent": "executors and futures, as asyncio",
+    "logging": "process-global handlers",
+    "loguru": "process-global handlers",
+    "sqlite3": "C connections: no Python attributes",
+    "weakref": "a weak reference does not keep the app",
+    "_weakrefset": "a weak reference does not keep the app",
+    "textual": "widgets and screens hold the app by design (ADR-250 Q4)",
+    "rich": "renderables: no service state",
+    "pathlib": "value objects",
+    "re": "value objects",
+}
 
 
-def _app_holders(root, app, *, depth: int = 6) -> list[str]:
+def _app_holders(root, app, *, depth: int = 6, label: str = "controller") -> list[str]:
     """Paths from ``root`` to ``app`` that end on an object attribute or item.
 
     The walk enters instance ``__dict__``s, slots and dataclass fields,
@@ -633,14 +644,35 @@ def _app_holders(root, app, *, depth: int = 6) -> list[str]:
     callable binding (partial argument, ``__self__``, closure cell) is a
     narrow callable over the app (ADR-250 s7) and is allowed; a path whose
     last step is an attribute or container item is an object holding the
-    app, which is what this guard forbids.
+    app, which is what this guard forbids. So is a bare getter, a closure
+    whose whole body returns the app (``lambda: self``): it hands out the
+    whole app, not one capability.
+
+    Blind spots:
+    - depth: paths longer than ``depth`` steps are not followed;
+    - dict keys: only values are walked;
+    - the modules in ``_NOT_WALKED``, each for the reason given there;
+    - callables are never called, so an object a callable builds on use is
+      walked only when the test calls it (the reachability test calls the
+      Library provider factory and the host's zero-argument readers);
+    - a closure that reads the app (``lambda: app.x``) is a narrow callable
+      here even when ``x`` is the app's whole surface.
     """
+    import dis
     import functools
     import types
 
+    def returns_its_cell(fn: types.FunctionType) -> bool:
+        ops = [
+            ins.opname
+            for ins in dis.get_instructions(fn)
+            if ins.opname not in {"RESUME", "COPY_FREE_VARS", "NOP", "CACHE", "MAKE_CELL"}
+        ]
+        return ops == ["LOAD_DEREF", "RETURN_VALUE"]
+
     holders: list[str] = []
     seen: set[int] = {id(root)}
-    frontier = [(root, "controller")]
+    frontier = [(root, label)]
 
     def children(obj):
         if isinstance(obj, functools.partial):
@@ -702,6 +734,8 @@ def _app_holders(root, app, *, depth: int = 6) -> list[str]:
                 if value is app:
                     if kind == "attr":
                         holders.append(path + step)
+                    elif isinstance(obj, types.FunctionType) and returns_its_cell(obj):
+                        holders.append(path + step + " (a getter returning the app)")
                     continue
                 if id(value) in seen or not walkable(value):
                     continue
@@ -718,7 +752,17 @@ async def test_no_object_the_console_controller_reaches_holds_the_app(
 ) -> None:
     """Bounded reachability: from a runtime-built controller over a real app
     (real ``app.services``), the app is reachable only through narrow callables
-    and the exempt owning runtime -- never as an object's attribute."""
+    and the exempt owning runtime -- never as an object's attribute.
+
+    Also walked: what the controller builds per use -- the Library provider
+    factory's product (direct tools on and off) and the result of each
+    zero-argument ``host.read_*`` reader. The walk is viewless: no Console
+    view is attached, so the view-hook callables bound to a ``ChatScreen``
+    (which holds the app by design, ADR-250 Q4) are not covered.
+    """
+
+    import inspect
+    from types import SimpleNamespace
 
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
@@ -741,7 +785,33 @@ async def test_no_object_the_console_controller_reaches_holds_the_app(
     runtime.ensure_archive_recovery()
     try:
         assert bridge is not None, "the walk must cover the agent bridge's consumers"
-        holders = _app_holders(controller, app)
+        reached = {"controller": controller}
+        for direct in (True, False):
+            context = SimpleNamespace(
+                library_authority=SimpleNamespace(direct_library_tools=direct)
+            )
+            product = controller._library_provider_factory(context)
+            assert product is not None, f"no Library provider (direct={direct})"
+            reached[f"library_provider(direct={direct})"] = product
+        host = controller.host
+        readers = sorted(
+            name for name in type(host).__dataclass_fields__ if name.startswith("read_")
+        )
+        for name in readers:
+            reader = getattr(host, name)
+            if reader is None or any(
+                p.default is p.empty
+                for p in inspect.signature(reader).parameters.values()
+                if p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)
+            ):
+                continue
+            reached[f"host.{name}()"] = reader()
+        assert len(reached) > 3, "the per-use walk read no host readers"
+        holders = [
+            path
+            for label, root in reached.items()
+            for path in _app_holders(root, app, label=label)
+        ]
         assert not holders, "objects holding the app:\n" + "\n".join(holders)
     finally:
         await runtime.dispose()
@@ -764,3 +834,11 @@ def test_reachability_walk_flags_an_object_holding_the_app() -> None:
             self.notify = functools.partial(print, app)
 
     assert _app_holders(Root(), app) == ["controller.child['wake']._app"]
+
+    getter = Root()
+    getter.read_app = lambda: app
+    getter.read_name = lambda: type(app).__name__
+    assert _app_holders(getter, app) == [
+        "controller.child['wake']._app",
+        "controller.read_app.<cell 0> (a getter returning the app)",
+    ]

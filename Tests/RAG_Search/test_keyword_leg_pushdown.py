@@ -635,7 +635,7 @@ async def test_library_hybrid_passes_the_translated_selection():
     an empty selection means an empty keyword leg.
     """
     rag = _HybridSpyRagService(results=[_note_row()])
-    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
+    service = LibraryLocalRagSearchService.from_app(SimpleNamespace(_rag_service=rag))
 
     await service.search(
         "credential", ("notes",), "rag", top_k=5, include_citations=True
@@ -680,7 +680,7 @@ async def test_library_hybrid_translates_every_fts_servable_type():
     between the Library and the leg.
     """
     rag = _HybridSpyRagService(results=[_note_row()])
-    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
+    service = LibraryLocalRagSearchService.from_app(SimpleNamespace(_rag_service=rag))
 
     await service.search(
         "credential",

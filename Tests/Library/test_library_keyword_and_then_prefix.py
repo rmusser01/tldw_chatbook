@@ -261,7 +261,7 @@ def prefix_spy(monkeypatch):
 
 async def _search(app, query: str, sources=ALL_SOURCES, *, top_k: int = 5):
     """Run the production keyword path and return its merged rows."""
-    result = await LibraryLocalRagSearchService(app).search(
+    result = await LibraryLocalRagSearchService.from_app(app).search(
         query, tuple(sources), "search", top_k=top_k
     )
     assert isinstance(result, dict), f"expected rows, got outcome: {result!r}"
@@ -297,7 +297,7 @@ async def test_a_sub_leg_whose_primary_returns_rows_never_builds_the_prefix_form
     is on the construction counter.
     """
     app = seams().app
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     state, rows = await service._search_notes(SPLIT_QUERY, 5, _USER_ID)
 
@@ -324,7 +324,7 @@ async def test_a_hitting_sub_legs_rows_are_byte_identical_to_the_and_only_answer
     against itself the way a same-path reference would.
     """
     app = seams().app
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     _available, rows = await service._search_notes(SPLIT_QUERY, 5, _USER_ID)
     reference = await app.notes_scope_service.search_notes(
@@ -378,7 +378,7 @@ async def test_an_all_primary_query_issues_exactly_one_match_per_seam(seams):
 
     app.notes_scope_service.search_notes = counting_search
 
-    _available, rows = await LibraryLocalRagSearchService(app)._search_notes(
+    _available, rows = await LibraryLocalRagSearchService.from_app(app)._search_notes(
         ALL_PRIMARY_QUERY, 5, _USER_ID
     )
 
@@ -401,7 +401,7 @@ async def test_a_zero_row_sub_leg_is_rescued_by_the_prefix_form(
 ):
     """AC#1/AC#3. The document is unreachable under AND and reachable now."""
     app = seams().app
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
     call = {
         "media": lambda: service._search_media(SPLIT_QUERY, 5),
         "conversations": lambda: service._search_conversations(SPLIT_QUERY, 5),
@@ -456,7 +456,7 @@ async def test_an_all_function_word_query_never_runs_an_unbounded_prefix(seams):
 
     app.notes_scope_service.search_notes = counting_search
 
-    _available, rows = await LibraryLocalRagSearchService(app)._search_notes(
+    _available, rows = await LibraryLocalRagSearchService.from_app(app)._search_notes(
         "of the", 5, _USER_ID
     )
 
@@ -555,7 +555,7 @@ async def test_rescued_rows_carry_the_same_row_shape_as_primary_rows(seams):
     silently -- the merge would still "work", on garbage keys.
     """
     app = seams().app
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     _a, primary_rows = await service._search_notes(SPLIT_QUERY, 5, _USER_ID)
     _b, rescued_rows = await service._search_media(SPLIT_QUERY, 5)

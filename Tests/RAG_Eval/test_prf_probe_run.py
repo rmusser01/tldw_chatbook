@@ -1257,7 +1257,7 @@ def test_the_prf_probe_over_the_real_fixtures(tmp_path, capsys):
     close_error: Exception | None = None
     try:
         search_config.default_search_mode = "plain"
-        seam = LibraryLocalRagSearchService(runtime.app)
+        seam = LibraryLocalRagSearchService.from_app(runtime.app)
         lookup = slug_lookup_from(runtime.slug_to_source)
         media_db = runtime.app.media_reading_scope_service.local_service.media_db
         chachanotes_db = runtime.app.chachanotes_db

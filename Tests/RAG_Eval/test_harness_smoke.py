@@ -112,7 +112,7 @@ def test_corpus_ingests_and_semantic_search_finds_a_planted_doc(tmp_path):
         assert stats["count"] >= len(indexable)
 
         # ... and comes back through the PRODUCTION seam, not the engine.
-        seam = LibraryLocalRagSearchService(runtime.app)
+        seam = LibraryLocalRagSearchService.from_app(runtime.app)
         result = runtime.run(
             seam.search(
                 PLANTED_QUERY,

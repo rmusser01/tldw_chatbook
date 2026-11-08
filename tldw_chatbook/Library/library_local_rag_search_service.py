@@ -249,10 +249,12 @@ def _validated_query(query: str) -> str:
 class LibraryRagSources:
     """What the Library search service reads of the app, as narrow readers.
 
-    TASK-36947.4 (ADR-250 s7): the service holds no app. It is built while
-    the app composes its services, before ``app.services`` is published
-    (ADR-250 s3), so each reader resolves the app's alias at call time --
-    late-bound, exactly as the attribute reads it replaces were.
+    TASK-36947.4 (ADR-250 s7): the service holds no app, only these readers.
+    The five seams exist before ``_wire_study_services`` builds the service
+    and production never reassigns them; the readers stay late-bound, as the
+    attribute reads they replace were, because tests patch these app aliases
+    after construction. The RAG-cache pair must be callables either way: the
+    cache is app state that ``semantic_availability`` reads and writes.
     """
 
     read_notes_user_id: Callable[[], Any]
@@ -292,22 +294,22 @@ class LibraryLocalRagSearchService:
     the ACTIVE profile's decision, not a constant -- see `_search_rag`.
     """
 
-    def __init__(self, app_instance: Any) -> None:
+    def __init__(self, sources: LibraryRagSources) -> None:
         """Read the app's search seams through narrow readers (TASK-36947.4).
 
         Args:
-            app_instance: ``LibraryRagSources`` (production), or an app-like
-                object the readers are built over (tests, harnesses).
+            sources: The readers; ``from_app`` builds them over an app.
         """
-        self._sources = (
-            app_instance
-            if isinstance(app_instance, LibraryRagSources)
-            else LibraryRagSources.for_app(app_instance)
-        )
+        self._sources = sources
         #: TASK-33621.20 review: the one shared-runtime build in flight, which
         #: every caller joins (see `_shared_runtime_build`), with the shared
         #: service generation it was started under.
         self._runtime_build: tuple[int, asyncio.Future[tuple[Any, Any]]] | None = None
+
+    @classmethod
+    def from_app(cls, app: Any) -> LibraryLocalRagSearchService:
+        """The service over an app or an app-like double (tests, RAG harnesses)."""
+        return cls(LibraryRagSources.for_app(app))
 
     async def prewarm(self) -> bool:
         """Build the shared RAG runtime now, ahead of a time-boxed search.

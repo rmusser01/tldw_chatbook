@@ -212,7 +212,7 @@ def four_seams(tmp_path) -> Callable[..., FourSeamFixture]:
 
 async def _search(app, query: str, sources=ALL_SOURCES, *, top_k: int = 5):
     """Run the production keyword path and return its merged rows."""
-    result = await LibraryLocalRagSearchService(app).search(
+    result = await LibraryLocalRagSearchService.from_app(app).search(
         query, tuple(sources), "search", top_k=top_k
     )
     assert isinstance(result, dict), f"expected rows, got outcome: {result!r}"
@@ -240,7 +240,7 @@ async def _seam_ranking(app, source: str, query: str, *, top_k: int = 5):
     helper goes silently stale: update it in the same commit, or the pins
     compare against a reference the merge no longer sees.
     """
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
     if source == "notes":
         available, rows = await service._search_notes(
             query, top_k, getattr(app, "notes_user_id", "default_user")

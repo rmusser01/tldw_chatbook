@@ -247,7 +247,7 @@ def test_plain_search_and_rag_answer_answer_the_same_inflection_miss(tmp_path):
             )
         )
 
-        library = LibraryLocalRagSearchService(
+        library = LibraryLocalRagSearchService.from_app(
             SimpleNamespace(
                 prompt_scope_service=PromptScopeService(
                     local_service=LocalPromptService(db), server_service=None
