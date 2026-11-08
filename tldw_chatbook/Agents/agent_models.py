@@ -667,9 +667,11 @@ class ToolResult:
     # block from an ordinary failed dispatch without interpreting payload text.
     outcome: ToolOutcome | None = None
     # Host dispatch ownership, never inferred from a remote result body.
-    dispatch_state: Literal["not_started", "settled", "uncertain"] | None = None
+    dispatch_state: Literal["not_started", "settled", "uncertain"] | None = field(
+        default=None, kw_only=True
+    )
     approval_decision: ApprovalDecision | None = field(default=None, kw_only=True)
-    termination_reason: RunTerminationReason | None = None
+    termination_reason: RunTerminationReason | None = field(default=None, kw_only=True)
 
     @classmethod
     def blocked(
