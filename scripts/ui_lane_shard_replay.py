@@ -24,8 +24,8 @@ Usage:
     # entries appended after it; such entries must not be blank-separated,
     # or --write carries the blank into the block):
     gh run view <run-id> --job <job-id> --log > run1/shard1.log
-    python scripts/ui_lane_shard_replay.py --shards 34 run1 run2
-    python scripts/ui_lane_shard_replay.py --shards 34 --tail 92 --write run1 run2
+    python scripts/ui_lane_shard_replay.py --shards 36 run1 run2
+    python scripts/ui_lane_shard_replay.py --shards 36 --tail 92 --write run1 run2
 
 TASK-39144: ``--rebalance MINUTES`` swaps entries between shards, across the
 whole census, until no shard's replay passes MINUTES of pytest (the census
@@ -33,7 +33,7 @@ header names the value that keeps a job 5 min under its cap); ``--charge
 ENTRY=SECONDS`` prices an entry no log timed. ``--write`` then swaps those
 entries in the census, each with the comment lines directly above it::
 
-    python scripts/ui_lane_shard_replay.py --shards 34 --rebalance 13.2 \\
+    python scripts/ui_lane_shard_replay.py --shards 36 --rebalance 13.3 \\
         --charge Tests/UI/test_new.py=40 --write run1 run2
 """
 

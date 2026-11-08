@@ -880,8 +880,8 @@ def _pytest_targets(run: str) -> tuple[str, ...]:
 
 def _assert_ui_capacity(workflow: dict) -> None:
     strategy = workflow["jobs"]["ui-fast-lane"]["strategy"]
-    assert strategy["matrix"] == {"shard": list(range(1, 35))}
-    assert strategy.get("max-parallel") == 17
+    assert strategy["matrix"] == {"shard": list(range(1, 37))}
+    assert strategy.get("max-parallel") == 18
 
 
 def test_ui_capacity_preserves_peak_runner_budget() -> None:
