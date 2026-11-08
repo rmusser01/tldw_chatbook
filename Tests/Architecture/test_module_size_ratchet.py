@@ -868,7 +868,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-08, TASK-36949.6: 24908 -> 24909 (+1). The seven Chat imports
     # go; ConsoleLibraryMigrationSeed moves in beside the v47->v48 migration
     # that consumes it, and the v52->v53 step names the trimming port's errors.
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22558,
+    # 2026-11-08, TASK-36949.6 fix round 1: 24909 -> 24903 (-6). The 21
+    # internal call sites use the public seams; the three aliases are gone.
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 22552,
     # TASK-39147: the rebased report reader and workflow migrations cross 4000.
     # 2026-11-12, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
     # comment): +2, the store's @declare_store backup-participant declaration and import.
