@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 from textual.widgets import Input, Select, Static
+from textual.worker import get_current_worker
 
 from Tests.Chat.test_archive_recovery_operations import (
     recovery_stores as recovery_stores,  # noqa: PLC0414 - pytest fixture re-export
@@ -558,25 +559,27 @@ async def test_native_result_refresh_remains_manual_and_imported_json_is_inert(
         assert rig.console.query("#recovery-manual-library")
         from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
+        navigation_workers = []
+
         async def navigate_to_manual_library(event):
+            navigation_workers.append(get_current_worker())
             await rig.host.push_screen(LibraryScreen(rig.app))
 
         monkeypatch.setattr(
             rig.app, "handle_screen_navigation", navigate_to_manual_library
         )
         await click(rig, "#recovery-manual-library")
-        # The screen is visible before its navigation worker applies the scope.
+        # A mounted Library precedes this worker's archive-scope application.
         await wait_until(
             rig.pilot,
-            lambda: (
-                isinstance(rig.host.screen, LibraryScreen)
-                and not any(
-                    worker.group == "archive-recovery-library"
-                    and not worker.is_finished
-                    for worker in rig.host.workers
-                )
-            ),
+            lambda: bool(navigation_workers) and navigation_workers[0].is_finished,
         )
+        assert len(navigation_workers) == 1
+        navigation_worker = navigation_workers[0]
+        assert navigation_worker.node is rig.host
+        assert navigation_worker.group == "archive-recovery-library"
+        await navigation_worker.wait()
+        assert isinstance(rig.host.screen, LibraryScreen)
         assert rig.host.screen._conversation_recovery().scope == "all"
         assert rig.store.active_session_id == imported.id
 

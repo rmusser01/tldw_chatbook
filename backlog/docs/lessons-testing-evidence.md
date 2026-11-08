@@ -162,6 +162,18 @@ so that candidate was discarded.
 fixture call through its original owners. Mount completion alone is not service
 readiness; keep teardown assertions when selecting a different capture route.
 
+## A visible Library can precede the archive navigation worker's scope update (TASK-39272, 2026-11-08)
+
+**Incident.** PR #3345's UI19 read Library scope `active` instead of `all`. Holding the real navigation stub after `push_screen` returned reproduced the original assertion: Library was visible while its host-owned `archive-recovery-library` worker was still running. Waiting for that exact worker then propagating `wait()` passed the same control; real cancellation and failure still raised. The uninstrumented full flow and original shard passed 204 cases.
+
+**What to do.** Screen visibility proves mounting, not completion of the action that selected its state. Capture the actual owning worker and await its result within the existing bound before asserting that state.
+
+## Warm a checked display before changing the state a same-tick focus test must paint (TASK-39372, 2026-11-08)
+
+**Incident.** UI31's original immediate control-sync assertion returned False. A native-lock control kept the actual issued display proof until its one-second lifetime elapsed; the original assertion failed at the real expiry refusal. One real preparation before changing capability passed the same control. Temporarily omitting hidden-row disabling still passed immediate sync and failed the original composer-focus assertion. The whole attachment file and original shard passed 384 cases.
+
+**What to do.** Share the existing five-second setup allowance with native preparation, before the state change. Keep dismissal restore and immediate sync in the same tick; an await after the change or an eventual-state wait would miss the focus race. The control proves this failure mechanism, not the unrecorded branch of the hosted failure.
+
 ## A census's "gone" row can be a live producer the scanner stopped seeing (TASK-39053, 2026-11-06)
 
 **Incident.** The backup owner inventory reported 194 gone producer rows, and the task that filed it read them as removed or moved code. But 24 of them were live `os.replace` / `os.unlink` calls. Their modules had switched to `from tldw_chatbook.Utils.platform_files import os`, and the census only bound `os` from `import os`. Other reviewed rows looked gone for the same kind of reason:
