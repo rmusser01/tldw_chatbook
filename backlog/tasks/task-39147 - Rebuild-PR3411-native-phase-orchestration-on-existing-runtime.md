@@ -1,7 +1,7 @@
 ---
 id: TASK-39147
 title: Rebuild PR3411 native phase orchestration on existing runtime
-status: Done
+status: In Progress
 created_date: 2026-11-07 15:27
 assignee:
 - '@codex'
@@ -18,13 +18,13 @@ documentation:
 - backlog/decisions/356-native-phase-orchestration-runtime-ownership.md
 - Docs/superpowers/specs/2026-11-07-native-phase-orchestration-rebuild-design.md
 - Docs/superpowers/plans/2026-11-07-native-phase-orchestration-rebuild.md
-updated_date: 2026-11-08 21:14
+updated_date: 2026-11-08 21:28
 ---
 
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Replace PR3411's orchestration implementation with a thin phase coordinator using the existing native agent lifecycle. Preserve approved coding phases, shared-worktree edits, approvals, bounded execution and useful history. This supersedes continued patching of the rejected coordination design; it is not an application rewrite. Work only in the existing checkout, preserve unrelated changes, and stop shared-source edits while another writer owns them. Task/QA closure and draft PR setup are explicitly authorized in the 2026-11-08 closeout below; merge remains excluded.
+Replace PR3411's orchestration implementation with a thin phase coordinator using the existing native agent lifecycle. Preserve approved coding phases, shared-worktree edits, approvals, bounded execution and useful history. This supersedes continued patching of the rejected coordination design; it is not an application rewrite. Work only in the existing checkout, preserve unrelated changes, and stop shared-source edits while another writer owns them. Task/QA closure and draft PR setup are explicitly authorized in the 2026-11-08 closeout below; the subsequent user-authorized integration/merge follow-up below supersedes that earlier exclusion.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -51,6 +51,7 @@ Replace PR3411's orchestration implementation with a thin phase coordinator usin
 - [x] #20 The explicitly approved minimal inherited CI repairs pass unchanged diagnostic, query-plan, worker and markup gates, with genuine plan evidence and targeted DOM-loss/literal-rendering regressions.
 - [x] #21 The derived-artifact job selects a runner that provides its unchanged pinned Python build; the immutable artifact-version gate and all existing checks/budgets remain enforced.
 - [x] #22 Passive trace/provider recovery projection reads the currently installed controller without initializing or refreshing configuration, remains responsive during a held configuration rebuild, and yields no recovery state before a controller exists; action-time checks remain unchanged.
+- [ ] #23 PR3480 integrates the native workflow with current dev, preserves shipped features and runtime fences, passes targeted integration and actual PR-head CI, and satisfies current-head review/thread requirements before authorized merge or queue auto-merge.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -192,6 +193,15 @@ Reason: record already verified behavior/CI and task completion; this closeout c
 2. Use the Backlog CLI on task metadata only to check AC8 and mark Done; record exact source-head CI, qualified local failures and historical evidence without relabeling earlier runs.
 3. Verify that only this task and its QA Markdown change, all executable/build inputs equal the green source, task parsing/criteria and links pass, and preservation remains intact.
 4. Commit through the existing private index and commit-tree/CAS, push only the task branch, and create a draft PR against dev. Record its inherited baseline/divergence and leave merge/newer-dev integration unqualified.
+Current-dev rebase and merge follow-up (explicitly authorized 2026-11-08):
+ADR required: no new ADR
+ADR path: backlog/decisions/356-native-phase-orchestration-runtime-ownership.md (existing subsystem ADRs and current merge-queue rules apply)
+Reason: integrate the accepted implementation with current dev and qualify the existing contracts, without a new service/storage/authority design.
+1. Pin actual PR head3184178 and remote dev36a21dc, retain full checkout/index/375-path preservation, inspect upstream-equivalent commits and all review/queue requirements. Rebase through immutable Git blobs/private indexes without a checkout, worktree or source export.
+2. Replay the commit sequence on current dev, resolving real content/schema/API conflicts against both current callers and ADR356. Keep current-dev features, all resource/permission/revision/recovery fences and unchanged assertion/timeout budgets; never restore implementation-identity authority.
+3. Record conflict decisions and add narrow RED regressions for demonstrated semantic gaps; run targeted tests and unchanged static/asset gates on the integrated candidate. Keep historical standalone CI/UAT evidence separate from new integration results.
+4. Verify preservation and task scope, update task/QA/PR description, then push the rewritten task branch with an exact force-with-lease. Mark PR ready and use its actual pull_request CI; never dispatch a workflow to substitute for the PR-required rollup.
+5. Fetch actual failure logs before minimal repairs and rerun until current-head CI is green. With MERGE_QUEUE=on, arm auto-merge only after Qodo reviewed the current head and every current-head thread is resolved; let the queue own subsequent rebase/merge. No unrelated run or automation cancellation.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -630,6 +640,13 @@ no merge, rebase or auto-merge is certified by this closure.
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Current-dev integration reopened by the user after standalone task acceptance.
+PR3480 must be rebased, conflict-resolved and qualified on its actual PR head before
+authorized merge/auto-merge. The earlier22 checked criteria and green source2d4241b
+remain historical scoped evidence; new AC23 is open. The latest authorization
+supersedes prior exclusions of newer-dev integration, a lease-protected rebase push
+and merge. The real checkout/index and every unrelated path remain protected.
+
 TASK-39147 meets its22 scoped acceptance criteria and is Done. The replacement
 coordinator uses native lifecycle/resource ownership under ADR356, preserves real
 permission/revision/recovery fences, and removes orchestration implementation-identity
