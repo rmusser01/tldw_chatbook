@@ -600,3 +600,77 @@ because the standing authorization excludes unrelated file changes. That scope
 answer remains pending. AC #8 stays open. A new full selected CI dispatch is held
 until those known aggregate blockers can be addressed, avoiding a knowingly
 redundant run; no active run or unrelated automation is changed.
+
+## Sixth CI follow-up: approved minimal inherited gates (2026-11-08)
+
+The user explicitly answered **“Include the minimal baseline CI repairs.”** The
+private index advanced from published `6aaaeb33ab`, preserving the real checkout.
+The task plan and AC #20 were recorded before implementation. No new ADR is needed
+for existing view contracts, literal rendering or evidence for unchanged indexes;
+ADR356 and the UI conventions remain applicable.
+
+The previous summary omitted four **only-in-rebuild** diagnostic owners already
+listed in aggregate log 128681770614: `Chat/console_workflow_preparation.py` (1),
+`Chat/console_workflow_runs.py` (8), `UI/Console_Modules/workflows.py` (1), and
+`Workspaces/worktree_activity.py` (1). All eleven statements and their context are
+now reviewed: fixed native-return/observer diagnostics and allowlisted view error
+metadata. The eight stale owner rows were compared with source `c5ceca1247`, whose
+per-file counts/digests were verified to match the pin. Review separates formatting
+and reindentation from fixed-string changes, hook attribution/type-only additions
+and existing exception-capture forms. No logging source, sink topology or privacy
+metadata changes here. Packets: `/tmp/pr39147-ci-round6-diagnostic-statements.txt`
+and `/tmp/pr39147-ci-round6-diagnostic-review.json`.
+
+Mounted partial-DOM regressions hold actual finite reads, remove controls and then
+release them. Both history/checkpoint success and refusal paths, review refusal,
+planning completion and three queued-button paths reproduce `NoMatches`; three
+Undo cases prove bracketed external text was interpreted as markup. Isolated RED
+on tree `faf92ff9c741f2b87c1d02ba1aaf07272609d6ec`: **12 failed in 8.35s**
+(`/tmp/pr39147-ci-round6-dom-undo-red-isolated.txt`). Earlier fixture attempts had
+automatic mount/resume workers and are discarded as clean regression evidence.
+NoMatches handling now contains presentation teardown, retains existing finally
+cleanup and clears stale checkpoint review. Worker/markup census counts and the
+checkers themselves are unchanged. The success-count notification is literal too.
+
+The real current AgentRuns schema is initialized in SQLite `:memory:` and populated
+through native workflow/phase/task APIs. With `sqlite_stat1` explicitly absent,
+`EXPLAIN QUERY PLAN` selects `idx_workflow_conversation` for the production history
+page (no temp sort), `idx_workflow_open_interval` for the open-interval lookup, and
+covering `idx_workflow_task_phase` for phase claims. Each dropped-index control
+becomes a scan; history also needs a temp sort. No schema/index/DDL change and no
+pre-convention exemption. Three plan cases pass in **0.74s**; see
+`/tmp/pr39147-ci-round6-index-plans.txt` and `Tests/DB/test_workflow_runs.py`.
+
+Final executable tree `7867d352de1d7937b0ad32892ed6a47232cc0925`:
+
+- **39 passed in 10.48s**: complete workflow setup-worker/DOM-loss and workflow
+  storage files, including all three plan pins (`round6-bootstrap-green.txt`).
+- **12 passed, 3 deselected in 9.37s**: nonmounted Undo logic and literal text
+  (`round6-undo-unit-green.txt`). This is an explicit targeted cohort.
+- All **four unchanged static checkers return zero**: 691 diagnostic owners/16
+  sinks; 327 declared indexes and census rows/111 plan pins; no new worker contract
+  violations; no new markup violations (`round6-static-final.txt`).
+- All six changed Python files add zero Ruff findings. Five complete modules format
+  cleanly; all four changed Undo notification ranges format cleanly while inherited
+  whole-chat-screen format debt remains. Diff check passes (`round6-verification.txt`).
+
+The broader local attempt had **51 passed, 3 failed in 14.87s**. The three mounted
+Undo fixtures refuse `raw_source_selection_changed` during app construction, before
+Undo behavior. Separate pre-repair `6aaaeb33ab` controls reproduce all three
+(**3 failed in 7.52s**); separate candidate Undo-only execution gives **12 passed,
+3 failed in 8.98s**. Packets: `/tmp/pr39147-ci-round6-targeted.txt`,
+`/tmp/pr39147-ci-round6-undo-baseline.txt`, and
+`/tmp/pr39147-ci-round6-undo-isolated.txt`. These files are outside the selected CI
+census; no extra baseline fixture repair or passing mounted-Undo claim is made.
+The focused cohorts do not erase those failures.
+
+Self-review traced the workflow callers and existing generation/revision checks,
+kept read joining and worker admission callable, reviewed the substantive diff
+independently of indentation, and confirmed no changed assertion budget, scanner,
+worker/markup allowance, migration or native authority/resource fence. Subsequent
+candidate changes are evidence Markdown only. The complete real index/status,
+HEAD `e08627a` and all 375 preserved states audit unchanged. This source-overlay
+harness is partial local evidence, not full-filesystem/isolated-Python or Linux CI.
+No full local suite, external provider, other-platform UAT, merge or newer-dev
+integration is certified. Overall CI on the next published head is still pending;
+TASK-39147 remains In Progress with AC #8 open.

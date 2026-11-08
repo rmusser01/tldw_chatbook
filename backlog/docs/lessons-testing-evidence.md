@@ -25159,3 +25159,13 @@ passed after it (3.74s). No repository source or cache was deleted.
 expected candidate node IDs/count, not only the exit code or a source-read hook.
 Prevent stale cache reads as well as writes. Preserve the exact executable tree
 and keep this partial local evidence distinct from the actual CI filesystem run.
+
+
+### Compare both missing and changed inventory rows (TASK-39147, 2026-11-08)
+
+The aggregate log listed eight stale diagnostic owners plus four only-in-rebuild
+owners after the task-owned row repair. A handoff summary retained only the stale
+rows; a common-key-only comparison likewise missed the four additions. The approved
+repair reviewed all eleven statements in those four files and verified the entire
+old/new owner-key delta before publication. Review added/removed keys as well as
+changed common rows; a matching drift count is not evidence that every owner was read.

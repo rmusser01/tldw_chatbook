@@ -20186,7 +20186,7 @@ class ChatScreen(BaseAppScreen):
             if isinstance(
                 error, (_ConsoleTurnUndoUnavailableError, RevertRefusedError)
             ):
-                self.app_instance.notify(str(error), severity="warning")
+                self.app_instance.notify(str(error), severity="warning", markup=False)
             else:
                 logger.opt(exception=error).warning(
                     "Console turn-card Undo All apply failed."
@@ -20194,6 +20194,7 @@ class ChatScreen(BaseAppScreen):
                 self.app_instance.notify(
                     f"Undo All failed before completion: {str(error)[:240]}",
                     severity="error",
+                    markup=False,
                 )
             self._finish_console_turn_undo(token, card, success=False)
             return
@@ -20220,9 +20221,10 @@ class ChatScreen(BaseAppScreen):
                 f"{len(succeeded)} file(s) reverted; "
                 f"{len(failed)} file(s) not reverted: {detail}",
                 severity="error",
+                markup=False,
             )
         elif success:
-            self.app_instance.notify(f"Reverted {len(outcomes)} file(s).")
+            self.app_instance.notify(f"Reverted {len(outcomes)} file(s).", markup=False)
         else:
             self.app_instance.notify(
                 "Undo All did not return a complete result. Open Review and try again.",

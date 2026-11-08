@@ -486,3 +486,85 @@ def test_snapshot_refuses_disagreeing_attempt_and_result_outcomes(tmp_path):
             )
         with pytest.raises(ValueError, match="invalid_workflow_result_ownership"):
             db.workflow_runs.get(snap.id)
+
+
+@pytest.mark.parametrize(
+    "index,sql",
+    [
+        (
+            "idx_workflow_conversation",
+            "SELECT id,conversation_id,control_revision,progress_cursor,status,updated_at FROM workflow_runs WHERE conversation_id=? ORDER BY created_at DESC,id LIMIT ? OFFSET ?",
+        ),
+        (
+            "idx_workflow_open_interval",
+            "SELECT 1 FROM workflow_active_intervals WHERE workflow_id=? AND ended_at IS NULL",
+        ),
+        (
+            "idx_workflow_task_phase",
+            "SELECT 1 FROM workflow_task_claims WHERE phase_attempt_id=?",
+        ),
+    ],
+)
+def test_workflow_indexes_serve_production_queries_without_stats(
+    tmp_path, monkeypatch, index, sql
+):
+    from Tests.DB.test_workflow_attempts import prepare
+    from tldw_chatbook.Agents import run_log
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    monkeypatch.setattr(
+        run_log,
+        "_setting",
+        lambda key, default: True if key == "workflow_runs_enabled" else default,
+    )
+    with closing(AgentRunsDB(":memory:")) as db:
+        db.automatic_work.recover(current_owner_id="owner")
+        snap = planned(db, tmp_path)
+        phase = prepare(db, snap)
+        assert db.automatic_work.accept_workflow_phase(phase.id, owner_id="owner")
+        claim = db.automatic_work.claim_workflow_task(
+            phase.id, task_id="task-1", owner_id="owner"
+        )
+        with db.connection() as conn:
+            phase_id = conn.execute(
+                "SELECT phase_attempt_id FROM workflow_task_claims WHERE task_attempt_id=?",
+                (claim.id,),
+            ).fetchone()[0]
+        params = (
+            (snap.request.conversation_id, 50, 0)
+            if index == "idx_workflow_conversation"
+            else (snap.id,)
+            if index == "idx_workflow_open_interval"
+            else (phase_id,)
+        )
+        with db.connection() as conn:
+            assert (
+                conn.execute(
+                    "SELECT 1 FROM sqlite_schema WHERE name='sqlite_stat1'"
+                ).fetchone()
+                is None
+            )
+            assert conn.execute(sql, params).fetchall()
+            plan = " | ".join(
+                row[3] for row in conn.execute("EXPLAIN QUERY PLAN " + sql, params)
+            )
+            assert index in plan and "SEARCH" in plan, plan
+            assert "TEMP B-TREE" not in plan, plan
+            print(index, plan)
+            conn.execute("DROP INDEX " + index)
+            # A different statement avoids reusing SQLite's cached pre-drop plan.
+            without = " | ".join(
+                row[3]
+                for row in conn.execute(
+                    "EXPLAIN QUERY PLAN " + sql + " /* dropped */", params
+                )
+            )
+            assert index not in without and "SCAN" in without, without
+            if index == "idx_workflow_conversation":
+                assert "TEMP B-TREE" in without, without
+            assert (
+                conn.execute(
+                    "SELECT 1 FROM sqlite_schema WHERE name='sqlite_stat1'"
+                ).fetchone()
+                is None
+            )

@@ -10,6 +10,7 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Select, Static
 
@@ -72,69 +73,78 @@ class ConsoleWorkflowHistory(SafeModalDismissMixin, ModalScreen[None]):
         await self.reads.drain()
 
     async def _load(self):
-        page = self._page_offset
         try:
-            service = self.coordinator.service
-            rows = await self.reads.read(
-                service.call, service.list_history, self.conversation_id, offset=page
-            )
-        except WORKFLOW_VIEW_ERRORS as error:
-            message = workflow_view_error("History", error)
-            if (
-                not self.reads.closed
-                and self.query("#workflow-page")
-                and page == self._page_offset
-            ):
-                self.query_one("#workflow-saved", Select).set_options([])
-                self.query_one("#workflow-open", Button).disabled = True
-                self.query_one("#workflow-next", Button).disabled = True
-                self.query_one("#workflow-prev", Button).disabled = page == 0
-                self.query_one("#workflow-retry").display = True
-                self.query_one("#workflow-page").update(
-                    message + " Choose Retry to load this page."
+            page = self._page_offset
+            try:
+                service = self.coordinator.service
+                rows = await self.reads.read(
+                    service.call,
+                    service.list_history,
+                    self.conversation_id,
+                    offset=page,
                 )
+            except WORKFLOW_VIEW_ERRORS as error:
+                message = workflow_view_error("History", error)
+                if (
+                    not self.reads.closed
+                    and self.query("#workflow-page")
+                    and page == self._page_offset
+                ):
+                    self.query_one("#workflow-saved", Select).set_options([])
+                    self.query_one("#workflow-open", Button).disabled = True
+                    self.query_one("#workflow-next", Button).disabled = True
+                    self.query_one("#workflow-prev", Button).disabled = page == 0
+                    self.query_one("#workflow-retry").display = True
+                    self.query_one("#workflow-page").update(
+                        message + " Choose Retry to load this page."
+                    )
+                return
+            if (
+                self.reads.closed
+                or not self.is_mounted
+                or not self.query("#workflow-saved")
+                or page != self._page_offset
+            ):
+                return
+            self.query_one("#workflow-retry").display = False
+            select = self.query_one("#workflow-saved", Select)
+            select.set_options(
+                [
+                    (Text(f"{status_label(row['status'])} · {row['id']}"), row["id"])
+                    for row in rows
+                ]
+            )
+            if rows:
+                select.value = rows[0]["id"]
+            self.query_one("#workflow-open", Button).disabled = not rows
+            self.query_one("#workflow-prev", Button).disabled = page == 0
+            self.query_one("#workflow-next", Button).disabled = len(rows) < 50
+            self.query_one("#workflow-page").update(
+                f"Page {page // 50 + 1} · {len(rows)} saved"
+                if rows
+                else "No workflows on this page."
+            )
+        except NoMatches:
             return
-        if (
-            self.reads.closed
-            or not self.is_mounted
-            or not self.query("#workflow-saved")
-            or page != self._page_offset
-        ):
-            return
-        self.query_one("#workflow-retry").display = False
-        select = self.query_one("#workflow-saved", Select)
-        select.set_options(
-            [
-                (Text(f"{status_label(row['status'])} · {row['id']}"), row["id"])
-                for row in rows
-            ]
-        )
-        if rows:
-            select.value = rows[0]["id"]
-        self.query_one("#workflow-open", Button).disabled = not rows
-        self.query_one("#workflow-prev", Button).disabled = page == 0
-        self.query_one("#workflow-next", Button).disabled = len(rows) < 50
-        self.query_one("#workflow-page").update(
-            f"Page {page // 50 + 1} · {len(rows)} saved"
-            if rows
-            else "No workflows on this page."
-        )
 
     async def on_button_pressed(self, event: Button.Pressed):
-        control = event.button.id
-        if control in {"workflow-prev", "workflow-next"}:
-            self._page_offset += -50 if control == "workflow-prev" else 50
-            await self._load()
-        elif control == "workflow-retry":
-            await self._load()
-        elif control == "workflow-close":
-            await self.request_safe_cancel(source="button")
-        elif control == "workflow-new" and self.dismiss_safe_once(None):
-            self.new_workflow(self.conversation_id)
-        elif control == "workflow-open":
-            selected = self.query_one("#workflow-saved", Select).value
-            if isinstance(selected, str) and self.dismiss_safe_once(None):
-                self.open_workflow(self.conversation_id, selected)
+        try:
+            control = event.button.id
+            if control in {"workflow-prev", "workflow-next"}:
+                self._page_offset += -50 if control == "workflow-prev" else 50
+                await self._load()
+            elif control == "workflow-retry":
+                await self._load()
+            elif control == "workflow-close":
+                await self.request_safe_cancel(source="button")
+            elif control == "workflow-new" and self.dismiss_safe_once(None):
+                self.new_workflow(self.conversation_id)
+            elif control == "workflow-open":
+                selected = self.query_one("#workflow-saved", Select).value
+                if isinstance(selected, str) and self.dismiss_safe_once(None):
+                    self.open_workflow(self.conversation_id, selected)
+        except NoMatches:
+            return
 
 
 class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
@@ -276,61 +286,67 @@ class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
                 )
 
     async def _refresh(self):
-        service = self.coordinator.service
         try:
-            while self._read_again and self._unsubscribe:
-                self._read_again = False
-                try:
-                    full = await self.reads.read(self.coordinator.get, self.workflow_id)
-                    if full.request.conversation_id != self.conversation_id:
-                        raise PermissionError("Workflow belongs to another chat.")
-                    view = await self.reads.read(
-                        service.call, service.runtime_snapshot, self.workflow_id
-                    )
-                    if (view.control_revision, view.progress_cursor) != (
-                        full.control_revision,
-                        full.progress_cursor,
-                    ):
-                        raise ValueError("workflow_snapshot_superseded")
-                    decision, repair_required = await self._review(full, view)
-                    windows = await self.reads.read(
-                        service.call,
-                        service.change_windows,
-                        self.workflow_id,
-                        offset=self._window_offset,
-                    )
-                    active_seconds = await self.reads.read(
-                        service.call, service.active_seconds, self.workflow_id
-                    )
-                    if repair_required:
-                        current = await self.reads.read(
+            service = self.coordinator.service
+            try:
+                while self._read_again and self._unsubscribe:
+                    self._read_again = False
+                    try:
+                        full = await self.reads.read(
                             self.coordinator.get, self.workflow_id
                         )
-                        if (
-                            current.status,
-                            current.control_revision,
-                            current.progress_cursor,
-                        ) != (
-                            full.status,
+                        if full.request.conversation_id != self.conversation_id:
+                            raise PermissionError("Workflow belongs to another chat.")
+                        view = await self.reads.read(
+                            service.call, service.runtime_snapshot, self.workflow_id
+                        )
+                        if (view.control_revision, view.progress_cursor) != (
                             full.control_revision,
                             full.progress_cursor,
-                        ) or current.accounting.uncertain:
+                        ):
                             raise ValueError("workflow_snapshot_superseded")
-                    if self._can_render:
-                        self.active_seconds = active_seconds
-                        self.windows = windows
-                        self.snapshot, self.decision = full, decision
-                        self._render_state(view, repair_required)
-                except WORKFLOW_VIEW_ERRORS as error:
-                    message = workflow_view_error("Review", error)
-                    if self._can_render:
-                        self.decision = None
-                        self._disable_commands()
-                        self.query_one("#workflow-notice").update(
-                            message + ". Refresh to read the current workflow."
+                        decision, repair_required = await self._review(full, view)
+                        windows = await self.reads.read(
+                            service.call,
+                            service.change_windows,
+                            self.workflow_id,
+                            offset=self._window_offset,
                         )
-        finally:
-            self._reading = False
+                        active_seconds = await self.reads.read(
+                            service.call, service.active_seconds, self.workflow_id
+                        )
+                        if repair_required:
+                            current = await self.reads.read(
+                                self.coordinator.get, self.workflow_id
+                            )
+                            if (
+                                current.status,
+                                current.control_revision,
+                                current.progress_cursor,
+                            ) != (
+                                full.status,
+                                full.control_revision,
+                                full.progress_cursor,
+                            ) or current.accounting.uncertain:
+                                raise ValueError("workflow_snapshot_superseded")
+                        if self._can_render:
+                            self.active_seconds = active_seconds
+                            self.windows = windows
+                            self.snapshot, self.decision = full, decision
+                            self._render_state(view, repair_required)
+                    except WORKFLOW_VIEW_ERRORS as error:
+                        message = workflow_view_error("Review", error)
+                        if self._can_render:
+                            self.decision = None
+                            self._disable_commands()
+                            self.query_one("#workflow-notice").update(
+                                message + ". Refresh to read the current workflow."
+                            )
+            finally:
+                self._reading = False
+        except NoMatches:
+            self.decision = None
+            return
 
     async def _review(self, full, view):
         """Read the current decision or the native, drained repair disposition."""
@@ -631,119 +647,133 @@ class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
 
     @on(Select.Changed, "#workflow-results")
     async def _select_result(self, event):
-        result = next(
-            (r for r in self._visible_results if r.attempt_id == event.value), None
-        )
-        self.checkpoint = None
-        self.query_one("#workflow-changes", Button).disabled = True
-        self.query_one("#workflow-evidence").update("")
-        if not result:
-            if self.snapshot is not None:
-                self._render_results()
-            return
-        service = self.coordinator.service
         try:
-            evidence = await self.reads.read(
-                service.call,
-                service.read_checkpoint,
-                self.workflow_id,
-                result.attempt_id,
+            result = next(
+                (r for r in self._visible_results if r.attempt_id == event.value), None
             )
-        except WORKFLOW_VIEW_ERRORS as error:
-            message = workflow_view_error("Checkpoint", error)
-            if (
-                self._can_render
-                and self.query_one("#workflow-results", Select).value
-                == result.attempt_id
-            ):
-                self.query_one("#workflow-evidence").update(
-                    message + " Reselect the result or reopen detail to retry."
+            self.checkpoint = None
+            self.query_one("#workflow-changes", Button).disabled = True
+            self.query_one("#workflow-evidence").update("")
+            if not result:
+                if self.snapshot is not None:
+                    self._render_results()
+                return
+            service = self.coordinator.service
+            try:
+                evidence = await self.reads.read(
+                    service.call,
+                    service.read_checkpoint,
+                    self.workflow_id,
+                    result.attempt_id,
                 )
+            except WORKFLOW_VIEW_ERRORS as error:
+                message = workflow_view_error("Checkpoint", error)
+                if (
+                    self._can_render
+                    and self.query_one("#workflow-results", Select).value
+                    == result.attempt_id
+                ):
+                    self.query_one("#workflow-evidence").update(
+                        message + " Reselect the result or reopen detail to retry."
+                    )
+                return
+            if not self._can_render:
+                return
+            selector = self.query_one("#workflow-results", Select)
+            if selector.value != result.attempt_id:
+                return
+            self.checkpoint = evidence
+            lines = [
+                f"Result · {result.status}",
+                result.summary,
+                "Handoff",
+                result.handoff,
+                "Checks",
+            ]
+            lines.extend(f"{c.id} · {c.status} · {c.reason}" for c in result.checks)
+            if not result.checks:
+                lines.append("No checks recorded.")
+            for record in evidence.verifiers:
+                lines.extend(
+                    [
+                        f"{record.verifier_id} · exit {record.exit_code} · {record.shell_path}",
+                        f"Invocation {record.invocation_id} · arguments {record.arguments_digest}",
+                        f"Verifier {record.verifier_sha256} · shell manifest {record.shell_manifest}",
+                        f"Inputs {record.input_manifest} · outputs {record.output_manifest}",
+                        f"Complete {record.complete} · cleanup {record.cleanup_proven} · fresh {record.fresh}",
+                        f"stdout\n{record.stdout}",
+                        f"stderr\n{record.stderr}",
+                    ]
+                )
+            lines.append(evidence.change_review_disclosure)
+            if not evidence.change_window_refs:
+                lines.append("No captured window for this checkpoint.")
+            self.query_one("#workflow-evidence").update("\n".join(lines))
+            self._render_results()
+        except NoMatches:
+            self.checkpoint = None
             return
-        if not self._can_render:
-            return
-        selector = self.query_one("#workflow-results", Select)
-        if selector.value != result.attempt_id:
-            return
-        self.checkpoint = evidence
-        lines = [
-            f"Result · {result.status}",
-            result.summary,
-            "Handoff",
-            result.handoff,
-            "Checks",
-        ]
-        lines.extend(f"{c.id} · {c.status} · {c.reason}" for c in result.checks)
-        if not result.checks:
-            lines.append("No checks recorded.")
-        for record in evidence.verifiers:
-            lines.extend(
-                [
-                    f"{record.verifier_id} · exit {record.exit_code} · {record.shell_path}",
-                    f"Invocation {record.invocation_id} · arguments {record.arguments_digest}",
-                    f"Verifier {record.verifier_sha256} · shell manifest {record.shell_manifest}",
-                    f"Inputs {record.input_manifest} · outputs {record.output_manifest}",
-                    f"Complete {record.complete} · cleanup {record.cleanup_proven} · fresh {record.fresh}",
-                    f"stdout\n{record.stdout}",
-                    f"stderr\n{record.stderr}",
-                ]
-            )
-        lines.append(evidence.change_review_disclosure)
-        if not evidence.change_window_refs:
-            lines.append("No captured window for this checkpoint.")
-        self.query_one("#workflow-evidence").update("\n".join(lines))
-        self._render_results()
 
     async def on_button_pressed(self, event: Button.Pressed):
-        action = event.button.id.removeprefix("workflow-")
-        if action == "close":
-            await self.request_safe_cancel(source="button")
-        elif action == "refresh":
-            self._action_notice = ""
-            self.request_refresh()
-        elif action in {"result-prev", "result-next"}:
-            self._result_page += 1 if action.endswith("next") else -1
-            self._render_results()
-        elif action in {"window-newer", "window-older"}:
-            self._window_offset += 50 if action.endswith("older") else -50
-            self.request_refresh()
-        elif action == "changes":
-            selected = self.query_one("#workflow-windows", Select).value
-            if selected in self._window_targets:
-                self.open_changes(
-                    self.snapshot, self._window_targets[selected], selected
-                )
-        elif action == "fleet":
-            selected = self.query_one("#workflow-task", Select).value
-            self.open_fleet(
-                self,
-                self.conversation_id,
-                selected if isinstance(selected, str) else None,
-            )
-        elif action == "pending":
-            self.open_approval(self, self.conversation_id)
-        elif (
-            not self._sending
-            and self.snapshot is not None
-            and not event.button.disabled
-        ):
-            full, decision = self.snapshot, self.decision
-            instruction = self.query_one("#workflow-instruction", Input).value.strip()
-            if action == "revise" and not instruction:
-                self.query_one("#workflow-notice").update(
-                    "Enter an instruction for the revised plan."
-                )
-                self.query_one("#workflow-instruction").focus()
-                return
-            self._sending = True
-            self._action_notice = ""
-            self._disable_commands()
-            try:
-                self.run_worker(partial(self._act, action, full, decision, instruction))
-            except RuntimeError as error:
-                self._sending = False
-                self._action_notice = workflow_view_error(action.capitalize(), error)
+        try:
+            action = event.button.id.removeprefix("workflow-")
+            if action == "close":
+                await self.request_safe_cancel(source="button")
+            elif action == "refresh":
+                self._action_notice = ""
                 self.request_refresh()
+            elif action in {"result-prev", "result-next"}:
+                self._result_page += 1 if action.endswith("next") else -1
+                self._render_results()
+            elif action in {"window-newer", "window-older"}:
+                self._window_offset += 50 if action.endswith("older") else -50
+                self.request_refresh()
+            elif action == "changes":
+                selected = self.query_one("#workflow-windows", Select).value
+                if selected in self._window_targets:
+                    self.open_changes(
+                        self.snapshot, self._window_targets[selected], selected
+                    )
+            elif action == "fleet":
+                selected = self.query_one("#workflow-task", Select).value
+                self.open_fleet(
+                    self,
+                    self.conversation_id,
+                    selected if isinstance(selected, str) else None,
+                )
+            elif action == "pending":
+                self.open_approval(self, self.conversation_id)
+            elif (
+                not self._sending
+                and self.snapshot is not None
+                and not event.button.disabled
+            ):
+                full, decision = self.snapshot, self.decision
+                instruction = self.query_one(
+                    "#workflow-instruction", Input
+                ).value.strip()
+                if action == "revise" and not instruction:
+                    self.query_one("#workflow-notice").update(
+                        "Enter an instruction for the revised plan."
+                    )
+                    self.query_one("#workflow-instruction").focus()
+                    return
+                self._sending = True
+                self._action_notice = ""
+                self._disable_commands()
+                try:
+                    self.run_worker(
+                        partial(self._act, action, full, decision, instruction)
+                    )
+                except RuntimeError as error:
+                    self._sending = False
+                    self._action_notice = workflow_view_error(
+                        action.capitalize(), error
+                    )
+                    self.request_refresh()
+        except NoMatches:
+            self._sending = False
+            return
 
     async def _act(self, action, full, decision, instruction):
         expected = full.control_revision
@@ -842,7 +872,8 @@ class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
         except WORKFLOW_VIEW_ERRORS as error:
             self._action_notice = workflow_view_error(action.capitalize(), error)
             if self._can_render:
-                self.query_one("#workflow-notice").update(self._action_notice)
+                for notice in self.query("#workflow-notice"):
+                    notice.update(self._action_notice)
         finally:
             self._sending = False
             self.request_refresh()

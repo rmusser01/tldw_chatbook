@@ -18,7 +18,7 @@ documentation:
 - backlog/decisions/356-native-phase-orchestration-runtime-ownership.md
 - Docs/superpowers/specs/2026-11-07-native-phase-orchestration-rebuild-design.md
 - Docs/superpowers/plans/2026-11-07-native-phase-orchestration-rebuild.md
-updated_date: 2026-11-08 01:51
+updated_date: 2026-11-08 07:04
 ---
 
 ## Description
@@ -48,6 +48,7 @@ Replace PR3411's orchestration implementation with a thin phase coordinator usin
 - [x] #17 Saving equivalent or future system-prompt settings while planning runs or stops preserves the admitted input, completes native cleanup and permits shutdown without weakening real failed-scope protection.
 - [x] #18 Re-delivered closing reviews are idempotent for explicitly reviewed terminal history with known or unknown accounting, preserve revision/liveness checks and never reopen removed payloads.
 - [x] #19 The system-prompt editor keeps Apply/Clear/Cancel fully visible and usable at 80×24, including after resizing and Library feedback, with unchanged action results and targeted regression/UAT evidence.
+- [x] #20 The explicitly approved minimal inherited CI repairs pass unchanged diagnostic, query-plan, worker and markup gates, with genuine plan evidence and targeted DOM-loss/literal-rendering regressions.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -151,6 +152,17 @@ Reason: direct worker-refusal presentation and diagnostic-record corrections; in
 2. Retain the actual aggregate log and attribute each failure against immutable baseline source. Do not call the workflow green because its 15 test jobs passed.
 3. Cover worker refusal after notice removal, then make its presentation tolerate the absent widget. Review the added constant-only native-child diagnostic and update only its owned inventory row.
 4. Run targeted regression and static attribution checks, preserve remaining inherited failures honestly, self-review and publish only authorized task changes. Baseline-only fixes remain pending explicit scope approval; no budgets, assertions, resource/revision/recovery gates or test selections may be relaxed.
+
+
+Sixth CI follow-up (minimal inherited repairs, explicitly approved 2026-11-08):
+ADR required: no new ADR
+ADR path: N/A (existing ADR356 runtime ownership and ADR150/161 UI conventions remain applicable)
+Reason: repair existing DOM-loss/literal-rendering defects and record reviewed diagnostics/real plans for unchanged indexes; no schema, runtime boundary or authority changes.
+1. Audit the full real index/status/HEAD and all 375 preserved paths. Advance the existing private index from published 6aaaeb33ab without resetting it; retain prior evidence and the explicit scope answer.
+2. Add narrow RED regressions for workflow view completion after partial DOM removal and Console Undo messages containing Rich markup. Protect view projection with NoMatches handling and render external Undo text literally; keep command/revision and cleanup behavior.
+3. Capture actual production-query EXPLAIN QUERY PLAN results on the current AgentRuns schema with sqlite_stat1 absent. Pin all three existing workflow indexes with positive plans and dropped-index controls; add plan-pinned census rows only after those tests pass.
+4. Review statement changes for all eight inherited stale diagnostic owners against their last pinned source before regenerating the inventory. Retain all privacy/sink checks and do not relax scanners, census counts, assertions or budgets.
+5. Run the targeted regressions, all four unchanged failing checkers, affected existing controls and lint/format/diff checks. Record exact RED/GREEN evidence and limits, audit preservation, commit-tree/CAS and push only this task branch, then dispatch one exact-head Derived Artifacts run after checking no task run is active. Follow actual logs until overall current-head success; no merge, newer-dev integration or full local sweep.
 
 <!-- SECTION:PLAN:END -->
 
@@ -448,6 +460,37 @@ Scope approval for minimal inherited baseline gate repairs is pending; no knowin
 redundant selected CI run is dispatched. AC #8 remains open and status In Progress.
 Later user authorization covers task-only commits/pushes; merge and newer-dev
 integration remain excluded. No full local suite or additional live UAT is claimed.
+
+
+Sixth CI follow-up (explicit scope reply: “Include the minimal baseline CI repairs”):
+workflow view handlers now tolerate controls removed during a finite read or before
+a queued button event. Busy/read flags still reset, stale checkpoint review is
+cleared, and native operations retain all existing revision/permission/cleanup
+checks. Undo error/path text and its numeric success message render literally.
+No worker/markup census allowance or scanner changed.
+
+All three existing workflow indexes now have genuine no-sqlite_stat1 production
+query-plan pins with populated native rows and dropped-index controls. No index,
+schema or migration changed. Diagnostic statement review against verified pinned
+source c5ceca1247 covers eight stale rows; four previously unlisted workflow owners
+(11 calls) were also reviewed and recorded. Those four were present in the original
+aggregate log but omitted from the fifth-round handoff summary. Sink topology and
+privacy metadata remain unchanged; no diagnostic source was changed.
+
+Isolated RED: 12 failures in 8.35s on faf92ff9c741f2b87c1d02ba1aaf07272609d6ec.
+Final executable tree 7867d352de1d7937b0ad32892ed6a47232cc0925 passes 39 workflow/storage
+cases (10.48s), 12 Undo unit cases (9.37s), all four unchanged static gates, zero-new-
+Ruff comparison and formatting of all five format-clean modules plus the changed
+Undo notification ranges. Existing whole-chat-screen formatting debt is retained.
+A broader 54-case batch had 51 passes and three mounted Undo profile-setup refusals;
+all three also fail unchanged on pre-repair 6aaaeb33ab before exercising Undo.
+Separate candidate Undo-only execution reproduces those refusals. They are outside
+the selected CI census and are retained as an unqualified local limit, not hidden
+by the focused passing cohorts. No full local sweep or fresh live UAT is claimed.
+Detailed packets and self-review are in the UAT report. The full real index/status,
+dev HEAD and 375 preserved path states still audit unchanged. AC #8 stays open for
+actual exact-head CI; no merge or newer-dev integration. Existing ADR356 applies;
+these routine view/evidence repairs require no new ADR.
 
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 

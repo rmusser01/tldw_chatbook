@@ -11,6 +11,7 @@ from uuid import uuid4
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widgets import Button, Collapsible, Input, Label, Select, Static, TextArea
 
@@ -199,72 +200,86 @@ class ConsoleWorkflowSetup(SafeModalDismissMixin, ModalScreen):
         self._update_submit()
 
     async def on_button_pressed(self, event: Button.Pressed):
-        if event.button.id == "workflow-close":
-            await self.request_safe_cancel(source="button")
-            return
-        if event.button.id != "workflow-plan" or self._sending:
-            return
-        limits, reason = self._limits()
-        if reason:
-            self.query_one("#workflow-notice").update(reason)
-            return
         try:
-            binding = next(
-                b
-                for b, _ in self.bindings
-                if b.binding_id == self.query_one("#workflow-binding", Select).value
-            )
-            setup = WorkflowSetup(
-                conversation_id=self.conversation_id,
-                objective=self.query_one("#workflow-objective", TextArea).text.strip(),
-                binding=binding,
-                policy=limits,
-                planner=self.planner,
-                targets=self.targets[self.query_one("#workflow-target", Select).value],
-            )
-            if self._submitted is not None and self._submitted != setup:
-                self.launch_id = str(uuid4())
-            self._submitted = setup
-        except ValueError as error:
-            self.query_one("#workflow-notice").update(
-                workflow_view_error("Setup", error)
-            )
-            return
-        self._sending = True
-        event.button.disabled = True
-        self.query_one("#workflow-notice").update("Preparing the plan…")
-        try:
-            self.run_worker(partial(self._submit, setup, self._safe_mount_generation))
-        except WORKFLOW_VIEW_ERRORS as error:
+            if event.button.id == "workflow-close":
+                await self.request_safe_cancel(source="button")
+                return
+            if event.button.id != "workflow-plan" or self._sending:
+                return
+            limits, reason = self._limits()
+            if reason:
+                self.query_one("#workflow-notice").update(reason)
+                return
+            try:
+                binding = next(
+                    b
+                    for b, _ in self.bindings
+                    if b.binding_id == self.query_one("#workflow-binding", Select).value
+                )
+                setup = WorkflowSetup(
+                    conversation_id=self.conversation_id,
+                    objective=self.query_one(
+                        "#workflow-objective", TextArea
+                    ).text.strip(),
+                    binding=binding,
+                    policy=limits,
+                    planner=self.planner,
+                    targets=self.targets[
+                        self.query_one("#workflow-target", Select).value
+                    ],
+                )
+                if self._submitted is not None and self._submitted != setup:
+                    self.launch_id = str(uuid4())
+                self._submitted = setup
+            except ValueError as error:
+                self.query_one("#workflow-notice").update(
+                    workflow_view_error("Setup", error)
+                )
+                return
+            self._sending = True
+            event.button.disabled = True
+            self.query_one("#workflow-notice").update("Preparing the plan…")
+            try:
+                self.run_worker(
+                    partial(self._submit, setup, self._safe_mount_generation)
+                )
+            except WORKFLOW_VIEW_ERRORS as error:
+                self._sending = False
+                event.button.disabled = False
+                for notice in self.query("#workflow-notice"):
+                    notice.update(workflow_view_error("Prepare plan", error))
+        except NoMatches:
             self._sending = False
             event.button.disabled = False
-            for notice in self.query("#workflow-notice"):
-                notice.update(workflow_view_error("Prepare plan", error))
+            return
 
     async def _submit(self, setup, generation):
         try:
             try:
-                snapshot = await asyncio.shield(
-                    self.coordinator.start(setup, launch_id=self.launch_id)
-                )
-            except WorkflowAlreadyExists as error:
-                snapshot = await self.coordinator.get(error.workflow_id)
-                if snapshot.request.conversation_id != self.conversation_id:
-                    raise ValueError("Workflow belongs to another chat.") from None
-                if self.is_mounted and self._safe_mount_generation == generation:
-                    self.notify(
-                        "This chat already has an unfinished workflow. Opening it for review.",
-                        severity="warning",
-                        markup=False,
+                try:
+                    snapshot = await asyncio.shield(
+                        self.coordinator.start(setup, launch_id=self.launch_id)
                     )
-            if self._safe_mount_generation == generation:
-                self.dismiss_safe_once_when_on_top(snapshot)
-        except WORKFLOW_VIEW_ERRORS as error:
-            message = workflow_view_error("Prepare plan", error)
-            if self.is_mounted and self._safe_mount_generation == generation:
-                self.query_one("#workflow-notice").update(message)
-        finally:
-            if self._safe_mount_generation == generation:
-                self._sending = False
-                if self.is_mounted and not self._safe_dismiss_committed:
-                    self._show_choices()
+                except WorkflowAlreadyExists as error:
+                    snapshot = await self.coordinator.get(error.workflow_id)
+                    if snapshot.request.conversation_id != self.conversation_id:
+                        raise ValueError("Workflow belongs to another chat.") from None
+                    if self.is_mounted and self._safe_mount_generation == generation:
+                        self.notify(
+                            "This chat already has an unfinished workflow. Opening it for review.",
+                            severity="warning",
+                            markup=False,
+                        )
+                if self._safe_mount_generation == generation:
+                    self.dismiss_safe_once_when_on_top(snapshot)
+            except WORKFLOW_VIEW_ERRORS as error:
+                message = workflow_view_error("Prepare plan", error)
+                if self.is_mounted and self._safe_mount_generation == generation:
+                    self.query_one("#workflow-notice").update(message)
+            finally:
+                if self._safe_mount_generation == generation:
+                    self._sending = False
+                    if self.is_mounted and not self._safe_dismiss_committed:
+                        self._show_choices()
+        except NoMatches:
+            return

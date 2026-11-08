@@ -2,21 +2,21 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
-import threading
 
 import pytest
 from textual.widgets import Button, Static
 
+import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from Tests.UI.app_factory import _build_test_app
-from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_console_narrow_layout import _compositor_text
+from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -658,3 +658,34 @@ async def test_mounted_partial_and_provider_failures_name_problem_and_allow_retr
             for message, severity in notices
         )
         assert str(undo.label) == "Undo All"
+
+
+@pytest.mark.parametrize("kind", ["refused", "unexpected", "partial"])
+def test_undo_notifications_render_external_text_literally(kind):
+    from rich.text import Text
+
+    from tldw_chatbook.Workspaces.change_revert import RevertRefusedError
+
+    sentinel = "[bold]literal[/bold]"
+    rendered, finished = [], []
+
+    def notify(message, *, markup=True, **kwargs):
+        rendered.append(Text.from_markup(message).plain if markup else message)
+
+    screen = SimpleNamespace(
+        app_instance=SimpleNamespace(notify=notify),
+        _finish_console_turn_undo=lambda *args, **kwargs: finished.append(kwargs),
+    )
+    error = (
+        RevertRefusedError(sentinel)
+        if kind == "refused"
+        else RuntimeError(sentinel)
+        if kind == "unexpected"
+        else None
+    )
+    outcomes = [RevertOutcome(path=sentinel, ok=False, error=sentinel)]
+    chat_screen_module.ChatScreen._publish_console_turn_undo(
+        screen, "token", None, SimpleNamespace(total_files=1), outcomes, error
+    )
+    assert sentinel in rendered[0]
+    assert finished == [{"success": False}]
