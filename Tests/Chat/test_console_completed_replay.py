@@ -217,3 +217,36 @@ def test_completed_trace_comparison_preserves_opaque_known_credential_mask():
     )
     assert secret not in dump_provider_continuation_json(projected)
     assert secret in value["rounds"][0]["calls"][0]["result"]
+
+
+def test_completed_trace_comparison_of_a_v1_turn_uses_its_stored_projection():
+    """TASK-39123 review r12b-rev2: a round stored before the upgrade holds the
+    v1 projection of a tool result with a bare key; the comparison must project
+    the replayed value under that stored policy, or the turn is refused."""
+    from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
+    from tldw_chatbook.Chat.console_trace_redaction import (
+        CREDENTIAL_FILTER_VERSION,
+        CredentialSanitizer,
+    )
+    from tldw_chatbook.Chat.console_trace_service import ConsoleTraceService
+    from tldw_chatbook.Chat.provider_continuation import dump_provider_continuation_json
+
+    key = "sk" + "_live_" + "DONOTUSEEXAMPLEONLY" + "a1B2c3D4e5" * 2
+    value = json.loads(dump_provider_continuation_json(completed_group().checkpoint))
+    value["rounds"][0]["calls"][0]["result"] = "env STRIPE=" + key
+
+    def stored_and_compared(version: str):
+        stored = CredentialSanitizer(version=version).sanitize(value)
+        policy = FrozenTracePolicy(new_opaque_id(), version, False, None)
+        compared = ConsoleTraceService._completed_replay_trace_checkpoint(value, policy)
+        return parse_provider_continuation_json(stored.value).rounds, compared.rounds
+
+    v1_stored, v1_compared = stored_and_compared("credentials-v1")
+    v2_stored, v2_compared = stored_and_compared(CREDENTIAL_FILTER_VERSION)
+    assert (v1_stored == v1_compared, v2_stored == v2_compared) == (True, True)
+    assert key not in dump_provider_continuation_json(
+        ConsoleTraceService._completed_replay_trace_checkpoint(
+            value,
+            FrozenTracePolicy(new_opaque_id(), CREDENTIAL_FILTER_VERSION, False, None),
+        )
+    )

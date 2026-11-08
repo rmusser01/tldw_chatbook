@@ -72,6 +72,8 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     _project_verified_provider_request_provenance,
 )
 from tldw_chatbook.Chat.console_trace_redaction import (
+    CREDENTIAL_FILTER_VERSION,
+    READABLE_CREDENTIAL_FILTER_VERSIONS,
     CredentialSanitizer,
     PIIRedactionSpan,
     trace_policies_agree,
@@ -4936,9 +4938,14 @@ class ConsoleTraceService:
             parse_provider_continuation_json,
         )
 
-        sanitized = CredentialSanitizer(known_credentials=known_credentials).sanitize(
-            value
-        )
+        version = getattr(policy, "credential_filter_version", None)
+        sanitized = CredentialSanitizer(
+            known_credentials=known_credentials,
+            # TASK-39123: compare under the stored round's own projection.
+            version=version
+            if version in READABLE_CREDENTIAL_FILTER_VERSIONS
+            else CREDENTIAL_FILTER_VERSION,
+        ).sanitize(value)
         if not sanitized.available:
             raise ValueError("completed_replay_disclosure")
         return parse_provider_continuation_json(
@@ -5348,17 +5355,29 @@ class ConsoleTraceService:
                 self._expected_descriptor_value(cursor, owner_id, descriptor, value)
             # Provider input stays raw. Only the durable comparison uses the
             # frozen disclosure projection, after exact saved-source checks.
-            sanitized = CredentialSanitizer(
-                known_credentials=known_credentials
-            ).sanitize(value)
-            if not sanitized.available:
-                return False
-            projected = self._pii_projected_value(
-                sanitized.value, policy=artifact.policy
-            )
-            return _artifact_bytes(projected) == _artifact_bytes(
-                durable_values[durable_key]
-            )
+            # TASK-39123: the descriptor carries this turn's policy, while
+            # bytes stored before the upgrade carry another readable
+            # projection; any readable version that agrees may match.
+            durable = _artifact_bytes(durable_values[durable_key])
+            versions = (CREDENTIAL_FILTER_VERSION,)
+            if artifact.policy.credential_filter_version in (
+                READABLE_CREDENTIAL_FILTER_VERSIONS
+            ):
+                versions += tuple(
+                    sorted(READABLE_CREDENTIAL_FILTER_VERSIONS - set(versions))
+                )
+            for version in versions:
+                sanitized = CredentialSanitizer(
+                    known_credentials=known_credentials, version=version
+                ).sanitize(value)
+                if not sanitized.available:
+                    return False
+                projected = self._pii_projected_value(
+                    sanitized.value, policy=artifact.policy
+                )
+                if _artifact_bytes(projected) == durable:
+                    return True
+            return False
         expected = self._reference_key(cursor, descriptor, value)
         if expected != durable_key:
             return False

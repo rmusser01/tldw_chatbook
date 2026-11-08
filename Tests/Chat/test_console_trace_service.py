@@ -5027,3 +5027,42 @@ def test_thinking_tool_call_reference_identity_and_legacy_refusal(
                 cursor, rewritten, value, legacy_key, legacy_values, owner_id=owner_id
             )
             assert repository.get_surface_node(cursor, legacy.node_id) == legacy
+
+
+def test_durable_prefix_match_accepts_bytes_stored_under_credentials_v1() -> None:
+    """TASK-39123 review r12b-rev2: a surface prefix artifact stored before the
+    upgrade holds the v1 projection of a value with a bare key; the next turn's
+    descriptor carries a v2 policy. Matching v2(incoming) against those bytes
+    refused the turn; any readable projection that agrees must match."""
+    from tldw_chatbook.Chat.console_trace_redaction import (
+        CREDENTIAL_FILTER_VERSION,
+        CredentialSanitizer,
+    )
+    from tldw_chatbook.Chat.console_trace_service import (
+        ConsoleTraceService,
+        _artifact_component_kind,
+    )
+
+    key = "sk" + "_live_" + "DONOTUSEEXAMPLEONLY" + "a1B2c3D4e5" * 2
+    descriptor = ProviderArtifactTraceProvenance(
+        TraceProvenanceSource.TOOL_RESULT,
+        FrozenTracePolicy(new_opaque_id(), CREDENTIAL_FILTER_VERSION, False, None),
+    )
+    value = {"role": "tool", "tool_call_id": "call_1", "content": "env STRIPE=" + key}
+    durable_key = (_artifact_component_kind(descriptor), "artifact", new_opaque_id())
+    service = ConsoleTraceService(ConsoleTraceRepository())
+
+    def matches(stored: object, incoming: object) -> bool:
+        return service._durable_reference_matches(
+            None, descriptor, incoming, durable_key, {durable_key: stored}, owner_id="o"
+        )
+
+    def projected(version: str) -> object:
+        return CredentialSanitizer(version=version).sanitize(value).value
+
+    other = dict(value, content="env STRIPE=another-value")
+    assert (
+        matches(projected("credentials-v1"), value),
+        matches(projected(CREDENTIAL_FILTER_VERSION), value),
+        matches(projected("credentials-v1"), other),
+    ) == (True, True, False)
