@@ -42,7 +42,7 @@ docstring's own note on the collision).
 **Task 2 (controller PR)** adds the full-cluster ownership / same-name-
 delegator-forwarding / staticmethod-class-forwarding / controller-state-shim
 checks (``_PROMPTS_CLUSTER_METHOD_NAMES``, 139 names) plus a
-constructor-binding coverage check (``_PROMPTS_CONTROLLER_BOUND_NAMES``, 43
+constructor-binding coverage check (``_PROMPTS_CONTROLLER_BOUND_NAMES``, 44
 names) that no prior series' wiring test carries -- added here because the
 skills series shipped a silent production regression precisely in that gap
 (a moved body's ``getattr(self, "focused", None)`` with no ``focused``
@@ -498,9 +498,10 @@ _PROMPTS_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     "run_worker",
     "set_timer",
     "workers",
-    # -- general Library-wide shell helpers, named constructor callables (13)
+    # -- general Library-wide shell helpers, named constructor callables (14)
     "_arm_library_list_entry_focus",
     "_focus_library_control",
+    "_land_stage_pick",
     "_library_entry_reconcile_is_current",
     "_library_entry_route_key",
     "_library_list_canvas_showing_list",
@@ -701,8 +702,8 @@ def test_prompts_controller_binds_every_name_its_moved_bodies_use() -> None:
         LibraryPromptsController,
     )
 
-    assert len(_PROMPTS_CONTROLLER_BOUND_NAMES) == 43, (
-        f"expected 43 bound names, got {len(_PROMPTS_CONTROLLER_BOUND_NAMES)}"
+    assert len(_PROMPTS_CONTROLLER_BOUND_NAMES) == 44, (
+        f"expected 44 bound names, got {len(_PROMPTS_CONTROLLER_BOUND_NAMES)}"
     )
     unbound = [
         name

@@ -34,7 +34,7 @@ docstring's own note on the collision).
 **Task 2 (controller PR)** adds the full-cluster ownership / same-name-
 delegator-forwarding / staticmethod-class-forwarding / controller-state-shim
 checks (``_MEDIA_CLUSTER_METHOD_NAMES``, 142 names) plus a
-constructor-binding coverage check (``_MEDIA_CONTROLLER_BOUND_NAMES``, 92
+constructor-binding coverage check (``_MEDIA_CONTROLLER_BOUND_NAMES``, 93
 names) carried from the prompts series, which added it because the skills
 series shipped a silent production regression precisely in that gap (a moved
 body's ``getattr(self, "focused", None)`` with no ``focused`` property
@@ -609,13 +609,14 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     # -- the 2 prior-extracted media WIRING controller instances (2)
     "_library_media_browse_controller",
     "_library_media_trash_browse_controller",
-    # -- general Library-wide shell helpers, named constructor callables (24)
+    # -- general Library-wide shell helpers, named constructor callables (25)
     "_acknowledge_library_destination_change",
     "_active_review_set_banner",
     "_apply_library_open_item_surface",
     "_arm_library_list_entry_focus",
     "_disarm_library_list_entry_focus",
     "_focus_library_control",
+    "_land_stage_pick",
     "_focus_library_list_entry",
     "_library_entry_route_key",
     "_open_library_export_canvas",
@@ -869,8 +870,8 @@ def test_media_controller_binds_every_name_its_moved_bodies_use() -> None:
         LibraryMediaController,
     )
 
-    assert len(_MEDIA_CONTROLLER_BOUND_NAMES) == 92, (
-        f"expected 92 bound names, got {len(_MEDIA_CONTROLLER_BOUND_NAMES)}"
+    assert len(_MEDIA_CONTROLLER_BOUND_NAMES) == 93, (
+        f"expected 93 bound names, got {len(_MEDIA_CONTROLLER_BOUND_NAMES)}"
     )
     assert len(set(_MEDIA_CONTROLLER_BOUND_NAMES)) == len(
         _MEDIA_CONTROLLER_BOUND_NAMES

@@ -480,6 +480,7 @@ async def test_a_search_racing_close_all_pools_leaves_no_connection_open(
             sqlite3.Connection.in_transaction.__get__(connection)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_closing_a_discarded_service_keeps_the_survivors_pool(
     tmp_path, monkeypatch
@@ -541,3 +542,126 @@ async def test_closing_a_discarded_service_keeps_the_survivors_pool(
     for connection in opened:
         with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
             sqlite3.Connection.in_transaction.__get__(connection)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["error", "refusal"])
+async def test_failed_last_user_close_retains_pool_for_maintenance(tmp_path, failure):
+    import sqlite3
+    import sys
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    from contextlib import AsyncExitStack
+
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+    from tldw_chatbook.RAG_Search.simplified import db_connection_pool as pools
+    from tldw_chatbook.Utils.private_paths import lexical_path
+
+    path = lexical_path(tmp_path / "last-user-retirement.db")
+    key = str(path)
+    seed = MediaDatabase(path, client_id="last-user-retirement")
+    try:
+        media_id, _, message = seed.add_media_with_keywords(
+            title="Numbat Notes",
+            content="Notes about numbat foraging.",
+            media_type="article",
+        )
+        assert media_id is not None, message
+    finally:
+        seed.close_connection()
+
+    def live_leases():
+        with storage._lock:
+            return {
+                lease for lease in storage._live_leases if lease.resource_path == path
+            }
+
+    service = _make_service(tmp_path, media_db_path=path)
+    pool = executor = connection = original_close = None
+
+    def retire_captured():
+        if executor is None:
+            return
+        if connection is not None:
+            try:
+                sqlite3.Connection.in_transaction.__get__(connection)
+            except sqlite3.ProgrammingError:
+                pass
+            else:
+                # The controlled RED may have unregistered this live pool.
+                ThreadPoolExecutor.submit(executor, original_close).result()
+            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                sqlite3.Connection.in_transaction.__get__(connection)
+        executor.shutdown(wait=True)
+        assert all(not thread.is_alive() for thread in executor._threads)
+        if connection is not None:
+            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                sqlite3.Connection.in_transaction.__get__(connection)
+        assert not live_leases()
+
+    try:
+        assert await service._keyword_search("numbat", top_k=5)
+        pool = pools._connection_pools[key]
+        original_close = pool.close_connection
+        executor = pools.pool_executor(pool)
+        assert executor is not None
+        loop = asyncio.get_running_loop()
+        connection, owner = await loop.run_in_executor(
+            executor,
+            lambda: (pool._get_thread_connection(), threading.current_thread()),
+        )
+        before = live_leases()
+        assert before
+        assert set(pools._pool_users[key]) == {service}
+        close_calls = []
+
+        def controlled_close():
+            close_calls.append(threading.current_thread())
+            if failure == "error":
+                raise RuntimeError("controlled pool close failure")
+            # Refusal leaves the actual native connection untouched.
+
+        pool.close_connection = controlled_close
+        service.close()
+
+        assert close_calls == [owner]
+        sqlite3.Connection.in_transaction.__get__(connection)
+        assert live_leases() == before
+        assert pools._connection_pools.get(key) is pool
+        assert key in pools._pool_users
+        assert not pools._pool_users[key]
+        assert pools.pool_executor(pool) is executor
+        assert not pools.maintenance._closed
+        with pytest.raises(RuntimeError, match="media search pool closed"):
+            await loop.run_in_executor(
+                executor, service._perform_fts5_search, pool, "numbat", 5
+            )
+        assert not pools._pool_users[key]
+        sqlite3.Connection.in_transaction.__get__(connection)
+
+        pool.close_connection = original_close
+        pools.maintenance._maintenance_close_admission()
+        assert await pools.maintenance._maintenance_drain(time.monotonic() + 2)
+        assert key not in pools._connection_pools
+        assert key not in pools._pool_users
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            sqlite3.Connection.in_transaction.__get__(connection)
+        assert not live_leases()
+    finally:
+        primary = sys.exception()
+        if pool is not None and original_close is not None:
+            pool.close_connection = original_close
+        try:
+            async with AsyncExitStack() as cleanup:
+                cleanup.push_async_callback(asyncio.to_thread, retire_captured)
+                cleanup.push_async_callback(asyncio.to_thread, pools.close_all_pools)
+                cleanup.callback(service.close)
+                cleanup.push_async_callback(pools.maintenance._maintenance_resume)
+        except BaseException as cleanup_error:
+            if primary is not None:
+                primary.add_note("cleanup_error:" + type(cleanup_error).__name__)
+                raise primary from cleanup_error
+            raise

@@ -320,14 +320,13 @@ class ProviderStep(provider_check.ProviderCheckStep):
                     id="setup-provider-detection-results",
                     classes="setup-detection-results hidden",
                 )
-            # TASK-21144 (UAT P-6): the probe/discovery status renders
-            # ABOVE the Authentication collapsible, directly under the
-            # connection controls it reports on — at its old panel-bottom
-            # position it fell below the fold at 40-row terminals, which
-            # (compounded by the F-1 focus soft-lock eating the button
-            # presses) is how UAT experienced "silent" probes.
-            # provider-14: after the connection panel, so Tab from the list
-            # still reaches the endpoint first (TASK-1496).
+            # TASK-21144 (UAT P-6): the probe/discovery status renders ABOVE the
+            # Authentication collapsible, directly under the connection controls it
+            # reports on — at its old panel-bottom position it fell below the fold at
+            # 40-row terminals, which (compounded by the F-1 focus soft-lock eating the
+            # button presses) is how UAT experienced "silent" probes. provider-14: after
+            # the connection panel, so Tab from the list still reaches the endpoint
+            # first (TASK-1496).
             yield from self.compose_no_server_block()
             yield QuietStatic(
                 "", id="setup-provider-probe-status", classes="setup-probe-status"

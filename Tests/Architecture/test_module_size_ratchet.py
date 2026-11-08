@@ -195,7 +195,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-06, TASK-39117 (owner size waiver): 2203 -> 2207 (+4) -- the
     # quit's idle close also covers the Workspace, Library Collections and
     # notifications stores.
-    "tldw_chatbook/app_lifecycle.py": 2207,
+    "tldw_chatbook/app_lifecycle.py": 2150,
     # TASK-33011: TldwCli's screen navigation moved verbatim out of app.py
     # (NavigationMixin); governed there, so governed here.
     # TASK-34000.27 (2026-10-09): 1110 -> 1195 (+85), owner decision
@@ -734,7 +734,9 @@ _BUDGETS: dict[str, int] = {
     # carries the chat's values (unsaved_committed). Exact measurement.
     # 2026-11-06, TASK-38964 (owner waiver): 6176 -> 6191, a koboldcpp default
     # off its native route is refused with its copy before it is submitted.
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6194,  # 2026-11-06: +3, a schemeless loopback draft endpoint restores (TASK-39042 review C1, owner waiver)
+    # Historical upstream waiver: 2026-11-06: +3, a schemeless loopback draft endpoint restores (TASK-39042 review C1, owner waiver)
+    # 2026-11-07 PR3345 owner source-size waiver; measured below. Runtime limits unchanged.
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6179,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 7010,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
@@ -799,7 +801,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-31 PR3294 review repair: exact 1690 lines under user size waiver.
     # 2026-11-06, TASK-38964 (owner waiver): 1690 -> 1691, the route check
     # imports Provider_Contract's rule.
-    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 1691,
+    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 1690,
     # owner decision 2026-10-04 (expand limits): TASK-34100.14 +60 -- the
     # download's cancel switch, its live status line and the cancelled
     # outcome are wired on the step (its @on handlers must stay on the
@@ -949,7 +951,7 @@ _BUDGETS: dict[str, int] = {
     # focus, the narrow navigator offers Manage, and a failed refresh shows
     # on the authority line.
     # Active integration retains the stricter existing feature ceiling.
-    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9674,
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9612,
     # 2026-11-02: +3 shared store-error import (TASK-36949.5).
     # TASK-38714 re-review, 2026-11-05: 9429 -> 9436 (+7). A failed
     # connection build closes the connection it opened instead of leaking it.
@@ -1134,7 +1136,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-31 PR3259: exact integrated measurement under the user size-limit waiver.
     # TASK-38981 re-review 3, 2026-11-06 (owner size waiver): 4738 -> 4742
     # (+4). The list's resize reshape keeps the user's focused control.
-    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4742,
+    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4738,
     "tldw_chatbook/Web_Scraping/WebSearch_APIs.py": 4611,
     # 2026-11-03 TASK-36945.3: +9, [rag.service] constants read when used.
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):

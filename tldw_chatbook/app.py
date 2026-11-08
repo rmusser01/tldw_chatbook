@@ -4360,6 +4360,11 @@ class TldwCli(
 
     async def _run_no_splash_post_mount_setup(self) -> None:
         """Run screen startup and post-mount setup when the splash screen is disabled."""
+        from .app_served import _await_served_control_start
+
+        if not await _await_served_control_start(self):
+            return
+
         try:
             await self._push_initial_screen()
             await self._post_mount_setup()
@@ -5582,6 +5587,11 @@ class TldwCli(
     @on(SplashScreen.Closed)
     async def on_splash_screen_closed(self, event: SplashScreen.Closed) -> None:
         """Handle splash screen closing."""
+        from .app_served import _await_served_control_start
+
+        if not await _await_served_control_start(self):
+            return
+
         self.splash_screen_active = False
         logger.debug("Splash screen closed, mounting main UI")
 

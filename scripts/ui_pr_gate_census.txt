@@ -3228,3 +3228,7 @@ Tests/UI/test_mcp_workbench.py::test_apply_view_state_scope_ref_key_absent_keeps
 Tests/UI/test_mcp_workbench.py::test_hub_local_group_stays_visible_but_disabled_when_master_flag_off
 Tests/UI/test_mcp_workbench.py::test_advanced_external_servers_section_redacts_secret_args
 Tests/UI/test_mcp_workbench.py::test_open_add_server_form_local_source_shows_profile_form
+
+# PR #3345: retain both complete UI regression files.
+Tests/UI/test_python_style_inventory.py
+Tests/UI/test_console_context_close_lifetime.py

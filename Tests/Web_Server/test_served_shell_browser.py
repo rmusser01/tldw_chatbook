@@ -154,6 +154,7 @@ def _make_scripted_server(statics_path: str, port: int) -> _ScriptedShellServer:
     server._canvas_disabled_latched = True
     server._canvas_policy_watch_task = None
     server._served_browser_children = {}
+    server._served_browser_attachments = {}
     server._served_canvas_launches = {}
 
     server._served_canvas_gateway = served_gateway_double(aclose=lambda: None)

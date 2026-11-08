@@ -1,10 +1,9 @@
 """The Library ingest queue: ``LibraryIngestQueueMixin`` and its helpers.
 
-Moved verbatim from ``app.py`` (TASK-33011): the job submission seam, the
-parallel-parse coordinator, the writer, remote-ingest polling and the local
-STT dispatch, plus the module-level helpers only they use. ``TldwCli`` still
-mixes the class in at the same MRO position, and ``tldw_chatbook.app``
-re-exports the names callers import from it.
+Moved verbatim from ``app.py`` (TASK-33011): the job submission seam, the parallel-parse
+coordinator, the writer, remote-ingest polling and the local STT dispatch, plus the
+module-level helpers only they use. ``TldwCli`` still mixes the class in at the same MRO
+position, and ``tldw_chatbook.app`` re-exports the names callers import from it.
 
 Patch names the moved code reads (``get_cli_setting``, ``logger``,
 ``run_parse_job``, ``multiprocessing``, ``pending_remote_batches`` and so on)
@@ -142,13 +141,12 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 def _sanitize_library_ingest_error_text(message: str) -> str:
     """Reduce a raw error message to a single-line, ``<=200``-char string.
 
-    Shared building block for both ingest-pipeline stages (F3): the write
-    stage has a real ``Exception`` (see ``_sanitize_library_ingest_error``,
-    below); the parse stage only has the already-``str()``-ed message a
-    pool worker's structured failure result carries across the process
-    boundary (``ingest_parse_worker.run_parse_job``'s ``"error"`` key) --
-    both need the exact same single-line/200-cap treatment before landing
-    in a job's ``LibraryIngestJob.error`` field.
+    Shared building block for both ingest-pipeline stages (F3): the write stage has a
+    real ``Exception`` (see ``_sanitize_library_ingest_error``, below); the parse stage
+    only has the already-``str()``-ed message a pool worker's structured failure result
+    carries across the process boundary (``ingest_parse_worker.run_parse_job``'s
+    ``"error"`` key) -- both need the exact same single-line/200-cap treatment before
+    landing in a job's ``LibraryIngestJob.error`` field.
 
     Args:
         message: The raw (possibly multi-line, possibly empty) message.
@@ -169,9 +167,8 @@ def _sanitize_library_ingest_error(exc: Exception) -> str:
         exc: The exception raised by the ingest seam.
 
     Returns:
-        The first line of ``str(exc)``, stripped and capped at 200
-        characters. Falls back to the exception's class name when
-        ``str(exc)`` is empty.
+        The first line of ``str(exc)``, stripped and capped at 200 characters. Falls
+        back to the exception's class name when ``str(exc)`` is empty.
     """
     sanitized = _sanitize_library_ingest_error_text(str(exc))
     return sanitized if sanitized else exc.__class__.__name__[:200]
@@ -180,19 +177,17 @@ def _sanitize_library_ingest_error(exc: Exception) -> str:
 def _library_ingest_write_failure_category(exc: BaseException) -> str:
     """Classify an exception escaping the ingest WRITE stage.
 
-    (task-14821) The stage covers two different things: refusing an empty
-    extraction, which happens BEFORE any write, and a genuine database
-    write failure. Exceptions that know which they are declare it on
-    ``ingest_error_category``.
+    (task-14821) The stage covers two different things: refusing an empty extraction,
+    which happens BEFORE any write, and a genuine database write failure. Exceptions
+    that know which they are declare it on ``ingest_error_category``.
 
-    (xhigh review round) Everything else used to default to
-    ``"write_error"`` -- the ONE category ``ingest_retry_advice`` still
-    answers with "a retry can succeed if the write failure was temporary
-    — the file itself parsed fine". So the optimistic branch task-14821
-    was filed to remove stayed reachable for every unclassified cause,
-    through the default. Only a failure of the database write itself
-    earns that name now; an unknown cause is unnamed, and an unnamed
-    category is silent (task-14821 AC#2) rather than encouraging.
+    (xhigh review round) Everything else used to default to ``"write_error"`` -- the ONE
+    category ``ingest_retry_advice`` still answers with "a retry can succeed if the
+    write failure was temporary — the file itself parsed fine". So the optimistic branch
+    task-14821 was filed to remove stayed reachable for every unclassified cause,
+    through the default. Only a failure of the database write itself earns that name
+    now; an unknown cause is unnamed, and an unnamed category is silent (task-14821
+    AC#2) rather than encouraging.
 
     Args:
         exc: The exception raised while persisting a parsed payload.
@@ -259,12 +254,11 @@ def _library_ingest_done_progress(
 
     (task-3301) Pure and module-level so the analysis-skipped annotation is
     unit-testable without a writer thread. When the parse payload carries
-    ``analysis_skipped_reason`` (analysis was requested but no callable
-    provider was configured at dispatch time), the done row says so --
-    "analysis skipped: ..." on the row's progress sub-line -- instead of
-    the analysis being silently absent. Duplicate-match outcomes keep their
-    exact ``INGEST_DUPLICATE_PROGRESS_PREFIX`` message untouched: nothing
-    new was imported, so there was nothing to analyze.
+    ``analysis_skipped_reason`` (analysis was requested but no callable provider was
+    configured at dispatch time), the done row says so -- "analysis skipped: ..." on the
+    row's progress sub-line -- instead of the analysis being silently absent.
+    Duplicate-match outcomes keep their exact ``INGEST_DUPLICATE_PROGRESS_PREFIX``
+    message untouched: nothing new was imported, so there was nothing to analyze.
 
     Args:
         source_path: The job's source path (basename feeds the message).
@@ -318,11 +312,10 @@ def _stream_fileno(stream: Any) -> int:
             stderr capture object, a pytest capture stream, ``None``, ...).
 
     Returns:
-        The stream's OS-level fd when ``fileno()`` returns a real one;
-        ``-1`` when the stream is missing/``None``, ``fileno()`` raises,
-        or -- the case that actually bit in production -- ``fileno()``
-        returns a non-fd sentinel like ``-1`` without raising (Textual's
-        capture object does exactly that).
+        The stream's OS-level fd when ``fileno()`` returns a real one; ``-1`` when the
+        stream is missing/``None``, ``fileno()`` raises, or -- the case that actually
+        bit in production -- ``fileno()`` returns a non-fd sentinel like ``-1`` without
+        raising (Textual's capture object does exactly that).
     """
     try:
         fd = stream.fileno()
@@ -488,11 +481,10 @@ class LibraryIngestQueueMixin:
       constructed once (e.g. in ``__init__``/app wiring).
     - ``self.media_db``: an ``Optional[MediaDatabase]``.
     - ``self._ingest_parse_pool``, ``self._ingest_parsed_payloads``,
-      ``self._ingest_parse_pool_generation``,
-      ``self._ingest_parse_jobs_by_generation``, and
-      ``self._ingest_parse_pool_mode``,
-      ``self._ingest_shutdown``: the coordinator's own state, initialized
-      once alongside ``library_ingest_jobs`` -- see ``TldwCli.__init__``.
+      ``self._ingest_parse_pool_generation``, ``self._ingest_parse_jobs_by_generation``,
+      and ``self._ingest_parse_pool_mode``, ``self._ingest_shutdown``: the coordinator's
+      own state, initialized once alongside ``library_ingest_jobs`` -- see
+      ``TldwCli.__init__``.
     - Textual's ``App``/``Widget`` worker machinery (``@work`` and
       ``call_from_thread``), since this mixin is always combined with one
       of those base classes.
@@ -500,45 +492,40 @@ class LibraryIngestQueueMixin:
     F3 architecture -- two decoupled stages, not one serial loop:
 
     - **Parse stage (this mixin's coordinator, UI thread).** A lazily
-      created spawn-context ``multiprocessing.Pool`` (see
-      ``_create_ingest_parse_pool``) fans ordinary file parsing out to N
-      workers. Ebook batches instead own one-worker generations, retired
-      before ordinary work resumes so parser high-water heaps cannot
-      accumulate across the configured pool. ``_top_up_ingest_parse_pool``
-      runs after every submission/retry and parse completion. A completion is
-      marshaled onto the UI thread (``_on_ingest_parse_complete``); success
-      stashes the parsed payload and wakes the writer, failure goes straight
-      to ``mark_failed``.
+      created spawn-context ``multiprocessing.Pool`` (see ``_create_ingest_parse_pool``)
+      fans ordinary file parsing out to N workers. Ebook batches instead own one-worker
+      generations, retired before ordinary work resumes so parser high-water heaps
+      cannot accumulate across the configured pool. ``_top_up_ingest_parse_pool`` runs
+      after every submission/retry and parse completion. A completion is marshaled onto
+      the UI thread (``_on_ingest_parse_complete``); success stashes the parsed payload
+      and wakes the writer, failure goes straight to ``mark_failed``.
     - **Write stage (the writer, background thread, unchanged shape).**
-      Exactly one job is ever being written at a time (SQLite has one
-      writer). The writer's claim-or-release loop
-      (``_claim_next_ingest_job_or_release`` / ``_run_library_ingest_queue``)
-      now claims the OLDEST payload-ready job (by submission order) instead
-      of the oldest queued one, persists it via ``persist_parsed_media``,
-      and marks it ``DONE``/``FAILED``.
+      Exactly one job is ever being written at a time (SQLite has one writer). The
+      writer's claim-or-release loop (``_claim_next_ingest_job_or_release`` /
+      ``_run_library_ingest_queue``) now claims the OLDEST payload-ready job (by
+      submission order) instead of the oldest queued one, persists it via
+      ``persist_parsed_media``, and marks it ``DONE``/``FAILED``.
 
-    The coordinator (parse side) and the writer (write side) are the only
-    intended callers of the registry's ``mark_parsing``/``mark_writing``/
-    ``mark_done``/``mark_failed`` transition methods, respectively. Every
-    job is driven either ``queued`` -> ``parsing`` -> ``writing`` ->
-    ``done``/``failed``, or ``parsing`` -> ``failed`` directly when the pool
-    worker's parse itself fails (e.g. an unsupported/undetectable file type,
-    or a missing source file -- classified by ``classify_parse_failure``
-    inside the worker, where the real exception type is available). Either
-    way, one job's failure is isolated so it never strands a later queued
-    job or blocks the writer.
+    The coordinator (parse side) and the writer (write side) are the only intended
+    callers of the registry's ``mark_parsing``/``mark_writing``/
+    ``mark_done``/``mark_failed`` transition methods, respectively. Every job is driven
+    either ``queued`` -> ``parsing`` -> ``writing`` -> ``done``/``failed``, or
+    ``parsing`` -> ``failed`` directly when the pool worker's parse itself fails (e.g.
+    an unsupported/undetectable file type, or a missing source file -- classified by
+    ``classify_parse_failure`` inside the worker, where the real exception type is
+    available). Either way, one job's failure is isolated so it never strands a later
+    queued job or blocks the writer.
 
-    Shutdown (quit path) order, in ``_shutdown_ingest_parse_pool`` (called
-    from ``TldwCli.on_unmount``): (1) ``_ingest_shutdown = True`` + executor
-    and pool references detached, synchronously -- callbacks short-circuit
-    before ever marshaling; (2) executor close followed by a bounded wait for
-    ``pool.terminate()`` + ``pool.join()`` on detached daemon threads, never
-    the event-loop thread (deadlock rationale in that method's docstring); (3)
-    the writer thread is swept afterward by ``on_unmount``'s
-    generic worker cancellation, its in-flight DB write completing as
-    before. Steps 2 and 3 run concurrently -- safe because the stages share
-    no resources (parse workers never touch ``media_db``; the writer never
-    touches either heavy worker).
+    Shutdown (quit path) order, in ``_shutdown_ingest_parse_pool`` (called from
+    ``TldwCli.on_unmount``): (1) ``_ingest_shutdown = True`` + executor and pool
+    references detached, synchronously -- callbacks short-circuit before ever
+    marshaling; (2) executor close followed by a bounded wait for ``pool.terminate()`` +
+    ``pool.join()`` on detached daemon threads, never the event-loop thread (deadlock
+    rationale in that method's docstring); (3) the writer thread is swept afterward by
+    ``on_unmount``'s generic worker cancellation, its in-flight DB write completing as
+    before. Steps 2 and 3 run concurrently -- safe because the stages share no resources
+    (parse workers never touch ``media_db``; the writer never touches either heavy
+    worker).
     """
 
     _RESEARCH_SOURCE_RETRY_UNAVAILABLE_COPY = (
@@ -561,11 +548,10 @@ class LibraryIngestQueueMixin:
         ``self.media_db`` is deliberately NOT set here: it is a per-host
         input (see the class docstring), not coordinator state.
 
-        F3 parallel-parse coordinator state: the lazily-created parse-pool
-        handle, the parse->write handoff (job_id -> parsed payload dict,
-        populated by a pool completion and drained by the writer's claim),
-        and the shutdown flag pool callbacks check before touching a
-        closing app.
+        F3 parallel-parse coordinator state: the lazily-created parse-pool handle, the
+        parse->write handoff (job_id -> parsed payload dict, populated by a pool
+        completion and drained by the writer's claim), and the shutdown flag pool
+        callbacks check before touching a closing app.
         """
         self.library_ingest_jobs = LibraryIngestJobRegistry()
         self._research_source_terminal_jobs_scheduled: set[str] = set()
@@ -643,10 +629,9 @@ class LibraryIngestQueueMixin:
     def _schedule_settled_research_source_operations(self) -> None:
         """Schedule durable association work after a linked job has settled.
 
-        Registry listeners run after the in-memory transition has completed.
-        This listener only queues an async worker; it never calls the
-        coordinator (and therefore never touches SQLite) synchronously inside
-        the registry mutation.
+        Registry listeners run after the in-memory transition has completed. This
+        listener only queues an async worker; it never calls the coordinator (and
+        therefore never touches SQLite) synchronously inside the registry mutation.
         """
         # TASK-32804.5: this listener fires on every registry mutation. Run
         # the cheap early-returns BEFORE touching the queue, and iterate the
@@ -919,12 +904,11 @@ class LibraryIngestQueueMixin:
     def _restore_ingest_jobs(self) -> None:
         """Start the one-time restore of persisted ingest job history.
 
-        Returns immediately: the store open (schema create/migrate on first
-        run), the read, the plan and the reconcile writes all run on a worker
-        thread, and only the in-memory registry seeding comes back to the UI
-        thread (TASK-21111(c) -- measured 1.7-11.6 ms of synchronous
-        ``on_mount`` work depending on history size, x3-5 on constrained
-        hardware).
+        Returns immediately: the store open (schema create/migrate on first run), the
+        read, the plan and the reconcile writes all run on a worker thread, and only the
+        in-memory registry seeding comes back to the UI thread (TASK-21111(c) --
+        measured 1.7-11.6 ms of synchronous ``on_mount`` work depending on history size,
+        x3-5 on constrained hardware).
 
         Never raises, on either thread: a corrupt or unreadable store leaves
         the registry empty and store-less, exactly as before.
@@ -1026,14 +1010,13 @@ class LibraryIngestQueueMixin:
         ``merge_restored`` rather than ``restore`` so a job submitted in the
         few milliseconds between ``on_mount`` and this callback survives.
 
-        The store is attached BEFORE the merge, not after: a job submitted in
-        that window was submitted while the registry was store-less, so its
-        own ``_persist`` was a no-op, and nothing later re-offers it. With
-        the store attached first, ``merge_restored`` writes those live jobs
-        through -- which also replaces any persisted row that happens to
-        share their id (both sessions allocate from ``ingest-job-1`` upward,
-        so a collision in this window is the likely case, and the stale row
-        would otherwise be restored in the live job's place next launch).
+        The store is attached BEFORE the merge, not after: a job submitted in that
+        window was submitted while the registry was store-less, so its own ``_persist``
+        was a no-op, and nothing later re-offers it. With the store attached first,
+        ``merge_restored`` writes those live jobs through -- which also replaces any
+        persisted row that happens to share their id (both sessions allocate from
+        ``ingest-job-1`` upward, so a collision in this window is the likely case, and
+        the stale row would otherwise be restored in the live job's place next launch).
         """
         if getattr(self, "_ingest_shutdown", False):
             store.close()
@@ -1104,13 +1087,11 @@ class LibraryIngestQueueMixin:
     ) -> LibraryIngestJob:
         """Submit a new Library ingest job and top up the parse pool.
 
-        UI-thread only. Appends a ``QUEUED`` job to ``self.library_ingest_jobs``.
-        When ``self.media_db`` is unavailable, the job is failed immediately
-        (with the exact copy ``"Media database is unavailable."``) and it
-        never reaches the parse pool.
-        ``batch_id`` carries the folder-expansion batch id (task-2221) so
-        the queue can group one submission's jobs; ``None`` for single
-        files.
+        UI-thread only. Appends a ``QUEUED`` job to ``self.library_ingest_jobs``. When
+        ``self.media_db`` is unavailable, the job is failed immediately (with the exact
+        copy ``"Media database is unavailable."``) and it never reaches the parse pool.
+        ``batch_id`` carries the folder-expansion batch id (task-2221) so the queue can
+        group one submission's jobs; ``None`` for single files.
 
         Args:
             source_path: The file path to ingest.
@@ -1818,11 +1799,10 @@ class LibraryIngestQueueMixin:
     def _ingest_parse_worker_count(self) -> int:
         """Resolve the parse-pool size from config, with a safe default.
 
-        UI-thread only. Reads ``library.ingest_parse_workers`` via the
-        dotted 1-arg ``get_cli_setting`` form (``load_settings()`` doesn't
-        carry CLI ``[library.*]`` tables -- same bug-class guard as the
-        rail-state read). An invalid, missing, or non-positive value falls
-        back to the spec's default formula.
+        UI-thread only. Reads ``library.ingest_parse_workers`` via the dotted 1-arg
+        ``get_cli_setting`` form (``load_settings()`` doesn't carry CLI ``[library.*]``
+        tables -- same bug-class guard as the rail-state read). An invalid, missing, or
+        non-positive value falls back to the spec's default formula.
 
         Returns:
             The configured worker count when it int-coerces to a positive
@@ -1842,11 +1822,10 @@ class LibraryIngestQueueMixin:
     def _ingest_heavy_lane_max_workers(self) -> int:
         """Resolve the heavy-lane (audio/video transcription) cap from config.
 
-        UI-thread only. Reads ``library.ingest_heavy_lane_max_workers`` via the
-        dotted 1-arg ``get_cli_setting`` form (same reason as
-        ``_ingest_parse_worker_count``). Defaults to 1; a missing, invalid, or
-        non-positive value clamps to 1 so heavy work is never permanently
-        starved.
+        UI-thread only. Reads ``library.ingest_heavy_lane_max_workers`` via the dotted
+        1-arg ``get_cli_setting`` form (same reason as ``_ingest_parse_worker_count``).
+        Defaults to 1; a missing, invalid, or non-positive value clamps to 1 so heavy
+        work is never permanently starved.
         """
         try:
             configured = int(get_cli_setting("library.ingest_heavy_lane_max_workers"))
@@ -1857,37 +1836,33 @@ class LibraryIngestQueueMixin:
     def _create_ingest_parse_pool(self, *, processes: int | None = None):
         """Create the Library ingest parse pool.
 
-        UI-thread only. Test seam: monkeypatched to an inline-synchronous
-        fake resource bundle (see
-        ``Tests/Library/test_library_ingest_runner.py``) so pilots stay
+        UI-thread only. Test seam: monkeypatched to an inline-synchronous fake resource
+        bundle (see ``Tests/Library/test_library_ingest_runner.py``) so pilots stay
         deterministic without spawning real OS processes. Real callers get a
         spawn-context ``multiprocessing.Pool`` and bounded progress queue.
 
-        Not a ``concurrent.futures.ProcessPoolExecutor`` -- see the F3
-        design spec's Architecture section: the executor's ``atexit`` hook
-        joins running tasks, so an in-flight long transcription would block
-        app exit for its full duration. ``Pool`` has a public
-        ``terminate()`` the quit path relies on instead.
+        Not a ``concurrent.futures.ProcessPoolExecutor`` -- see the F3 design spec's
+        Architecture section: the executor's ``atexit`` hook joins running tasks, so an
+        in-flight long transcription would block app exit for its full duration.
+        ``Pool`` has a public ``terminate()`` the quit path relies on instead.
 
-        Textual stderr workaround (live-QA crash fix): under Textual (app
-        mode / textual-serve), ``sys.stderr`` is replaced by a capture
-        object whose ``fileno()`` returns ``-1`` WITHOUT raising. CPython
-        3.12's ``multiprocessing.resource_tracker._launch`` appends
-        ``sys.stderr.fileno()`` to the fds it hands
-        ``util.spawnv_passfds`` (its ``except Exception`` guard never
-        fires, since ``-1`` is returned rather than raised), and
-        ``spawnv_passfds`` rejects the list with ``ValueError: bad
-        value(s) in fds_to_keep`` -- so the very first Pool construction
-        (which ensure-runs the process-global resource tracker) crashed
-        the app on its first ingest submission. When ``sys.stderr`` has no
+        Textual stderr workaround (live-QA crash fix): under Textual (app mode /
+        textual-serve), ``sys.stderr`` is replaced by a capture object whose
+        ``fileno()`` returns ``-1`` WITHOUT raising. CPython 3.12's
+        ``multiprocessing.resource_tracker._launch`` appends ``sys.stderr.fileno()`` to
+        the fds it hands ``util.spawnv_passfds`` (its ``except Exception`` guard never
+        fires, since ``-1`` is returned rather than raised), and ``spawnv_passfds``
+        rejects the list with ``ValueError: bad value(s) in fds_to_keep`` -- so the very
+        first Pool construction (which ensure-runs the process-global resource tracker)
+        crashed the app on its first ingest submission. When ``sys.stderr`` has no
         usable fd, both the queue and Pool are constructed under
-        ``contextlib.redirect_stderr`` pointing at a genuinely fd-backed
-        stream (``_ingest_pool_real_stderr``: ``sys.__stderr__``, else a
-        kept-alive devnull handle). The tracker launches at most once per
-        process, so covering construction is sufficient -- and applying
-        the redirect on every (re)construction is harmless. Queue and Pool
-        creation are one atomic owner operation: if Pool creation fails, the
-        already-created queue is closed before the exception escapes.
+        ``contextlib.redirect_stderr`` pointing at a genuinely fd-backed stream
+        (``_ingest_pool_real_stderr``: ``sys.__stderr__``, else a kept-alive devnull
+        handle). The tracker launches at most once per process, so covering construction
+        is sufficient -- and applying the redirect on every (re)construction is
+        harmless. Queue and Pool creation are one atomic owner operation: if Pool
+        creation fails, the already-created queue is closed before the exception
+        escapes.
 
         Args:
             processes: Physical worker count for this generation. ``None``
@@ -2096,54 +2071,47 @@ class LibraryIngestQueueMixin:
     def _ingest_job_options(self, job: LibraryIngestJob) -> Dict[str, Any]:
         """Build ``run_parse_job``'s ``options`` dict from a job's fields.
 
-        ``job.ingest_options`` is the canonical source of ingestion settings.
-        It is expected to be a group-keyed snapshot (e.g. ``{"generic": {...},
-        "pdf": {...}}``); values from the detected type group override values
-        from the ``generic`` group. The older scalar fields
-        (``perform_analysis``, ``chunk_enabled``, ``chunk_size``) are used only
-        as deprecated fallbacks when ``ingest_options`` is empty or does not
-        contain a value.
+        ``job.ingest_options`` is the canonical source of ingestion settings. It is
+        expected to be a group-keyed snapshot (e.g. ``{"generic": {...}, "pdf":
+        {...}}``); values from the detected type group override values from the
+        ``generic`` group. The older scalar fields (``perform_analysis``,
+        ``chunk_enabled``, ``chunk_size``) are used only as deprecated fallbacks when
+        ``ingest_options`` is empty or does not contain a value.
 
         (task-3301) The three previously dead controls resolve here:
 
         * ``encoding`` (generic group) travels to the plaintext/html readers.
         * ``chunk_options`` carries the form's size/overlap as ints (the
-          snapshot boundary coerces, but restored/persisted jobs may still
-          hold display strings), in both the ``size`` spelling (audio/video
-          option maps) and the ``max_size`` spelling
-          (``improved_chunking_process``); the overlap fallback is the
-          generic schema default -- the value the UI displays -- not a
-          hardcoded constant. (task-3301/3303 xhigh review round 2,
-          F11+F12) An explicit ``method`` ALWAYS travels: pdf and
-          audio/video get ``words`` so the generic size/overlap hint
-          ("words · 100-5000") is true everywhere the processors would
-          otherwise setdefault sentences (a ~10-30x unit lie); the ebook
-          group maps its panel choice ("chapters" -> the chunker's
-          ``ebook_chapters``, other names verbatim) and falls back to the
-          pre-branch ``sentences`` when the snapshot predates the field
-          (fresh snapshots always carry the schema default -- absence IS
-          the legacy marker, so a requeued old job keeps its original
-          scheme). The text tail's own default is already words.
+          snapshot boundary coerces, but restored/persisted jobs may still hold display
+          strings), in both the ``size`` spelling (audio/video option maps) and the
+          ``max_size`` spelling (``improved_chunking_process``); the overlap fallback is
+          the generic schema default -- the value the UI displays -- not a hardcoded
+          constant. (task-3301/3303 xhigh review round 2, F11+F12) An explicit
+          ``method`` ALWAYS travels: pdf and audio/video get ``words`` so the generic
+          size/overlap hint ("words · 100-5000") is true everywhere the processors would
+          otherwise setdefault sentences (a ~10-30x unit lie); the ebook group maps its
+          panel choice ("chapters" -> the chunker's ``ebook_chapters``, other names
+          verbatim) and falls back to the pre-branch ``sentences`` when the snapshot
+          predates the field (fresh snapshots always carry the schema default -- absence
+          IS the legacy marker, so a requeued old job keeps its original scheme). The
+          text tail's own default is already words.
         * When analysis is requested, the configured analysis provider
-          (``[analysis_defaults] provider``) is resolved through the shared
-          readiness seam, then constrained to a chat-dispatchable name
-          (task-3301 xhigh review round): ready adds ``api_name`` (the
-          normalized ``API_CALL_HANDLERS`` key), ``api_key`` (``None`` for
-          keyless local providers, paired with the explicit
-          ``analysis_keyless_ok`` opt-in the processors' credential gates
-          require), and ``analysis_call`` (model/temperature/top_p/min_p/
-          max_tokens from ``[analysis_defaults]``, viewer-parity defaults)
-          plus ``system_prompt`` when the section configures one; not ready
-          (including readiness-ready providers with no chat handler) adds
-          ``analysis_skipped_reason`` so the job records WHY analysis is
-          absent instead of silently dropping it.
+          (``[analysis_defaults] provider``) is resolved through the shared readiness
+          seam, then constrained to a chat-dispatchable name (task-3301 xhigh review
+          round): ready adds ``api_name`` (the normalized ``API_CALL_HANDLERS`` key),
+          ``api_key`` (``None`` for keyless local providers, paired with the explicit
+          ``analysis_keyless_ok`` opt-in the processors' credential gates require), and
+          ``analysis_call`` (model/temperature/top_p/min_p/ max_tokens from
+          ``[analysis_defaults]``, viewer-parity defaults) plus ``system_prompt`` when
+          the section configures one; not ready (including readiness-ready providers
+          with no chat handler) adds ``analysis_skipped_reason`` so the job records WHY
+          analysis is absent instead of silently dropping it.
 
-        ``custom_prompt`` and ``system_prompt`` are copied from the generic
-        snapshot only when analysis is requested. They remain in the job
-        snapshot while analysis is off, but parser options omit them so stale
-        instructions cannot reach a backend that will not execute analysis.
-        ``metadata`` remains absent (``None`` inside the worker's
-        ``options.get(...)`` reads).
+        ``custom_prompt`` and ``system_prompt`` are copied from the generic snapshot
+        only when analysis is requested. They remain in the job snapshot while analysis
+        is off, but parser options omit them so stale instructions cannot reach a
+        backend that will not execute analysis. ``metadata`` remains absent (``None``
+        inside the worker's ``options.get(...)`` reads).
         """
         opts = job.ingest_options or {}
         group = get_type_group(job.source_path)
@@ -3262,27 +3230,23 @@ class LibraryIngestQueueMixin:
     def _top_up_ingest_parse_pool(self) -> None:
         """Submit ``QUEUED`` jobs to the parse pool up to the worker cap.
 
-        UI-thread only. Called after every submission/retry and after every
-        parse completion (ok or not) so the pool stays saturated at up to N
-        concurrent ``PARSING`` jobs -- this cap IS the backpressure: at most
-        N parsed payloads (plus the one currently being written) are ever
-        held in memory at once.
+        UI-thread only. Called after every submission/retry and after every parse
+        completion (ok or not) so the pool stays saturated at up to N concurrent
+        ``PARSING`` jobs -- this cap IS the backpressure: at most N parsed payloads
+        (plus the one currently being written) are ever held in memory at once.
 
-        A no-op once ``self._ingest_shutdown`` is set (the app is closing;
-        no new parse work should be handed to a pool that's about to be
-        terminated).
+        A no-op once ``self._ingest_shutdown`` is set (the app is closing; no new parse
+        work should be handed to a pool that's about to be terminated).
 
         ``classify_ingest_source`` is called once, at enqueue time (in
-        ``submit_library_ingest_job``), and its result is stamped onto the
-        job's ``detected_type`` -- not recomputed here. Dispatch reuses that
-        stored value both to claim the job (``mark_parsing``) and to decide
-        eligibility under the heavy-lane gate below; an unsupported
-        extension at enqueue time is silently left ``""`` rather than
-        fast-failing the job: real classification (permanent vs. retryable)
-        happens inside the pool worker, where the authoritative exception
-        is available (see ``classify_parse_failure``), matching the F3
-        design spec's "permanent-vs-retryable classification happens inside
-        the worker" decision.
+        ``submit_library_ingest_job``), and its result is stamped onto the job's
+        ``detected_type`` -- not recomputed here. Dispatch reuses that stored value both
+        to claim the job (``mark_parsing``) and to decide eligibility under the
+        heavy-lane gate below; an unsupported extension at enqueue time is silently left
+        ``""`` rather than fast-failing the job: real classification (permanent vs.
+        retryable) happens inside the pool worker, where the authoritative exception is
+        available (see ``classify_parse_failure``), matching the F3 design spec's
+        "permanent-vs-retryable classification happens inside the worker" decision.
 
         Heavy-lane gate: at most ``_ingest_heavy_lane_max_workers()`` jobs
         whose ``detected_type`` is in ``_INGEST_HEAVY_TYPES`` (audio/video

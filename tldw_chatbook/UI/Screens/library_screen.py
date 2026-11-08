@@ -850,6 +850,7 @@ from ..Library_Modules.canvas_sync import (
     _sync_library_canvas,
 )
 from ..Library_Modules.screen_helpers import (
+    land_stage_pick,
     _library_screen_is_current,
     library_note_persisted_title,
     _ingestible_file_filters,
@@ -3020,6 +3021,9 @@ class LibraryScreen(BaseAppScreen):
         self._prompts_controller = LibraryPromptsController(
             self,
             prompts_state_accessor=lambda: self._prompts_state,
+            land_stage_pick=(
+                lambda *a, **k: land_stage_pick(self, *a, source=globals(), **k)
+            ),
             arm_library_list_entry_focus=(
                 lambda *a, **k: self._arm_library_list_entry_focus(*a, **k)
             ),
@@ -3112,6 +3116,9 @@ class LibraryScreen(BaseAppScreen):
         self._media_controller = LibraryMediaController(
             self,
             media_state_accessor=lambda: self._media_state,
+            land_stage_pick=(
+                lambda *a, **k: land_stage_pick(self, *a, source=globals(), **k)
+            ),
             # -- shared shell state this cluster READS (getter-only).
             library_canvas_projection_depth_accessor=(
                 lambda: self._library_canvas_projection_depth
@@ -23988,7 +23995,7 @@ class LibraryScreen(BaseAppScreen):
         # task-31273: an explicit row open wins over a pending auto-resume.
         self._cancel_pending_review_set_resume()
         if list_holds_the_stage(self._media_state.reader_layout):
-            self._arm_stage_pick_landing("media", media_id)
+            self._library_stage_pick_landing = ("media", str(media_id))
         self._open_library_media_viewer(media_id)
 
     @on(Button.Pressed, "#library-media-select-toggle")
@@ -27996,7 +28003,7 @@ class LibraryScreen(BaseAppScreen):
         self._library_selected_row_id = LIBRARY_ROW_BROWSE_PROMPTS
         self._prompts_state.view = "editor"
         if picked_from_stage:
-            self._arm_stage_pick_landing("prompts", prompt_id)
+            self._library_stage_pick_landing = ("prompts", str(prompt_id))
         # Exclusive in its own group so rapidly switching rows cancels
         # the previous in-flight detail fetch instead of letting a
         # slower older fetch finish and overwrite the newer selection's
@@ -28011,43 +28018,6 @@ class LibraryScreen(BaseAppScreen):
         )
         _sync_library_canvas(self, "prompts")
 
-    def _arm_stage_pick_landing(self, destination: str, item_id: object) -> None:
-        """Remember a pick from the list holding the stage (TASK-38981).
-
-        The pick rebuilds the list, and the opened item's controls mount only
-        once its detail lands, so focus would rest on whatever Textual's reset
-        chose. The destination's detail path calls
-        ``_land_stage_pick`` once those controls are mounted; the user's own
-        input in between withdraws the landing
-        (``_withdraw_library_notes_pending_focus_handoffs``).
-        """
-        self._library_stage_pick_landing = (destination, str(item_id))
-
-    def _land_stage_pick(
-        self, destination: str, item_id: object, shell_selector: str
-    ) -> None:
-        """Focus the opened item's first control, once, if still pending.
-
-        Until that control shows, the landing stays pending for the next
-        detail sync of the same item.
-        """
-        if self._library_stage_pick_landing != (destination, str(item_id)):
-            return
-        try:
-            shell = self.query_one(shell_selector, LibraryAdaptiveReaderShell)
-        except (NoMatches, QueryError):
-            return
-        target = next(
-            (
-                candidate
-                for candidate in self.focus_chain
-                if shell.work.display and shell.work in candidate.ancestors_with_self
-            ),
-            None,
-        )
-        if target is not None:
-            self._library_stage_pick_landing = None
-            self.set_focus(target)
 
     def _invalidate_library_prompt_detail_generation(self) -> None:
         return self._prompts_controller._invalidate_library_prompt_detail_generation()

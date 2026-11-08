@@ -1,20 +1,17 @@
 """Library Conversations reader controller.
 
-Controller PR of the Conversations extraction series (the decomposition
-exemplar; ``backlog/docs/library-decomposition-recipe.md``,
-``.superpowers/sdd/2026-09-01-library-decomposition-foundation`` task 7).
-Owns the reader cluster moved verbatim out of ``LibraryScreen`` in
+Controller PR of the Conversations extraction series (the decomposition exemplar;
+``backlog/docs/library-decomposition-recipe.md``,
+``.superpowers/sdd/2026-09-01-library-decomposition-foundation`` task 7). Owns the
+reader cluster moved verbatim out of ``LibraryScreen`` in
 ``tldw_chatbook/UI/Screens/library_screen.py``: the fenced progressive
-load/bootstrap/retry pipeline for one selected conversation's saved
-transcript, its mounted-pane sync, and the five ``@on`` handlers the
-Conversations reader pane's buttons/input/message post
-(``show_library_conversation_reader_read``/``_info``,
-``find_in_library_conversation``,
-``library_conversation_reader_messages_synced``,
-``retry_library_conversation_reader``). ``LibraryScreen`` keeps one-line
-delegators under every one of those original names, since each is reached
-from outside this cluster (``@on`` dispatch, or another conversations
-method not part of this move).
+load/bootstrap/retry pipeline for one selected conversation's saved transcript, its
+mounted-pane sync, and the five ``@on`` handlers the Conversations reader pane's
+buttons/input/message post (``show_library_conversation_reader_read``/``_info``,
+``find_in_library_conversation``, ``library_conversation_reader_messages_synced``,
+``retry_library_conversation_reader``). ``LibraryScreen`` keeps one-line delegators
+under every one of those original names, since each is reached from outside this cluster
+(``@on`` dispatch, or another conversations method not part of this move).
 
 Note: the ``@on(...)`` decorators kept on this controller's own five copies
 are inert here -- Textual dispatches ``@on`` handlers against the mounted
@@ -25,20 +22,17 @@ this controller's method directly by name. The decorator survives the move
 only because the byte-for-byte canon (recipe §1) forbids editing a moved
 body, decorator line included.
 
-Three names from the 2026-09-01 brief snapshot are deliberately EXCLUDED
-from this cluster: ``_conversation_message_count_label``,
-``_conversation_workspace_label``, ``_conversation_updated_label``. The
-brief described them as "pure helpers only [the reader cluster] calls" --
-true when the brief was written, no longer true by the time this task
-executed (the file churns ~14 commits/day; see the recipe's §6). Their
-only caller at execution time is
-``LibraryScreen._selected_conversation_handoff_payload`` (the "Use in
-Console" handoff-payload builder, ~line 13298) -- a browse/handoff concern,
-not reader, and itself not part of this cluster or this move. Moving them
-would have required either dragging that unrelated method along (out of
-scope) or adding a delegator hop the recipe does not call for when the only
-caller is a non-cluster, non-reader method with no other use. Left in
-place on the screen.
+Three names from the 2026-09-01 brief snapshot are deliberately EXCLUDED from this
+cluster: ``_conversation_message_count_label``, ``_conversation_workspace_label``,
+``_conversation_updated_label``. The brief described them as "pure helpers only [the
+reader cluster] calls" -- true when the brief was written, no longer true by the time
+this task executed (the file churns ~14 commits/day; see the recipe's §6). Their only
+caller at execution time is ``LibraryScreen._selected_conversation_handoff_payload``
+(the "Use in Console" handoff-payload builder, ~line 13298) -- a browse/handoff concern,
+not reader, and itself not part of this cluster or this move. Moving them would have
+required either dragging that unrelated method along (out of scope) or adding a
+delegator hop the recipe does not call for when the only caller is a non-cluster,
+non-reader method with no other use. Left in place on the screen.
 
 Two binding kinds only (moved method bodies are never edited -- every name
 they reference that is not this controller's own state is rebound under
@@ -53,33 +47,29 @@ example this constructor's shape mirrors):
    every access -- never snapshotted, so a test that monkeypatches one on
    the screen instance after construction still reaches the patch.
 2. **Everything else** the cluster depends on that is not its own state is
-   a NAMED constructor dependency -- a callable the screen builds to close
-   over its own attribute lookup at CALL time, not at construction time.
-   Two flavors appear here: general screen/browse-cluster helpers the
-   reader bodies call with ``()`` (``_build_library_conversations_state``,
-   ``_library_adaptive_reader_allocation_is_current``,
-   ``_run_library_service_call``, ``_conversation_records``,
-   ``_conversation_record_id``), and shared shell/other-subsystem STATE the
-   reader bodies read as a bare attribute (``_library_loaded``,
-   ``_library_lookup_error``, ``_library_notes_focus_intent_generation`` --
-   Notes-subsystem, not Conversations -- ``_library_selected_row_id`` --
-   the recipe's own canonical ≥2-subsystems example -- and
-   ``_selected_conversation_id``, a per-source "currently selected" field
-   shared with ``_media_state.selected_media_id``/
-   ``_notes_state.selected_note_id`` in the save/restore plumbing, never
-   exclusively Conversations' despite its name). Every one of the latter
-   group is read-only inside this cluster -- confirmed by checking each
-   assignment site in ``library_screen.py`` falls outside the 21 moved
-   method bodies -- so each surfaces here as a read-only property that
-   calls its accessor and returns the value, matching
-   ``ConsoleDictationController``'s ``_console_undo_histories`` pattern for
-   a bare-attribute dependency.
+   a NAMED constructor dependency -- a callable the screen builds to close over its own
+   attribute lookup at CALL time, not at construction time. Two flavors appear here:
+   general screen/browse-cluster helpers the reader bodies call with ``()``
+   (``_build_library_conversations_state``,
+   ``_library_adaptive_reader_allocation_is_current``, ``_run_library_service_call``,
+   ``_conversation_records``, ``_conversation_record_id``), and shared
+   shell/other-subsystem STATE the reader bodies read as a bare attribute
+   (``_library_loaded``, ``_library_lookup_error``,
+   ``_library_notes_focus_intent_generation`` -- Notes-subsystem, not Conversations --
+   ``_library_selected_row_id`` -- the recipe's own canonical ≥2-subsystems example --
+   and ``_selected_conversation_id``, a per-source "currently selected" field shared
+   with ``_media_state.selected_media_id``/ ``_notes_state.selected_note_id`` in the
+   save/restore plumbing, never exclusively Conversations' despite its name). Every one
+   of the latter group is read-only inside this cluster -- confirmed by checking each
+   assignment site in ``library_screen.py`` falls outside the 21 moved method bodies --
+   so each surfaces here as a read-only property that calls its accessor and returns the
+   value, matching ``ConsoleDictationController``'s ``_console_undo_histories`` pattern
+   for a bare-attribute dependency.
 
 This subsystem's OWN state (every ``_library_conversation*`` /
-``_library_conversations_*`` name the moved bodies reference) is exposed
-through generated properties reading
-``self._conversations_state_accessor().<field>`` -- the same generator
-shape Task 6 installed on ``LibraryScreen`` itself, applied here to the
+``_library_conversations_*`` name the moved bodies reference) is exposed through
+generated properties reading ``self._conversations_state_accessor().<field>`` -- the
+same generator shape Task 6 installed on ``LibraryScreen`` itself, applied here to the
 controller instead.
 """
 
@@ -157,14 +147,13 @@ class LibraryConversationReaderController:
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
-        Every one of the 21 method bodies below is a byte-for-byte copy of
-        the pre-extraction ``LibraryScreen`` method: no internal line was
-        edited to retarget a call or an attribute. That is possible because
-        this constructor binds every name those bodies reference that is
-        not this controller's own state, under the SAME name the original
-        method used. See the module docstring for the two binding kinds
-        this follows (mirroring ``ConsoleDictationController.__init__``,
-        the canonical worked example).
+        Every one of the 21 method bodies below is a byte-for-byte copy of the
+        pre-extraction ``LibraryScreen`` method: no internal line was edited to retarget
+        a call or an attribute. That is possible because this constructor binds every
+        name those bodies reference that is not this controller's own state, under the
+        SAME name the original method used. See the module docstring for the two binding
+        kinds this follows (mirroring ``ConsoleDictationController.__init__``, the
+        canonical worked example).
 
         Args:
             screen: The Library screen. Used ONLY for the three framework
@@ -197,31 +186,27 @@ class LibraryConversationReaderController:
                 -- the general record-id resolver shared across the whole
                 Conversations subsystem, not reader-specific.
             library_loaded_accessor: Reads ``LibraryScreen._library_loaded``
-                -- whether the shared local-source lookup has completed at
-                least once. Shell-wide, not Conversations-owned; read-only
-                here (``_sync_library_conversation_reader``'s loading-status
-                copy).
+                -- whether the shared local-source lookup has completed at least once.
+                Shell-wide, not Conversations-owned; read-only here
+                (``_sync_library_conversation_reader``'s loading-status copy).
             library_lookup_error_accessor: Reads ``LibraryScreen.
                 _library_lookup_error`` -- the shared local-source lookup's
                 last error copy, same shell-wide scope and read-only use as
                 ``library_loaded_accessor`` immediately above.
             notes_focus_intent_generation_accessor: Reads ``LibraryScreen.
-                _notes_state.focus_intent_generation`` -- the Notes
-                subsystem's find/focus-intent generation counter, reused by
-                Conversations' own deferred-Find-focus fence
-                (``_finish_library_conversation_find_focus``,
+                _notes_state.focus_intent_generation`` -- the Notes subsystem's
+                find/focus-intent generation counter, reused by Conversations' own
+                deferred-Find-focus fence (``_finish_library_conversation_find_focus``,
                 ``find_in_library_conversation``). Read-only here.
             selected_row_id_accessor: Reads ``LibraryScreen.
-                _library_selected_row_id`` -- the recipe's own canonical
-                ≥2-subsystems shared field (226 refs at the time of
-                writing). Read-only here: every write site in
-                ``library_screen.py`` falls outside this cluster's 21
+                _library_selected_row_id`` -- the recipe's own canonical ≥2-subsystems
+                shared field (226 refs at the time of writing). Read-only here: every
+                write site in ``library_screen.py`` falls outside this cluster's 21
                 methods.
             library_conversation_workspace_block: ``LibraryScreen.
-                _library_conversation_workspace_block`` -- ``(reason,
-                link_resolves_it, detail)`` for the open conversation's
-                workspace refusal, or ``("", False, "")`` when it can be
-                staged (task-32056).
+                _library_conversation_workspace_block`` -- ``(reason, link_resolves_it,
+                detail)`` for the open conversation's workspace refusal, or ``("",
+                False, "")`` when it can be staged (task-32056).
             visible_link_receipt: Projects the retained link receipt into
                 its owning active workspace, or returns an empty string.
             selected_conversation_id_accessor: Reads ``LibraryScreen.
@@ -933,17 +918,16 @@ class LibraryConversationReaderController:
         self._retry_library_conversation_reader()
 
 
-# --- BEGIN generated conversations-state shims ---
-# Permanent, not a cleanup-PR deletion target: the conversations cleanup PR
-# landed (shims and dead delegators removed on `LibraryScreen`) and
-# deliberately KEPT this block. Deleting it would mean editing this
-# controller's own moved-method bodies to read `self._conversations_state.*`
-# directly, which the byte-for-byte canon (recipe §1,
-# `backlog/docs/library-decomposition-recipe.md`) forbids -- moved bodies
-# are never edited, so the attribute names they already use have to keep
-# resolving through *something*. This block is that something, and it stays
-# byte-for-byte-canon-permanent until a phase-C rewrite of this cluster
-# (see the design doc's Phase C) actually rewrites the bodies.
+# --- BEGIN generated conversations-state shims --- Permanent, not a cleanup-PR deletion
+# target: the conversations cleanup PR landed (shims and dead delegators removed on
+# `LibraryScreen`) and deliberately KEPT this block. Deleting it would mean editing this
+# controller's own moved-method bodies to read `self._conversations_state.*` directly,
+# which the byte-for-byte canon (recipe §1,
+# `backlog/docs/library-decomposition-recipe.md`) forbids -- moved bodies are never
+# edited, so the attribute names they already use have to keep resolving through
+# *something*. This block is that something, and it stays byte-for-byte-canon-permanent
+# until a phase-C rewrite of this cluster (see the design doc's Phase C) actually
+# rewrites the bodies.
 #
 # task 7: exposes every `LibraryConversationsState` field under its original
 # `_library_conversation*`/`_library_conversations_*` name on THIS controller

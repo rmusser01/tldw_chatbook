@@ -39,10 +39,9 @@ ARTIFACT_READER_PROFILE = AdaptiveReaderLayoutProfile(
 class DemoConsent:
     """What the Reports empty-state consent block shows (TASK-34000.23).
 
-    `lines` is the shared consequence copy (`daily_report_demo_consequences`)
-    or the no-provider sentence; `existing` selects the reuse wording for the
-    run button; `available` is False when no provider resolves, which
-    disables the run button with `lines[0]` as its reason.
+    `lines` is the shared consequence copy (`daily_report_demo_consequences`) or the no-provider sentence;
+    `existing` selects the reuse wording for the run button; `available` is False when no provider resolves,
+    which disables the run button with `lines[0]` as its reason.
     """
 
     lines: tuple[str, ...]
@@ -291,20 +290,17 @@ class LibraryArtifactsController:
 
     @property
     def empty_actions_visible(self) -> bool:
-        """Whether the Reports empty-state actions (Watchlists, "Set up a
-        daily brief…") are offered (TASK-34000.23).
+        """Whether the Reports empty-state actions (Watchlists, "Set up a daily brief…") are offered
+        (TASK-34000.23).
 
-        True for an unfiltered, loaded Reports page with no rows, and --
-        review 1 #2 (mirrors `ArtifactsScreen._latest_report_failed`) -- for
-        one whose newest row is a `failed` first run: that run leaves a row,
-        so the page is no longer empty, yet the failure toast says "run the
-        demo again" and no other surface offers it. Newest-first at the top
-        of the default page means `items[0]` IS the newest run.
+        True for an unfiltered, loaded Reports page with no rows, and -- review 1 #2 (mirrors
+        `ArtifactsScreen._latest_report_failed`) -- for one whose newest row is a `failed` first run: that run
+        leaves a row, so the page is no longer empty, yet the failure toast says "run the demo again" and no
+        other surface offers it. Newest-first at the top of the default page means `items[0]` IS the newest run.
 
-        One predicate for both panes (final review 2026-10-20, F4): the items
-        pane shows the actions on it and the work pane hides its own standing
-        "Watchlists" button while they are visible, so the empty state never
-        paints that control twice.
+        One predicate for both panes (final review 2026-10-20, F4): the items pane shows the actions on it and
+        the work pane hides its own standing "Watchlists" button while they are visible, so the empty state
+        never paints that control twice.
         """
         page = self.page
         if self.loading or self.error or not page:
@@ -776,12 +772,10 @@ class LibraryArtifactsController:
     def open_demo_consent(self) -> None:
         """Show what the demo will create and bill; write and fetch nothing.
 
-        The pair comes from `resolve_persisted_briefing_defaults`, the same
-        call-time disk read the brief itself spends through, so the copy
-        names the provider · model that will actually be billed. A schedule
-        already on disk switches to the reuse wording (the service never
-        re-seeds, ADR-323 §2). No provider -- or an unreadable config --
-        leaves the run button disabled with the reason as its tooltip.
+        The pair comes from `resolve_persisted_briefing_defaults`, the same call-time disk read the brief itself
+        spends through, so the copy names the provider · model that will actually be billed. A schedule already
+        on disk switches to the reuse wording (the service never re-seeds, ADR-323 §2). No provider -- or an
+        unreadable config -- leaves the run button disabled with the reason as its tooltip.
         """
         from ...Subscriptions.briefing_service import (
             resolve_persisted_briefing_defaults,

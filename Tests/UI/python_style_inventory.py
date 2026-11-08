@@ -43,6 +43,11 @@ def inventory_styles(source: str) -> list[StyleWrite]:
     on an unresolved expression remains a reviewable claim about runtime data.
     """
     tree = ast.parse(source)
+    if not any(
+        isinstance(node, ast.Attribute) and node.attr in {"styles", "set_styles"}
+        for node in ast.walk(tree)
+    ):
+        return []
     parents = {
         child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
     }

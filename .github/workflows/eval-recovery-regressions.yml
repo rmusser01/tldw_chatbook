@@ -108,6 +108,7 @@ jobs:
           Tests/Backup_Recovery/test_eval_selective_retention.py
           Tests/Backup_Recovery/test_eval_rollback_retention.py
           Tests/Backup_Recovery/test_eval_later_snapshot.py
+          Tests/RAG_Search/test_keyword_leg_db_resolution.py::test_failed_last_user_close_retains_pool_for_maintenance
           -q --timeout=180 --junitxml=${{ runner.temp }}/eval-recovery.xml
       - uses: actions/upload-artifact@v4
         if: always()

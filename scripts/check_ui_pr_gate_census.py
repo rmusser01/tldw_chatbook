@@ -1003,6 +1003,8 @@ MINIMUM_FILES = 2034
 # Retain the post-attach native-read responsiveness case.
 # PR #3345: retain every relocated MCP workbench selector.
 MINIMUM_FILES = 2198
+# PR #3345: include both complete UI regression files.
+MINIMUM_FILES = 2200
 
 
 def read_census(path: Path) -> list[str]:

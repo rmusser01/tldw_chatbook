@@ -151,10 +151,11 @@ def _stock_default_probe(bridge: object) -> bool:
         database,
         AgentRuns_DB.AgentRunsDB,
         AgentRuns_DB._RUN_LOG_PROBE_SOURCE,
-        ("_thread_local",),
+        ("_thread_local", "_execution_owner", "_read_only"),
     ) or (
         vars(database).get("is_memory_db") is not False
         or type(vars(database).get("_thread_local")) is not _local
+        or AgentRuns_DB._stock_execution_owner(database) is None
     ):
         return False
     registry = workspace_file_roots._default_registry_instance

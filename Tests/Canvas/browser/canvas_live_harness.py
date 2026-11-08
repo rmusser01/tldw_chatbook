@@ -1148,7 +1148,7 @@ async def _login_live_page(page, *, origin: str, access_token: str) -> None:
 
 
 async def _wait_for_initial_console_ready(page, *, timeout_ms=45_000) -> None:
-    """Wait for both initial Console signals within one shared deadline."""
+    """Wait for painted Console and input admission within one shared deadline."""
 
     deadline = monotonic() + timeout_ms / 1_000
 
@@ -1176,6 +1176,15 @@ async def _wait_for_initial_console_ready(page, *, timeout_ms=45_000) -> None:
         )
     except AssertionError as error:
         error.add_note("initial Console readiness stage: terminal Composer")
+        raise
+
+    input_timeout = remaining_ms("terminal input")
+    try:
+        await expect(page.locator("#terminal")).to_have_attribute(
+            "aria-busy", "false", timeout=input_timeout
+        )
+    except AssertionError as error:
+        error.add_note("initial Console readiness stage: terminal input")
         raise
 
 

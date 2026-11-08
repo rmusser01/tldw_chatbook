@@ -26021,3 +26021,16 @@ recovery. An in-memory substitute was invalid across worker threads. Final561
 reuses the existing native DB harness, completes the actual startup audit before
 installing live fake rows, and passes all original lifecycle/notification
 assertions. Do not clear a refusal flag to make a UI fixture look ready.
+
+
+## A future native read must join the owner's live retirement set (PR #3345, 2026-11-08)
+
+**Incident.** A Console context-presentation read opened a native handle after the runtime/controller had copied its observed-handle set. Meaningful held-read controls720 reproduced the same strict native-preparation close refusal, missing runtime observation, and reads admitted after the actual close fence. The repair registers that exact finite handle in both existing observer sets and checks disposal, shutdown, session-close and runtime-binding fences. All four native controls passed in721; the complete original response-rule E2E file724 passed all five cases. The callback responsible for the earlier717 failure was not captured, so these results do not identify it.
+
+**What to do.** Exercise a read opened after the earlier observation snapshot, hold the actual native read, close through the real owner, and verify physical retirement. A snapshot of already-open handles cannot prove ownership of future reads. Preserve strict close failures; do not make finalization tolerate an unowned handle.
+
+## First output and painted text do not prove a served terminal accepts input (PR #3345, 2026-11-08)
+
+**Incident.** Original whole browser760 passed13 cases and failed two original5s focus acknowledgements. The helper waited for first output and Composer but ignored the served shell's separately published matching-generation input-ready flag. Diagnostic764 captured the native begin/repaint/ready exchange, but did not capture browser keypress emission, so the exact historical key timing remains unknown. Regression766 produced five intended failures and four original negative/cancellation passes against the old helper. The helper now waits for aria-busy=false using the same remaining45s budget; all nine readiness cases passed in767. Three connected shell tests failed only because their bare __new__ fixture omitted the native attachment registry; adding that one constructor field made all three pass in771 without changing their assertions or native shutdown. Fresh original whole browser768 then passed all15 cases.
+
+**What to do.** Wait for the existing input-admission signal inside the original shared deadline before sending keys. Prove pending readiness, exhausted remaining budget, exact error identity and cancellation. Keep the production input fence; do not replay input that the terminal correctly refused. When a bare fixture skips construction, initialize the native state required by the shutdown it still exercises.
