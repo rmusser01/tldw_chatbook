@@ -41,12 +41,13 @@ def test_play_does_not_raise_unbound_local_error_on_a_non_darwin_afplay_path(
     tmp_path,
     monkeypatch,
 ):
-    """Deterministic regardless of the host OS this test actually runs on:
-    forces the player instance into a non-Darwin/afplay shape directly
-    (bypassing `_find_player()`'s real OS/binary detection, which would
-    otherwise need a real mpv/aplay/etc. binary present) and fakes
-    `subprocess.Popen` so no real player process is spawned.
-    """
+    """Exercise the real Linux/WAV selector without a host-installed player."""
+    # Playback re-probes availability for the artifact's format.
+    monkeypatch.setattr(
+        audio_player.shutil,
+        "which",
+        lambda name: "/test/aplay" if name == "aplay" else None,
+    )
     player = SimpleAudioPlayer()
     player._system = "Linux"
     player._player_name = "aplay"
@@ -58,19 +59,23 @@ def test_play_does_not_raise_unbound_local_error_on_a_non_darwin_afplay_path(
 
     fake_process = MagicMock()
     fake_process.poll.return_value = None
-    monkeypatch.setattr(
-        "tldw_chatbook.TTS.audio_player.subprocess.Popen",
-        lambda *args, **kwargs: fake_process,
-    )
+    fake_process.wait.return_value = 0
+    popen = MagicMock(return_value=fake_process)
+    monkeypatch.setattr(audio_player.subprocess, "Popen", popen)
 
-    started = player.play(audio_file)
+    try:
+        started = player.play(audio_file)
 
-    assert started is True, (
-        "a non-Darwin/afplay path must not raise UnboundLocalError on "
-        "time.time() -- see the module-level vs. function-local `import "
-        "time` collision this pins (task-4 review N1)"
-    )
-    assert player.get_current_file() == audio_file
+        assert started is True, (
+            "a non-Darwin/afplay path must not raise UnboundLocalError on "
+            "time.time() -- see the module-level vs. function-local `import "
+            "time` collision this pins (task-4 review N1)"
+        )
+        assert player.get_current_file() == audio_file
+        popen.assert_called_once()
+        assert popen.call_args.args[0] == ["aplay", "-q", str(audio_file)]
+    finally:
+        player.cleanup()
 
 
 def test_macos_opus_uses_a_compatible_player(tmp_path, monkeypatch):
