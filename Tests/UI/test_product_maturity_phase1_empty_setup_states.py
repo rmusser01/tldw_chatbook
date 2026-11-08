@@ -11,6 +11,7 @@ import pytest
 from textual.widgets import Button, Input, Static
 
 from Tests.app_module_patches import patch_app_global
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     RaisingLibraryNotesScopeService,
@@ -77,26 +78,13 @@ def _test_cli_setting(section: str, key: str, default=None):
     return default
 
 
-def _prepare_clean_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    for env_var, path_name in (
-        ("HOME", "home"),
-        ("XDG_CONFIG_HOME", "xdg-config"),
-        ("XDG_DATA_HOME", "xdg-data"),
-        ("XDG_CACHE_HOME", "xdg-cache"),
-    ):
-        path = tmp_path / path_name
-        path.mkdir(parents=True, exist_ok=True)
-        monkeypatch.setenv(env_var, str(path))
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(
+def _build_clean_setup_state_app(request):
+    from Tests.UI.test_settings_configuration_hub import _seed_active_config
+
+    _seed_active_config(
+        request,
         '[chat_defaults]\nprovider = "OpenAI"\nmodel = "gpt-4o"\n',
-        encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-
-
-def _build_clean_setup_state_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    _prepare_clean_environment(monkeypatch, tmp_path)
     app = _build_test_app()
     app.app_config["_first_run"] = True
     app._initial_tab_value = "chat"
@@ -135,11 +123,9 @@ async def _wait_until(
 
 
 @pytest.mark.asyncio
-async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    app = _build_clean_setup_state_app(monkeypatch, tmp_path)
+@private_profile_test
+async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(request) -> None:
+    app = _build_clean_setup_state_app(request)
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
