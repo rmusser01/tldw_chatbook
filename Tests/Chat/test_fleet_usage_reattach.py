@@ -24,14 +24,12 @@ Console screen), never on the child's thread; with no loop ever captured
 
 Durability contract under test: ``set_message_usage`` on an already-
 terminal message flushes ``usage_json`` through the persistence adapter's
-version-neutral write, and that chain still lands AFTER
-``controller.shutdown()`` (the ``ChatScreen.on_unmount`` sequence) because
-nothing in teardown closes the ChaChaNotes DB or the app loop -- Task 1
-A2/A5 established the child thread and its DB writes survive teardown; this
-file proves the usage flush does too. What nothing can recover: spend not
-yet folded when the PROCESS exits -- it is durable nowhere (``agent_runs``
-rows carry no token data), which is why there is deliberately NO
-mount-time usage reconcile.
+version-neutral write. The current ``ChatScreen.on_unmount`` detaches its
+view while the controller, ChaChaNotes DB and app loop remain live. The
+durable test exercises that exact detach and reads the fold through a fresh
+handle. Permanent controller shutdown refuses late events. Spend still not
+folded at process exit cannot be recovered at mount; agent run rows carry
+no token data.
 """
 
 from __future__ import annotations
@@ -63,6 +61,7 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderStreamSignals
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.thinking_blocks import (
     DisplayableThinkingBlock,
@@ -232,13 +231,14 @@ async def test_survivor_spend_folds_into_the_message_row_when_the_last_child_set
 async def test_the_fold_lands_durably_when_the_child_settles_after_console_teardown(
     tmp_path,
 ):
-    """15667 AC#3, the hard half: the user closes Console (the exact
-    ``on_unmount`` sequence: ``busy_fleet_session_count`` then
-    ``shutdown()``) while a survivor is still running; the child settles
-    afterwards and the fold still lands in the persisted conversation --
-    read back through a FRESH DB handle, not the old store's memory."""
+    """15667 AC#3: a survivor settles after the Console view detaches.
+
+    The app-owned runtime retains the original controller and store.
+    Read the resulting usage through a fresh handle on the same SQLite file.
+    """
     db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
     runs_db = None
+    runtime = None
     try:
         store = ConsoleChatStore(persistence=ChatPersistenceService(db))
         session = store.ensure_session()
@@ -269,6 +269,13 @@ async def test_the_fold_lands_durably_when_the_child_settles_after_console_teard
         controller = ConsoleChatController(
             store=store, provider_gateway=object(), agent_bridge=bridge
         )
+        runtime = ConsoleRuntime(app=None)
+        runtime.set_chat_store(store)
+        runtime.set_chat_controller(controller)
+        runtime.set_agent_bridge(bridge)
+        view = SimpleNamespace()
+        generation = runtime.attach_view(view)
+        assert generation is not None
         resolution = _test_resolution(
             provider="openai",
             model="gpt-4o",
@@ -295,12 +302,13 @@ async def test_the_fold_lands_durably_when_the_child_settles_after_console_teard
                 "precondition: the turn's terminal mark persisted the reply"
             )
 
-            # The exact ChatScreen.on_unmount sequence, controller level
-            # (Task 1's harness): snapshot the count, then shut down.
             assert controller.busy_fleet_session_count() == 1
-            await controller.shutdown()
+            assert runtime.detach_view(view, generation)
+            assert runtime.view is None
+            assert runtime.chat_controller is controller
+            assert runtime.chat_store is store
 
-            # The screen is gone. The survivor bills one more call.
+            # The view is detached. The survivor bills one more call.
             signals.record_usage_payload({"prompt_tokens": 40, "completion_tokens": 5})
             signals.close_usage_call()
         finally:
@@ -327,6 +335,8 @@ async def test_the_fold_lands_durably_when_the_child_settles_after_console_teard
         finally:
             fresh.close()
     finally:
+        if runtime is not None:
+            await runtime.dispose()
         if runs_db is not None:
             runs_db.close()
         db.close()
