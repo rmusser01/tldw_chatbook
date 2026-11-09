@@ -14,7 +14,7 @@ references:
 - backlog/decisions/236-served-desktop-approval-relay.md
 - tldw_chatbook/Chat/console_remote_rounds.py
 - tldw_chatbook/Web_Server/static/mobile/app.js
-updated_date: 2026-11-09 18:10
+updated_date: 2026-11-09 18:14
 ---
 
 ## Description
@@ -90,7 +90,7 @@ UI5’s native resume overlapped the first attempt, but both attempts returned w
 
 Two supplemental runs retain their mixed results. Eight unmounted Settings doubles lacked a Textual node tree, and a mode-bar double lacked a content field. Those exact unchanged cases are outside the PR gate roster. The native busy open, move, and cancel cases passed. All 207 size and globals cases, the diagnostic inventory, 34 boot checks, all 15 original browser cases, and the original mounted journey passed on this source. Hosted qualification remains pending on the new commit.
 
-On 35fcbaf, UI3 and UI5 passed all original cases with the four replay controls. UI23 found the Notifications table already attached while Mark read’s nested toolbar was still mounting. A real held toolbar mount reproduced the same first lookup failure. Both the original and selected replacement buttons now use one existing 15-second activation budget, and the fixture presses the replacement without yielding after its final readiness check. The same native control and all 12 original Notifications cases passed, including both overlapping mutations and their native commit-to-refresh assertions. Runtime, original browser and mounted UAT consumers are byte-identical to 35fcbaf, so those actual software UAT results carry through. The hosted callback ordering remains unobserved, and the new commit must earn its own hosted qualification.
+On 35fcbaf, UI3 and UI5 passed all original cases with the four replay controls. UI23 found the Notifications table attached but could not find Mark read’s nested toolbar control before the first action. A real held toolbar mount reproduced the same first lookup failure. Both the original and selected replacement buttons now use one existing 15-second activation budget, and the fixture presses the replacement without yielding after its final readiness check. The same native control and all 12 original Notifications cases passed, including both overlapping mutations and their native commit-to-refresh assertions. Runtime, original browser and mounted UAT consumers are byte-identical to 35fcbaf, so those actual software UAT results carry through. The hosted callback ordering remains unobserved, and the new commit must earn its own hosted qualification.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
