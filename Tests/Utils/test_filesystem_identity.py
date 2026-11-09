@@ -48,12 +48,6 @@ def test_capture_directory_chain_rejects_symlink_at_canonical_locator(
     canonical = root.resolve()
     real_lstat = identity_module.os.lstat
 
-    monkeypatch.setattr(
-        identity_module.Path,
-        "resolve",
-        lambda self, strict=True: canonical,
-    )
-
     def symlinked_locator(path: Path | str):
         value = real_lstat(path)
         if Path(path) == canonical:
@@ -61,10 +55,11 @@ def test_capture_directory_chain_rejects_symlink_at_canonical_locator(
                 st_dev=value.st_dev,
                 st_ino=value.st_ino,
                 st_mode=stat.S_IFLNK,
+                st_file_attributes=getattr(value, "st_file_attributes", 0),
             )
         return value
 
-    monkeypatch.setattr(identity_module.os, "lstat", symlinked_locator)
+    monkeypatch.setattr(identity_module, "os", SimpleNamespace(lstat=symlinked_locator))
 
     with pytest.raises(DirectoryIdentityError, match="unsafe directory"):
         capture_directory_chain(root)

@@ -12,6 +12,7 @@ import os
 import platform
 import stat
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from loguru import logger
@@ -459,11 +460,11 @@ def test_private_write_bytes_is_owner_only(tmp_path):
 
 def test_fsync_parent_directory_is_a_noop_on_windows(monkeypatch, tmp_path):
     """Windows has no directory fd to fsync; skip, never crash."""
-    monkeypatch.setattr(file_durability.os, "name", "nt")
     opened: list = []
-    monkeypatch.setattr(
-        file_durability.os, "open", lambda *a, **k: opened.append(a) or 0
-    )
+    simulated_os = SimpleNamespace(**vars(file_durability.os))
+    simulated_os.name = "nt"
+    simulated_os.open = lambda *a, **k: opened.append(a) or 0
+    monkeypatch.setattr(file_durability, "os", simulated_os)
 
     file_durability.fsync_parent_directory(tmp_path)
 
