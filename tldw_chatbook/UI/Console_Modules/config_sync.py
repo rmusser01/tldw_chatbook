@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import ExitStack, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass
+from math import ceil, log2
 from threading import get_ident
 from typing import Any
 
@@ -393,7 +394,9 @@ def full_sync_replay_delay(screen: Any) -> bool | float:
     refusals = getattr(screen, "_console_warm_refusals", 0)
     if refusals <= 1 or getattr(screen, "_console_sync_maintenance_paused", False):
         return True
-    return min(RETRY_FIRST_DELAY * 2 ** (refusals - 1), RETRY_MAX_DELAY)
+    cap_exponent = ceil(log2(RETRY_MAX_DELAY / RETRY_FIRST_DELAY))
+    delay = RETRY_FIRST_DELAY * 2 ** min(refusals - 1, cap_exponent)
+    return min(delay, RETRY_MAX_DELAY)
 
 
 def cut_replay_backoff(screen: Any, held: bool) -> None:
