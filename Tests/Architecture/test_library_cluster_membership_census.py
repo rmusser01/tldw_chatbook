@@ -29,6 +29,8 @@ import ast
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 _TESTS_DIR = Path(__file__).resolve().parent
 _PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 
@@ -209,6 +211,7 @@ def _wiring_sets(module_name: str, moved_attr: str, pruned_attr: str):
     return set(getattr(module, moved_attr)), set(getattr(module, pruned_attr))
 
 
+@pytest.mark.bootstrap_profile
 def test_every_cluster_named_screen_method_is_accounted_for() -> None:
     screen_methods = _screen_method_names()
     for cluster, (module_name, moved_attr, pruned_attr, patterns) in _CLUSTERS.items():

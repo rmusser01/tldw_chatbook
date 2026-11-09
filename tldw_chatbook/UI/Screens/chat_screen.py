@@ -3377,6 +3377,7 @@ class ChatScreen(BaseAppScreen):
         session_id: str,
         settings_revision: int,
         _on_transfer_committed: Callable[[], bool] | None = None,
+        _retry_owner_current: Callable[[], bool] | None = None,
     ) -> bool:
         """Transfer the exact retained draft to a restored modal when safe."""
         modal_contract = _conversation_settings_modal_module()
@@ -3401,7 +3402,7 @@ class ChatScreen(BaseAppScreen):
                     store,
                     session_id,
                     settings_revision,
-                )
+                ) and (_retry_owner_current is None or _retry_owner_current())
             except KeyError:
                 return False
 
@@ -3774,12 +3775,35 @@ class ChatScreen(BaseAppScreen):
                 selected_active_session_epoch = store.active_session_epoch()
                 self._session._bind_composer_to_active_session(focus=False)
                 await self._sync_native_console_chat_ui()
-            restored = await self._reopen_suspended_console_settings(
+            reopen = partial(
+                self._reopen_suspended_console_settings,
                 token,
                 session_id=target.session_id,
                 settings_revision=target.settings_revision,
                 _on_transfer_committed=commit_transfer,
             )
+            revision = store.session_settings_revision(target.session_id)
+            session_epoch = store.active_session_epoch()
+            origin = store.capture_console_settings_origin(target.session_id)
+            visit = self._current_console_attach_visit()
+            def retry_owner_current() -> bool:
+                return (
+                    claim is not None
+                    and handoffs.is_current_claim(claim)
+                    and self._pending_conversation_settings_return_target is target
+                    and self._suspended_conversation_settings is snapshot
+                    and self._suspended_conversation_settings_token == token
+                    and self._owns_console_screen_stack()
+                    and visit.can_complete(self._current_console_attach_visit())
+                    and store.active_session_epoch() == session_epoch
+                    and store.capture_console_settings_origin(target.session_id) == origin
+                    and store.session_settings_revision(target.session_id) != revision
+                    and settings_revision_held(self._session, store, target.session_id, revision)
+                )
+
+            restored = await reopen()
+            if not restored and retry_owner_current():
+                restored = await reopen(_retry_owner_current=retry_owner_current)
             if not restored:
                 handoffs.release(claim)
                 await restore_prior_session_if_still_owned()
