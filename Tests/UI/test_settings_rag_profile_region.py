@@ -1475,14 +1475,13 @@ def test_rag_backfill_worker_is_dispatched_as_a_thread_worker():
 
 
 def test_rag_backfill_worker_failure_notifies_and_clears_in_flight_without_raising(
-    monkeypatch, tmp_path, fake_app
+    monkeypatch, fake_app
 ):
     """The thread-worker body must never let an exception escape -- it's
     marshalled back to the UI thread as a notify (via the fake app's
     call_from_thread, invoked inline for this sync-constructed test) and
     the in-flight flag is still cleared, exactly like the pre-fix async
     worker's try/except/finally contract."""
-    _wire_rag_profile_adapter(monkeypatch, tmp_path)
     monkeypatch.setattr(
         settings_screen_module, "semantic_indexing_available", lambda: True
     )
@@ -1496,7 +1495,15 @@ def test_rag_backfill_worker_failure_notifies_and_clears_in_flight_without_raisi
         settings_screen_module, "get_shared_rag_service", lambda: object()
     )
 
-    def _boom(*, media_db, chachanotes_db, rag_service=None, progress_callback=None):
+    def _boom(
+        *,
+        media_db,
+        chachanotes_db,
+        rag_service,
+        progress_callback,
+        reconcile_for_recovery,
+    ):
+        assert reconcile_for_recovery is False
         raise RuntimeError("kaboom")
 
     monkeypatch.setattr(settings_screen_module, "backfill_semantic_index", _boom)
@@ -1523,12 +1530,11 @@ def test_rag_backfill_worker_failure_notifies_and_clears_in_flight_without_raisi
 
 
 def test_rag_backfill_partial_failure_toast_is_plain_language(
-    monkeypatch, tmp_path, fake_app
+    monkeypatch, fake_app
 ):
     """TASK-23108 review round (finding 4): the partial-failure toast used to
     embed raw str(errors[-1]) verbatim -- it now reports counts and points at
     the log, where the engine already records each failure's traceback."""
-    _wire_rag_profile_adapter(monkeypatch, tmp_path)
     monkeypatch.setattr(
         settings_screen_module, "semantic_indexing_available", lambda: True
     )
@@ -1537,8 +1543,14 @@ def test_rag_backfill_partial_failure_toast_is_plain_language(
     )
 
     async def _partial(
-        *, media_db, chachanotes_db, rag_service=None, progress_callback=None
+        *,
+        media_db,
+        chachanotes_db,
+        rag_service,
+        progress_callback,
+        reconcile_for_recovery,
     ):
+        assert reconcile_for_recovery is False
         return {
             "status": "error",
             "indexed": 3,
@@ -1565,7 +1577,7 @@ def test_rag_backfill_partial_failure_toast_is_plain_language(
     assert severity == "error"
     assert "Backfill finished with problems: 3 indexed, 2 failed." in message
     assert "2 error(s) recorded" in message
-    assert "Logs (F8)" in message
+    assert "Logs (F3)" in message
     assert "sk-raw" not in message
     assert "boom two" not in message
 
@@ -1578,9 +1590,8 @@ def test_rag_backfill_partial_failure_toast_is_plain_language(
 
 
 def test_rag_backfill_worker_pre_resolves_the_shared_service_outside_the_loop(
-    monkeypatch, tmp_path, fake_app
+    monkeypatch, fake_app
 ):
-    _wire_rag_profile_adapter(monkeypatch, tmp_path)
     monkeypatch.setattr(
         settings_screen_module, "semantic_indexing_available", lambda: True
     )
@@ -1630,9 +1641,8 @@ def test_rag_backfill_worker_pre_resolves_the_shared_service_outside_the_loop(
 
 
 def test_rag_backfill_worker_guards_against_none_pre_resolved_service(
-    monkeypatch, tmp_path, fake_app
+    monkeypatch, fake_app
 ):
-    _wire_rag_profile_adapter(monkeypatch, tmp_path)
     monkeypatch.setattr(
         settings_screen_module, "semantic_indexing_available", lambda: True
     )

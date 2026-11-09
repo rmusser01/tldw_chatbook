@@ -43,6 +43,7 @@ from tldw_chatbook.Library.library_export_state import (
     format_empty_export_error,
     format_last_export_line,
 )
+from tldw_chatbook.Notes.note_import_parsers import split_frontmatter
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 # Pinned transcript text -- the round-trip assertion below checks this
@@ -231,7 +232,9 @@ def test_library_export_roundtrip_everything_scope_through_real_service_and_impo
             for item in manifest["content_items"]
             if item["type"] == ContentType.NOTE.value
         )
-        assert "tags: meeting, moc" in zf.read(note_path).decode("utf-8")
+        note_metadata, _body = split_frontmatter(zf.read(note_path).decode("utf-8"))
+        assert note_metadata is not None
+        assert note_metadata["tags"] == ["meeting", "moc"]
         conversation_path = next(
             item["file_path"]
             for item in manifest["content_items"]
