@@ -46,6 +46,7 @@ def _identities(screen, selectors) -> dict[str, int]:
     return {selector: id(screen.query_one(selector)) for selector in selectors}
 
 
+@pytest.mark.bootstrap_profile
 async def test_rail_click_leaves_the_chrome_and_the_rail_widget_in_place(
     evals_app, seeded_bench
 ):
@@ -73,6 +74,7 @@ async def test_rail_click_leaves_the_chrome_and_the_rail_widget_in_place(
         assert screen.query_one("#evals-bench-name", Input).value == "loaded-nouns v1"
 
 
+@pytest.mark.bootstrap_profile
 async def test_rail_click_marks_the_selected_row_active_in_place(
     evals_app, seeded_bench
 ):
@@ -93,6 +95,7 @@ async def test_rail_click_marks_the_selected_row_active_in_place(
         assert screen.query_one(LibraryRail).selection.kind == "bench"
 
 
+@pytest.mark.bootstrap_profile
 async def test_rail_click_keeps_focus_on_the_clicked_row(evals_app, seeded_bench):
     """The screen recompose destroyed the button under the user's cursor and
     dropped focus with it; the row survives a scoped swap, so focus stays."""
@@ -107,6 +110,7 @@ async def test_rail_click_keeps_focus_on_the_clicked_row(evals_app, seeded_bench
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_region_swaps_never_destroy_the_frames_collapse_headers(
     evals_app, seeded_bench
 ):
@@ -166,6 +170,7 @@ async def test_region_swaps_never_destroy_the_frames_collapse_headers(
         assert len(screen.query(".console-rail-header")) == 2
 
 
+@pytest.mark.bootstrap_profile
 async def test_rail_rebuild_returns_focus_to_the_row_the_user_was_on(
     evals_app, seeded_bench
 ):
@@ -194,6 +199,7 @@ async def test_rail_rebuild_returns_focus_to_the_row_the_user_was_on(
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_burst_of_selections_leaves_every_region_populated(
     evals_app, seeded_bench
 ):
@@ -228,6 +234,7 @@ async def test_a_burst_of_selections_leaves_every_region_populated(
         assert screen._selection.kind == "none"
 
 
+@pytest.mark.bootstrap_profile
 async def test_rail_initiated_creation_still_refreshes_the_rail(
     evals_app, seeded_bench
 ):
@@ -251,6 +258,7 @@ async def test_rail_initiated_creation_still_refreshes_the_rail(
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_select_rebuilds_the_rail_by_default(evals_app, seeded_bench):
     """A mutation caller (save, finished run, delete) changes the rail's rows,
     so the DEFAULT must still rebuild it -- only the rail-click path opts out."""

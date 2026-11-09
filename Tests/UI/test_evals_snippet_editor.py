@@ -351,6 +351,7 @@ def test_import_snippets_into_dataset_dedups_colliding_ids(evals_db):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_snippet_editor_mounts_with_summary_and_labelled_char_column(
     evals_app, evals_db
@@ -387,6 +388,7 @@ async def test_snippet_editor_mounts_with_summary_and_labelled_char_column(
         assert "token" not in header_text.lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_snippet_table_header_names_the_columns_rows_actually_render(
     evals_app, evals_db
@@ -421,6 +423,7 @@ async def test_snippet_table_header_names_the_columns_rows_actually_render(
         assert meta_text.count("·") == header_text.count("·")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_snippet_editor_heading_renders_a_markup_hazard_dataset_name_literally(
     evals_app, evals_db
@@ -451,6 +454,7 @@ async def test_snippet_editor_heading_renders_a_markup_hazard_dataset_name_liter
         assert heading.visual.plain == "dataset[/]name"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_normal_snippet_renders_no_whitespace_marker(evals_app, evals_db):
     clean = _snip("The protestors were")
@@ -472,6 +476,7 @@ async def test_normal_snippet_renders_no_whitespace_marker(evals_app, evals_db):
         assert "exact dup" not in meta_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_trailing_whitespace_snippet_renders_a_visible_marker(
     evals_app, evals_db
@@ -499,6 +504,7 @@ async def test_trailing_whitespace_snippet_renders_a_visible_marker(
         assert "␣" in meta_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_leading_and_interior_whitespace_are_both_detected_on_screen(
     evals_app, evals_db
@@ -521,6 +527,7 @@ async def test_leading_and_interior_whitespace_are_both_detected_on_screen(
         assert "interior" in _row_meta(screen, 1)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_minimal_pair_snippets_render_with_no_duplicate_warning(
     evals_app, evals_db
@@ -551,6 +558,7 @@ async def test_minimal_pair_snippets_render_with_no_duplicate_warning(
         assert warnings_line == "No warnings", warnings_line
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_exact_duplicate_after_normalization_is_flagged_on_screen(
     evals_app, evals_db
@@ -581,6 +589,7 @@ async def test_exact_duplicate_after_normalization_is_flagged_on_screen(
         assert warnings_line == "2 warnings", warnings_line
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_snippet_table_scrolls_to_reveal_rows_and_import_button_stays_pinned(
     evals_app, evals_db
@@ -638,6 +647,7 @@ async def test_snippet_table_scrolls_to_reveal_rows_and_import_button_stays_pinn
         assert import_button_after.region.y == button_y_before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_empty_dataset_shows_empty_state_and_import_control(evals_app, evals_db):
     dataset_id = _make_dataset(evals_db, "fresh-set", [])
@@ -661,6 +671,7 @@ async def test_empty_dataset_shows_empty_state_and_import_control(evals_app, eva
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dataset_with_duplicate_and_illegal_snippet_ids_renders_without_raising(
     evals_app, evals_db
@@ -724,6 +735,7 @@ async def test_dataset_with_duplicate_and_illegal_snippet_ids_renders_without_ra
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_plain_text_import_assigns_uuids_and_persists_inline(
     evals_app, evals_db, tmp_path
@@ -747,6 +759,7 @@ async def test_plain_text_import_assigns_uuids_and_persists_inline(
     assert stored["metadata"]["sample_count"] == 3
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_csv_import_round_trips_the_group_field(evals_app, evals_db, tmp_path):
     dataset_id = _make_dataset(evals_db, "csv-target", [])
@@ -772,6 +785,7 @@ async def test_csv_import_round_trips_the_group_field(evals_app, evals_db, tmp_p
     assert by_text["no group here"] is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_json_import_round_trips_id_group_and_note(evals_app, evals_db, tmp_path):
     dataset_id = _make_dataset(evals_db, "json-target", [])
@@ -811,6 +825,7 @@ async def test_json_import_round_trips_id_group_and_note(evals_app, evals_db, tm
     assert other["group"] == "loaded"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_json_import_with_illegal_id_does_not_crash_and_dataset_stays_openable(
     evals_app, evals_db, tmp_path
@@ -851,6 +866,7 @@ async def test_json_import_with_illegal_id_does_not_crash_and_dataset_stays_open
     uuid.UUID(samples[0]["id"])  # the illegal id was replaced, not stored verbatim
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_json_import_of_the_same_export_twice_does_not_crash(
     evals_app, evals_db, tmp_path
@@ -897,6 +913,7 @@ async def test_json_import_of_the_same_export_twice_does_not_crash(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_csv_import_without_text_column_notifies_error_and_does_not_persist(
     evals_app, evals_db, tmp_path
@@ -920,6 +937,7 @@ async def test_csv_import_without_text_column_notifies_error_and_does_not_persis
     assert stored["metadata"].get("sample_count", 0) == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_import_notification_names_the_skipped_count_when_entries_are_dropped(
     evals_app, evals_db, tmp_path
@@ -967,6 +985,7 @@ async def test_import_notification_names_the_skipped_count_when_entries_are_drop
     assert stored["metadata"]["sample_count"] == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_import_notification_omits_the_skipped_clause_when_nothing_is_dropped(
     evals_app, evals_db, tmp_path
@@ -997,6 +1016,7 @@ async def test_import_notification_omits_the_skipped_clause_when_nothing_is_drop
     assert "skipped" not in info_messages[0]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_non_utf8_import_file_notifies_error_instead_of_crashing(
     evals_app, evals_db, tmp_path
@@ -1038,6 +1058,7 @@ async def test_non_utf8_import_file_notifies_error_instead_of_crashing(
     assert stored["metadata"].get("sample_count", 0) == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_nonexistent_import_path_notifies_error_instead_of_crashing(
     evals_app, evals_db, tmp_path
@@ -1089,6 +1110,7 @@ async def test_snippet_editor_never_imports_the_runner_or_capture_client():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_evals_screen_dataset_selection_mounts_snippet_editor(
     evals_app, evals_db
@@ -1103,6 +1125,7 @@ async def test_evals_screen_dataset_selection_mounts_snippet_editor(
         assert editor.region.height > 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_missing_dataset_still_shows_the_not_found_message(evals_app, evals_db):
     """Pre-existing behaviour from Task 3 must survive this task's rewrite
@@ -1120,6 +1143,7 @@ async def test_missing_dataset_still_shows_the_not_found_message(evals_app, eval
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_dataset_can_be_renamed_from_its_detail_pane(evals_app, evals_db):
     """task-1484: the detail pane carries a rename affordance
@@ -1154,6 +1178,7 @@ async def test_a_dataset_can_be_renamed_from_its_detail_pane(evals_app, evals_db
         assert str(heading.renderable) == "renamed dataset"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_empty_rename_is_a_warning_not_a_write(evals_app, evals_db):
     """A blank rename must toast and leave the stored name untouched --
@@ -1177,6 +1202,7 @@ async def test_an_empty_rename_is_a_warning_not_a_write(evals_app, evals_db):
         assert severity == "warning"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_colliding_rename_toasts_and_keeps_the_original_name(
     evals_app, evals_db

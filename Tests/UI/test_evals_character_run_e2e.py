@@ -143,6 +143,7 @@ async def _wait_until(
     raise AssertionError("condition never became true")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_estimate_counts_cards_probes_targets_samples_and_turns(
     evals_app, runnable_character_bench
@@ -167,6 +168,7 @@ async def test_the_estimate_counts_cards_probes_targets_samples_and_turns(
         assert str(estimate).startswith("6 calls")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_running_a_character_bench_persists_conversations(
     evals_app, runnable_character_bench, evals_db, succeeding_chat
@@ -207,6 +209,7 @@ async def test_running_a_character_bench_persists_conversations(
         assert run_groups[0]["status"] == "completed"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_failing_provider_leaves_the_rest_of_the_grid_intact(
     evals_app, runnable_character_bench, evals_db, failing_once_chat
@@ -227,6 +230,7 @@ async def test_a_failing_provider_leaves_the_rest_of_the_grid_intact(
         assert any(not c.error and c.turns for c in conversations)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_run_snapshot_records_card_text_and_sampler(
     evals_app, runnable_character_bench, evals_db, succeeding_chat
@@ -250,6 +254,7 @@ async def test_the_run_snapshot_records_card_text_and_sampler(
         assert snapshot["composed_system_prompts"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_bench_with_no_resolvable_target_row_fails_loudly_instead_of_silently(
     evals_app, evals_db, chachanotes_db, succeeding_chat
@@ -305,6 +310,7 @@ async def test_a_bench_with_no_resolvable_target_row_fails_loudly_instead_of_sil
         assert pilot.app.screen._selection.kind == "character_bench"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_worker_names_the_missing_character_database_if_reached_by_any_path(
     evals_db, chachanotes_db, runnable_character_bench, succeeding_chat
@@ -368,6 +374,7 @@ async def test_the_worker_names_the_missing_character_database_if_reached_by_any
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_running_a_character_bench_does_not_yank_a_dirty_editor(
     evals_app, runnable_character_bench, evals_db
@@ -436,6 +443,7 @@ async def test_running_a_character_bench_does_not_yank_a_dirty_editor(
         assert len(load_conversations(evals_db, run_groups[0]["id"])) == 4
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_in_flight_character_bench_run_reads_as_running_not_completed(
     evals_app, runnable_character_bench
@@ -485,6 +493,7 @@ async def test_an_in_flight_character_bench_run_reads_as_running_not_completed(
         await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_hard_cancelled_character_bench_run_does_not_read_as_completed(
     evals_app, runnable_character_bench
@@ -537,6 +546,7 @@ async def test_a_hard_cancelled_character_bench_run_does_not_read_as_completed(
         release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_character_bench_run_that_errors_ordinarily_does_not_read_as_completed(
     evals_app, runnable_character_bench

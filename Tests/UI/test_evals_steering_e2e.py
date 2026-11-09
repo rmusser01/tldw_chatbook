@@ -141,6 +141,7 @@ async def _wait_until(
     raise AssertionError("condition never became true")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_two_ui_authored_targets_one_steered_light_up_column_mode_delta(
     steering_app, evals_db, tmp_path

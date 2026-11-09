@@ -156,6 +156,7 @@ def _assert_continuation_row_renders(screen, index: int) -> None:
     assert continuation.region.height > 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_continuation_captured_persisted_and_rendered_end_to_end(
     continuation_app, evals_db, tmp_path

@@ -986,6 +986,7 @@ def test_render_probe_reading_covers_all_three_states_distinctly():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selecting_a_run_group_mounts_the_results_grid_with_the_right_shape(
     evals_app, mixed_run_group
@@ -999,6 +1000,7 @@ async def test_selecting_a_run_group_mounts_the_results_grid_with_the_right_shap
         assert table.row_count == 3
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_grid_meta_defines_its_own_jargon_via_tooltip(evals_app, mixed_run_group):
     """TASK-1076: the meta line ("<bench> * raw * K 20 * N cells * N
@@ -1016,6 +1018,7 @@ async def test_grid_meta_defines_its_own_jargon_via_tooltip(evals_app, mixed_run
         assert "cells:" in tooltip
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_grid_and_its_selectors_are_genuinely_visible_within_the_detail_pane(
     evals_app, mixed_run_group
@@ -1046,6 +1049,7 @@ async def test_grid_and_its_selectors_are_genuinely_visible_within_the_detail_pa
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_top1_lens_marks_a_near_tie_and_leaves_a_clear_winner_bare(
     evals_app, mixed_run_group
@@ -1068,6 +1072,7 @@ async def test_top1_lens_marks_a_near_tie_and_leaves_a_clear_winner_bare(
         assert '" a"' in clear_cell
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_cell_renders_em_dash_and_its_reason_reaches_the_inspector(
     evals_app, mixed_run_group
@@ -1093,6 +1098,7 @@ async def test_failed_cell_renders_em_dash_and_its_reason_reaches_the_inspector(
         assert "connection refused" in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unrun_cell_renders_blank_never_zero(evals_app, mixed_run_group):
     async with evals_app.run_test(size=(160, 45)) as pilot:
@@ -1139,6 +1145,7 @@ async def _focus_cell(
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_focused_cell_continuation_renders_with_whitespace_markers(
     evals_app, run_group_with_cell_continuations
@@ -1163,6 +1170,7 @@ async def test_focused_cell_continuation_renders_with_whitespace_markers(
         assert "scaffolding" in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_focused_cell_continuation_with_a_markup_hazard_renders_literally(
     evals_app, run_group_with_cell_continuations
@@ -1183,6 +1191,7 @@ async def test_focused_cell_continuation_with_a_markup_hazard_renders_literally(
         assert "[/]bold-looking output" in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_focused_cell_continuation_with_a_newline_stays_single_line(
     evals_app, run_group_with_cell_continuations
@@ -1199,6 +1208,7 @@ async def test_focused_cell_continuation_with_a_newline_stays_single_line(
         assert "⏎" in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_focused_cell_continuation_longer_than_the_preview_cap_is_truncated(
     evals_app, run_group_with_cell_continuations
@@ -1220,6 +1230,7 @@ async def test_focused_cell_continuation_longer_than_the_preview_cap_is_truncate
         assert text == expected
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_focused_cell_with_no_continuation_renders_nothing_extra_but_still_renders_the_cell(
     evals_app, run_group_with_cell_continuations
@@ -1248,6 +1259,7 @@ async def test_focused_cell_with_no_continuation_renders_nothing_extra_but_still
         assert body.region.height > 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_focused_cell_continuation_widget_clears_when_moving_to_a_cell_without_one(
     evals_app, run_group_with_cell_continuations
@@ -1273,6 +1285,7 @@ async def test_focused_cell_continuation_widget_clears_when_moving_to_a_cell_wit
         assert str(continuation.renderable) == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(235, 52), (160, 45)], ids=["235x52", "160x45"])
 async def test_focused_cell_and_primary_action_paint_inside_the_inspector_viewport(
@@ -1328,6 +1341,7 @@ async def test_focused_cell_and_primary_action_paint_inside_the_inspector_viewpo
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_grid_content_survives_datatable_rendering_without_bracket_corruption(
     evals_app, mixed_run_group
@@ -1366,6 +1380,7 @@ async def test_grid_content_survives_datatable_rendering_without_bracket_corrupt
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_baseline_selector_options_survive_markup_special_characters_in_snippet_text(
     evals_app, markup_hazard_run_group
@@ -1396,6 +1411,7 @@ async def test_baseline_selector_options_survive_markup_special_characters_in_sn
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_warned_column_header_carries_the_warning_the_clean_one_does_not(
     evals_app, mixed_run_group
@@ -1455,6 +1471,7 @@ def _header_row_text(app: App, table: DataTable) -> str:
     return line[x_start:x_end]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_focused_results_grid_keeps_its_header_and_the_warned_marker(
     evals_app, mixed_run_group
@@ -1533,6 +1550,7 @@ async def test_focused_results_grid_keeps_its_header_and_the_warned_marker(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_degenerate_canary_callout_names_the_target_and_states_the_consequence(
     evals_app, mixed_run_group
@@ -1570,6 +1588,7 @@ async def test_degenerate_canary_callout_names_the_target_and_states_the_consequ
         assert callout.region.height > 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_degenerate_canary_callout_absent_when_nothing_is_warned(
     evals_app, clean_run_group
@@ -1583,6 +1602,7 @@ async def test_degenerate_canary_callout_absent_when_nothing_is_warned(
         assert not grid.query(".ds-recovery-callout")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_degenerate_canary_callout_names_every_warned_target_when_several(
     evals_app, multi_warned_run_group
@@ -1604,6 +1624,7 @@ async def test_degenerate_canary_callout_names_every_warned_target_when_several(
         assert degenerate_canary_text(["steered", "distilled"]) == text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_degenerate_canary_callout_survives_a_target_name_containing_markup(
     evals_app, warned_markup_hazard_run_group
@@ -1631,6 +1652,7 @@ async def test_degenerate_canary_callout_survives_a_target_name_containing_marku
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failure_callout_names_the_next_step_when_every_cell_failed(
     evals_app, all_cells_failed_run_group
@@ -1659,6 +1681,7 @@ async def test_failure_callout_names_the_next_step_when_every_cell_failed(
         assert callout.region.height > 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failure_callout_states_the_fact_without_a_next_step_when_partial(
     evals_app, one_of_four_cells_failed_run_group
@@ -1678,6 +1701,7 @@ async def test_failure_callout_states_the_fact_without_a_next_step_when_partial(
         assert "run the bench again" not in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failure_callout_absent_when_nothing_failed(evals_app, clean_run_group):
     """No reserved blank row, no empty container -- the callout must not
@@ -1689,6 +1713,7 @@ async def test_failure_callout_absent_when_nothing_failed(evals_app, clean_run_g
         assert not grid.query("#evals-grid-failure-callout")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failure_callout_dominant_reason_ties_broken_by_first_seen_majority_otherwise_wins(
     evals_app, evals_db
@@ -1753,6 +1778,7 @@ async def test_failure_callout_dominant_reason_ties_broken_by_first_seen_majorit
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_entropy_lens_states_effective_k_and_uses_it_for_every_cell(
     evals_app, k_depth_matched_run_group
@@ -1786,6 +1812,7 @@ async def test_entropy_lens_states_effective_k_and_uses_it_for_every_cell(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delta_lens_never_renders_a_leading_gte(evals_app, clean_run_group):
     async with evals_app.run_test(size=(160, 45)) as pilot:
@@ -1804,6 +1831,7 @@ async def test_delta_lens_never_renders_a_leading_gte(evals_app, clean_run_group
                 )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delta_lens_flags_high_combined_truncation_with_a_bang_marker(
     evals_app, clean_run_group
@@ -1835,6 +1863,7 @@ async def test_delta_lens_flags_high_combined_truncation_with_a_bang_marker(
         assert not s3_text.endswith("!"), s3_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_focused_delta_cell_inspector_explains_the_bang_marker_with_combined_mass(
     evals_app, clean_run_group
@@ -1869,6 +1898,7 @@ async def test_focused_delta_cell_inspector_explains_the_bang_marker_with_combin
         assert "Truncated mass: 34.6%" in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_focused_delta_cell_inspector_says_nothing_extra_when_not_bounded(
     evals_app, clean_run_group
@@ -1895,6 +1925,7 @@ async def test_focused_delta_cell_inspector_says_nothing_extra_when_not_bounded(
         assert "Combined truncated mass" not in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delta_lens_baseline_column_shows_literal_baseline_text_or_blank_if_unrun(
     evals_app, mixed_run_group
@@ -1919,6 +1950,7 @@ async def test_delta_lens_baseline_column_shows_literal_baseline_text_or_blank_i
         assert "column · base" in state
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delta_lens_on_a_single_target_run_explains_itself_instead_of_faking_baseline(
     evals_app, evals_db
@@ -1968,6 +2000,7 @@ async def test_delta_lens_on_a_single_target_run_explains_itself_instead_of_faki
         assert select.value == "delta"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delta_lens_row_baseline_on_a_single_target_still_computes_real_divergence(
     evals_app, evals_db
@@ -2029,6 +2062,7 @@ async def test_delta_lens_row_baseline_on_a_single_target_still_computes_real_di
         assert "row ·" in state
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_baseline_cell_failing_makes_the_whole_comparison_unavailable_not_zero(
     evals_app, mixed_run_group
@@ -2057,6 +2091,7 @@ async def test_baseline_cell_failing_makes_the_whole_comparison_unavailable_not_
         assert str(table.get_cell("s2", base_id)) == FAILED_MARK
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_baseline_key_toggles_column_to_row_and_header_states_it(
     evals_app, mixed_run_group
@@ -2079,6 +2114,7 @@ async def test_baseline_key_toggles_column_to_row_and_header_states_it(
         assert select.value[0] == "row"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_lens_key_cycles_the_selector_through_all_five_lenses(
     evals_app, mixed_run_group
@@ -2099,6 +2135,7 @@ async def test_lens_key_cycles_the_selector_through_all_five_lenses(
         assert seen == ["top1", "entropy", "probe", "coverage", "delta", "top1"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_sort_key_registers_and_reorders_by_spread(evals_app, clean_run_group):
     """Previously only asserted the header text changed and never checked
@@ -2137,6 +2174,7 @@ async def test_sort_key_registers_and_reorders_by_spread(evals_app, clean_run_gr
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ascending_sort_still_puts_undefined_spread_rows_last(
     evals_app, mixed_run_group
@@ -2176,6 +2214,7 @@ async def test_ascending_sort_still_puts_undefined_spread_rows_last(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_grid_autofocuses_its_table_so_shortcuts_work_without_a_manual_focus(
     evals_app, mixed_run_group
@@ -2202,6 +2241,7 @@ async def test_grid_autofocuses_its_table_so_shortcuts_work_without_a_manual_foc
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_grid_shortcuts_register_in_the_footer_including_export(
     evals_app, mixed_run_group
@@ -2221,6 +2261,7 @@ async def test_grid_shortcuts_register_in_the_footer_including_export(
         assert "e" in {b.key for b in ResultsGrid.BINDINGS}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_grid_shortcuts_clear_when_selection_leaves_the_run_group(
     evals_app, mixed_run_group
@@ -2237,6 +2278,7 @@ async def test_grid_shortcuts_clear_when_selection_leaves_the_run_group(
         assert "l lens" not in footer.shortcut_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_arrow_keys_move_focus_and_update_the_inspector_without_a_recompose(
     evals_app, mixed_run_group
@@ -2270,6 +2312,7 @@ async def test_arrow_keys_move_focus_and_update_the_inspector_without_a_recompos
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_probe_lens_renders_an_observed_probe_with_a_percentage(
     evals_app, mixed_run_group
@@ -2297,6 +2340,7 @@ async def test_probe_lens_renders_an_observed_probe_with_a_percentage(
         assert 'Lens: Probe (" a")' in state, state
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_run_group_with_no_snippets_renders_an_empty_state_instead_of_crashing(
     evals_app, empty_run_group
@@ -2326,6 +2370,7 @@ async def test_a_run_group_with_no_snippets_renders_an_empty_state_instead_of_cr
         assert pilot.app.screen.query_one("#evals-results-grid", ResultsGrid) is grid
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unexpected_load_grid_failure_renders_error_state_without_crashing_the_app(
     evals_app, mixed_run_group, monkeypatch
@@ -2389,6 +2434,7 @@ async def test_unexpected_load_grid_failure_renders_error_state_without_crashing
         assert pilot.app.screen.query_one("#evals-results-grid", ResultsGrid) is grid
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_truncation_lens_uses_the_shared_k_the_header_states(
     evals_app, k_depth_matched_run_group
@@ -2435,6 +2481,7 @@ async def test_truncation_lens_uses_the_shared_k_the_header_states(
         assert round(native_rich, 4) != round(native_poor, 4)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_probe_lens_names_the_active_probe_and_lets_the_user_switch_it(
     evals_app, multi_probe_run_group
@@ -2473,6 +2520,7 @@ async def test_probe_lens_names_the_active_probe_and_lets_the_user_switch_it(
         assert str(table.get_cell("s1", base_id)) == f"{math.log(0.2):.2f}  20.0%"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_probe_percentage_follows_the_engines_matched_token_not_a_local_rematch(
     evals_app, mixed_run_group, monkeypatch
@@ -2542,6 +2590,7 @@ def test_resolve_probe_hands_back_the_token_it_matched():
     assert bounded.matched is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_spread_column_only_appears_in_the_delta_lens(evals_app, clean_run_group):
     async with evals_app.run_test(size=(160, 45)) as pilot:
@@ -2558,6 +2607,7 @@ async def test_spread_column_only_appears_in_the_delta_lens(evals_app, clean_run
         assert any("Spread" in label for label in labels_delta)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_group_mean_rows_match_analysis_group_means_over_the_rendered_divergences(
     evals_app, clean_run_group
@@ -2611,6 +2661,7 @@ async def test_group_mean_rows_match_analysis_group_means_over_the_rendered_dive
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_in_flight_run_never_renders_the_all_cells_failed_next_step(
     evals_app, evals_db
@@ -2651,6 +2702,7 @@ async def test_an_in_flight_run_never_renders_the_all_cells_failed_next_step(
         assert "run the bench again" not in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_cancelled_run_states_cancellation_and_the_true_proportions(
     evals_app, evals_db
@@ -2686,6 +2738,7 @@ async def test_a_cancelled_run_states_cancellation_and_the_true_proportions(
         assert "run the bench again" not in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_cancelled_run_with_zero_failures_still_explains_its_partial_grid(
     evals_app, evals_db
@@ -2714,6 +2767,7 @@ async def test_a_cancelled_run_with_zero_failures_still_explains_its_partial_gri
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_completed_all_failed_run_keeps_its_existing_callout(
     evals_app, all_cells_failed_run_group
