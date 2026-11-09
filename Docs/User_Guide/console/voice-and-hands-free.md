@@ -75,6 +75,9 @@ reply and the spoken version must fit the existing 5,000-character speech limit.
 | Thinking | "hands-free · thinking…" | Your message was sent; the reply is being generated |
 | Speaking | "hands-free · speaking" | The reply streams out sentence by sentence |
 
+If Persona Buddy is enabled, it shows Listening once the mic starts recording.
+It shows Thinking and Speaking for the Chat that sent the turn.
+
 - **Turning it on asks first.** Hands-free opens your microphone and
   speaks every reply through the same TTS provider as Speak replies, so it
   shows the same dialog (provider, destination, whether charges may apply)

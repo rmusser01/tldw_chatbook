@@ -128,6 +128,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Audio.speech_presentation import (
         SpeechPresentation,
     )
+    from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 
 # TASK-22504: `console_voice_input` (and its STT-stack closure) is loaded
 # on FIRST VOICE USE, not at module import -- this module rides the Chat
@@ -344,6 +345,8 @@ class ConsoleHandsFreeSession:
     #: points (completion tap, drained tap) evaluate the same condition, so
     #: whichever fires second must not re-notify. Reset per reply.
     escalation_shown_for_reply: bool = False
+    buddy_sink: PersonaBuddyConsoleAdapter | None = None
+    buddy_key: tuple[str, int] | None = None
 
 
 def speculative_voice_qualified() -> bool:
@@ -634,8 +637,13 @@ class ConsoleHandsFreeController:
         self._sync_hands_free_state_fn(active, starting)
 
     def sync_console_hands_free_presentation(self) -> None:
-        """Repaint the header control after a dictation state change."""
+        """Repaint after a dictation state change and reconcile listening."""
         self._sync_hands_free_switch(self.console_hands_free_exit_available())
+        session = self._console_hands_free
+        if isinstance(session, ConsoleHandsFreeSession):
+            state = session.controller.state
+            if state in ("listening", "countdown"):
+                self._sync_console_hands_free_buddy(session, state)
 
     def _run_qualified_console_voice_result(self, result: Any) -> bool:
         """Supervise optional async view cleanup without retaining text."""
@@ -1521,8 +1529,13 @@ class ConsoleHandsFreeController:
             self.app_instance.notify(
                 CONSOLE_HANDS_FREE_DEGRADED_MESSAGE, severity="warning"
             )
+
+        def emit(intent: HandsFreeIntent) -> None:
+            if self._console_hands_free is session:
+                self._handle_console_hands_free_intent(intent)
+
         controller = HandsFreeController(
-            emit=self._handle_console_hands_free_intent,
+            emit=emit,
             send_delay_seconds=handsfree_send_delay_seconds(),
             acoustic_barge_in=acoustic_barge_in_enabled(),
         )
@@ -1530,7 +1543,12 @@ class ConsoleHandsFreeController:
             speak=self._dispatch_console_hands_free_speak,
             stop_speech=self._stop_console_hands_free_speech,
         )
-        session = ConsoleHandsFreeSession(controller=controller, sequencer=sequencer)
+        runtime = getattr(self.app_instance, "console_runtime", None)
+        session = ConsoleHandsFreeSession(
+            controller=controller,
+            sequencer=sequencer,
+            buddy_sink=getattr(runtime, "persona_buddy_sink", None),
+        )
         sequencer.on_drained = self._on_console_hands_free_sequencer_drained
         self._console_hands_free = session
         self._sync_hands_free_switch(True)
@@ -1781,7 +1799,50 @@ class ConsoleHandsFreeController:
                 # first tick would compute anyway (`remaining = send_delay
                 # - 0`).
                 session.countdown_remaining = session.controller._send_delay_seconds
+        session = self._console_hands_free
+        if isinstance(session, ConsoleHandsFreeSession):
+            self._sync_console_hands_free_buddy(session, state)
         self._repaint_console_hands_free_chip()
+
+    @staticmethod
+    def _release_console_hands_free_buddy(session: ConsoleHandsFreeSession) -> None:
+        if session.buddy_sink is not None and session.buddy_key is not None:
+            session.buddy_sink.release_voice(*session.buddy_key)
+
+    def _sync_console_hands_free_buddy(
+        self, session: ConsoleHandsFreeSession, state: str
+    ) -> None:
+        sink = session.buddy_sink
+        if sink is None:
+            return
+        origin = None
+        if state in ("listening", "countdown"):
+            if self._console_dictation_state == "recording":
+                origin = self._console_dictation_origin_session_id
+            state = "listening"
+        elif state in ("awaiting_reply", "speaking"):
+            origin = session.pending_session_id
+            if state == "awaiting_reply":
+                state = "thinking"
+
+        if origin is None:
+            # Keep the generation for a later phase of this same origin.
+            self._release_console_hands_free_buddy(session)
+            return
+        if session.buddy_key is None or session.buddy_key[0] != origin:
+            self._release_console_hands_free_buddy(session)
+            generation = sink.next_voice_generation(origin)
+            if generation is None:
+                return
+            session.buddy_key = (origin, generation)
+        sink.voice_state(*session.buddy_key, state)
+
+    def _retire_console_hands_free_buddy(
+        self, session: ConsoleHandsFreeSession
+    ) -> None:
+        self._release_console_hands_free_buddy(session)
+        session.buddy_sink = None
+        session.buddy_key = None
 
     def _begin_console_hands_free_reply(self) -> None:
         """Reset per-reply state at `ModeChanged("awaiting_reply")`.
@@ -1809,6 +1870,9 @@ class ConsoleHandsFreeController:
         `SilenceSpeech`/`CloseCapture` alongside this intent (see
         `HandsFreeController._exit`'s callers) -- this handler performs
         both itself, in that order, before tearing the session down."""
+        session = self._console_hands_free
+        if isinstance(session, ConsoleHandsFreeSession):
+            self._retire_console_hands_free_buddy(session)
         self._console_hands_free_silence_speech()
         self._console_hands_free_close_capture()
         self._teardown_console_hands_free_loop()
@@ -2518,6 +2582,8 @@ class ConsoleHandsFreeController:
         if isinstance(hands_free, ConsoleSpeculativeHandsFreeSession):
             self._close_qualified_console_voice(ControlKind.TEARDOWN)
             return
+        if isinstance(hands_free, ConsoleHandsFreeSession):
+            self._retire_console_hands_free_buddy(hands_free)
         if hands_free is not None and hands_free.tick_timer is not None:
             hands_free.tick_timer.stop()
         self._console_hands_free = None

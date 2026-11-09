@@ -57,6 +57,7 @@ from tldw_chatbook.Chat.console_voice_input import (
     handsfree_send_delay_seconds as real_handsfree_send_delay_seconds,
     acoustic_barge_in_enabled as real_acoustic_barge_in_enabled,
 )
+from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
 from tldw_chatbook.UI.Console_Modules import dictation as dictation_module
 from tldw_chatbook.UI.Console_Modules import hands_free as hands_free_module
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
@@ -267,6 +268,66 @@ async def test_key_binding_asks_consent_then_starts_loop_from_idle_and_opens_cap
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
+async def test_hands_free_buddy_waits_for_capture_and_fences_retired_loop(monkeypatch):
+    service = FakeDictationService()
+    service.start_gate = threading.Event()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    app, host = _ready_host()
+    buddy = PersonaBuddyController()
+    app.persona_buddy_controller = buddy
+
+    async with host.run_test(size=(140, 42)) as pilot:
+        console = await _mounted_console(host, pilot)
+        sink = console._console_runtime().persona_buddy_sink
+        origin = console._ensure_console_chat_store().active_session_id
+        await pilot.press("ctrl+shift+h")
+        await wait_for_hands_free_consent(host, pilot)
+        assert service.start_calls == 0 and sink.active_owner_count("voice") == 0
+        try:
+            await accept_hands_free_consent(host, pilot)
+            assert await asyncio.to_thread(service.start_entered.wait, 3)
+            assert console._console_dictation_state == "starting"
+            assert buddy.snapshot().state == "idle"
+            assert sink.active_owner_count("voice") == 0
+        finally:
+            service.start_gate.set()
+
+        await _wait_for(lambda: console._console_dictation_state == "recording", pilot)
+        assert buddy.snapshot().state == "listening"
+        assert origin in sink._voice_generation, (
+            "confirmed capture has no Buddy pipeline owner"
+        )
+        first_generation = sink._voice_generation[origin]
+        assert sink.active_owner_count("voice") == 2
+        retired = console._console_hands_free
+        capture_lease = console._dictation._buddy_listening
+        console._hands_free.teardown()
+        assert console._console_hands_free is None and not sink._voice_generation
+        assert console._dictation._buddy_listening == capture_lease
+        assert console._console_dictation_state == "recording"
+        assert sink.active_owner_count("voice") == 1
+
+        await pilot.press("ctrl+shift+h")
+        await accept_hands_free_consent(host, pilot)
+        await _wait_for(lambda: console._console_hands_free is not None, pilot)
+        successor = console._console_hands_free
+        assert successor is not retired and service.start_calls == 1
+        second_generation = sink._voice_generation[origin]
+        assert second_generation > first_generation
+        retired.controller.on_exit_request()
+        assert console._console_hands_free is successor
+        assert sink._voice_generation == {origin: second_generation}
+        await pilot.press("escape")
+        await _wait_for(lambda: console._console_dictation_state == "idle", pilot)
+        assert console._console_hands_free is None and not sink._voice_generation
+        retired.controller.enter(capture_live=False)
+        assert console._console_dictation_state == "idle" and service.start_calls == 1
+        assert sink.active_owner_count("voice") == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_spoken_hands_free_command_adopts_live_capture_as_first_turn(
     monkeypatch,
 ):
@@ -426,6 +487,106 @@ async def test_countdown_chip_painted_and_two_stage_send_drives_real_flow(
         assert any(
             m.role == "assistant" and "First sentence" in m.content for m in messages
         )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_hands_free_buddy_follows_each_capture_and_reply_origin(
+    monkeypatch, request
+):
+    service = FakeDictationService()
+    _patch_availability(monkeypatch)
+    _install_streaming_session(monkeypatch, service)
+    gateway = _HandsFreeReplyGateway("One reply sentence. ")
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    app.console_provider_gateway_factory = lambda: gateway
+    app.persona_buddy_controller = PersonaBuddyController()
+    tts = _install_fake_tts_handler(app)
+    speak = tts.speak_utterance
+    finishes = []
+
+    async def hold_playback(text, *, on_finished, **kwargs):
+        await speak(
+            text, on_finished=lambda ok: finishes.append((on_finished, ok)), **kwargs
+        )
+
+    monkeypatch.setattr(tts, "speak_utterance", hold_playback)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = await _mounted_console(host, pilot)
+        _make_active_conversation_temporary(console)
+        store = console._ensure_console_chat_store()
+        first = store.active_session_id
+        second = store.create_session(ephemeral=True, activate=False).id
+        sink = console._console_runtime().persona_buddy_sink
+
+        def pipeline_states():
+            return {
+                key: sink._tokens[("voice", owner)].state
+                for key, owner in sink._voice_owners.items()
+            }
+
+        await pilot.press("ctrl+shift+h")
+        await wait_for_hands_free_consent(host, pilot)
+        await accept_hands_free_consent(host, pilot)
+        await _wait_for(lambda: console._console_dictation_state == "recording", pilot)
+        session = console._console_hands_free
+        loop = session.controller
+        observed = []
+        for origin in (first, second):
+            assert console._console_dictation_origin_session_id == origin
+            service.emit_final("Dictated words")
+            await _wait_for(lambda: loop.state == "countdown", pilot)
+            listening = pipeline_states()
+            service.stop_gate = threading.Event()
+            try:
+                now = time.monotonic()
+                loop.tick(now)
+                loop.tick(now + 3600)
+                assert loop.state == "awaiting_reply"
+                assert session.pending_session_id == origin
+                thinking = pipeline_states()
+            finally:
+                service.stop_gate.set()
+
+            await _wait_for(lambda: bool(finishes), pilot)
+            finish, ok = finishes.pop()
+            try:
+                assert loop.state == "speaking"
+                assert store.session_id_for_message(session.reply_id) == origin
+                speaking = pipeline_states()
+                if origin == first:
+                    console._session.switch_and_bind(second)
+                    assert session.pending_session_id == first
+                    assert pipeline_states() == speaking
+                observed.append((listening, thinking, speaking))
+            finally:
+                finish(ok)
+            await _wait_for(
+                lambda: (
+                    loop.state == "listening"
+                    and console._console_dictation_state == "recording"
+                ),
+                pilot,
+            )
+            assert console._console_hands_free is session
+
+        assert len(gateway.sent_messages) == len(tts.calls) == 2
+        assert all(observed[0]), "live first turn has no indexed Buddy phases"
+        [(first_origin, first_generation)] = observed[0][0]
+        [(second_origin, second_generation)] = observed[1][0]
+        assert (first_origin, second_origin) == (first, second)
+        assert second_generation > first_generation
+        for (listening, thinking, speaking), key in zip(
+            observed,
+            ((first, first_generation), (second, second_generation)),
+            strict=True,
+        ):
+            assert listening == {key: "listening"}
+            assert thinking == {key: "thinking"}
+            assert speaking == {key: "speaking"}
+        assert pipeline_states() == {(second, second_generation): "listening"}
 
 
 @pytest.mark.asyncio
