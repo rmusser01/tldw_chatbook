@@ -128,9 +128,7 @@ class AutomaticWorkContext:
     def mark_accepted(self) -> None:
         """Latch acceptance only after the required durable fence succeeded."""
         if self.attempt_kind == "workflow_phase":
-            from tldw_chatbook.Chat.console_workflow_runs import (
-                WorkflowPhaseAuthorization,
-            )
+            from .workflow_phase import WorkflowPhaseAuthorization
 
             if (
                 type(self.workflow) is not WorkflowPhaseAuthorization
@@ -167,9 +165,7 @@ class AutomaticWorkContext:
             raise AutomaticWorkRefused("acceptance_required")
         dispatch = None
         if self.attempt_kind == "workflow_phase":
-            from tldw_chatbook.Chat.console_workflow_runs import (
-                WorkflowPhaseAuthorization,
-            )
+            from .workflow_phase import WorkflowPhaseAuthorization
 
             if (
                 type(self.workflow) is not WorkflowPhaseAuthorization

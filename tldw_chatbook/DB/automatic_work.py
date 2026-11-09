@@ -202,7 +202,7 @@ class AutomaticWorkLedger:
         BaseException too: cancellation must never leave a fence half-open.
         """
         if _native is not None:
-            from tldw_chatbook.Chat.console_workflow_runs import _fence_connection
+            from tldw_chatbook.Agents.workflow_phase import workflow_fence_connection as _fence_connection
 
         with (
             self._db.connection()
@@ -330,7 +330,7 @@ class AutomaticWorkLedger:
         _native=None,
     ) -> None:
         if _native is not None:
-            from tldw_chatbook.Chat.console_workflow_runs import _fence_connection
+            from tldw_chatbook.Agents.workflow_phase import workflow_fence_connection as _fence_connection
 
             _fence_connection(_native, self)
         self._check_unconfirmed_starts(conn, chain_id)
@@ -810,7 +810,7 @@ class AutomaticWorkLedger:
     ) -> bool:
         """Consume a reservation once; True alone authorizes its first dispatch."""
         if _native is not None:
-            from tldw_chatbook.Chat.console_workflow_runs import _fence_connection
+            from tldw_chatbook.Agents.workflow_phase import workflow_fence_connection as _fence_connection
 
         with (
             self._db.connection()
@@ -2245,7 +2245,7 @@ class AutomaticWorkLedger:
         from tldw_chatbook.config import coerce_bool_setting
 
         if _native is not None:
-            from tldw_chatbook.Chat.console_workflow_runs import _fence_connection
+            from tldw_chatbook.Agents.workflow_phase import workflow_fence_connection as _fence_connection
 
             _fence_connection(_native, self)
             return
@@ -2263,7 +2263,7 @@ class AutomaticWorkLedger:
         _native=None,
     ):
         if _native is not None:
-            from tldw_chatbook.Chat.console_workflow_runs import _fence_connection
+            from tldw_chatbook.Agents.workflow_phase import workflow_fence_connection as _fence_connection
 
             _fence_connection(_native, self)
         self._check_runtime_owner(conn, owner_id)
@@ -2300,7 +2300,7 @@ class AutomaticWorkLedger:
         return native, phase
 
     def _validate_workflow_dispatch(self, conn, proof, native, phase):
-        from tldw_chatbook.Chat.console_workflow_runs import _dispatch_identity
+        from tldw_chatbook.Agents.workflow_phase import workflow_dispatch_identity as _dispatch_identity
 
         proof = _dispatch_identity(proof, self)
         task = proof.task.claim
@@ -2873,7 +2873,7 @@ class AutomaticWorkLedger:
     ) -> bool:
         """Reopen workflow time inside the same transaction as native dispatch."""
         if _native is not None:
-            from tldw_chatbook.Chat.console_workflow_runs import _fence_connection
+            from tldw_chatbook.Agents.workflow_phase import workflow_fence_connection as _fence_connection
 
             _fence_connection(_native, self)
         root = self._allowance_chain(conn, chain_id)["id"]

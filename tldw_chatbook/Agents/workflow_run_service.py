@@ -29,7 +29,7 @@ from .workflow_models import (
 )
 
 if TYPE_CHECKING:
-    from tldw_chatbook.Chat.console_workflow_runs import WorkflowPhaseAuthorization
+    from .workflow_phase import WorkflowPhaseAuthorization
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     from .agent_service import WorkflowChildReceipt
@@ -1317,7 +1317,7 @@ class WorkflowRunService:
         Raises:
             ValueError: Original retirement, required evidence or unused proof is absent.
         """
-        from tldw_chatbook.Chat.console_workflow_runs import WorkflowPhaseAuthorization
+        from .workflow_phase import WorkflowPhaseAuthorization
 
         from .workflow_task_scope import require_workflow_runtime
 
@@ -1331,7 +1331,7 @@ class WorkflowRunService:
         if _remaining_read is None:
             phase._check_owner()
         else:
-            from tldw_chatbook.Chat.console_workflow_runs import require_remaining_unused
+            from .workflow_phase import require_remaining_unused
 
             if outcome != "cancelled":
                 raise ValueError("original_unused_cancellation_required")
@@ -2079,9 +2079,7 @@ class WorkflowRunService:
         expected_control_revision: int | None = None,
     ) -> WorkflowSnapshot:
         """Retry recovery recording from an actual physically returned planner."""
-        from tldw_chatbook.Chat.console_workflow_preparation import (
-            require_returned_planning,
-        )
+        from .workflow_phase import require_returned_planning
 
         from .automatic_work_budget import AutomaticWorkRefused
 

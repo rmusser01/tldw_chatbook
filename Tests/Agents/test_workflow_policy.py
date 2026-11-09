@@ -97,3 +97,59 @@ def test_registry_rechecks_workflow_revocation_before_provider_effect(monkeypatc
     with pytest.raises(RuntimeError, match="workflow_authority_changed"):
         registry.invoke_by_name("t0", {})
     assert effects == []
+
+
+
+def test_unregistered_planning_preparation_cannot_run_a_receiver():
+    from tldw_chatbook.Agents.run_context import (
+        bind_workflow_preparation,
+        current_planning_preparation,
+    )
+    from tldw_chatbook.Agents.workflow_phase import require_returned_planning
+
+    class Unregistered:
+        @property
+        def phase(self):
+            pytest.fail("unregistered preparation invoked a phase descriptor")
+
+    preparation = Unregistered()
+    with bind_workflow_preparation(preparation):
+        assert current_planning_preparation() is None
+    with pytest.raises(ValueError, match="workflow_planning_return_required"):
+        require_returned_planning(preparation, object(), RuntimeError())
+
+
+
+@pytest.mark.asyncio
+async def test_remaining_acceptance_does_not_export_phase_key_or_copy_issuance():
+    from copy import copy
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+    from tldw_chatbook.Agents.workflow_models import WorkflowDecision
+    from tldw_chatbook.Agents.workflow_phase import (
+        begin_remaining_acceptance,
+        require_remaining_unused,
+    )
+
+    service = object()
+    bridge = object()
+    controller = SimpleNamespace(_agent_bridge=bridge)
+    runtime = SimpleNamespace(
+        chat_controller=controller, agent_bridge=bridge, _workflow_service=service
+    )
+    controller.app = SimpleNamespace(console_runtime=runtime)
+    decision = WorkflowDecision(
+        id="decision",
+        workflow_id="workflow",
+        plan_revision=1,
+        control_revision=1,
+        phase_id="phase",
+        action="approve",
+        reason="ready",
+    )
+
+    cell = begin_remaining_acceptance(controller, decision, service=service)
+    assert not hasattr(cell, "key")
+    with pytest.raises(AutomaticWorkRefused, match="original_unused_acceptance_required"):
+        require_remaining_unused(copy(cell), service, phase=None)

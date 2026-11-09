@@ -235,9 +235,7 @@ def current_planning_preparation(controller=None):
     if prepared is None:
         return None
 
-    from tldw_chatbook.Chat.console_workflow_preparation import (
-        registered_planning_preparation,
-    )
+    from .workflow_phase import registered_planning_preparation
 
     return registered_planning_preparation(prepared)
 

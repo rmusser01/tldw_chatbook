@@ -18,14 +18,34 @@ from .agent_models import ToolCall
 from .run_context import current_planning_preparation, current_run_id
 
 if TYPE_CHECKING:
-    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
-    from tldw_chatbook.Chat.console_workflow_runs import WorkflowPhaseAuthorization
-    from tldw_chatbook.Workspaces.worktree_activity import WorktreeActivityClaim
+    from typing import Any, Protocol
 
-    from .execution_capacity import ExecutionOwner
+    from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import ConsolePreparationRead
+    from tldw_chatbook.Workspaces.worktree_activity import WorktreeActivity, WorktreeActivityClaim
+
+    from .execution_capacity import ExecutionCapacity, ExecutionOwner
+    from .run_hooks import RunHooksEngine
+    from .workflow_phase import WorkflowPhaseAuthorization
+    from .workflow_run_service import WorkflowRunService
     from .local_tool_provider import RunAdmittedWorkspaceRoot
     from .tool_catalog import ToolCatalogRegistry
     from .workflow_models import WorkflowTaskClaim, WorkflowTaskSpec
+
+    class WorkflowRuntime(Protocol):
+        """Native resources and registrations the workflow path consumes."""
+
+        chat_controller: Any
+        agent_bridge: Any
+        execution_capacity: ExecutionCapacity
+        worktree_activity: WorktreeActivity
+        run_hooks_engine: RunHooksEngine | None
+        _workflow_closing: bool
+        _workflow_service: WorkflowRunService | None
+        _workflow_preparations: set[Any]
+        _workflow_waves: dict[Any, Any]
+        _preparation_reads: set[ConsolePreparationRead]
+
+        def ensure_workflow_service(self) -> WorkflowRunService: ...
 
 _KEY = object()
 _CURRENT: ContextVar[WorkflowTaskAuthorization | None] = ContextVar(
@@ -46,9 +66,13 @@ def _refuse(reason: str) -> None:
     raise AutomaticWorkRefused(f"workflow_task_{reason}")
 
 
-def require_workflow_runtime(phase: WorkflowPhaseAuthorization) -> ConsoleRuntime:
+def require_workflow_runtime(phase: WorkflowPhaseAuthorization) -> WorkflowRuntime:
     """Return the phase controller’s current attached runtime or refuse."""
-    controller = phase._controller
+    return require_workflow_runtime_for_controller(phase._controller)
+
+
+def require_workflow_runtime_for_controller(controller) -> WorkflowRuntime:
+    """Require the runtime attached to this original controller and bridge."""
     runtime = getattr(getattr(controller, "app", None), "console_runtime", None)
     if runtime is None:
         runtime = getattr(controller, "_hooks_v2_runtime", None)
@@ -61,7 +85,7 @@ def require_workflow_runtime(phase: WorkflowPhaseAuthorization) -> ConsoleRuntim
     return runtime
 
 
-def require_workflow_hooks_idle(runtime: ConsoleRuntime, session_id: str) -> None:
+def require_workflow_hooks_idle(runtime: WorkflowRuntime, session_id: str) -> None:
     """Require the original hook engine to have no effects or pending work."""
     # Effectful or unfinished hooks cannot enter a workflow task.
     from tldw_chatbook import config
@@ -132,7 +156,7 @@ class WorkflowTaskAuthorization:
     footprint: WorktreeFootprint = field(repr=False)
     physical_footprint: WorktreeFootprint = field(repr=False)
     _freshness_reads: tuple[WorktreeScope, ...] = field(repr=False)
-    _runtime: ConsoleRuntime = field(repr=False)
+    _runtime: WorkflowRuntime = field(repr=False)
     _binding_state: list = field(repr=False)
     _native_preparation: list = field(repr=False)
     _native_launch: list = field(repr=False)
@@ -285,7 +309,7 @@ class WorkflowTaskAuthorization:
             )
             self._binding_state.append((owner, activity_claim))
         if prepared is not None:
-            from ..Chat.console_workflow_wave import require_workflow_wave_sources
+            from .workflow_wave import require_workflow_wave_sources
 
             if wave is not None:
                 require_workflow_wave_sources(wave)
@@ -384,7 +408,7 @@ def prepare_workflow_task(
     phase, *, task_id: str, registry, binding
 ) -> WorkflowTaskAuthorization:
     """Issue at most one private preparation per task from original phase custody."""
-    from tldw_chatbook.Chat.console_workflow_runs import WorkflowPhaseAuthorization
+    from .workflow_phase import WorkflowPhaseAuthorization
 
     if (
         type(phase) is not WorkflowPhaseAuthorization
@@ -408,7 +432,7 @@ def _prepare_task(
     phase, *, task_id: str, registry, binding
 ) -> WorkflowTaskAuthorization:
     """Host-only preparation from accepted custody, never a supplied claim/ID grant."""
-    from tldw_chatbook.Chat.console_workflow_runs import WorkflowPhaseAuthorization
+    from .workflow_phase import WorkflowPhaseAuthorization
     from tldw_chatbook.Tools.local_tool_impls import resolve_workspace_path
     from tldw_chatbook.Tools.remote_root_types import local_root_path
 

@@ -249,6 +249,22 @@ Archive catalog follow-up. Project only the existing archive recovery names from
 
 <!-- SECTION:PLAN:END -->
 
+### Remaining current-dev CI repair
+
+ADR required: no new ADR.
+ADR path: backlog/decisions/356-native-phase-orchestration-runtime-ownership.md.
+Reason: repair the original native phase and metadata owners without adding
+storage, tool permission, or execution authority.
+
+1. Preserve the native accepted phase, SQL fences and original returned
+   preparation at their owning runtime boundary. Keep Console coordination and
+   exact native wave resource validation.
+2. Qualify the original stock async MCP metadata read under its actual bounded
+   source and policy ownership, retaining opaque admission for other sources.
+3. Recheck the published overlap, native workflow, negative controls, original
+   startup budgets and the unchanged architecture guard. Review the exact diff
+   before publishing the rebased PR branch.
+
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->

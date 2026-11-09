@@ -162,21 +162,6 @@ def _planning_release_source(prepared, binding, *, scope_live=False, slots_live=
                 raise PermissionError("planning primary token changed")
 
 
-def registered_planning_preparation(prepared: object) -> _PreparedWorkflowReply | None:
-    """Check the original native reply and its live planning registration."""
-    from .console_workflow_runs import WorkflowPhaseAuthorization
-
-    if (
-        type(prepared) is _PreparedWorkflowReply
-        and type(prepared.phase) is WorkflowPhaseAuthorization
-        and prepared.phase.attempt.purpose == "planning"
-        and prepared.task_id is None
-        and prepared in prepared.runtime._workflow_preparations
-    ):
-        return prepared
-    return None
-
-
 def current_workflow_execution_local_tools(registry, allowed, local_provider):
     """Keep the original accepted task's captured local catalog in its request."""
     from tldw_chatbook.Agents.workflow_task_scope import WorkflowTaskAuthorization
@@ -3284,8 +3269,10 @@ async def prepare_workflow_planning(
                 raise
             prepared._planning_attempt = attempt
             prepared.require_current()
+            if type(prepared) is not _PreparedWorkflowReply:
+                raise PermissionError("original planning preparation required")
             prepared.phase = _accept_workflow_phase(
-                controller, attempt.id, session_id=session_id
+                controller, attempt.id, session_id=session_id, _planning=prepared
             )
             return prepared.phase, attempt
 
@@ -3299,22 +3286,6 @@ async def prepare_workflow_planning(
         raise
     finally:
         prepared._planning_preparation_returned.set()
-
-
-def require_returned_planning(prepared, service, error: BaseException) -> None:
-    """Require the prepared reply’s original planning return for this service."""
-    if (
-        not isinstance(prepared, _PreparedWorkflowReply)
-        or prepared.service is not service
-        or prepared.runtime is not service._runtime
-        or prepared.phase is None
-        or prepared.phase.attempt.purpose != "planning"
-        or not isinstance(error, BaseException)
-    ):
-        raise ValueError("workflow_planning_return_required")
-    returned = prepared.planning_recovery_return()
-    if returned.error is not error:
-        raise ValueError("workflow_planning_return_required")
 
 
 def _finite_owner_return(owner, capacity, operation=None):

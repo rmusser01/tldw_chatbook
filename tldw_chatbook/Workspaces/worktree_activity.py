@@ -234,10 +234,10 @@ class WorktreeActivity:
 
     def _open_wave(self, wave, footprint, members):
         """Install ordering atomically against ordinary claim admission."""
-        from tldw_chatbook.Chat.console_workflow_wave import _WorkflowWave
+        from tldw_chatbook.Agents.workflow_wave import WorkflowWave
 
         if (
-            type(wave) is not _WorkflowWave
+            type(wave) is not WorkflowWave
             or wave.runtime.worktree_activity is not self
         ):
             raise ValueError("original workflow wave required")
