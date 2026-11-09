@@ -591,12 +591,11 @@ class ConsoleReadinessConfigProjection:
         # Not while reads fail: each failure arms a retry sync of its own.
         ahead = None if self._retry_delay else self.max_age * REFRESH_AHEAD_SHARE
         self.run(lambda: None, life=ahead)
-        def same_explicit_owner(attempt: _DisplayReadAttempt) -> bool:
+        def explicit_owner_current(attempt: _DisplayReadAttempt) -> bool:
             return (
                 retry_busy_if_current is not None
                 and attempt.reader is self.read_current
                 and attempt.runtime is _readiness_runtime(self.screen)
-                and _same_readiness_key(attempt.key, key)
                 and _same_readiness_key(key, self._key())
                 and retry_busy_if_current()
             )
@@ -606,14 +605,27 @@ class ConsoleReadinessConfigProjection:
             wait_unadmitted=(
                 pending is not None
                 and pending.entered is not None
-                and same_explicit_owner(pending)
+                and _same_readiness_key(pending.key, key)
+                and explicit_owner_current(pending)
             ),
         )
         if (
             attempt is not None
+            and self._admission is not attempt
+            and not _same_readiness_key(attempt.key, key)
+            and explicit_owner_current(attempt)
+        ):
+            # The older read retired without publishing for this Settings owner.
+            self.run(lambda: None, life=ahead)
+            pending = self._admission
+            if pending is not None and _same_readiness_key(pending.key, key):
+                attempt = await self._wait_for_refresh()
+        if (
+            attempt is not None
             and attempt.busy
             and not self.pending
-            and same_explicit_owner(attempt)
+            and _same_readiness_key(attempt.key, key)
+            and explicit_owner_current(attempt)
         ):
             # Only the explicit owner may continue an authentic busy read.
             self.run(lambda: None, life=ahead, _wait_for_config=True)

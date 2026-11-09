@@ -22969,6 +22969,15 @@ in RED, GREEN and ordinary runs; a green wrapper parent hides those warnings
 and is not warning-free child evidence.
 
 
+**Follow-up, PR #3345 (2026-11-09 UTC).** A fixed CORE release callback
+was queued before FULL refused presentation. The coalescer discarded FULL’s
+longer request, and a real config lock held across CORE made eight warm-up
+starts fit in the original three-second window. Keep the fixed callback’s
+native release opportunity and carry the absolute FULL deadline through it.
+An explicit request before or after that deadline is recorded keeps its
+priority, including when a busy callback rearms. The controlled failure and
+recovery prove that ordering locally. The hosted callback order was unobserved.
+
 ## Immutable recovery candidates must be staged from a live WAL source
 
 During PR #2918's schema-75 rebase, a new shared-Subscriptions test passed a live Chat WAL database directly to `validate_candidate`. The ordinary adapter saw 584 committed SQL objects, while immutable recovery validation saw the old 533-object main file and correctly refused `unsupported_schema`. Recovery's documented input is a disposable staged candidate, not the live destination. Using the existing `backup_database` API produced exact 584-object candidates; independent comparison also matched all 715 catalog rows and 523 metadata entries. A second staged copy with Chat stamp 74 correctly failed the version-75 gate. The final affected selection passed 31 cases after this and a separate test-only read-only owner correction.
@@ -26074,6 +26083,15 @@ assertions. Do not clear a refusal flag to make a UI fixture look ready.
 **Incident.** A Console context-presentation read opened a native handle after the runtime/controller had copied its observed-handle set. Meaningful held-read controls720 reproduced the same strict native-preparation close refusal, missing runtime observation, and reads admitted after the actual close fence. The repair registers that exact finite handle in both existing observer sets and checks disposal, shutdown, session-close and runtime-binding fences. All four native controls passed in721; the complete original response-rule E2E file724 passed all five cases. The callback responsible for the earlier717 failure was not captured, so these results do not identify it.
 
 **What to do.** Exercise a read opened after the earlier observation snapshot, hold the actual native read, close through the real owner, and verify physical retirement. A snapshot of already-open handles cannot prove ownership of future reads. Preserve strict close failures; do not make finalization tolerate an unowned handle.
+
+**Follow-up, PR #3345 (2026-11-09 UTC).** An explicit Settings opener
+joined an older checked readiness read after the current key changed. The
+old result correctly refused publication, but the opener returned before
+any read for its own key. A controlled native hold after lock release
+reproduced the original Return failure. Wait for physical retirement, then
+permit one ordinary checked read only while the explicit owner remains
+current. Authentic busy admission still requires the exact current key.
+Pin the old lease retirement and the new proof separately.
 
 ## First output and painted text do not prove a served terminal accepts input (PR #3345, 2026-11-08)
 

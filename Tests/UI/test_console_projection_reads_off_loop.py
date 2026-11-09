@@ -2074,6 +2074,58 @@ async def test_a_full_sync_asked_for_during_a_pause_runs_once_after_resume(
             assert not backoff_deliveries, "the stopped backoff timer still delivered"
 
 
+@pytest.mark.parametrize("explicit", ["none", "before", "after", "rearmed"])
+def test_fixed_core_release_does_not_shorten_the_full_backoff(monkeypatch, explicit):
+    from types import SimpleNamespace
+
+    now = [100.0]
+    timers, core, full = [], [], []
+    monkeypatch.setattr(config_sync, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    monkeypatch.setattr(config_sync, "sync_console_core_state", core.append)
+    screen = SimpleNamespace(
+        _console_control_bar_replay_whole_sync=True,
+        _console_sync_in_progress=False,
+        _console_config_handoffs={"core": SimpleNamespace(eligible=lambda: True)},
+        _sync_native_console_chat_ui=lambda: "whole",
+        set_timer=lambda delay, callback: timers.append((delay, callback)),
+        run_worker=lambda result, **_kwargs: full.append(result),
+    )
+    screen._request_console_control_bar_sync = lambda *, delayed=False: (
+        config_sync.request_control_bar_sync(screen, delayed)
+    )
+    screen._run_coalesced_control_bar_sync = lambda: (
+        config_sync.run_coalesced_control_bar_sync(screen, lambda _screen: False)
+    )
+
+    config_sync.request_control_bar_sync(screen, True)
+    if explicit in {"before", "rearmed"}:
+        config_sync.cut_replay_backoff(screen, False)
+    if explicit == "rearmed":
+        screen._console_sync_in_progress = True
+        now[0] += 0.2
+        timers.pop(0)[1]()
+        screen._console_sync_in_progress = False
+    config_sync.request_control_bar_sync(screen, 1.6)
+    if explicit == "after":
+        config_sync.cut_replay_backoff(screen, False)
+        config_sync.request_control_bar_sync(screen, 3.2)
+    assert [delay for delay, _ in timers] == [0.2]
+    now[0] += 0.2
+    timers.pop(0)[1]()
+    if explicit != "none":
+        assert full == ["whole"]
+        assert timers == []
+        return
+    assert core == [screen]
+    assert full == []
+    assert [delay for delay, _ in timers] == [pytest.approx(1.4)]
+
+    now[0] = 101.6
+    timers.pop(0)[1]()
+    assert core == [screen]
+    assert full == ["whole"]
+
+
 def test_a_long_full_render_refusal_streak_stays_at_the_retry_cap():
     from types import SimpleNamespace
 
