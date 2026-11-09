@@ -701,7 +701,7 @@ async def test_resumed_preparation_thinking_refusal_preserves_exact_owner(
     [
         pytest.param(True, "displayable", 1, marks=pytest.mark.bootstrap_profile),
         pytest.param(True, "ignored", 0, marks=pytest.mark.bootstrap_profile),
-        (False, "proprietary", 0),
+        pytest.param(False, "proprietary", 0, marks=pytest.mark.bootstrap_profile),
     ],
     ids=["v1-compatible", "ignored-disposition", "ephemeral"],
 )
