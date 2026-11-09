@@ -1,7 +1,7 @@
 ---
 id: TASK-39903
 title: Keep credential readiness polls eligible until the controls render
-status: In Progress
+status: Done
 created_date: 2026-11-09 05:42
 labels:
 - ci
@@ -12,7 +12,7 @@ references:
 - tldw_chatbook/UI/Screens/chat_screen.py
 - Tests/UI/test_console_credential_poll_gate.py
 - Tests/UI/test_console_switcher_local_probe.py
-updated_date: 2026-11-09 06:18
+updated_date: 2026-11-09 21:11
 ---
 
 ## Description
@@ -25,7 +25,7 @@ The Console credential poll can acknowledge a readiness change while its control
 <!-- AC:BEGIN -->
 - [x] #1 A real credential poll leaves the previous snapshot and gate in place when a changed control render defers, then renders the same evidence on a later tick and returns to skipping idle ticks.
 - [x] #2 The original held-config UI18 assertion and whole unchanged UI18 roster pass without raising runtime limits, with fresh original software UAT.
-- [ ] #3 Independent review and the published repair’s own hosted gates verify the credential poll fix.
+- [x] #3 Independent review and the published repair’s own hosted gates verify the credential poll fix.
 <!-- AC:END -->
 
 ## Implementation Plan

@@ -1,7 +1,7 @@
 ---
 id: TASK-40035
 title: Establish real admission before the Inspector first-poll assertion
-status: In Progress
+status: Done
 created_date: 2026-11-09 09:07
 labels:
 - ci
@@ -12,7 +12,7 @@ references:
 - Tests/UI/test_console_switcher_local_probe.py
 - tldw_chatbook/UI/Screens/chat_screen.py
 - backlog/docs/lessons-testing-evidence.md
-updated_date: 2026-11-09 09:37
+updated_date: 2026-11-09 21:12
 ---
 
 ## Description
@@ -25,7 +25,7 @@ UI18 captured a stale header immediately after the first manual credential poll,
 <!-- AC:BEGIN -->
 - [x] #1 The available-control fixture waits within the existing setup bound before changing evidence, then proves the first real poll installs it and paints the header synchronously.
 - [x] #2 The original held-lock deferral, readiness words, Inspector rows, and composer hint assertions pass at the original limits, including the controlled foreign-lock case.
-- [ ] #3 The correction passes independent review of the published commit and its own hosted checks.
+- [x] #3 The correction passes independent review of the published commit and its own hosted checks.
 <!-- AC:END -->
 
 ## Implementation Plan

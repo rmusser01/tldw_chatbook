@@ -1,7 +1,7 @@
 ---
 id: TASK-39703
 title: Keep explicit Chat settings open responsive through a busy config read
-status: In Progress
+status: Done
 created_date: 2026-11-09 03:32
 labels:
 - ci
@@ -14,7 +14,7 @@ references:
 - Tests/UI/test_console_full_config_preparation.py
 - tldw_chatbook/UI/Console_Modules/console_spend_projection.py
 - backlog/decisions/126-complete-local-backup-and-recovery.md
-updated_date: 2026-11-09 04:20
+updated_date: 2026-11-09 21:11
 ---
 
 ## Description
@@ -27,7 +27,7 @@ Two original UI5 cases lost an explicit Chat settings open after their own real 
 <!-- AC:BEGIN -->
 - [x] #1 Trace the original failing assertions to the exact current-owner/native-admission path under unchanged limits.
 - [x] #2 An explicit Settings open completes after a real held config lock retires, while concurrent passive FULL defers before admission; changed owners and cancellation still refuse stale work and physically retire the reader.
-- [ ] #3 The original UI5 roster and directly affected ownership controls pass locally, with original software UAT, independent exact-head review and own hosted gates retained.
+- [x] #3 The original UI5 roster and directly affected ownership controls pass locally, with original software UAT, independent exact-head review and own hosted gates retained.
 <!-- AC:END -->
 
 ## Implementation Plan

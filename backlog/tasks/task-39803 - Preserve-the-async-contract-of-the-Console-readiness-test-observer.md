@@ -1,7 +1,7 @@
 ---
 id: TASK-39803
 title: Preserve the async contract of the Console readiness test observer
-status: In Progress
+status: Done
 created_date: 2026-11-09 05:26
 labels:
 - ci
@@ -10,7 +10,7 @@ labels:
 priority: high
 references:
 - Tests/UI/test_console_send_ready_attachment.py
-updated_date: 2026-11-09 06:18
+updated_date: 2026-11-09 21:11
 ---
 
 ## Description
@@ -23,7 +23,7 @@ The mounted cold-readiness convergence test sometimes gave Textual a synchronous
 <!-- AC:BEGIN -->
 - [x] #1 Reproduce the hosted Textual rejection with the original observer and show that the repaired observer runs through the same worker while preserving immediate publication observation and argument forwarding.
 - [x] #2 The unchanged UI2 selector roster passes locally within its existing limits, preserving all original convergence assertions and runtime behavior.
-- [ ] #3 Independent review and the published repair commit’s own hosted gates verify the fixture correction and the original UI2 roster.
+- [x] #3 Independent review and the published repair commit’s own hosted gates verify the fixture correction and the original UI2 roster.
 <!-- AC:END -->
 
 ## Implementation Plan

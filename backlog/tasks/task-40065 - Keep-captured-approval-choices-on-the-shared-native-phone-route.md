@@ -1,7 +1,7 @@
 ---
 id: TASK-40065
 title: Keep captured approval choices on the shared native phone route
-status: In Progress
+status: Done
 created_date: 2026-11-09 10:29
 labels:
 - console
@@ -14,7 +14,7 @@ references:
 - backlog/decisions/236-served-desktop-approval-relay.md
 - tldw_chatbook/Chat/console_remote_rounds.py
 - tldw_chatbook/Web_Server/static/mobile/app.js
-updated_date: 2026-11-09 20:20
+updated_date: 2026-11-09 21:12
 ---
 
 ## Description
@@ -27,7 +27,7 @@ The latest dev approval work landed while PR #3345 was in CI. The shared phone C
 <!-- AC:BEGIN -->
 - [x] #1 The active phone snapshot and exact native decision command honor the captured approval row choices. One shared verdict has one phone control, and withheld grants cannot be submitted.
 - [x] #2 The rebased branch preserves native receipt ordering, approval feedback and terminal-only review, and passes the original software UAT and relevant local checks without higher runtime or source limits.
-- [ ] #3 Independent exact-commit review and the published head’s own hosted gates verify the integration.
+- [x] #3 Independent exact-commit review and the published head’s own hosted gates verify the integration.
 <!-- AC:END -->
 
 ## Implementation Plan

@@ -1,7 +1,7 @@
 ---
 id: TASK-40003
 title: Keep the Inspector focus tests clear of the setup overlay
-status: In Progress
+status: Done
 created_date: 2026-11-09 07:22
 labels:
 - ci
@@ -11,7 +11,7 @@ priority: high
 references:
 - Tests/UI/test_console_edge_focus_restyle_scope.py
 - Tests/UI/test_console_native_chat_flow.py
-updated_date: 2026-11-09 08:07
+updated_date: 2026-11-09 21:11
 ---
 
 ## Description
@@ -24,7 +24,7 @@ The Inspector focus tests hide the setup overlay while the Console still require
 <!-- AC:BEGIN -->
 - [x] #1 Reproduce the original click failure with a late real refresh and verify the compositor targets the blocking setup card.
 - [x] #2 Both original focus tests retain their real clicks and style assertions and pass with the existing send-ready fixture and original limits.
-- [ ] #3 Independent review and the published repair’s own hosted gates verify the fixture correction.
+- [x] #3 Independent review and the published repair’s own hosted gates verify the fixture correction.
 <!-- AC:END -->
 
 ## Implementation Plan
