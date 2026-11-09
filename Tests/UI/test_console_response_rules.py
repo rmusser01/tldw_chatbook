@@ -444,6 +444,7 @@ async def test_active_run_copy_takes_priority_over_an_earlier_rule_verdict(tmp_p
         seed_answer(case)
         learned = await case.rules.learn(case.session_id, "The answer omitted evidence")
         assert learned.state == "active", (learned.reason, case.failures)
+        assert case.rules.state(case.session_id).assessment is not None
         entered, release = asyncio.Event(), asyncio.Event()
 
         case.primary_entered, case.primary_release = entered, release

@@ -3,7 +3,7 @@
 import asyncio
 import sys
 import threading
-from contextlib import contextmanager, nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
 from types import MethodType, SimpleNamespace
 
 import pytest
@@ -132,7 +132,7 @@ async def test_expired_original_full_awaits_config_without_main_native_entry(
 
 
 @contextmanager
-def _held_original_config_read():
+def _held_original_config_read(*, projection=None, snapshot=None):
     """Hold the real read after its second source check, retaining actual leases."""
     entered, release = threading.Event(), threading.Event()
     observed = []
@@ -147,11 +147,26 @@ def _held_original_config_read():
             and event == "return"
             and frame.f_code is checked_config_identity.__code__
         ):
-            returns += 1
-            if returns == 2:
-                observed.append(raw._states[frame.f_locals["active"]])
-                entered.set()
-                assert release.wait(10), "test did not release original config read"
+            if projection is None:
+                returns += 1
+                if returns != 2:
+                    return
+            else:
+                caller = frame.f_back
+                request = caller.f_locals.get("request")
+                if (
+                    entered.is_set()
+                    or _argument is None  # A profiler return also reports unwind.
+                    or caller.f_code is not projection.read_current.__code__
+                    or caller.f_locals.get("projection") is not projection
+                    or request is None
+                    or request[2][-1] is not snapshot
+                    or "before" not in caller.f_locals
+                ):
+                    return
+            observed.append(raw._states[frame.f_locals["active"]])
+            entered.set()
+            assert release.wait(10), "test did not release original config read"
 
     threading.setprofile_all_threads(observe)
     try:
@@ -302,6 +317,7 @@ async def test_post_attach_full_keeps_screen_messages_moving_during_native_read(
     original = ConsoleReadinessConfigProjection.warm
     gate = None
     held = False
+    held_reads = ExitStack()
 
     async def cold_post_attach(projection):
         nonlocal gate, held
@@ -310,38 +326,98 @@ async def test_post_attach_full_keeps_screen_messages_moving_during_native_read(
             held = True
             # A replacement App config snapshot needs its own checked display read.
             app.app_config = dict(app.app_config)
-            with _held_original_config_read() as current:
-                gate = current
-                return await original(projection)
+            # The first warm may defer before entry; keep observing its replay.
+            gate = held_reads.enter_context(
+                _held_original_config_read(
+                    projection=projection, snapshot=app.app_config
+                )
+            )
         return await original(projection)
 
     monkeypatch.setattr(ConsoleReadinessConfigProjection, "warm", cold_post_attach)
-    async with _mounted_console(host) as pilot:
-        try:
-            assert await _loop_wait(lambda: gate is not None and gate[0].is_set()), {
-                "held": held,
-                "gate": gate,
-                "attached": getattr(host.screen, "_console_attach_reconciled", None),
-                "sections": tuple(app.app_config),
-            }
-            screen = host.screen
-            state = gate[2][0]
-            assert state.active, "the original checked read must still own its leases"
-            record_property("held_screen_await_chain", _awaiting(screen._task))
-            delivered = []
-            screen.call_later(delivered.append, True)
-            assert await _loop_wait(lambda: delivered == [True], timeout=1), (
-                "post-attach FULL parked the screen message pump on a native read",
-                _awaiting(screen._task),
-            )
-            assert state.active, "screen responsiveness was measured after release"
-        finally:
-            if gate is not None:
-                gate[1].set()
+    with held_reads:
+        async with _mounted_console(host) as pilot:
+            try:
                 assert await _loop_wait(
-                    lambda: (
-                        all(not state.active for state in gate[2])
-                        and not host.screen._console_sync_in_progress
-                    )
+                    lambda: gate is not None and gate[0].is_set()
+                ), {
+                    "held": held,
+                    "gate": gate,
+                    "attached": getattr(
+                        host.screen, "_console_attach_reconciled", None
+                    ),
+                    "sections": tuple(app.app_config),
+                }
+                screen = host.screen
+                state = gate[2][0]
+                assert state.active, (
+                    "the original checked read must still own its leases"
                 )
-                await pilot.pause()
+                record_property("held_screen_await_chain", _awaiting(screen._task))
+                delivered = []
+                screen.call_later(delivered.append, True)
+                assert await _loop_wait(lambda: delivered == [True], timeout=1), (
+                    "post-attach FULL parked the screen message pump on a native read",
+                    _awaiting(screen._task),
+                )
+                assert state.active, "screen responsiveness was measured after release"
+            finally:
+                if gate is not None:
+                    gate[1].set()
+                    assert await _loop_wait(
+                        lambda: (
+                            all(not state.active for state in gate[2])
+                            and not host.screen._console_sync_in_progress
+                        )
+                    )
+                    await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_full_preparation_defers_for_busy_file_lock(tmp_path):
+    """A refused stock read releases REBUILD and can prepare after FILE retires."""
+    from tldw_chatbook.UI.Console_Modules.config_sync import (
+        prepare_console_presentation_sync,
+    )
+
+    database, _store, _controller, screen, tasks = _screen(tmp_path)
+    held, release = threading.Event(), threading.Event()
+    holder_expired = threading.Event()
+    preparation = None
+
+    def hold_file():
+        with config._config_file_lock():
+            held.set()
+            if not release.wait(5):
+                holder_expired.set()
+
+    holder = threading.Thread(target=hold_file)
+    try:
+        projection = await _warm(screen, tasks)
+        proof = projection._display_proof
+        assert proof is not None
+        await asyncio.sleep(projection.max_age + 0.02)
+        holder.start()
+        try:
+            assert await asyncio.to_thread(held.wait, 3)
+            preparation = asyncio.create_task(prepare_console_presentation_sync(screen))
+            done, _ = await asyncio.wait((preparation,), timeout=2)
+            assert preparation in done, "display preparation waited for FILE"
+            assert await preparation is False
+            assert not holder_expired.is_set()
+            assert projection._display_proof is proof
+            assert not projection.pending and not projection._reads
+            rebuild = config._settings_rebuild_lock()
+            assert rebuild.acquire(blocking=False), "refused FILE leaked REBUILD"
+            rebuild.release()
+        finally:
+            release.set()
+            await asyncio.to_thread(holder.join, 3)
+        assert not holder.is_alive()
+        assert await prepare_console_presentation_sync(screen)
+        assert projection._display_proof is not proof
+    finally:
+        if preparation is not None:
+            await asyncio.gather(preparation, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
+        database.close()
