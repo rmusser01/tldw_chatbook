@@ -362,6 +362,7 @@ def test_target_ensure_folder_is_deterministic_and_replay_safe(
     assert UUID(folder_sync_id).version == 4
 
 
+@pytest.mark.bootstrap_profile
 def test_target_folder_projection_is_frozen_usable_and_private_safe(
     target_harness,
 ) -> None:
@@ -392,6 +393,7 @@ def test_target_folder_projection_is_frozen_usable_and_private_safe(
             assert private_value not in rendered
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("field", ["folder_id", "name", "path", "normalized_path"])
 def test_target_folder_projection_rejects_non_exact_text_fields(
     target_harness,
@@ -428,6 +430,7 @@ def test_target_folder_projection_rejects_non_exact_text_fields(
     assert "Private Imported" not in repr(caught.value)
 
 
+@pytest.mark.bootstrap_profile
 def test_target_root_reuse_requires_explicit_allow_existing(target_harness) -> None:
     target, _service, folders, _db = target_harness
     existing = folders.create_folder(
@@ -448,6 +451,7 @@ def test_target_root_reuse_requires_explicit_allow_existing(target_harness) -> N
     assert reused.normalized_path == existing.normalized_path
 
 
+@pytest.mark.bootstrap_profile
 def test_target_deleted_deterministic_folder_identity_is_a_conflict(
     target_harness,
 ) -> None:
@@ -464,6 +468,7 @@ def test_target_deleted_deterministic_folder_identity_is_a_conflict(
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_target_reconciles_a_concurrent_folder_create_winner(
     target_harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -483,6 +488,7 @@ def test_target_reconciles_a_concurrent_folder_create_winner(
     assert result.folder_id == _FOLDER_ID
 
 
+@pytest.mark.bootstrap_profile
 def test_target_concurrent_different_folder_identity_is_a_conflict(
     target_harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -504,6 +510,7 @@ def test_target_concurrent_different_folder_identity_is_a_conflict(
     assert "hostile" not in repr(caught.value)
 
 
+@pytest.mark.bootstrap_profile
 def test_target_concurrent_folder_id_winner_on_another_path_is_a_conflict(
     target_harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -619,6 +626,7 @@ def test_target_real_two_connection_same_path_race_has_one_safe_winner(
         second_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 def test_target_folder_conflict_precedes_following_note_mutation(
     target_harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -644,6 +652,7 @@ def test_target_folder_conflict_precedes_following_note_mutation(
     assert target.read_note(note_id=_NOTE_ID) is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("segments", "folder_id", "allow_existing"),
     [
@@ -666,6 +675,7 @@ def test_target_folder_validation_failures_are_permanent(
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_target_folder_segments_stop_at_the_bounded_overflow_probe(
     target_harness,
 ) -> None:
@@ -690,6 +700,7 @@ def test_target_folder_segments_stop_at_the_bounded_overflow_probe(
     assert next_calls == 65
 
 
+@pytest.mark.bootstrap_profile
 def test_target_read_note_returns_a_frozen_private_projection(target_harness) -> None:
     target, _service, _folders, _db = target_harness
     created = target.create_note(note_id=_NOTE_ID, payload=_payload())
@@ -764,6 +775,7 @@ def test_target_uses_injected_service_database_client_id_for_direct_writes(
     assert client_ids == {"target-user"}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "different",
     [
@@ -810,6 +822,7 @@ def test_target_replace_note_pins_one_version_increment_and_reconciles_retry(
     assert retry == updated
 
 
+@pytest.mark.bootstrap_profile
 def test_target_replace_note_rejects_missing_different_or_later_state(
     target_harness,
 ) -> None:
@@ -837,6 +850,7 @@ def test_target_replace_note_rejects_missing_different_or_later_state(
         target.replace_note(note_id=_NOTE_ID, expected_version=1, payload=replacement)
 
 
+@pytest.mark.bootstrap_profile
 def test_target_replace_note_translates_an_optimistic_race(
     target_harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -869,6 +883,7 @@ def test_target_replace_note_translates_an_optimistic_race(
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_target_create_rolls_back_note_on_internal_keyword_sync_failure(
     target_harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -893,6 +908,7 @@ def test_target_create_rolls_back_note_on_internal_keyword_sync_failure(
     assert row is None
 
 
+@pytest.mark.bootstrap_profile
 def test_target_replace_rolls_back_text_on_internal_keyword_sync_failure(
     target_harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3500,6 +3516,7 @@ def test_executor_summarizes_retryability_across_all_required_folder_failures(
     assert [effect.retryable for effect in durable.membership_effects] == [False, True]
 
 
+@pytest.mark.bootstrap_profile
 def test_target_membership_attach_is_idempotent_and_requires_active_targets(
     target_harness,
 ) -> None:
@@ -3549,6 +3566,7 @@ def test_target_membership_attach_is_idempotent_and_requires_active_targets(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "hostile",
     [
@@ -3584,6 +3602,7 @@ def test_target_exception_translation_is_safe_and_does_not_chain_raw_errors(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_target_internal_value_errors_are_fatal_and_baseexceptions_escape(
     target_harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3619,6 +3638,7 @@ def test_target_internal_value_errors_are_fatal_and_baseexceptions_escape(
 _FAULT_DETAIL_CANARY = "zqleakcanary"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("fault", "expected_type"),
     [
@@ -3686,6 +3706,7 @@ class _UnexpectedRuntimeFault(RuntimeError):
     pass
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "fault_type",
     [AssertionError, MemoryError, TypeError, ValueError, _UnexpectedRuntimeFault],
@@ -3731,6 +3752,7 @@ def test_target_unexpected_faults_abort_as_safe_internal_errors(
     assert private_detail not in rendered
 
 
+@pytest.mark.bootstrap_profile
 def test_unexpected_fault_cannot_borrow_item_level_sqlite_classification(
     target_harness,
     monkeypatch: pytest.MonkeyPatch,
@@ -3760,6 +3782,7 @@ def test_unexpected_fault_cannot_borrow_item_level_sqlite_classification(
     assert private_detail not in rendered_traceback
 
 
+@pytest.mark.bootstrap_profile
 def test_unknown_fault_chain_is_not_inspected_for_sqlite_contention(
     target_harness,
     monkeypatch: pytest.MonkeyPatch,
@@ -3791,6 +3814,7 @@ def test_unknown_fault_chain_is_not_inspected_for_sqlite_contention(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "operation",
     [
@@ -3832,6 +3856,7 @@ def test_constructor_explicit_validation_remains_permanent_without_context() -> 
     assert caught.value.__context__ is None
 
 
+@pytest.mark.bootstrap_profile
 def test_constructor_component_access_faults_are_safe_fatal_errors(
     target_harness,
 ) -> None:
@@ -3859,6 +3884,7 @@ def test_constructor_component_access_faults_are_safe_fatal_errors(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("helper_name", "operation"),
     [
@@ -3896,6 +3922,7 @@ def test_internal_db_row_type_errors_are_safe_fatal_errors(
     assert caught.value.__context__ is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "row",
     [
@@ -3932,6 +3959,7 @@ def test_selected_note_row_contract_faults_are_safe_fatal_errors(
     assert caught.value.__context__ is None
 
 
+@pytest.mark.bootstrap_profile
 def test_selected_keyword_row_missing_column_is_a_safe_fatal_error(
     target_harness,
     monkeypatch: pytest.MonkeyPatch,
@@ -3947,6 +3975,7 @@ def test_selected_keyword_row_missing_column_is_a_safe_fatal_error(
     assert caught.value.__context__ is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "row",
     [
@@ -3972,6 +4001,7 @@ def test_linked_keyword_row_contract_faults_are_safe_fatal_errors(
     assert caught.value.__context__ is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "rows",
     [
@@ -3996,6 +4026,7 @@ def test_keyword_match_row_contract_faults_are_safe_fatal_errors(
     assert caught.value.__context__ is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("selected_row", "lastrowid"),
     [
@@ -4043,6 +4074,7 @@ def test_keyword_ensure_contract_faults_are_safe_fatal_errors(
     assert caught.value.__context__ is None
 
 
+@pytest.mark.bootstrap_profile
 def test_create_note_postcondition_fault_is_safe_fatal_and_rolls_back(
     target_harness,
     monkeypatch: pytest.MonkeyPatch,
@@ -4064,6 +4096,7 @@ def test_create_note_postcondition_fault_is_safe_fatal_and_rolls_back(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_replace_note_postcondition_fault_is_safe_fatal_and_rolls_back(
     target_harness,
     monkeypatch: pytest.MonkeyPatch,
@@ -4151,6 +4184,7 @@ def test_replace_note_postcondition_fault_is_safe_fatal_and_rolls_back(
     assert snapshot_target_state() == before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "folder_id",
     ["invalid/path", ".leading", "éclair"],
@@ -4190,6 +4224,7 @@ def test_target_reuses_strict_folder_id_validation_before_repository_access(
     assert folder_id not in repr(caught.value)
 
 
+@pytest.mark.bootstrap_profile
 def test_target_construction_and_mutations_do_not_log_private_values(
     target_harness,
     monkeypatch: pytest.MonkeyPatch,
@@ -4272,6 +4307,7 @@ def test_target_construction_and_mutations_do_not_log_private_values(
         assert private_value not in rendered
 
 
+@pytest.mark.bootstrap_profile
 def test_target_injected_failures_do_not_log_raw_private_details(
     target_harness,
     monkeypatch: pytest.MonkeyPatch,
