@@ -332,6 +332,7 @@ class TestResolveIngestTemplate:
 
 
 class TestChunkingServiceTemplateKwarg:
+    @pytest.mark.bootstrap_profile
     def test_template_kwarg_governs_module_wrapper(self):
         from tldw_chatbook.RAG_Search.chunking_service import (
             improved_chunking_process,
@@ -349,6 +350,7 @@ class TestChunkingServiceTemplateKwarg:
             " ".join(_WORDS[i : i + 3]) for i in range(0, 24, 3)
         ]
 
+    @pytest.mark.bootstrap_profile
     def test_explicit_max_size_beats_template_kwarg(self):
         from tldw_chatbook.RAG_Search.chunking_service import (
             improved_chunking_process,
@@ -363,6 +365,7 @@ class TestChunkingServiceTemplateKwarg:
             " ".join(_WORDS[i : i + 6]) for i in range(0, 24, 6)
         ]
 
+    @pytest.mark.bootstrap_profile
     def test_template_key_inside_options_is_popped_and_forwarded(self):
         """The inert-key trap: a ``template`` key inside the options dict
         used to be ignored by the Chunker (it gates on the keyword)."""
@@ -381,6 +384,7 @@ class TestChunkingServiceTemplateKwarg:
         assert len(chunks) == 8
         assert chunks[0]["text"] == "w01 w02 w03"
 
+    @pytest.mark.bootstrap_profile
     def test_explicit_option_beats_template_key(self):
         from tldw_chatbook.RAG_Search.chunking_service import (
             improved_chunking_process,
@@ -392,6 +396,7 @@ class TestChunkingServiceTemplateKwarg:
         )
         assert chunks[0]["text"] == "w01 w02"
 
+    @pytest.mark.bootstrap_profile
     def test_chunke_service_chunk_text_accepts_template_kwarg(self):
         """The audio/video chunking seam (``ChunkingService.chunk_text``).
 
@@ -586,6 +591,7 @@ class TestGovernancePlainText:
         source.write_text(_FIXTURE_TEXT, encoding="utf-8")
         return source
 
+    @pytest.mark.bootstrap_profile
     def test_two_templates_different_persisted_rows(self, template_db, tmp_path):
         source = self._text_source(tmp_path)
         _, tiny_rows = _ingest(template_db, source, {"template": dict(TEMPLATE_TINY)})
@@ -593,6 +599,7 @@ class TestGovernancePlainText:
         assert tiny_rows == [" ".join(_WORDS[i : i + 3]) for i in range(0, 24, 3)]
         assert big_rows == [" ".join(_WORDS[i : i + 12]) for i in range(0, 24, 12)]
 
+    @pytest.mark.bootstrap_profile
     def test_builder_shaped_options_honor_template_despite_processor_defaults(
         self, template_db, tmp_path
     ):
@@ -603,6 +610,7 @@ class TestGovernancePlainText:
         _, rows = _ingest(template_db, source, {"template": dict(TEMPLATE_TINY)})
         assert len(rows) == 8
 
+    @pytest.mark.bootstrap_profile
     def test_user_changed_size_beats_template_end_to_end(self, template_db, tmp_path):
         source = self._text_source(tmp_path)
         _, rows = _ingest(
@@ -612,6 +620,7 @@ class TestGovernancePlainText:
         )
         assert rows == [" ".join(_WORDS[i : i + 6]) for i in range(0, 24, 6)]
 
+    @pytest.mark.bootstrap_profile
     def test_none_default_byte_identical_to_today(self, media_db, tmp_path):
         """Plain options (no template) keep today's output exactly."""
         source = self._text_source(tmp_path)
@@ -667,6 +676,7 @@ class TestGovernancePdfFamily:
         source.write_bytes(b"%PDF-1.4 fixture bytes; extraction is stubbed")
         return source
 
+    @pytest.mark.bootstrap_profile
     def test_two_templates_different_persisted_rows(self, template_db, tmp_path):
         source = self._pdf_source(tmp_path)
         _, tiny_rows = _ingest(template_db, source, {"template": dict(TEMPLATE_TINY)})
@@ -674,6 +684,7 @@ class TestGovernancePdfFamily:
         assert tiny_rows == [" ".join(_WORDS[i : i + 3]) for i in range(0, 24, 3)]
         assert big_rows == [" ".join(_WORDS[i : i + 12]) for i in range(0, 24, 12)]
 
+    @pytest.mark.bootstrap_profile
     def test_template_beats_processor_setdefaults(self, template_db, tmp_path):
         """process_pdf setdefaults sentences/500/100; the template's
         3-word scheme must survive them."""
@@ -710,6 +721,7 @@ class TestGovernanceEbookFamily:
         )
         return source
 
+    @pytest.mark.bootstrap_profile
     def test_two_templates_different_persisted_rows(self, template_db, tmp_path):
         source = self._fb2_source(tmp_path)
         _, tiny_rows = _ingest(template_db, source, {"template": dict(TEMPLATE_TINY)})
@@ -721,6 +733,7 @@ class TestGovernanceEbookFamily:
         assert all(len(row.split()) <= 3 for row in tiny_rows)
         assert any(len(row.split()) > 3 for row in big_rows)
 
+    @pytest.mark.bootstrap_profile
     def test_template_beats_ebook_processor_defaults(self, template_db, tmp_path):
         """process_fb2 setdefaults sentences/500/200; the template's
         words/3 scheme must survive them."""
@@ -756,6 +769,7 @@ class TestGovernanceAudioVideoFamily:
         source.write_bytes(b"fake wav bytes; STT is stubbed")
         return source
 
+    @pytest.mark.bootstrap_profile
     def test_two_templates_different_persisted_rows(self, template_db, tmp_path):
         source = self._audio_source(tmp_path)
         _, tiny_rows = _ingest(template_db, source, {"template": dict(TEMPLATE_TINY)})
@@ -763,6 +777,7 @@ class TestGovernanceAudioVideoFamily:
         assert tiny_rows != big_rows
         assert len(tiny_rows) > len(big_rows) > 0
 
+    @pytest.mark.bootstrap_profile
     def test_audio_reprojection_carries_template_scalars(
         self, template_db, tmp_path, monkeypatch
     ):
@@ -790,6 +805,7 @@ class TestGovernanceAudioVideoFamily:
         assert observed["chunk_template"]["name"] == "tiny-words"
         assert len(rows) == 8
 
+    @pytest.mark.bootstrap_profile
     def test_video_branch_passes_template_explicitly(self, tmp_path, monkeypatch):
         """The :1309-1315 re-projection: a stub stands in for the video
         processor and records the call (signature-checked)."""
@@ -867,6 +883,7 @@ class TestImageSeamDocumented:
         monkeypatch.setattr(lfi, "_ensure_process_image", lambda: stub)
         self.stub = stub
 
+    @pytest.mark.bootstrap_profile
     def test_image_branch_unaffected_but_tail_honors_template(
         self, template_db, tmp_path
     ):
@@ -1023,6 +1040,7 @@ class TestA24TemplateHealthSurfaces:
             service.apply_template("invalid-one", text="alpha beta gamma")
         assert "invalid-one" in str(excinfo.value)
 
+    @pytest.mark.bootstrap_profile
     def test_apply_still_applies_valid_templates(self):
         service = _admin_with_valid_and_invalid()
         result = service.apply_template("valid-one", text="alpha beta gamma delta")
@@ -1491,6 +1509,7 @@ class TestAutoChainPdfSeam:
         assert raw is not None
         return json.loads(raw)
 
+    @pytest.mark.bootstrap_profile
     def test_classifier_win_template_honored_and_differs_from_plan_tier(
         self, media_db, tmp_path
     ):
@@ -1542,6 +1561,7 @@ class TestAutoChainPdfSeam:
         finally:
             plan_db.close_connection()
 
+    @pytest.mark.bootstrap_profile
     def test_auto_template_tier_config_satisfies_both_readers(self, media_db, tmp_path):
         """Reader 1 (LIKE) and reader 2 (json_extract) round-trip the
         template-tier row exactly as #2's do."""
@@ -1573,6 +1593,7 @@ class TestAutoChainPdfSeam:
             stats["most_used_templates"]
         )
 
+    @pytest.mark.bootstrap_profile
     def test_plan_tier_rows_carry_no_template_columns(self, template_db, tmp_path):
         """Template columns are a template-tier-only record (§4.4)."""
         source = self._pdf_source(tmp_path)
@@ -1587,6 +1608,7 @@ class TestAutoChainPdfSeam:
         assert all(row["chunking_template"] is None for row in rows)
         assert all(row["chunking_params"] is None for row in rows)
 
+    @pytest.mark.bootstrap_profile
     def test_plain_tier_auto_still_records_the_decision(
         self, template_db, tmp_path, monkeypatch
     ):

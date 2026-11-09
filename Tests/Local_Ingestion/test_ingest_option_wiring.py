@@ -400,6 +400,7 @@ class TestChunkToggleReachesProcessors:
 
         assert calls[0]["perform_chunking"] is False
 
+    @pytest.mark.bootstrap_profile
     def test_audio_chunk_off_passes_perform_chunking_false(
         self, tmp_path: Path, monkeypatch
     ):
@@ -441,6 +442,7 @@ class TestChunkToggleReachesProcessors:
 
         assert calls[0]["perform_chunking"] is False
 
+    @pytest.mark.bootstrap_profile
     def test_video_chunk_off_passes_perform_chunking_false(
         self, tmp_path: Path, monkeypatch
     ):
@@ -492,6 +494,7 @@ class TestChunkToggleReachesProcessors:
 
 
 class TestTextTypeChunkingEndToEnd:
+    @pytest.mark.bootstrap_profile
     def test_plaintext_chunk_on_stores_chunks(
         self, tmp_path: Path, media_db: MediaDatabase
     ):
@@ -514,6 +517,7 @@ class TestTextTypeChunkingEndToEnd:
         assert len(rows) == len(payload["chunks"])
         assert _chunking_status(media_db, media_id) == "completed"
 
+    @pytest.mark.bootstrap_profile
     def test_plaintext_chunk_size_governs_chunk_count(self, tmp_path: Path):
         source = tmp_path / "many.txt"
         source.write_text(_MANY_SENTENCES, encoding="utf-8")
@@ -529,6 +533,7 @@ class TestTextTypeChunkingEndToEnd:
 
         assert len(small["chunks"]) > len(large["chunks"])
 
+    @pytest.mark.bootstrap_profile
     def test_plaintext_chunk_overlap_governs_chunk_text(self, tmp_path: Path):
         source = tmp_path / "many.txt"
         source.write_text(_MANY_SENTENCES, encoding="utf-8")
@@ -544,6 +549,7 @@ class TestTextTypeChunkingEndToEnd:
 
         assert len(with_overlap["chunks"]) > len(no_overlap["chunks"])
 
+    @pytest.mark.bootstrap_profile
     def test_plaintext_chunk_off_stores_no_chunks(
         self, tmp_path: Path, media_db: MediaDatabase
     ):
@@ -557,6 +563,7 @@ class TestTextTypeChunkingEndToEnd:
         assert _chunk_rows(media_db, media_id) == []
         assert _chunking_status(media_db, media_id) == "pending"
 
+    @pytest.mark.bootstrap_profile
     def test_html_chunk_on_stores_chunks(self, tmp_path: Path, media_db: MediaDatabase):
         source = tmp_path / "many.html"
         source.write_text(
@@ -574,6 +581,7 @@ class TestTextTypeChunkingEndToEnd:
         assert len(_chunk_rows(media_db, media_id)) == len(payload["chunks"])
         assert _chunking_status(media_db, media_id) == "completed"
 
+    @pytest.mark.bootstrap_profile
     def test_document_chunk_on_chunks_processor_content(
         self, tmp_path: Path, monkeypatch, media_db: MediaDatabase
     ):
@@ -660,6 +668,7 @@ class TestTextTypeAnalysis:
             exploding_analyze,
         )
 
+    @pytest.mark.bootstrap_profile
     def test_plaintext_analysis_dispatches_and_persists(
         self, tmp_path: Path, monkeypatch, media_db: MediaDatabase
     ):
@@ -696,6 +705,7 @@ class TestTextTypeAnalysis:
         stored = [row["analysis_content"] for row in cursor.fetchall()]
         assert "DISPATCHED ANALYSIS." in stored
 
+    @pytest.mark.bootstrap_profile
     def test_analysis_call_settings_travel_to_the_dispatch(
         self, tmp_path: Path, monkeypatch
     ):
@@ -731,6 +741,7 @@ class TestTextTypeAnalysis:
         assert call["max_tokens"] == 512
         assert call["system_message"] == "Analyze like the viewer would."
 
+    @pytest.mark.bootstrap_profile
     def test_html_analysis_dispatches(self, tmp_path: Path, monkeypatch):
         source = tmp_path / "page.html"
         source.write_text(
@@ -747,6 +758,7 @@ class TestTextTypeAnalysis:
 
         assert payload["analysis_content"] == "HTML ANALYSIS."
 
+    @pytest.mark.bootstrap_profile
     def test_openai_shaped_dict_response_is_extracted(
         self, tmp_path: Path, monkeypatch
     ):
@@ -764,6 +776,7 @@ class TestTextTypeAnalysis:
 
         assert payload["analysis_content"] == "DICT ANALYSIS."
 
+    @pytest.mark.bootstrap_profile
     def test_plaintext_analysis_skipped_without_provider(
         self, tmp_path: Path, monkeypatch
     ):
@@ -776,6 +789,7 @@ class TestTextTypeAnalysis:
         assert payload["analysis_content"] == ""
         assert calls == []
 
+    @pytest.mark.bootstrap_profile
     def test_api_name_without_key_skips_instead_of_spending(
         self, tmp_path: Path, monkeypatch
     ):
@@ -793,6 +807,7 @@ class TestTextTypeAnalysis:
         assert payload["analysis_content"] == ""
         assert calls == []
 
+    @pytest.mark.bootstrap_profile
     def test_keyless_opt_in_allows_dispatch_without_key(
         self, tmp_path: Path, monkeypatch
     ):
@@ -815,6 +830,7 @@ class TestTextTypeAnalysis:
         assert calls[0]["api_endpoint"] == "ollama"
         assert calls[0].get("api_key") is None
 
+    @pytest.mark.bootstrap_profile
     def test_error_prefixed_response_is_failure_not_analysis(
         self, tmp_path: Path, monkeypatch
     ):
@@ -834,6 +850,7 @@ class TestTextTypeAnalysis:
         assert any("Analysis failed" in w for w in payload["warnings"])
         assert "Invalid API Name" in payload["analysis_failed_reason"]
 
+    @pytest.mark.bootstrap_profile
     def test_plaintext_analysis_failure_is_warning_not_job_failure(
         self, tmp_path: Path, monkeypatch
     ):
@@ -850,6 +867,7 @@ class TestTextTypeAnalysis:
         assert any("nalysis" in w for w in payload["warnings"])
         assert "provider exploded" in payload["analysis_failed_reason"]
 
+    @pytest.mark.bootstrap_profile
     def test_analysis_skipped_reason_travels_to_payload(self, tmp_path: Path):
         source = tmp_path / "notes.txt"
         source.write_text("Content.", encoding="utf-8")
@@ -867,6 +885,7 @@ class TestTextTypeAnalysis:
             == "OpenAI is not ready (Missing API key)"
         )
 
+    @pytest.mark.bootstrap_profile
     def test_no_skip_reason_key_when_not_requested(self, tmp_path: Path):
         source = tmp_path / "notes.txt"
         source.write_text("Content.", encoding="utf-8")
@@ -896,6 +915,7 @@ class TestProcessorAnalysisErrorStrings:
             "warnings": [],
         }
 
+    @pytest.mark.bootstrap_profile
     def test_error_string_processor_analysis_is_not_persisted(
         self, tmp_path: Path, monkeypatch
     ):
@@ -921,6 +941,7 @@ class TestProcessorAnalysisErrorStrings:
         assert any("Analysis failed" in w for w in payload["warnings"])
         assert "Summarization failed" in payload["analysis_failed_reason"]
 
+    @pytest.mark.bootstrap_profile
     def test_error_string_document_summary_is_not_persisted(
         self, tmp_path: Path, monkeypatch
     ):
@@ -948,6 +969,7 @@ class TestProcessorAnalysisErrorStrings:
         assert any("Analysis failed" in w for w in payload["warnings"])
         assert "Invalid API Name" in payload["analysis_failed_reason"]
 
+    @pytest.mark.bootstrap_profile
     def test_real_document_summary_still_surfaces(self, tmp_path: Path, monkeypatch):
         source = tmp_path / "report.docx"
         source.write_bytes(b"PK\x03\x04" + b"\x00" * 32)
@@ -1018,6 +1040,7 @@ class TestProcessorAnalysisCredentialGates:
         # (perform_analysis and api_name only) turns this RED.
         assert "analysis_credentials_ok(" in inspect.getsource(func)
 
+    @pytest.mark.bootstrap_profile
     def test_keyless_ok_travels_to_process_pdf(self, tmp_path: Path, monkeypatch):
         source = tmp_path / "doc.pdf"
         source.write_bytes(b"%PDF-1.4 stub")
@@ -1055,6 +1078,7 @@ class TestProcessorAnalysisCredentialGates:
 
         assert calls[0]["keyless_ok"] is True
 
+    @pytest.mark.bootstrap_profile
     def test_keyless_ok_defaults_false_for_process_ebook(
         self, tmp_path: Path, monkeypatch
     ):
@@ -1178,6 +1202,7 @@ class TestDocumentOptionWiring:
         assert calls[0]["enable_ocr"] == sig.parameters["enable_ocr"].default
         assert calls[0]["ocr_language"] == sig.parameters["ocr_language"].default
 
+    @pytest.mark.bootstrap_profile
     def test_document_still_gets_generic_chunking(
         self, tmp_path: Path, monkeypatch, media_db: MediaDatabase
     ):
@@ -1377,6 +1402,7 @@ def _audio_stub_result() -> Dict[str, Any]:
 
 
 class TestAVTranslationAndVadWiring:
+    @pytest.mark.bootstrap_profile
     def test_translation_target_reaches_audio_processor(
         self, tmp_path: Path, monkeypatch
     ):
@@ -1410,6 +1436,7 @@ class TestAVTranslationAndVadWiring:
 
         assert calls[0]["translation_target_language"] == "en"
 
+    @pytest.mark.bootstrap_profile
     def test_vad_filter_reaches_audio_processor_as_vad_use(
         self, tmp_path: Path, monkeypatch
     ):
@@ -1441,6 +1468,7 @@ class TestAVTranslationAndVadWiring:
 
         assert calls[0]["vad_use"] is True
 
+    @pytest.mark.bootstrap_profile
     def test_vad_filter_reaches_video_processor_as_vad_use(
         self, tmp_path: Path, monkeypatch
     ):
@@ -1483,6 +1511,7 @@ class TestAVTranslationAndVadWiring:
 
         assert calls[0]["vad_use"] is True
 
+    @pytest.mark.bootstrap_profile
     def test_vad_absent_defaults_off(self, tmp_path: Path, monkeypatch):
         source = tmp_path / "talk.mp3"
         source.write_bytes(b"ID3\x00" + b"\x00" * 32)
@@ -1532,6 +1561,7 @@ _MANY_WORDS = " ".join(
 
 
 class TestPublicWrapperChunkDefaults:
+    @pytest.mark.bootstrap_profile
     def test_ingest_local_file_default_chunks_and_stores(
         self, tmp_path: Path, media_db: MediaDatabase
     ):
@@ -1551,6 +1581,7 @@ class TestPublicWrapperChunkDefaults:
             len(_chunk_rows(media_db, result["media_id"])) == (result["chunks_created"])
         )
 
+    @pytest.mark.bootstrap_profile
     def test_ingest_local_file_explicit_none_stores_no_chunks(
         self, tmp_path: Path, media_db: MediaDatabase
     ):
@@ -1566,6 +1597,7 @@ class TestPublicWrapperChunkDefaults:
         assert result["chunks_created"] == 0
         assert _chunk_rows(media_db, result["media_id"]) == []
 
+    @pytest.mark.bootstrap_profile
     def test_batch_ingest_files_default_chunks(
         self, tmp_path: Path, media_db: MediaDatabase
     ):
@@ -1585,6 +1617,7 @@ class TestPublicWrapperChunkDefaults:
         for result in results:
             assert result["chunks_created"] > 1
 
+    @pytest.mark.bootstrap_profile
     def test_quick_ingest_default_chunks(self, tmp_path: Path, monkeypatch):
         from tldw_chatbook.Local_Ingestion.local_file_ingestion import quick_ingest
 
@@ -1684,6 +1717,7 @@ def _install_video_stub(monkeypatch) -> list:
 
 
 class TestAVTrimWiring:
+    @pytest.mark.bootstrap_profile
     def test_trim_reaches_audio_processor(self, tmp_path: Path, monkeypatch):
         source = _write_fake_mp3(tmp_path)
         from tldw_chatbook.Local_Ingestion.audio_processing import (
@@ -1701,6 +1735,7 @@ class TestAVTrimWiring:
         assert calls[0]["start_time"] == "0:15"
         assert calls[0]["end_time"] == "1:30"
 
+    @pytest.mark.bootstrap_profile
     def test_trim_reaches_video_processor(self, tmp_path: Path, monkeypatch):
         source = _write_fake_mp4(tmp_path)
         calls = _install_video_stub(monkeypatch)
@@ -1712,6 +1747,7 @@ class TestAVTrimWiring:
         assert calls[0]["start_time"] == "00:00:10"
         assert calls[0]["end_time"] == "90"
 
+    @pytest.mark.bootstrap_profile
     def test_trim_absent_defaults_unbounded(self, tmp_path: Path, monkeypatch):
         source = _write_fake_mp3(tmp_path)
         calls = _install_audio_stub(monkeypatch)
@@ -1721,6 +1757,7 @@ class TestAVTrimWiring:
         assert calls[0].get("start_time") is None
         assert calls[0].get("end_time") is None
 
+    @pytest.mark.bootstrap_profile
     def test_video_extraction_trim_is_not_applied_twice(
         self, tmp_path: Path, monkeypatch
     ):
@@ -1875,6 +1912,7 @@ def _capture_audio_extraction_argv(tmp_path: Path, monkeypatch, start, end):
 
 
 class TestAVTrimArgvSemantics:
+    @pytest.mark.bootstrap_profile
     def test_video_and_audio_mean_the_same_window(self, tmp_path: Path, monkeypatch):
         """Start 0:30 / Stop 1:00 must select 30s-60s on BOTH paths.
 
@@ -1912,6 +1950,7 @@ class TestAVTrimArgvSemantics:
             ("0:30", None, (30.0, None)),
         ],
     )
+    @pytest.mark.bootstrap_profile
     def test_both_paths_agree_across_formats(
         self, tmp_path: Path, monkeypatch, start, end, expected
     ):
@@ -1924,6 +1963,7 @@ class TestAVTrimArgvSemantics:
         assert _interpret_ffmpeg_window(video_argv) == expected
         assert _interpret_ffmpeg_window(audio_argv) == expected
 
+    @pytest.mark.bootstrap_profile
     def test_bounded_trim_keeps_fast_input_seeking(self, tmp_path: Path, monkeypatch):
         """Correctness first, speed second -- but not speed sacrificed.
 
@@ -1943,6 +1983,7 @@ class TestAVTrimArgvSemantics:
 
 
 class TestAVRecursiveSummaryWiring:
+    @pytest.mark.bootstrap_profile
     def test_summarize_recursively_reaches_audio_processor(
         self, tmp_path: Path, monkeypatch
     ):
@@ -1959,6 +2000,7 @@ class TestAVRecursiveSummaryWiring:
 
         assert calls[0]["summarize_recursively"] is True
 
+    @pytest.mark.bootstrap_profile
     def test_summarize_recursively_reaches_video_processor(
         self, tmp_path: Path, monkeypatch
     ):
@@ -1969,6 +2011,7 @@ class TestAVRecursiveSummaryWiring:
 
         assert calls[0]["summarize_recursively"] is True
 
+    @pytest.mark.bootstrap_profile
     def test_legacy_chunk_options_spelling_still_works(
         self, tmp_path: Path, monkeypatch
     ):
@@ -1982,6 +2025,7 @@ class TestAVRecursiveSummaryWiring:
 
         assert calls[0]["summarize_recursively"] is True
 
+    @pytest.mark.bootstrap_profile
     def test_absent_defaults_off(self, tmp_path: Path, monkeypatch):
         source = _write_fake_mp3(tmp_path)
         calls = _install_audio_stub(monkeypatch)
@@ -2029,6 +2073,7 @@ class TestAVRecursiveSummaryWiring:
 
 
 class TestAVCookiesFileWiring:
+    @pytest.mark.bootstrap_profile
     def test_cookies_file_reaches_video_processor(self, tmp_path: Path, monkeypatch):
         source = _write_fake_mp4(tmp_path)
         calls = _install_video_stub(monkeypatch)
@@ -2041,6 +2086,7 @@ class TestAVCookiesFileWiring:
         assert calls[0]["use_cookies"] is True
         assert calls[0]["cookies"] == "/home/user/cookies.txt"
 
+    @pytest.mark.bootstrap_profile
     def test_cookies_absent_defaults_off_for_video(self, tmp_path: Path, monkeypatch):
         source = _write_fake_mp4(tmp_path)
         calls = _install_video_stub(monkeypatch)
@@ -2050,6 +2096,7 @@ class TestAVCookiesFileWiring:
         assert calls[0]["use_cookies"] is False
         assert calls[0].get("cookies") is None
 
+    @pytest.mark.bootstrap_profile
     def test_cookies_never_forwarded_to_audio_processor(
         self, tmp_path: Path, monkeypatch
     ):
@@ -2070,6 +2117,7 @@ class TestAVCookiesFileWiring:
         assert "use_cookies" not in calls[0]
         assert "cookies" not in calls[0]
 
+    @pytest.mark.bootstrap_profile
     def test_cookies_problem_travels_to_the_payload(self, tmp_path: Path, monkeypatch):
         """(xhigh review round) A cookies path the option boundary refused
         must be visible on the job, not swallowed. It rides the same
@@ -2183,6 +2231,7 @@ def _install_ocr_stub(monkeypatch, text: str | None):
 
 
 class TestImageWiring:
+    @pytest.mark.bootstrap_profile
     def test_image_options_reach_process_image(self, tmp_path: Path, monkeypatch):
         """The parse branch forwards the panel's OCR knobs to the REAL
         ``process_image`` parameter names, keeps visual features off (their
@@ -2238,6 +2287,7 @@ class TestImageWiring:
         assert payload["media_type"] == "image"
         assert payload["content"] == "OCR TEXT"
 
+    @pytest.mark.bootstrap_profile
     def test_image_defaults_match_the_real_signature(self, tmp_path: Path, monkeypatch):
         """The parse branch's fallbacks mirror ``process_image``'s own
         declared defaults, pinned against ``inspect.signature`` so a
@@ -2276,6 +2326,7 @@ class TestImageWiring:
         assert captured["ocr_language"] == sig.parameters["ocr_language"].default
         assert captured["ocr_backend"] == sig.parameters["ocr_backend"].default
 
+    @pytest.mark.bootstrap_profile
     def test_image_end_to_end_real_png_persists(
         self, tmp_path: Path, monkeypatch, media_db: MediaDatabase
     ):
@@ -2316,6 +2367,7 @@ class TestImageWiring:
         assert row["content"] == "TOTAL 12.50 EUR thank you"
         assert _chunk_rows(media_db, media_id), "chunk ON stored no chunks"
 
+    @pytest.mark.bootstrap_profile
     def test_image_chunk_off_stores_no_chunks(
         self, tmp_path: Path, monkeypatch, media_db: MediaDatabase
     ):
@@ -2331,6 +2383,7 @@ class TestImageWiring:
         media_id, _uuid, _msg = persist_parsed_media(payload, media_db)
         assert _chunk_rows(media_db, media_id) == []
 
+    @pytest.mark.bootstrap_profile
     def test_image_without_ocr_text_fails_honestly(
         self, tmp_path: Path, monkeypatch, media_db: MediaDatabase
     ):
@@ -2348,6 +2401,7 @@ class TestImageWiring:
         cursor = media_db.execute_query("SELECT COUNT(*) AS n FROM Media", ())
         assert cursor.fetchone()["n"] == 0
 
+    @pytest.mark.bootstrap_profile
     def test_image_ocr_off_also_fails_honestly(
         self, tmp_path: Path, monkeypatch, media_db: MediaDatabase
     ):
@@ -2361,6 +2415,7 @@ class TestImageWiring:
         with pytest.raises(Exception, match="OCR"):
             persist_parsed_media(payload, media_db)
 
+    @pytest.mark.bootstrap_profile
     def test_image_chunk_size_governs_chunk_count(self, tmp_path: Path, monkeypatch):
         """(task-3307 xhigh review round) OCR text must chunk per the form.
 
@@ -2392,6 +2447,7 @@ class TestImageWiring:
         assert len(small["chunks"]) > 1, "OCR text was never chunked"
         assert len(small["chunks"]) > len(large["chunks"])
 
+    @pytest.mark.bootstrap_profile
     def test_image_chunk_on_with_defaulted_empty_options_still_chunks(
         self, tmp_path: Path, monkeypatch
     ):
@@ -2415,6 +2471,7 @@ class TestImageWiring:
         # ``{"chunk_num": 0}`` placeholder.
         assert "word_count" in payload["chunks"][0]
 
+    @pytest.mark.bootstrap_profile
     def test_image_chunking_has_one_authority(self, tmp_path: Path, monkeypatch):
         """``process_image`` must never chunk on the ingest path.
 
@@ -2464,6 +2521,7 @@ class TestImageWiring:
             "the processor's single fallback chunk was persisted as-is"
         )
 
+    @pytest.mark.bootstrap_profile
     def test_image_analysis_dispatches_via_chat_tail(self, tmp_path: Path, monkeypatch):
         """Analysis over the OCR text runs through the arc's chat_api_call
         tail (full [analysis_defaults] shape, keyless support) -- NOT

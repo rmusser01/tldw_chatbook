@@ -95,6 +95,7 @@ def _media_chunking_config(db: MediaDatabase, media_id: int) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_template_ingest_fills_chunk_columns_and_config(
     media_db: MediaDatabase, tmp_path: Path
 ) -> None:
@@ -119,6 +120,7 @@ def test_template_ingest_fills_chunk_columns_and_config(
     assert parsed["template"] == "tiny-words"
 
 
+@pytest.mark.bootstrap_profile
 def test_chunking_config_satisfies_like_reader(
     media_db: MediaDatabase, tmp_path: Path
 ) -> None:
@@ -145,6 +147,7 @@ def test_chunking_config_satisfies_like_reader(
     assert documents[0]["config"]["template"] == "tiny-words"
 
 
+@pytest.mark.bootstrap_profile
 def test_chunking_config_satisfies_json_extract_reader(
     media_db: MediaDatabase, tmp_path: Path
 ) -> None:
@@ -168,6 +171,7 @@ def test_chunking_config_satisfies_json_extract_reader(
     assert stats["configured_documents"] == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_non_ascii_template_name_still_satisfies_both_readers(
     media_db: MediaDatabase, tmp_path: Path
 ) -> None:
@@ -206,6 +210,7 @@ def test_non_ascii_template_name_still_satisfies_both_readers(
     assert {"template": name, "count": 1} in stats["most_used_templates"]
 
 
+@pytest.mark.bootstrap_profile
 def test_rechunk_resolution_reads_back_stored_choice(
     media_db: MediaDatabase, tmp_path: Path
 ) -> None:
@@ -233,6 +238,7 @@ def test_rechunk_resolution_reads_back_stored_choice(
     assert resolved["name"] == "tiny-words"
 
 
+@pytest.mark.bootstrap_profile
 def test_plain_options_ingest_writes_no_template_persistence(
     media_db: MediaDatabase, tmp_path: Path
 ) -> None:
@@ -247,6 +253,7 @@ def test_plain_options_ingest_writes_no_template_persistence(
     assert _media_chunking_config(media_db, media_id) is None
 
 
+@pytest.mark.bootstrap_profile
 def test_two_templates_persist_their_own_names(
     media_db: MediaDatabase, tmp_path: Path
 ) -> None:
