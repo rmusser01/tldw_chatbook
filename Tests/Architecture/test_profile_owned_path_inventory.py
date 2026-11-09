@@ -306,7 +306,7 @@ data_dir / "export"
 
 #: TASK-38989: Python under Docs/ is evidence and snippets, never runtime
 #: (bffa2bffed added a QA excerpt that is not even parseable on its own).
-NON_RUNTIME_PYTHON_ROOTS = ("Docs/",)
+NON_RUNTIME_PYTHON_ROOTS = ("Docs/", "build/lib/")
 
 
 def test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners() -> (
