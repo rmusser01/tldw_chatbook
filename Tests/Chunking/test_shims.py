@@ -14,6 +14,7 @@ def test_testing_shim():
     assert isinstance(testing.is_test_mode(), bool)
 
 
+@pytest.mark.bootstrap_profile
 def test_config_shim():
     from tldw_chatbook.Chunking._shims import config
 
@@ -98,6 +99,7 @@ def test_config_shim_merge_order_capitalized_wins(monkeypatch):
     assert cfg.get("Chunking", "lower_only") == "yes"
 
 
+@pytest.mark.bootstrap_profile
 def test_prompt_loader_shim_maps_rolling_summarize():
     from tldw_chatbook.Chunking._shims.Utils import prompt_loader
 
@@ -177,6 +179,7 @@ def test_prompt_loader_flat_alias():
     assert flat.load_prompt is nested.load_prompt
 
 
+@pytest.mark.bootstrap_profile
 def test_engine_imports_with_shims():
     # The engine's module graph must resolve entirely through the shims.
     import tldw_chatbook.Chunking.engine  # noqa: F401

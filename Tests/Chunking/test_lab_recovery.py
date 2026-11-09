@@ -87,6 +87,7 @@ def test_oversized_raw_draft_is_rejected_on_import():
         parse_recovery(json.dumps(envelope).encode())
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("change", ["draft", "sample", "result", "reference"])
 def test_malformed_session_is_validated_before_pruning(monkeypatch, change):
     from tldw_chatbook.Chunking import lab_recovery
@@ -111,6 +112,7 @@ def test_malformed_session_is_validated_before_pruning(monkeypatch, change):
         parse_recovery(json.dumps(envelope).encode())
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "limit",
     [
@@ -137,6 +139,7 @@ def test_import_limits_precede_nested_model_reconstruction(monkeypatch, limit):
         parse_recovery(payload)
 
 
+@pytest.mark.bootstrap_profile
 def test_pending_controls_and_old_captured_runtime_remain_readable(monkeypatch):
     from tldw_chatbook.Chunking import lab_preflight, lab_state
     from tldw_chatbook.Chunking.lab_state import edit_control, pin_baseline
@@ -157,6 +160,7 @@ def test_pending_controls_and_old_captured_runtime_remain_readable(monkeypatch):
     assert restored.results == session.results
 
 
+@pytest.mark.bootstrap_profile
 def test_old_unsupported_captured_recipe_uses_original_identity():
     session = historical_session()
     restored = parse_recovery(export_recovery(session))
@@ -245,6 +249,7 @@ def test_recovery_keeps_unknown_view_and_record_extensions_with_opaque_input():
     assert restored.candidates[candidate_id]["draft"] == draft
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "change", ["digest", "recipe", "membership", "dangling", "batch_outcome"]
 )
@@ -270,6 +275,7 @@ def test_result_integrity_and_membership_are_checked_independently(change):
         parse_recovery(json.dumps(envelope).encode())
 
 
+@pytest.mark.bootstrap_profile
 def test_unfinished_import_is_interrupted_without_execution():
     from tldw_chatbook.Chunking.lab_state import capture_batch, install_batch
 
@@ -281,6 +287,7 @@ def test_unfinished_import_is_interrupted_without_execution():
     assert restored.batch["outcomes"] == {request.run_id: "interrupted"}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("boundary", ["parse", "load", "rebase"])
 def test_recovery_boundaries_share_partial_batch_interruption_policy(
     tmp_path, boundary
@@ -349,6 +356,7 @@ def test_total_envelope_limit_is_checked_before_decoding(monkeypatch):
         parse_recovery(b" " * 33)
 
 
+@pytest.mark.bootstrap_profile
 def test_export_rechecks_mutated_retained_blob():
     session = completed_session()
     export_recovery(session)
@@ -381,6 +389,7 @@ def test_invalid_content_or_overall_revision_is_rejected(field, value):
         parse_recovery(json.dumps(envelope).encode())
 
 
+@pytest.mark.bootstrap_profile
 def test_matching_result_limit_counts_entire_snapshot(monkeypatch):
     from Tests.Chunking.test_lab_state import _completed
     from tldw_chatbook.Chunking import lab_recovery
@@ -431,6 +440,7 @@ def test_empty_containers_obey_exact_envelope_depth():
         update_view(session, {"nested": {"x": nested}})
 
 
+@pytest.mark.bootstrap_profile
 def test_string_run_revision_is_rejected_without_coercing_captured_snapshot():
     envelope = json.loads(export_recovery(completed_session()))
     run_id, result = next(iter(envelope["session"]["results"].items()))
@@ -462,6 +472,7 @@ def test_exact_checkpoint_limit_matches_active_and_export_accounting():
         update_view(accepted, {"padding": padding + "x"})
 
 
+@pytest.mark.bootstrap_profile
 def test_blob_allowance_counts_referenced_samples_and_results(monkeypatch):
     from Tests.Chunking.test_lab_state import _completed
     from tldw_chatbook.Chunking import lab_recovery
@@ -481,6 +492,7 @@ def test_blob_allowance_counts_referenced_samples_and_results(monkeypatch):
     assert installed.results == session.results
 
 
+@pytest.mark.bootstrap_profile
 def test_too_many_chunks_are_rejected_before_active_publication():
     from Tests.Chunking.test_lab_state import _completed
     from tldw_chatbook.Chunking.lab_models import RunResult

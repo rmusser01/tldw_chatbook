@@ -36,6 +36,7 @@ def _chunk(text: str) -> str:
     return " ".join(ck.chunk_text(text, method="words", max_size=10, overlap=0))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.production_path
 def test_marker_null_bytes_are_sanitized():
     """Under @pytest.mark.production_path the engine must take the production
@@ -73,6 +74,7 @@ def test_marker_tldw_test_mode_removed():
     assert os.environ.get("TLDW_TEST_MODE", "") == ""
 
 
+@pytest.mark.bootstrap_profile
 def test_without_marker_test_mode_relaxation_active():
     """Control: withOUT the marker the engine stays in test mode (relaxed
     sanitization, null bytes preserved). This is the upstream-intended

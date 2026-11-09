@@ -39,6 +39,7 @@ TEXT = (
 )
 
 
+@pytest.mark.bootstrap_profile
 def test_book_ingestion_regex_path_shape():
     # Book_Ingestion_Lib:1793 → RAG_Search.chunking_service.improved_chunking_process.
     # Characterizes today's producer (chunking_service's own regex path);
@@ -91,6 +92,7 @@ def test_db_roundtrip_offsets_populated(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_ebook_chapters_through_rag_service():
     # §7.2 regression: no InvalidChunkingMethodError after whitelist removal.
     # Phase B (task 7) removed chunking_service's five-method whitelist; this
@@ -191,6 +193,7 @@ def _drive_preview_branches(config):
     return chunks
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("method", ["words", "sentences", "paragraphs"])
 async def test_preview_matches_ingest_basic_chunker_branch(method):
     # §7.3, basic-chunker branch: the modal's Chunker() preview must produce
@@ -216,6 +219,7 @@ async def test_preview_matches_ingest_basic_chunker_branch(method):
         assert c["word_count"] == len(c["text"].split()) > 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("method", ["hierarchical", "structural", "contextual"])
 async def test_preview_matches_ingest_structural_branch(method):
     # §7.3, ECS branch: the modal's structural preview (chunk_text_with_structure

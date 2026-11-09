@@ -866,6 +866,7 @@ async def test_system_command_rejects_recipe_before_session_or_draft_mutation() 
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_unknown_command_first_enter_renders_hint_and_does_not_send():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -932,6 +933,7 @@ async def test_console_unknown_command_second_unmodified_enter_sends_as_text():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_unknown_command_edit_between_enters_re_hints_and_does_not_send():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -966,6 +968,7 @@ async def test_console_unknown_command_edit_between_enters_re_hints_and_does_not
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_unknown_command_roundtrip_edit_back_to_armed_text_requires_fresh_arm():
     """Editing away and back to the armed text still disarms (Task 10 hardening).
 
@@ -1004,6 +1007,7 @@ async def test_console_unknown_command_roundtrip_edit_back_to_armed_text_require
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_collapse_disarms_unknown_command_literal_send():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -1070,6 +1074,7 @@ async def test_console_collapsed_paste_starting_with_slash_sends_normally():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_prompt_command_dispatches_insert_prompt_stub():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -1095,6 +1100,7 @@ async def test_console_prompt_command_dispatches_insert_prompt_stub():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_system_command_dispatches_apply_system_stub():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -1195,6 +1201,7 @@ async def test_console_prompt_replacement_resyncs_stale_command_popup(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_prompt_command_captures_before_resolution_and_refuses_stale_draft():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -1229,6 +1236,7 @@ async def test_console_prompt_command_captures_before_resolution_and_refuses_sta
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_prompt_slash_fallback_threads_dispatch_snapshot_to_picker():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -1802,6 +1810,7 @@ async def test_console_prompt_command_picker_escape_leaves_draft_untouched(tmp_p
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_pending_prompt_insert_is_consumed_automatically_on_mount():
     """The staged handoff is consumed by the real ``on_mount`` wiring itself
     (not just the private method called directly) -- proves the Library
@@ -1827,6 +1836,7 @@ async def test_console_pending_prompt_insert_is_consumed_automatically_on_mount(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_pending_prompt_insert_is_consumed_automatically_on_resume():
     """Same as the ``on_mount`` variant above, but exercises the real
     ``on_screen_resume`` timer path -- the finding this regression guards
@@ -1860,6 +1870,7 @@ async def test_console_pending_prompt_insert_is_consumed_automatically_on_resume
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_resume_triggered_prompt_insert_survives_stale_session_switch():
     """Regression for the resume wipe-race: if a session switch races ahead
     of a resume-triggered insert, ``_console_visible_draft_session_id`` can
@@ -1936,6 +1947,7 @@ async def test_console_resume_triggered_prompt_insert_survives_stale_session_swi
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_consumes_pending_prompt_insert_empty_draft_is_clean_insert():
     """An empty composer draft gets a clean insert -- no separator noise."""
     app = _build_test_app()
@@ -1962,6 +1974,7 @@ async def test_console_consumes_pending_prompt_insert_empty_draft_is_clean_inser
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_consumes_pending_prompt_insert_appends_to_existing_draft():
     """Library's insert-in-console NEVER clobbers an in-progress draft --
     it appends onto it instead."""
@@ -1992,6 +2005,7 @@ async def test_console_consumes_pending_prompt_insert_appends_to_existing_draft(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_consumes_pending_prompt_insert_large_body_appends_as_collapsed_token():
     """An oversized appended body still collapses to a display token, exactly
     like a real paste onto an existing draft."""
@@ -2022,6 +2036,7 @@ async def test_console_consumes_pending_prompt_insert_large_body_appends_as_coll
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_consumes_pending_prompt_insert_blocked_shows_exact_toast():
     """First-run setup blocked (no provider/model configured): the insert
     shows the exact toast copy, leaves the draft completely untouched, and
@@ -2054,6 +2069,7 @@ async def test_console_consumes_pending_prompt_insert_blocked_shows_exact_toast(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_consumes_pending_prompt_insert_noop_when_nothing_pending():
     """Nothing pending: no-op, no notify, draft untouched."""
     app = _build_test_app()
@@ -2082,6 +2098,7 @@ async def test_console_consumes_pending_prompt_insert_noop_when_nothing_pending(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_rejects_empty_user_only_append_as_noop():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -2109,6 +2126,7 @@ async def test_console_rejects_empty_user_only_append_as_noop():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_library_append_targets_draft_at_consumption_and_preserves_attachment():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -2132,6 +2150,7 @@ async def test_console_library_append_targets_draft_at_consumption_and_preserves
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_library_append_expired_claim_warns_once_and_discards():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -2164,6 +2183,7 @@ async def test_console_library_append_expired_claim_warns_once_and_discards():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_library_append_latest_wins_and_wrong_session_is_discarded():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -2198,6 +2218,7 @@ async def test_console_library_append_latest_wins_and_wrong_session_is_discarded
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_library_append_stale_system_discards_before_draft_mutation():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -2230,6 +2251,7 @@ async def test_console_library_append_stale_system_discards_before_draft_mutatio
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_library_append_missing_composer_releases_for_retry():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -2254,6 +2276,7 @@ async def test_console_library_append_missing_composer_releases_for_retry():
 
 @pytest.mark.parametrize("transient", ["sync", "composer"])
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_library_append_expiry_during_transient_release_warns_once(
     transient,
 ):
@@ -2302,6 +2325,7 @@ async def test_console_library_append_expiry_during_transient_release_warns_once
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_library_append_expiry_during_cancelled_sync_warns_once():
     now = [129.9]
     app = _build_test_app()
@@ -2339,6 +2363,7 @@ async def test_console_library_append_expiry_during_cancelled_sync_warns_once():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_library_system_only_leaves_draft_and_warns_on_persistence_failure(
     monkeypatch,
 ):
@@ -2386,6 +2411,7 @@ async def test_console_library_system_only_leaves_draft_and_warns_on_persistence
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_library_append_rolls_back_draft_when_system_mutation_raises(
     monkeypatch,
 ):
@@ -2452,6 +2478,7 @@ async def test_console_library_append_rolls_back_draft_when_system_mutation_rais
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_library_append_rolls_back_when_paste_mutates_then_raises(
     monkeypatch,
 ):
@@ -2488,6 +2515,7 @@ async def test_console_library_append_rolls_back_when_paste_mutates_then_raises(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_library_system_only_replaces_stale_prompt_undo(
     monkeypatch,
 ):
@@ -2545,6 +2573,7 @@ async def test_console_library_system_only_replaces_stale_prompt_undo(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_prefill_command_arms_one_shot_and_confirms():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -2566,6 +2595,7 @@ async def test_console_prefill_command_arms_one_shot_and_confirms():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_prefill_pin_and_clear_round_trip():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -2593,6 +2623,7 @@ async def test_console_prefill_pin_and_clear_round_trip():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_prefill_pin_seeds_settings_on_settings_less_session():
     """PR #729 Qodo finding 3: a session created without settings (e.g. by a
     bare system-message append before any send) must not make `/prefill pin`

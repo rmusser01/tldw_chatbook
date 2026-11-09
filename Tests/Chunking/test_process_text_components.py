@@ -103,6 +103,7 @@ def _prepared_for_finalize(**overrides: Any) -> PreparedText:
     return PreparedText(**values)
 
 
+@pytest.mark.bootstrap_profile
 def test_llm_override_scope_restores_missing_attribute_after_exception() -> None:
     chunker = Chunker()
     assert not hasattr(chunker._thread_local, "llm_overrides")
@@ -115,6 +116,7 @@ def test_llm_override_scope_restores_missing_attribute_after_exception() -> None
     assert not hasattr(chunker._thread_local, "llm_overrides")
 
 
+@pytest.mark.bootstrap_profile
 def test_llm_override_scope_restores_existing_override_tuple() -> None:
     chunker = Chunker()
     existing = ("previous-call", {"model": "old"})
@@ -155,6 +157,7 @@ def test_chunker_noncritical_exceptions_include_chunking_errors() -> None:
     assert InvalidInputError in CHUNKER_NONCRITICAL_EXCEPTIONS
 
 
+@pytest.mark.bootstrap_profile
 def test_chunker_strategy_factory_still_raises_invalid_method_error() -> None:
     chunker = Chunker()
 
@@ -266,22 +269,26 @@ def test_process_text_import_boundary_rejects_chunker_import_alias(
         _assert_no_chunker_imports(module)
 
 
+@pytest.mark.bootstrap_profile
 def test_resolve_process_options_rejects_invalid_max_size() -> None:
     with pytest.raises(InvalidInputError, match="Invalid max_size value: bad"):
         resolve_process_options(Chunker(), "Body text", {"max_size": "bad"})
 
 
+@pytest.mark.bootstrap_profile
 def test_resolve_process_options_rejects_nonpositive_max_size() -> None:
     with pytest.raises(InvalidInputError, match="max_size must be positive, got 0"):
         resolve_process_options(Chunker(), "Body text", {"max_size": 0})
 
 
+@pytest.mark.bootstrap_profile
 def test_resolve_process_options_clamps_negative_overlap() -> None:
     resolved = resolve_process_options(Chunker(), "Body text", {"overlap": -5})
 
     assert resolved.overlap == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("text", "expected_language"),
     [
@@ -299,6 +306,7 @@ def test_resolve_process_options_autodetects_script_languages(
     assert resolved.language == expected_language
 
 
+@pytest.mark.bootstrap_profile
 def test_resolve_process_options_default_language_detection_preserves_config_default() -> (
     None
 ):
@@ -309,6 +317,7 @@ def test_resolve_process_options_default_language_detection_preserves_config_def
     assert resolved.language == chunker.config.language
 
 
+@pytest.mark.bootstrap_profile
 def test_resolve_process_options_excludes_process_only_options_and_keeps_tokenizer_overrides() -> (
     None
 ):
@@ -372,6 +381,7 @@ def test_resolve_process_options_excludes_process_only_options_and_keeps_tokeniz
     assert resolved.align_text_to_source is True
 
 
+@pytest.mark.bootstrap_profile
 def test_resolve_process_options_sets_align_text_to_source() -> None:
     resolved = resolve_process_options(
         Chunker(),
@@ -382,6 +392,7 @@ def test_resolve_process_options_sets_align_text_to_source() -> None:
     assert resolved.align_text_to_source is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("method", "expected_code_mode"),
     [
@@ -401,6 +412,7 @@ def test_resolve_process_options_defaults_code_mode_for_code_methods(
     assert resolved.method_options_for_chunk["code_mode"] == expected_code_mode
 
 
+@pytest.mark.bootstrap_profile
 def test_resolve_process_options_adaptive_size_and_overlap() -> None:
     resolved = resolve_process_options(
         Chunker(),
@@ -423,6 +435,7 @@ def test_resolve_process_options_adaptive_size_and_overlap() -> None:
     assert resolved.overlap == 25
 
 
+@pytest.mark.bootstrap_profile
 def test_resolve_process_options_uses_normalized_method_for_adaptive_membership() -> (
     None
 ):
@@ -442,6 +455,7 @@ def test_resolve_process_options_uses_normalized_method_for_adaptive_membership(
     assert resolved.max_size == 140
 
 
+@pytest.mark.bootstrap_profile
 def test_resolve_process_options_hierarchical_false_and_multi_level_exclusion() -> None:
     template = {"levels": [{"name": "heading"}]}
 
@@ -468,6 +482,7 @@ def test_resolve_process_options_hierarchical_false_and_multi_level_exclusion() 
     assert resolved_with_template.multi_level is False
 
 
+@pytest.mark.bootstrap_profile
 def test_resolve_process_options_uses_normalized_method_for_multi_level_membership() -> (
     None
 ):
@@ -597,6 +612,7 @@ def test_prepare_frontmatter_malformed_leading_json_does_not_raise() -> None:
     assert prepared.json_meta == {}
 
 
+@pytest.mark.bootstrap_profile
 def test_process_text_frontmatter_metric_excludes_option_setup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -624,6 +640,7 @@ def test_process_text_frontmatter_metric_excludes_option_setup(
     assert observed["chunker_frontmatter_duration_seconds"] < 0.03
 
 
+@pytest.mark.bootstrap_profile
 def test_dispatch_chunks_normal_path_stringifies_custom_objects(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -646,6 +663,7 @@ def test_dispatch_chunks_normal_path_stringifies_custom_objects(
     assert chunks == [NormalizedChunk(text="custom object text", metadata={})]
 
 
+@pytest.mark.bootstrap_profile
 def test_dispatch_chunks_normal_path_converts_json_metadata_dict(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -668,6 +686,7 @@ def test_dispatch_chunks_normal_path_converts_json_metadata_dict(
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_dispatch_chunks_normal_path_converts_text_metadata_dict(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -687,6 +706,7 @@ def test_dispatch_chunks_normal_path_converts_text_metadata_dict(
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_dispatch_chunks_normal_path_treats_none_metadata_as_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -702,6 +722,7 @@ def test_dispatch_chunks_normal_path_treats_none_metadata_as_empty(
     assert chunks == [NormalizedChunk(text="beta", metadata={})]
 
 
+@pytest.mark.bootstrap_profile
 def test_dispatch_chunks_normal_path_preserves_mapping_like_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -724,6 +745,7 @@ def test_dispatch_chunks_normal_path_preserves_mapping_like_metadata(
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_dispatch_chunks_normal_path_propagates_unexpected_metadata_conversion_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -742,6 +764,7 @@ def test_dispatch_chunks_normal_path_propagates_unexpected_metadata_conversion_e
         dispatch_chunks(chunker, "alpha beta", _resolved_for_dispatch())
 
 
+@pytest.mark.bootstrap_profile
 def test_dispatch_chunks_hierarchical_path_uses_context_method(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -791,6 +814,7 @@ def test_dispatch_chunks_hierarchical_path_uses_context_method(
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_dispatch_chunks_multi_level_metadata_result_becomes_dict_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -826,6 +850,7 @@ def test_dispatch_chunks_multi_level_metadata_result_becomes_dict_metadata(
     assert chunks[0].metadata["multi_level"] is True
 
 
+@pytest.mark.bootstrap_profile
 def test_dispatch_chunks_multi_level_uses_resolved_align_text_to_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -858,6 +883,7 @@ def test_dispatch_chunks_multi_level_uses_resolved_align_text_to_source(
     assert calls[0]["align_text_to_source"] is False
 
 
+@pytest.mark.bootstrap_profile
 def test_dispatch_chunks_multi_level_fallback_clamps_offsets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -923,6 +949,7 @@ def test_restore_prefix_offsets_for_finalization_does_not_mutate_input() -> None
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_process_text_restores_prefix_before_normalization_metric(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

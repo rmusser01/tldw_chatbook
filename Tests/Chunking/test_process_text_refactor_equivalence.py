@@ -9,6 +9,7 @@ from tldw_chatbook.Chunking.engine.exceptions import ChunkingError, InvalidInput
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.bootstrap_profile
 def test_process_text_normal_path_preserves_text_dict_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -29,6 +30,7 @@ def test_process_text_normal_path_preserves_text_dict_metadata(
     assert rows[0]["metadata"]["chunk_method"] == "words"
 
 
+@pytest.mark.bootstrap_profile
 def test_process_text_normal_path_stringifies_custom_chunk_objects(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -56,6 +58,7 @@ def test_process_text_normal_path_stringifies_custom_chunk_objects(
     assert rows[0]["metadata"]["chunk_method"] == "words"
 
 
+@pytest.mark.bootstrap_profile
 def test_process_text_multi_level_fallback_clamps_offsets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -91,6 +94,7 @@ def test_process_text_multi_level_fallback_clamps_offsets(
     assert rows[1]["metadata"]["end_offset"] <= len(text)
 
 
+@pytest.mark.bootstrap_profile
 def test_process_text_hierarchical_template_preserves_section_metadata() -> None:
     chunker = Chunker()
 
@@ -112,6 +116,7 @@ def test_process_text_hierarchical_template_preserves_section_metadata() -> None
     assert rows[1]["metadata"]["section_path"] == "Title"
 
 
+@pytest.mark.bootstrap_profile
 def test_process_text_frontmatter_offsets_and_timecode_map_are_original_coordinates() -> (
     None
 ):
@@ -153,6 +158,7 @@ def test_process_text_frontmatter_offsets_and_timecode_map_are_original_coordina
     assert rows[0]["text"] == body
 
 
+@pytest.mark.bootstrap_profile
 def test_process_text_string_false_frontmatter_option_remains_truthy() -> None:
     chunker = Chunker()
     payload = '{"meta": "x", "__tldw_frontmatter__": true}\nBody text.'
@@ -166,6 +172,7 @@ def test_process_text_string_false_frontmatter_option_remains_truthy() -> None:
     assert rows[0]["text"].startswith("Body")
 
 
+@pytest.mark.bootstrap_profile
 def test_process_text_string_false_hierarchical_option_remains_false(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -195,6 +202,7 @@ def test_process_text_string_false_hierarchical_option_remains_false(
     assert all("ancestry_titles" not in row["metadata"] for row in rows)
 
 
+@pytest.mark.bootstrap_profile
 def test_process_text_tokenizer_override_reaches_chunk_text_without_mutating_cached_strategy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -219,6 +227,7 @@ def test_process_text_tokenizer_override_reaches_chunk_text_without_mutating_cac
     assert getattr(token_strategy, "tokenizer_name", None) != "test-tokenizer"
 
 
+@pytest.mark.bootstrap_profile
 def test_process_text_preserves_explicit_zero_overlap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -240,6 +249,7 @@ def test_process_text_preserves_explicit_zero_overlap(
     assert rows[0]["metadata"]["overlap_setting"] == 0
 
 
+@pytest.mark.bootstrap_profile
 def test_process_text_clamps_negative_overlap_to_zero(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -261,6 +271,7 @@ def test_process_text_clamps_negative_overlap_to_zero(
     assert rows[0]["metadata"]["overlap_setting"] == 0
 
 
+@pytest.mark.bootstrap_profile
 def test_process_text_invalid_max_size_raises_invalid_input_error() -> None:
     with pytest.raises(InvalidInputError):
         Chunker().process_text(
@@ -268,6 +279,7 @@ def test_process_text_invalid_max_size_raises_invalid_input_error() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_process_text_invalid_non_string_input_raises_invalid_input_error() -> None:
     with pytest.raises(InvalidInputError):
         Chunker().process_text(
@@ -278,6 +290,7 @@ def test_process_text_invalid_non_string_input_raises_invalid_input_error() -> N
         )  # type: ignore[arg-type]
 
 
+@pytest.mark.bootstrap_profile
 def test_process_text_invalid_input_increments_process_counter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -299,6 +312,7 @@ def test_process_text_invalid_input_increments_process_counter(
     ) in calls
 
 
+@pytest.mark.bootstrap_profile
 def test_process_text_wrapper_delegates_to_pipeline_with_chunker_telemetry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

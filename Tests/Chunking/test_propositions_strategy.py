@@ -145,6 +145,7 @@ class TestPropositionStrategy:
 
 
 class TestChunkerIntegration:
+    @pytest.mark.bootstrap_profile
     def test_chunker_with_propositions_method(self):
         chunker = Chunker()
         text = "Alice founded a company and Bob joined later."
@@ -154,6 +155,7 @@ class TestChunkerIntegration:
         assert isinstance(result, list)
         assert len(result) == 2
 
+    @pytest.mark.bootstrap_profile
     def test_chunker_with_propositions_engine_fields(self):
 
         chunker = Chunker()

@@ -66,6 +66,7 @@ def _popup_labels(popup) -> list[str]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_slash_opens_popup_and_typing_filters():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -106,6 +107,7 @@ async def test_slash_opens_popup_and_typing_filters():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_enter_accepts_and_inserts_without_sending():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -127,6 +129,7 @@ async def test_enter_accepts_and_inserts_without_sending():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_down_up_navigates_and_tab_accepts():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -148,6 +151,7 @@ async def test_down_up_navigates_and_tab_accepts():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_escape_closes_popup_and_keeps_draft():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -169,6 +173,7 @@ async def test_escape_closes_popup_and_keeps_draft():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_skill_entries_and_skills_arg_mode():
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -228,6 +233,7 @@ class _StyledConsoleHarness(ConsoleHarness):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_popup_does_not_reclaim_workspace_grid_rows():
     """Opening the popup must not shrink the workspace grid.
 
@@ -267,6 +273,7 @@ async def test_popup_does_not_reclaim_workspace_grid_rows():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_popup_anchors_above_composer_with_real_css():
     """The popup's bottom edge sits at the composer's top edge, no overlap."""
     app = _build_test_app()
@@ -293,6 +300,7 @@ async def test_popup_anchors_above_composer_with_real_css():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_enter_with_popup_closed_sends_normally():
     """Popup-hidden Enter must reach the normal send path (spec contract)."""
     app = _build_test_app()
@@ -316,6 +324,7 @@ async def test_enter_with_popup_closed_sends_normally():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_popup_anchor_clears_chips_above_composer_by_default():
     """task-17652: the chips top the composer cluster by default, so the
     popup's clearance loop must treat the strip like the staged-evidence
@@ -349,6 +358,7 @@ async def test_popup_anchor_clears_chips_above_composer_by_default():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_popup_anchor_clears_composer_with_chips_below():
     """DS-09 (TASK-2154.15), now behind `status_chips_position = "below"`:
     with the strip as the shell's bottom row, an anchor that chases the

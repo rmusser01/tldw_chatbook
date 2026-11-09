@@ -31,6 +31,7 @@ def test_words_chunk_generator_matches_chunk_with_min_size(monkeypatch):
     assert gen_chunks == chunks
 
 
+@pytest.mark.bootstrap_profile
 def test_sentence_strategy_language_reconfigure_via_chunker(monkeypatch):
 
     fake_pkg = types.ModuleType("pythainlp")
@@ -59,6 +60,7 @@ def test_sentence_strategy_language_reconfigure_via_chunker(monkeypatch):
     assert strategy._th_sent_tokenize is sent_tokenize
 
 
+@pytest.mark.bootstrap_profile
 def test_hierarchical_sentences_respects_combine_short():
 
     ck = Chunker()
@@ -92,6 +94,7 @@ def test_words_min_chunk_size_overlap_no_duplicates():
     assert chunks == [text]
 
 
+@pytest.mark.bootstrap_profile
 def test_hierarchical_words_min_chunk_size_overlap_matches_flat():
 
     ck = Chunker()
@@ -107,6 +110,7 @@ def test_hierarchical_words_min_chunk_size_overlap_matches_flat():
     assert [item["text"] for item in hier] == base
 
 
+@pytest.mark.bootstrap_profile
 def test_hierarchical_code_fence_long_marker_closes():
 
     ck = Chunker()
@@ -146,6 +150,7 @@ def test_token_chunk_decode_failure_falls_back():
     assert reconstructed == text.split()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.unit
 def test_process_text_multi_level_fallback_offsets_clamped(
     monkeypatch: pytest.MonkeyPatch,

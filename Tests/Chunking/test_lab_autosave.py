@@ -371,6 +371,7 @@ async def test_canceling_flush_await_keeps_commit_serialized_before_clear(tmp_pa
     reopened.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_initial_load_autosaves_interrupted_normalization_without_an_edit(
     tmp_path,

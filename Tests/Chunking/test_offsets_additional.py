@@ -15,6 +15,7 @@ def _assert_offsets_fidelity(text: str, chunks: list[dict]):
         assert text[s:e] == item.get("text", ""), "Chunk text must equal source slice"
 
 
+@pytest.mark.bootstrap_profile
 def test_hierarchical_offsets_with_code_fences():
 
     text = "Intro line\n\n```\nprint('hi')\nprint('hi')\n```\n\nOutro line.\n"
@@ -31,6 +32,7 @@ def test_hierarchical_offsets_with_code_fences():
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_hierarchical_offsets_with_repeated_content_monotonic():
 
     # Repeated paragraphs and tokens can confuse naive substring mapping

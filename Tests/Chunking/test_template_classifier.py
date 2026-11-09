@@ -24,6 +24,7 @@ def test_template_classifier_scores_basic_matches():
     assert s >= 0.1
 
 
+@pytest.mark.bootstrap_profile
 def test_template_processor_hierarchical_returns_dict_chunks():
 
     text = "# Heading\n\nPara one.\n\nPara two."

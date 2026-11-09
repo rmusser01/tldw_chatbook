@@ -106,6 +106,7 @@ class TestXXEProtection:
 class TestReDoSProtection:
     """Test protection against Regular Expression Denial of Service (ReDoS) attacks."""
 
+    @pytest.mark.bootstrap_profile
     def test_complex_regex_timeout(self):
         """Test that complex regex patterns have reasonable timeouts."""
         chunker = Chunker()
@@ -137,6 +138,7 @@ class TestReDoSProtection:
             "Regex processing took too long, possible ReDoS vulnerability"
         )
 
+    @pytest.mark.bootstrap_profile
     def test_regex_complexity_limit(self):
         """Test that overly complex regex patterns are rejected."""
         chunker = Chunker()
@@ -169,6 +171,7 @@ class TestReDoSProtection:
 class TestInputSanitization:
     """Test input sanitization and validation."""
 
+    @pytest.mark.bootstrap_profile
     def test_null_byte_injection_prevented(self):
         """Test that null byte injection is handled safely."""
         chunker = Chunker()
@@ -185,6 +188,7 @@ class TestInputSanitization:
                 "\x00"
             )
 
+    @pytest.mark.bootstrap_profile
     def test_unicode_normalization(self):
         """Test that unicode is properly normalized to prevent bypasses."""
         chunker = Chunker()
@@ -203,6 +207,7 @@ class TestInputSanitization:
         # Both should produce consistent results
         assert len(results[0]) == len(results[1])
 
+    @pytest.mark.bootstrap_profile
     def test_oversized_input_rejected(self):
         """Test that oversized inputs are rejected to prevent DoS."""
         chunker = Chunker()
@@ -239,6 +244,7 @@ class TestInputSanitization:
 class TestResourceLimits:
     """Test that resource limits are properly enforced."""
 
+    @pytest.mark.bootstrap_profile
     def test_memory_limit_enforcement(self):
         """Test that memory usage is limited."""
         chunker = Chunker()
@@ -291,6 +297,7 @@ class TestResourceLimits:
 class TestSecurityHeaders:
     """Test security-related configurations and headers."""
 
+    @pytest.mark.bootstrap_profile
     def test_default_safe_configuration(self):
         """Test that default configuration is secure."""
         chunker = Chunker()

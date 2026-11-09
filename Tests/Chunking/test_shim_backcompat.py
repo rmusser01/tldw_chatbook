@@ -14,12 +14,15 @@ signature (custom_chunk_options dict). The upstream assertion set is
 signature-agnostic (list-of-dicts, non-empty), so it ports directly.
 """
 
+import pytest
+
 from tldw_chatbook.Chunking.Chunk_Lib import (
     chunk_for_embedding,
     improved_chunking_process,
 )
 
 
+@pytest.mark.bootstrap_profile
 def test_improved_chunking_process_backcompat():
     """Upstream: TestBackwardCompatibility::test_improved_chunking_process."""
     text = "Test text. Another sentence. Third sentence."
@@ -34,6 +37,7 @@ def test_improved_chunking_process_backcompat():
     assert all("metadata" in chunk for chunk in chunks)
 
 
+@pytest.mark.bootstrap_profile
 def test_chunk_for_embedding_backcompat():
     """Upstream: TestBackwardCompatibility::test_chunk_for_embedding.
 
@@ -50,6 +54,7 @@ def test_chunk_for_embedding_backcompat():
     assert all(isinstance(chunk, dict) for chunk in chunks)
 
 
+@pytest.mark.bootstrap_profile
 def test_chunk_for_embedding_headers_wrap_source_text():
     """Shim-specific contract: every chunk wraps the original text with the
     document/chunk header envelope the embedding path depends on."""

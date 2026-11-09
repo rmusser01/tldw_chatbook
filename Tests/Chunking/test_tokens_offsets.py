@@ -227,6 +227,7 @@ def test_tokens_offsets_fallback_path():
         prev_start, prev_end = s, e
 
 
+@pytest.mark.bootstrap_profile
 def test_tokenizer_override_resets_between_calls(monkeypatch):
     """Switching tokenizer names should re-attempt tokenizer initialization."""
     from tldw_chatbook.Chunking.engine import Chunker

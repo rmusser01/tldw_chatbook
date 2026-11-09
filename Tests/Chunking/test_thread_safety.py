@@ -272,6 +272,7 @@ class TestRaceConditionScenarios:
             # init should not have been called after the initial configure
             assert init_count == 0
 
+    @pytest.mark.bootstrap_profile
     def test_chunk_text_generator_does_not_hold_shared_lock_while_paused(
         self, monkeypatch
     ):

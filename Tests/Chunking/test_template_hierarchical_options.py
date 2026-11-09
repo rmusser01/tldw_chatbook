@@ -1,3 +1,5 @@
+import pytest
+
 from tldw_chatbook.Chunking.engine.templates import (
     TemplateProcessor,
     ChunkingTemplate,
@@ -5,6 +7,7 @@ from tldw_chatbook.Chunking.engine.templates import (
 )
 
 
+@pytest.mark.bootstrap_profile
 def test_template_hierarchical_forwards_method_options():
 
     template = ChunkingTemplate(
@@ -36,6 +39,7 @@ def test_template_hierarchical_forwards_method_options():
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_template_string_false_does_not_enable_hierarchical():
     template = ChunkingTemplate(
         name="hierarchical_string_false_test",

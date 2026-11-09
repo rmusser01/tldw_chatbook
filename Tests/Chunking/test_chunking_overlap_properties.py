@@ -26,6 +26,7 @@ def words_to_text(words):
     return " ".join(words)
 
 
+@pytest.mark.bootstrap_profile
 @hyp_settings(deadline=None)
 @given(
     total_words=st.integers(min_value=10, max_value=200),
@@ -94,6 +95,7 @@ def _make_chunks(
     return words, chunks, overlap
 
 
+@pytest.mark.bootstrap_profile
 @hyp_settings(deadline=None, max_examples=150)
 @given(
     total_words=st.integers(min_value=1, max_value=200),
@@ -121,6 +123,7 @@ def test_words_reconstruction_property(
     assert seen == words, "ordered chunk words do not reconstruct the source sequence"
 
 
+@pytest.mark.bootstrap_profile
 @hyp_settings(deadline=None, max_examples=150)
 @given(
     total_words=st.integers(min_value=1, max_value=200),

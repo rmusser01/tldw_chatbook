@@ -94,6 +94,7 @@ _METHODS = st.sampled_from(
 )  # safe subset
 
 
+@pytest.mark.bootstrap_profile
 @hyp_settings(deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(
     lang=_LANGS,

@@ -29,6 +29,7 @@ def _capture(level: str):
 
 
 class TestStreamDiagnosticsOmitUserPaths:
+    @pytest.mark.bootstrap_profile
     def test_stream_processing_info_identifies_the_file_without_its_path(
         self, tmp_path
     ):
@@ -60,6 +61,7 @@ class TestStreamDiagnosticsOmitUserPaths:
             f"path_sha256={expected_ref}" in m and "bytes)" in m for m in stream_records
         ), f"the stable handle and byte size must survive redaction: {stream_records}"
 
+    @pytest.mark.bootstrap_profile
     def test_decode_failure_diagnostic_omits_path_and_raw_exception_text(
         self, tmp_path
     ):
@@ -96,6 +98,7 @@ class TestStreamDiagnosticsOmitUserPaths:
             f"raw UnicodeDecodeError text must not be echoed: {failure_records}"
         )
 
+    @pytest.mark.bootstrap_profile
     def test_oserror_diagnostic_does_not_leak_the_path_through_exception_text(
         self, tmp_path
     ):

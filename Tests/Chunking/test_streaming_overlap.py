@@ -41,6 +41,7 @@ def _reconstruct_chars_from_stream(chunks: List[str], max_overlap: int) -> str:
     return "".join(out)
 
 
+@pytest.mark.bootstrap_profile
 def test_chunk_file_stream_words_overlap(tmp_path):
 
     # Prepare a deterministic whitespace-normalized corpus
@@ -74,6 +75,7 @@ def test_chunk_file_stream_words_overlap(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_chunk_file_stream_words_no_space_language(tmp_path, monkeypatch):
     from tldw_chatbook.Chunking.engine.strategies.words import WordChunkingStrategy
 
@@ -100,6 +102,7 @@ def test_chunk_file_stream_words_no_space_language(tmp_path, monkeypatch):
     assert recon == text
 
 
+@pytest.mark.bootstrap_profile
 def test_chunk_file_stream_sentences_overlap(tmp_path):
 
     # Build simple sentences
@@ -131,6 +134,7 @@ def test_chunk_file_stream_sentences_overlap(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_chunk_file_stream_sentences_overlap_matches_full_chunking(
     tmp_path, monkeypatch
 ):
@@ -163,6 +167,7 @@ def test_chunk_file_stream_sentences_overlap_matches_full_chunking(
     assert chunks_stream == chunks_full
 
 
+@pytest.mark.bootstrap_profile
 def test_chunk_file_stream_sentences_no_overlap_matches_full_chunking(
     tmp_path, monkeypatch
 ):
@@ -193,6 +198,7 @@ def test_chunk_file_stream_sentences_no_overlap_matches_full_chunking(
     assert recon == text.split()
 
 
+@pytest.mark.bootstrap_profile
 def test_structure_aware_code_fence_no_trailing_newline():
 
     ck = Chunker()
@@ -208,6 +214,7 @@ def test_structure_aware_code_fence_no_trailing_newline():
     assert any("print('hello')" in c for c in chunks), "Code content should be present"
 
 
+@pytest.mark.bootstrap_profile
 def test_structure_aware_code_fence_long_marker():
 
     ck = Chunker()
@@ -224,6 +231,7 @@ def test_structure_aware_code_fence_long_marker():
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_language_autodetect_thai():
 
     ck = Chunker()
@@ -244,6 +252,7 @@ def test_language_autodetect_thai():
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_language_autodetect_japanese_prefers_kana():
 
     ck = Chunker()

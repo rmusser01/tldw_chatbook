@@ -523,6 +523,7 @@ def _assert_full_button_label_fits(button: Button, expected_label: str) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_collapse_button_moves_focus_to_transcript_without_sending():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -543,6 +544,7 @@ async def test_collapse_button_moves_focus_to_transcript_without_sending():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_expand_button_and_one_escape_expand_and_focus_draft():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -569,6 +571,7 @@ async def test_expand_button_and_one_escape_expand_and_focus_draft():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_collapsed_composer_hidden_input_and_paste_do_not_mutate_or_send():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -604,6 +607,7 @@ async def test_collapsed_composer_hidden_input_and_paste_do_not_mutate_or_send()
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_collapsed_escape_action_is_dynamic_and_setup_controls_are_inert(
     monkeypatch,
 ):
@@ -681,6 +685,7 @@ async def test_expanded_escape_clears_transcript_selection_before_focus_fallback
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_screen_collapse_disarms_unfurl_without_changing_pasted_content():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -701,6 +706,7 @@ async def test_screen_collapse_disarms_unfurl_without_changing_pasted_content():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_collapsed_stop_routes_native_run_control_without_expanding():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -730,6 +736,7 @@ async def test_collapsed_stop_routes_native_run_control_without_expanding():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_collapsed_stop_is_inert_while_setup_blocks(monkeypatch):
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -754,6 +761,7 @@ async def test_collapsed_stop_is_inert_while_setup_blocks(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_stale_composer_layout_revision_does_not_override_current_focus():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -775,6 +783,7 @@ async def test_stale_composer_layout_revision_does_not_override_current_focus():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_rapid_toggle_ignores_stale_collapse_focus_callback():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -793,6 +802,7 @@ async def test_rapid_toggle_ignores_stale_collapse_focus_callback():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_rapid_collapse_then_priority_escape_ignores_stale_focus_callback():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -811,6 +821,7 @@ async def test_rapid_collapse_then_priority_escape_ignores_stale_focus_callback(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_anchored_tail_and_selection_survive_collapse_round_trip():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -836,6 +847,7 @@ async def test_anchored_tail_and_selection_survive_collapse_round_trip():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_manual_reading_position_and_selection_survive_collapse_round_trip():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -862,6 +874,7 @@ async def test_manual_reading_position_and_selection_survive_collapse_round_trip
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_replacement_composer_inherits_screen_state_and_active_session_draft():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -883,6 +896,7 @@ async def test_replacement_composer_inherits_screen_state_and_active_session_dra
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_composer_defaults_expanded_and_toggles_idempotently():
     host = _ready_console_host()
 
@@ -945,6 +959,7 @@ async def test_console_composer_default_geometry_is_single_row():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_bottom_stack_single_separator_contract():
     """task-17651: one border row between transcript text and the chips.
 
@@ -993,6 +1008,7 @@ async def test_console_bottom_stack_single_separator_contract():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_composer_focus_edge_is_live_and_stable():
     """task-17651: the dense-form focus edge actually renders.
 
@@ -1040,6 +1056,7 @@ async def test_console_composer_focus_edge_is_live_and_stable():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_transcript_focus_marks_title_without_changing_collapsed_layout():
     """F6 marks the stable title without restoring the old transcript frame."""
     app = _build_test_app()
@@ -1195,6 +1212,7 @@ async def test_console_composer_compact_geometry_keeps_status_and_expand_visible
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(140, 42), (100, 32)])
+@pytest.mark.bootstrap_profile
 async def test_console_responsive_collapsed_geometry_preserves_controls_and_rows(size):
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -1262,6 +1280,7 @@ async def test_console_responsive_collapsed_geometry_preserves_controls_and_rows
         ),
     ],
 )
+@pytest.mark.bootstrap_profile
 async def test_console_collapsed_status_uses_presence_only(
     draft: str,
     attachment: str | None,
@@ -1291,6 +1310,7 @@ async def test_console_collapsed_status_uses_presence_only(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_collapsed_status_sync_does_not_join_canonical_draft(
     monkeypatch,
 ):
@@ -1321,6 +1341,7 @@ async def test_console_collapsed_status_sync_does_not_join_canonical_draft(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_composer_round_trip_preserves_editor_and_attachment_state():
     host = _ready_console_host()
 
@@ -1369,6 +1390,7 @@ async def test_console_composer_round_trip_preserves_editor_and_attachment_state
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_composer_collapse_preserves_pending_unfurl_segment():
     host = _ready_console_host()
 
@@ -1391,6 +1413,7 @@ async def test_console_composer_collapse_preserves_pending_unfurl_segment():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_composer_collapse_pauses_cursor_timer_despite_lingering_focus():
     host = _ready_console_host()
 
