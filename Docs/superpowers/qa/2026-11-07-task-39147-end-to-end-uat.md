@@ -1691,3 +1691,31 @@ critical or important issue in the migration follow-up.
 The cross-session Send case still fails while waiting for the second
 provider gate. The architecture review still reports seven upstream
 workflow dependencies. AC23 and published CI and review remain open.
+
+### Cross-session Send and native workflow dependencies
+
+Owned Console preparation now captures stock MCP metadata and policy on the
+original finite worker before ordinary admission. Disjoint Sends with complete
+metadata can hold their own bounded scratch claims. Cold permission publication
+respects an existing opaque owner. Custom, unresolved and changed definitions
+still require the original admission, and the admitted path retains the downgrade
+write and audit. The configuration witness allows independent log publication.
+
+The original accepted phase, SQL fences and wave now live with native execution.
+Console retains the actual preparation and coordination. Native planning
+validates the phase's original producer at both existing return checks. Remaining
+acceptance requires the original issued cell, active reader and physical owner.
+All seven upstream edges are gone, and the original architecture guard,
+private-import check, identity caps and size limits pass.
+
+On source-identical executable `440e7362`, the three original Send-start cases,
+237 architecture and workflow-policy checks, six startup/Send/payload guards,
+and four mounted project-chat cases passed. The original checker accepted every
+complete receipt. The test-only follow-up `a18eb53d` passed all 16 combined MCP
+controls, including cold publication, live deny, source replacement, cancellation,
+late log initialization, deferred downgrade and a held opaque owner. The native
+workflow repair separately passed real overlap, cancellation, bounded reads,
+returned planning, six settlement controls and the Git-backed correction journey.
+Independent review confirmed the final fixes and the test-only delta. The larger
+MCP comparison reproduced the same eight adjacent failures on the original
+candidate, and those cases remain unqualified. PR-head CI remains open under AC23.
