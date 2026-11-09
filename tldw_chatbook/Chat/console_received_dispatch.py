@@ -19,13 +19,19 @@ if TYPE_CHECKING:
 
 
 
+def _is_stock_native_method(owner: Any, method: Any, function: Any, code: Any) -> bool:
+    return (
+        isinstance(method, MethodType)
+        and method.__self__ is owner
+        and method.__func__ is function
+        and function.__code__ is code
+    )
+
+
 def stock_native_methods(owner: Any, originals: tuple) -> bool:
     """Preserve custom outer and nested callback signatures and affinity."""
     return all(
-        isinstance(callback := getattr(owner, name, None), MethodType)
-        and callback.__self__ is owner
-        and callback.__func__ is function
-        and function.__code__ is code
+        _is_stock_native_method(owner, getattr(owner, name, None), function, code)
         for name, function, code in originals
     )
 
@@ -362,12 +368,7 @@ async def _run_received_intent_bound(runtime, record, source):
             "expected_revision": intent.queue_revision,
             "configuration": configuration,
         }
-        if not (
-            isinstance(method, MethodType)
-            and method.__self__ is controller
-            and method.__func__ is function
-            and function.__code__ is code
-        ):
+        if not _is_stock_native_method(controller, method, function, code):
             raise RecoveryRequired("console_snapshot_owner_changed")
 
         def before_admission():

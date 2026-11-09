@@ -1543,7 +1543,10 @@ class ConsoleHandsFreeController:
             speak=self._dispatch_console_hands_free_speak,
             stop_speech=self._stop_console_hands_free_speech,
         )
-        runtime = getattr(self.app_instance, "console_runtime", None)
+        try:
+            runtime = self.app_instance.console_runtime
+        except AttributeError:
+            runtime = None
         session = ConsoleHandsFreeSession(
             controller=controller,
             sequencer=sequencer,
