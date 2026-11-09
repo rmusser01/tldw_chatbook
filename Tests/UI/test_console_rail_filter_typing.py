@@ -584,3 +584,68 @@ async def test_a_state_without_a_browser_drops_the_kept_row():
         await _rebuild(tray, _tray_state("", _TITLES, browser=False), pilot)
         assert not app.query(SEARCH)
         assert not app.query("#console-workspace-conversation-search-row")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mount_before_fit", [False, True], ids=["absent", "unlaid"])
+async def test_fit_waits_for_the_new_conversation_list_to_have_layout(
+    tmp_path, mount_before_fit
+):
+    from textual.compose import compose
+
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    _seed_conversations(app, tmp_path)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=APP_SIZE) as pilot:
+        console, search = await _focused_filter(host, pilot)
+        await pilot.press("Q", "u", "a")
+        await pilot.pause(PAST_DEBOUNCE_S)
+        assert await _wait_for_search_to_settle(console, pilot, "Qua")
+        tray = next(
+            ancestor
+            for ancestor in search.ancestors
+            if isinstance(ancestor, ConsoleWorkspaceContextTray)
+        )
+        assert tray._is_inside_rail_section_body()
+        current = tray.query_one("#console-workspace-conversations")
+        kept = tray.query_one("#console-workspace-conversation-search-row")
+        donor = ConsoleWorkspaceContextTray(
+            _tray_state("Qua", (*_TITLES, "Quarterly plans", "Quarterly goals")),
+            show_heading=False,
+            content="conversations",
+        )
+        (replacement,) = (child for child in compose(donor) if child.id == current.id)
+        original_height = tray.region.height
+        tray.set_styles(height=original_height)
+        height = tray.styles.height
+
+        async with tray.batch():
+            await current.remove()
+            if mount_before_fit:
+                await tray.mount(replacement)
+                assert (
+                    replacement.is_attached and replacement.virtual_region.height == 0
+                )
+            else:
+                assert not tray.query("#console-workspace-conversations")
+            assert kept.virtual_region.height > 0
+            assert not tray._fit_waits_for_layout
+
+            tray._fit_height_to_content()
+
+            assert tray.styles.height == height
+            assert (
+                tray._height_fit_layout_signal is console.screen_layout_refresh_signal
+            )
+            if not mount_before_fit:
+                await tray.mount(replacement)
+
+        for _ in range(30):
+            await pilot.pause(0.1)
+            bottom = replacement.virtual_region.bottom
+            if original_height < bottom <= tray.region.height:
+                break
+        assert not tray._fit_waits_for_layout
+        assert original_height < bottom <= tray.region.height
