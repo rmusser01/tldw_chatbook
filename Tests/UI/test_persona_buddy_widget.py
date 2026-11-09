@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -364,6 +365,10 @@ def _visual_with_frame(
 
 @pytest.mark.asyncio
 async def test_overlay_paints_without_flow_or_fr_budget():
+    assert (
+        Path(persona_buddy_widget.__file__).resolve().parents[3]
+        == Path(__file__).resolve().parents[2]
+    )
     controller = _FakeController()
     app = _BuddyApp(controller)
     async with app.run_test(size=(80, 24)):

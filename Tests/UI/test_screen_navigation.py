@@ -1502,7 +1502,22 @@ async def test_navigation_keypress_during_splash_is_safely_ignored():
     pushed: pressing F4 mid-splash must raise nothing and must not navigate,
     leaving the app to finish startup on its configured initial screen.
     """
+    from tldw_chatbook.Persona_Buddy import (
+        PersonaBuddyController,
+        PersonaBuddyPreferences,
+        PersonaBuddySelection,
+    )
+    from tldw_chatbook.Widgets.Persona_Widgets.persona_buddy_widget import (
+        PersonaBuddyWidget,
+    )
+
     app = _build_test_app()  # splash enabled by default (skip_on_keypress=True)
+    app.persona_buddy_controller = PersonaBuddyController(
+        preferences=PersonaBuddyPreferences(
+            enabled=True,
+            selection=PersonaBuddySelection("local", "splash-test-buddy"),
+        )
+    )
 
     def force_splash_config(section, key=None, default=None):
         # ``_build_test_app`` only patches config lookups during __init__, so
@@ -1526,6 +1541,9 @@ async def test_navigation_keypress_during_splash_is_safely_ignored():
             await pilot.pause(0.3)
             assert app.splash_screen_active, "splash must still be active at press time"
             assert not getattr(app, "_initial_screen_pushed", False)
+            assert app.persona_buddy_controller.snapshot().enabled
+            assert app._persona_buddy_overlay.view is None
+            assert not list(app.screen.query(PersonaBuddyWidget))
 
             await pilot.press("f4")  # F4 = Settings destination; must not crash
             await pilot.pause(0.2)

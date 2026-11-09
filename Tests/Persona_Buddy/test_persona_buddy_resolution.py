@@ -36,6 +36,7 @@ from tldw_chatbook.Persona_Buddy.rendering import (
     PersonaBuddyFrameError,
     prepare_persona_buddy_frame,
 )
+from tldw_chatbook.Persona_Visual.contracts import PersonaVisualRegion
 from tldw_chatbook.Persona_Visual.repository import (
     PersonaVisualGraph,
     PersonaVisualRepository,
@@ -527,6 +528,20 @@ def test_sprite_frames_prepare_distinct_painted_frames() -> None:
     assert first.paint_digest != second.paint_digest
     assert first.selected_frame == 0
     assert second.selected_frame == 1
+    blue = (20, 20, 220, 255)
+    assert second.paint_digest == hashlib.sha256(bytes(blue) * 16).hexdigest()
+
+    sprite = Image.new("RGBA", (8, 8), (220, 20, 20, 255))
+    sprite.paste(blue, (4, 0, 8, 8))
+    output = BytesIO()
+    sprite.save(output, format="PNG")
+    data = output.getvalue()
+    frame = replace(_resolved_frame(data), region=PersonaVisualRegion(4, 0, 4, 8))
+    cropped = prepare_persona_buddy_frame(
+        frame, resolution_cache_identity=_cache(data), cols=4, lines=4
+    )
+    assert (cropped.width, cropped.height) == (4, 8)
+    assert cropped.paint_digest == hashlib.sha256(bytes(blue) * 32).hexdigest()
 
 
 @pytest.mark.asyncio
