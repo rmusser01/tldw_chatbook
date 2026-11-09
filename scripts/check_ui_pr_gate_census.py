@@ -881,55 +881,68 @@ MINIMUM_FILES = 1809
 # setup on dev until this change; the whole file is far over the 30 s
 # per-file budget). The floor is the measured entry count.
 MINIMUM_FILES = 1814
+# TASK-38605 (2026-11-02 audit, re-landed 2026-11-06): the dead MediaViewerPanel
+# and its whole-file entry Tests/UI/test_media_viewer_prompt_search_15477.py are
+# deleted, so the census drops one entry: 1814 - 1 = 1813.
+MINIMUM_FILES = 1813
+# PR3036 resync: retain all 1813 current entries and append 4 approval contracts.
+MINIMUM_FILES = 1817
+# PR3036 whole-branch review: append two bounded literal-Details regressions.
+MINIMUM_FILES = 1819
+# TASK-34569: preserve actual feedback MessagePump dispatch without eager helpers.
+MINIMUM_FILES = 1820
 # TASK-39122 (2026-11-07): append the region editor's cancelled-before-mount
 # case at the tail. The floor is the measured entry count.
-MINIMUM_FILES = 1815
+MINIMUM_FILES = 1821
 # TASK-39146 (2026-11-07): append the cancelled-dialog-wait file (nine
 # cases, about 10 s) at the tail. The floor is the measured entry count.
-MINIMUM_FILES = 1816
+MINIMUM_FILES = 1822
 # TASK-38977 (2026-11-07): append the five Prompts modal and response-rule
 # copy/gateway nodes at the tail. The floor is the measured entry count.
-MINIMUM_FILES = 1821
+MINIMUM_FILES = 1827
 # TASK-38961 (2026-11-07): append the three Console endpoint-discovery
 # retry and pick-mode nodes at the tail. The floor is the measured entry
 # count.
-MINIMUM_FILES = 1824
+MINIMUM_FILES = 1830
 # TASK-38968 (2026-11-07): append the send-admission deferred-Enter capture
 # node at the tail. The floor is the measured entry count.
-MINIMUM_FILES = 1825
+MINIMUM_FILES = 1831
 # TASK-39120 (2026-11-07): append the Console Inspector section file at the
 # tail. The floor is the measured entry count.
-MINIMUM_FILES = 1826
+MINIMUM_FILES = 1832
 # TASK-38948 (2026-11-07): append the two 100 ms Send-feedback route nodes
 # at the tail. The floor is the measured entry count.
-MINIMUM_FILES = 1828
+MINIMUM_FILES = 1834
 # TASK-39133 / TASK-39135 / TASK-39134 (2026-11-07): append the llama.cpp
 # Settings handoff nodes (9), the moved-focus swap nodes (3) and the detail
 # width sweep (1) at the tail. The floor is the measured entry count.
-MINIMUM_FILES = 1841
+MINIMUM_FILES = 1847
 # TASK-39135 review r12s-rev1 (2026-11-07): append the PageDown case of the
 # moved-focus swap test at the tail. The floor is the measured entry count.
-MINIMUM_FILES = 1842
+MINIMUM_FILES = 1848
 # TASK-39135 review r12s-rev2 (2026-11-07): append the mid-rebuild move and
 # the Tab-into-the-rebuilt-panes nodes at the tail. The floor is the measured
 # entry count.
-MINIMUM_FILES = 1844
+MINIMUM_FILES = 1850
 # TASK-39135 review r12s-rev3 (2026-11-07): append the focus-reset and the
 # new-pane control nodes at the tail. The floor is the measured entry count.
-MINIMUM_FILES = 1846
+MINIMUM_FILES = 1852
 # TASK-39142 / TASK-38993 / TASK-39136 (2026-11-07): append the inspector
 # workflow file's 18 tests, the llama.cpp snapshot file's [size0] and its 13
 # plain tests, and TASK-38953's 13 Settings sweep nodes at the tail, one
 # entry each. The floor is the measured entry count.
-MINIMUM_FILES = 1891
+MINIMUM_FILES = 1897
 # Review r12l-rev1 (2026-11-07): append the inspector focus carriers file's 15
 # nodes and the Console full config preparation file at the tail, out of the
 # recovered-suites job (the census holds bootstrap_profile files). The floor
 # is the measured entry count.
-MINIMUM_FILES = 1907
-# Round-12 restack (2026-11-08): the TASK-39142..39144 blocks above landed on
-# a census that already held the 37 tail entries above them, so their floors
-# count those too; the stacked tail was then re-dealt over 36 shards.
+MINIMUM_FILES = 1913
+# Round-12 restack (2026-11-09, dev 3a6498ae14): every round-12 block above
+# was written before dev's blocks above joined, so each floor here counts
+# dev's six net entries too; the two TASK-39142 / review r12l-rev1 blocks were
+# also written before the other round-12 branches' tail entries, which follow
+# theirs and are counted in both. The stacked census was then re-dealt over
+# 36 shards.
 
 
 def read_census(path: Path) -> list[str]:
