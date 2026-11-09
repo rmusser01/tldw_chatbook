@@ -213,6 +213,7 @@ def test_invalid_pipeline_audio_fails_without_replacement_noise(upstream, chunks
         kokoro_pytorch.generate(model, state.text, state.voices)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("timestamps", [False, True])
 @pytest.mark.parametrize("stop_kind", ["cancel", "close"])
@@ -297,6 +298,7 @@ def test_unknown_language_is_rejected_before_inference(upstream):
         kokoro_pytorch.generate(model, state.text, state.voices, lang="not-a-language")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("route", ["pcm", "wav", "timestamps"])
 @pytest.mark.parametrize("stop_kind", ["cancel", "close"])
@@ -526,6 +528,7 @@ def test_known_runtime_failure_guidance_survives_both_ui_boundaries(
     assert "PRIVATE" not in TTSEventHandler._tts_error_copy(private_error)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_backend_blends_full_local_packs_before_official_inference(
     upstream, backend, monkeypatch
@@ -576,6 +579,7 @@ def test_pytorch_without_model_path_does_not_select_the_onnx_file(
     assert backend.model_path is None
 
 
+@pytest.mark.bootstrap_profile
 def test_pytorch_splitter_preserves_explicit_language_boundaries(backend):
     assert backend._split_text_for_pytorch("Primera frase.\nSegunda frase.") == [
         "Primera frase.",
@@ -583,6 +587,7 @@ def test_pytorch_splitter_preserves_explicit_language_boundaries(backend):
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_onnx_failure_uses_configured_pytorch_checkpoint(backend, monkeypatch):
     backend.use_onnx = True
@@ -660,6 +665,7 @@ async def test_backend_named_voice_rejects_escape_before_loading(
     assert loaded_paths == [], "An untrusted named voice reached tensor loading"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_backend_missing_voice_rejects_escape_before_download(
     backend, monkeypatch, tmp_path
@@ -679,6 +685,7 @@ async def test_backend_missing_voice_rejects_escape_before_download(
     assert downloads == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("engine", ["onnx", "pytorch"])
 @pytest.mark.parametrize("timestamps", [False, True])
@@ -724,6 +731,7 @@ async def test_backend_voice_language_is_consistent_for_all_generation_paths(
     assert calls == [(voice, language)]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_existing_model_initialization_runs_off_event_loop(backend, monkeypatch):
     from pathlib import Path
@@ -747,6 +755,7 @@ async def test_existing_model_initialization_runs_off_event_loop(backend, monkey
     assert threads and loop_thread not in threads
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_missing_torch_dependency_is_actionable_during_initialization(
     backend, monkeypatch
@@ -764,6 +773,7 @@ async def test_missing_torch_dependency_is_actionable_during_initialization(
     assert "ONNX" in str(captured.value) and "PRIVATE" not in str(captured.value)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_first_generation_reaches_deferred_model_download(backend, monkeypatch):
     backend.model_loaded = True
@@ -784,6 +794,7 @@ async def test_first_generation_reaches_deferred_model_download(backend, monkeyp
     np.testing.assert_array_equal(np.frombuffer(data, dtype=np.int16), [8191, -8191])
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cancelled_initialization_and_close_join_the_real_worker(
     backend, monkeypatch
@@ -825,6 +836,7 @@ async def test_cancelled_initialization_and_close_join_the_real_worker(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_inference_failure_is_retryable_not_a_settings_error(
     backend, monkeypatch
@@ -855,6 +867,7 @@ async def test_inference_failure_is_retryable_not_a_settings_error(
         assert "PRIVATE" not in message and "not configured" not in message
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_timestamp_cancellation_joins_inference_before_close(
     backend, monkeypatch

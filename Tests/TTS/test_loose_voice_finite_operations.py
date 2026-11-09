@@ -16,6 +16,8 @@ from tldw_chatbook.Backup_Recovery.control_records import admission_authority, b
 from tldw_chatbook.Backup_Recovery.profile_paths import default_base_data_dir
 home=Path.home(); config=Path(os.environ['TLDW_CONFIG_PATH']); root=home/'exact-voices'
 root.mkdir(mode=0o700); data=default_base_data_dir(); data.mkdir(parents=True,mode=0o700)
+if select_data_root:
+    config.write_text(config.read_text()+'[paths]\ndata_dir='+json.dumps(str(data))+'\n')
 exports=home/'exports'; exports.mkdir(mode=0o700)
 control=bootstrap.default_bootstrap_root(); authority=admission_authority(control)
 authority.register('voice-profile',(root,data,config.parent,exports))
@@ -31,7 +33,7 @@ def settled():
 """
 
 
-def _child(tmp_path, code):
+def _child(tmp_path, code, *, select_data_root=False):
     home = tmp_path / "home"
     home.mkdir(mode=0o700)
     config_dir = home / "selected-config"
@@ -48,7 +50,7 @@ def _child(tmp_path, code):
         PYTHONDONTWRITEBYTECODE="1",
     )
     result = subprocess.run(
-        [sys.executable, "-c", _SETUP + code],
+        [sys.executable, "-c", f"select_data_root={select_data_root!r}\n" + _SETUP + code],
         env=env,
         capture_output=True,
         text=True,
@@ -99,6 +101,7 @@ assert not backend.save_voice_blend('invalid',[('af_bella',0)])
 settled()
 """,
         }[backend],
+        select_data_root=backend == "kokoro",
     )
 
 
@@ -169,6 +172,7 @@ assert 'denied' not in backend.saved_blends
 assert backend.save_voice_blend('resumed',[('af_bella',1)])
 settled()
 """,
+        select_data_root=True,
     )
 
 
@@ -194,6 +198,7 @@ pause=storage._begin_local_pause()
 assert not pause.drain(time.monotonic()+.03)
 pause.resume()
 """,
+        select_data_root=True,
     )
 
 
@@ -295,6 +300,7 @@ assert not (root/'new').exists()
 assert pause.drain(time.monotonic()+.03)
 pause.resume()
 """,
+        select_data_root=kind == "kokoro",
     )
 
 
@@ -319,6 +325,7 @@ assert pause.drain(time.monotonic()+.03)
 pause.resume()
 settled()
 """,
+        select_data_root=True,
     )
 
 

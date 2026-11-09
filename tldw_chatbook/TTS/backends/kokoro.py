@@ -282,7 +282,6 @@ class KokoroTTSBackend(LocalTTSBackend):
     - https://github.com/remsky/Kokoro-FastAPI
     """
 
-    @voice_files.call
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
 
@@ -342,8 +341,6 @@ class KokoroTTSBackend(LocalTTSBackend):
         self.kokoro_instance = None  # ONNX instance
         self.kokoro_model_pt = None  # PyTorch model
 
-        # Services
-        self.audio_service = get_audio_service()
         self._max_tokens = int(self.config.get("KOKORO_MAX_TOKENS", 500))
         self.text_chunker = TextChunker(max_tokens=self._max_tokens)
         self.normalizer = TextNormalizer()
@@ -357,37 +354,40 @@ class KokoroTTSBackend(LocalTTSBackend):
             configured_blends_dir = get_cli_setting(
                 "app_tts", "KOKORO_VOICE_BLENDS_DIR", None
             )
-        self._voice_blends_directory_is_application_owned = (
-            configured_blends_dir is None
-        )
-        if self._voice_blends_directory_is_application_owned:
-            self.voice_blends_dir = default_kokoro_backend_blend_directory()
-            secure_private_directory(
-                self.voice_blends_dir,
-                create=True,
-                application_owned=True,
+        # Config reads have their own custody; scope only the voice work.
+        with voice_files._scope(self):
+            self.audio_service = get_audio_service()
+            self._voice_blends_directory_is_application_owned = (
+                configured_blends_dir is None
             )
-        else:
-            self.voice_blends_dir = validate_path_simple(
-                Path(configured_blends_dir).expanduser(),
-                probe_existing=False,
-            )
-            if self.voice_blends_dir.exists():
-                verify_trusted_directory(
-                    self.voice_blends_dir,
-                    allow_shared_sticky=False,
-                )
-            else:
+            if self._voice_blends_directory_is_application_owned:
+                self.voice_blends_dir = default_kokoro_backend_blend_directory()
                 secure_private_directory(
                     self.voice_blends_dir,
                     create=True,
                     application_owned=True,
                 )
-        self.saved_blends = self._load_saved_blends()
+            else:
+                self.voice_blends_dir = validate_path_simple(
+                    Path(configured_blends_dir).expanduser(),
+                    probe_existing=False,
+                )
+                if self.voice_blends_dir.exists():
+                    verify_trusted_directory(
+                        self.voice_blends_dir,
+                        allow_shared_sticky=False,
+                    )
+                else:
+                    secure_private_directory(
+                        self.voice_blends_dir,
+                        create=True,
+                        application_owned=True,
+                    )
+            self.saved_blends = self._load_saved_blends()
 
-        # Initialize default blends if none exist
-        if not self.saved_blends:
-            self._create_default_blends()
+            # Initialize default blends if none exist
+            if not self.saved_blends:
+                self._create_default_blends()
 
         # Performance tracking
         self.track_performance = self.config.get("KOKORO_TRACK_PERFORMANCE", True)
