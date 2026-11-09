@@ -23,16 +23,16 @@ class _PollScreen(ChatScreen):
 
 
 def _screen(monkeypatch, *, status="ready"):
+    state = {"status": status, "evidence_version": 0}
     monkeypatch.setattr(
         chat_screen_module,
         "shared_connection_evidence",
-        lambda app: SimpleNamespace(version=0),
+        lambda app: SimpleNamespace(version=state["evidence_version"]),
     )
     revision = [subscription.subscription_readiness_revision()]
     monkeypatch.setattr(
         subscription, "subscription_readiness_revision", lambda: revision[0]
     )
-    state = {"status": status}
     monkeypatch.setattr(
         subscription,
         "subscription_credential_status",
@@ -51,7 +51,12 @@ def _screen(monkeypatch, *, status="ready"):
     )[1]
     syncs = []
     screen._sync_console_settings_summary = lambda: syncs.append("summary")
-    screen._sync_console_control_bar = lambda: syncs.append("bar")
+
+    def render_controls():
+        syncs.append("bar")
+        return True
+
+    screen._sync_console_control_bar = render_controls
     return screen, builds, syncs, state, revision
 
 
@@ -83,3 +88,24 @@ def test_a_status_transition_without_revision_rebuilds(monkeypatch):
     state["status"] = "expired"  # time-based expiry: no revision bump
     screen._poll_console_credential_readiness()
     assert len(builds) == 2, "expiry must rebuild even without a revision bump"
+
+
+def test_a_deferred_control_render_retries_the_same_evidence(monkeypatch):
+    screen, builds, _syncs, state, _revision = _screen(monkeypatch)
+    screen._poll_console_credential_readiness()
+    previous_snapshot = screen._console_credential_snapshot
+    previous_gate = screen._console_credential_pre_gate
+    render_controls = screen._sync_console_control_bar
+    state["evidence_version"] = 1
+
+    monkeypatch.setattr(screen, "_sync_console_control_bar", lambda: False)
+    screen._poll_console_credential_readiness()
+    assert screen._console_credential_snapshot == previous_snapshot
+    assert screen._console_credential_pre_gate == previous_gate
+
+    monkeypatch.setattr(screen, "_sync_console_control_bar", render_controls)
+    screen._poll_console_credential_readiness()
+    assert screen._console_credential_snapshot[2] == 1
+    assert screen._console_credential_pre_gate[2] == 1
+    screen._poll_console_credential_readiness()
+    assert len(builds) == 3, "a successful retry restores the idle fast path"
