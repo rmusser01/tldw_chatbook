@@ -141,6 +141,7 @@ from .workspace import (
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Agents.hook_permissions import HookReviewSnapshot
+    from tldw_chatbook.Chat.console_command_grammar import CommandParse
     from .hooks import HookReviewResult
     from tldw_chatbook.Widgets.Console.console_voice_preview import (
         VoicePreviewProjection,
@@ -185,6 +186,27 @@ async def request_console_hooks_review(
         waiting,
         cancel,
     )
+
+
+def workflows_enabled() -> bool:
+    from tldw_chatbook.Agents.run_log import _setting
+    from tldw_chatbook.config import coerce_bool_setting
+
+    return coerce_bool_setting(_setting("workflow_runs_enabled", False), False)
+
+
+def console_workflows_for_screen(screen: Any):
+    """Return the screen's existing controller, constructing it on first use."""
+    from .workflows import ConsoleWorkflowsController
+
+    if "_workflow_ui" not in screen.__dict__:
+        screen._workflow_ui = ConsoleWorkflowsController(screen)
+    return screen._workflow_ui
+
+
+async def dispatch_console_workflow(screen: Any, parse: "CommandParse") -> None:
+    """Dispatch the parsed command through the current screen controller."""
+    screen._workflows.command(parse.args)
 
 
 def _stock_console_scratch_snapshot(screen: Any, session_id: str):
@@ -682,11 +704,8 @@ def _admit_console_turn_to_runtime(
             )
         request = replace(
             request,
-            configuration=replace(
-                request.configuration,
-                recovery_user_origin=runtime.ensure_archive_recovery().issue_user_proof(
-                    session_id
-                ),
+            _recovery_user_origin=runtime.ensure_archive_recovery().issue_user_proof(
+                session_id
             ),
         )
         send_ack = getattr(screen, "_console_send_ack", None)

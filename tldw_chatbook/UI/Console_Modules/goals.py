@@ -12,7 +12,7 @@ from tldw_chatbook.Agents.goal_models import (
     GoalRequest,
     GoalToolScope,
 )
-from tldw_chatbook.Chat.console_goal_runs import goal_provider_ref
+from tldw_chatbook.Chat.console_provider_endpoints import goal_provider_ref
 
 
 def change_review_provider(controller, bridge, conversation_id=None):

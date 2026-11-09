@@ -369,6 +369,7 @@ class _CapturedSources:
         self.local = service.local_service
         self.store = self.local.store
         self.permission = service._permission_store
+        self.native_permission_publication = None
         self.log = service._execution_log
         self.store_identity = _source_identity(self.store)
         self.permission_identity = (
@@ -561,6 +562,7 @@ class _CapturedSources:
                     identity[3],
                     identity[2],
                 )
+                self.native_permission_publication = publication
                 if ordinary is not None:
                     ordinary.permission = candidate
                     ordinary.permission_path = identity[2]

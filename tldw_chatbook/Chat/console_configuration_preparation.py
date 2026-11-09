@@ -6,7 +6,6 @@ import asyncio
 import inspect
 import os
 import sys
-import threading
 from collections.abc import Callable, Mapping
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
@@ -71,16 +70,6 @@ class _NativeSkillTrustPublication:
     local_winner: Any = field(repr=False)
     source_functions: tuple = field(repr=False)
     guard: Any = field(repr=False)
-
-
-@dataclass(slots=True)
-class _SkillTrustPublisher:
-    preparation: Any = field(repr=False)
-    thread_id: int
-    task: Any = field(repr=False)
-    guard: Any = field(repr=False)
-    candidate: Any = field(default=None, repr=False)
-    active: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -1140,17 +1129,15 @@ def _skill_publisher_guard_current(source, guard):
     )
 
 
-def _skill_publisher_identity():
-    try:
-        task = asyncio.current_task()
-    except RuntimeError:
-        task = None
-    return threading.get_ident(), task
-
-
 @contextmanager
 def native_skill_trust_publication(preparation):
     """Track only this original native producer invocation; never grant execution."""
+    from tldw_chatbook.app_skill_wiring import (
+        _SkillTrustPublisher,
+        _skill_publisher_identity,
+        _skill_trust_publisher,
+    )
+
     marker = None
     if (
         type(preparation) is ConsoleReceivedConfigurationPreparation
@@ -1173,8 +1160,6 @@ def native_skill_trust_publication(preparation):
             if guard is not None:
                 thread_id, task = _skill_publisher_identity()
                 marker = _SkillTrustPublisher(preparation, thread_id, task, guard)
-    from tldw_chatbook.app_skill_wiring import _skill_trust_publisher
-
     token = _skill_trust_publisher.set(marker)
     try:
         yield marker
@@ -1184,45 +1169,13 @@ def native_skill_trust_publication(preparation):
         _skill_trust_publisher.reset(token)
 
 
-def record_native_skill_trust_candidate(app, candidate):
-    """Observe only the original publisher's actual just-assigned candidate."""
-    from tldw_chatbook.app_skill_wiring import _skill_trust_publisher
-
-    marker = _skill_trust_publisher.get()
-    if type(marker) is not _SkillTrustPublisher or not marker.active:
-        return
-    if _skill_publisher_identity() != (marker.thread_id, marker.task):
-        return
-    source = marker.preparation.trust_source
-    if source is None or source.app is not app or candidate is None:
-        return
-    frame = sys._getframe(1)
-    getter = inspect.getattr_static(type(app), "local_skill_trust_service", None)
-    initializer = inspect.getattr_static(
-        type(app), "ensure_local_skill_trust_service", None
-    )
-    if not (
-        frame.f_locals.get("self") is app
-        and (
-            (
-                isinstance(getter, property)
-                and frame.f_code is getter.fget.__code__
-                and frame.f_locals.get("candidate") is candidate
-            )
-            or (
-                type(initializer) is FunctionType
-                and frame.f_code is initializer.__code__
-                and frame.f_locals.get("service") is candidate
-            )
-        )
-        and vars(app).get("_local_skill_trust_service") is candidate
-    ):
-        return
-    marker.candidate = candidate
-
-
 def finish_native_skill_trust_publication(marker, winner):
     """Publish a source-bound receipt after the original local getter returns."""
+    from tldw_chatbook.app_skill_wiring import (
+        _SkillTrustPublisher,
+        _skill_publisher_identity,
+    )
+
     if (
         type(marker) is not _SkillTrustPublisher
         or not marker.active
@@ -1653,7 +1606,7 @@ def require_prepared_skill_context(
     preparation = catalog.preparation
     runtime = getattr(creator, "_hooks_v2_runtime", None)
     record = getattr(runtime, "_turn_custody", {}).get(catalog.turn_id)
-    from .console_workflow_preparation import current_workflow_preparation
+    from .console_preparation_reads import current_workflow_preparation
 
     workflow = current_workflow_preparation(creator)
     workflow_member = workflow is not None and workflow.accepts_skill_context(
@@ -1794,7 +1747,7 @@ async def capture_console_turn_configuration_owned(
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
     from tldw_chatbook.MCP.console_snapshot import _capture_console_definition_selection
 
-    from .console_workflow_preparation import current_planning_preparation
+    from .console_preparation_reads import current_planning_preparation
 
     planning = current_planning_preparation(creator)
     attachment = _mcp_attachment_source(app, creator)
@@ -2287,7 +2240,7 @@ def original_mcp_capture_matches(
             record = controller._hooks_v2_runtime._turn_custody.get(
                 prepared.catalog.turn_id
             )
-            from .console_workflow_preparation import current_workflow_preparation
+            from .console_preparation_reads import current_workflow_preparation
 
             workflow = current_workflow_preparation(controller)
             if workflow is not None and workflow.accepts_skill_context(

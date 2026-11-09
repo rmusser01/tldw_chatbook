@@ -115,7 +115,7 @@ class _WorkflowWave:
 
     def snapshot_returned(self, reservation, kind, ticket):
         """Called after the actual operation finish and native source scopes return."""
-        _workflow_wave_sources(self)
+        require_workflow_wave_sources(self)
         if (
             reservation is not self.reservation
             or ticket.source is not self.source
@@ -175,7 +175,7 @@ class _WorkflowWave:
         self.loop.call_soon_threadsafe(deliver)
 
     def _release(self, *, _unused=False):
-        _workflow_wave_sources(self)
+        require_workflow_wave_sources(self)
         if (
             self.closed
             or self.unproven_launches
@@ -243,7 +243,7 @@ class _WorkflowWave:
                 item._terminal_configuration_return = returned, read, records
                 item._execution_configuration_return()
         # All original callouts returned; enrollment protects them until now.
-        _workflow_wave_sources(self)
+        require_workflow_wave_sources(self)
         if self.runtime._workflow_waves.get(self) is not self:
             raise PermissionError("original workflow wave registration changed")
         self.closed = True
@@ -315,14 +315,14 @@ class _WorkflowWave:
             )
 
     async def _open(self):
-        from tldw_chatbook.Agents.agent_service import _WorkflowChildWait
+        from tldw_chatbook.Agents.agent_service import WorkflowChildWait
 
         if not self.runtime.execution_capacity._workflow_children_ready(
             len(self.prepared)
         ):
             if self.runtime.execution_capacity.snapshot().closed:
                 raise PermissionError("workflow runtime closed")
-            wait = _WorkflowChildWait(
+            wait = WorkflowChildWait(
                 "runtime_capacity", "workflow wave capacity unavailable"
             )
             return _WaveOpenRefusal(wait, self.retain_waits)
@@ -336,7 +336,7 @@ class _WorkflowWave:
                     raise PermissionError("workflow fleet fenced")
                 full = len(fleet._live_ids) + count > fleet.max_live
             if full:
-                wait = _WorkflowChildWait(
+                wait = WorkflowChildWait(
                     "fleet_capacity", "workflow wave fleet capacity unavailable"
                 )
                 return _WaveOpenRefusal(wait, self.retain_waits)
@@ -349,7 +349,7 @@ class _WorkflowWave:
             for second in footprints[i + 1 :]
         ):
             return _WaveOpenRefusal(
-                _WorkflowChildWait(
+                WorkflowChildWait(
                     "worktree_activity", "workflow wave members conflict"
                 ),
                 False,
@@ -385,7 +385,7 @@ class _WorkflowWave:
         reads, read_index = first._finite_reads, len(first._finite_reads)
         try:
             captured = await first._read(capture)
-        except _WorkflowChildWait as error:
+        except WorkflowChildWait as error:
             if first._finite_reads is not reads or len(reads) != read_index + 1:
                 raise
             read = reads[read_index]
@@ -401,7 +401,7 @@ class _WorkflowWave:
             ):
                 raise
             return _WaveOpenRefusal(error, self.retain_waits)
-        _workflow_wave_sources(self)
+        require_workflow_wave_sources(self)
         if first._finite_reads is not reads or len(reads) != read_index + 1:
             raise PermissionError("original workflow capture reader changed")
         read = reads[read_index]
@@ -445,7 +445,7 @@ class _WorkflowWave:
                 if captured_source._holds or captured_source._closed.is_set():
                     raise PermissionError("workflow captured source return unproven")
             error = (
-                _WorkflowChildWait("worktree_activity", "workflow wave activity busy")
+                WorkflowChildWait("worktree_activity", "workflow wave activity busy")
                 if self.retain_waits
                 else PermissionError("workflow wave activity busy")
             )
@@ -466,7 +466,7 @@ class _WorkflowWave:
             for item in self.prepared:
                 closing = item.close(_wave=self)
                 await closing
-            _workflow_wave_sources(self)
+            require_workflow_wave_sources(self)
             self._release_return = self._release(_unused=True)
             raise PermissionError("workflow window admission refused")
         from tldw_chatbook.DB.workflow_runs import _WindowUnpublished
@@ -489,7 +489,7 @@ class _WorkflowWave:
             for item in self.prepared:
                 closing = item.close(_unpublished=publication, _wave=self)
                 await closing
-            _workflow_wave_sources(self)
+            require_workflow_wave_sources(self)
             self._release_return = self._release(_unused=True)
             raise publication.error
         baseline = await asyncio.shield(self.baseline_return)
@@ -517,12 +517,12 @@ class _WorkflowWave:
                 self.service.db.workflow_runs.unused_change_window,
                 self.reservation.id,
             )
-            _workflow_wave_sources(self)
+            require_workflow_wave_sources(self)
             self._release_return = self._release(_unused=True)
             raise PermissionError("workflow baseline unavailable")
 
     async def _launch(self, item):
-        from tldw_chatbook.Agents.agent_service import _WorkflowLaunchReturn
+        from tldw_chatbook.Agents.agent_service import WorkflowLaunchReturn
 
         self._check_enrollment(item)
         unused = []
@@ -555,13 +555,13 @@ class _WorkflowWave:
 
         try:
             result = await asyncio.to_thread(launch)
-            _workflow_wave_sources(self)
+            require_workflow_wave_sources(self)
             if unused:
                 if len(unused) != 1 or result is not unused[0]:
                     raise PermissionError("workflow no-entry result changed")
                 unused_returned = True
                 raise result
-            if not isinstance(result, _WorkflowLaunchReturn):
+            if not isinstance(result, WorkflowLaunchReturn):
                 raise PermissionError("native workflow launch result required")
             if not result.known:
                 raise result.error
@@ -623,10 +623,10 @@ class _WorkflowWave:
 
     async def run(self):
         """Launch a fixed eligible set; close E at its first actual quiescent gap."""
-        _workflow_wave_sources(self)
+        require_workflow_wave_sources(self)
         opening = self._open()
         waiting = await opening
-        _workflow_wave_sources(self)
+        require_workflow_wave_sources(self)
         if waiting is not None:
             if (
                 type(waiting) is not _WaveOpenRefusal
@@ -661,7 +661,7 @@ class _WorkflowWave:
                 for item in self.prepared:
                     closing = item.close(_wave=self)
                     await closing
-            _workflow_wave_sources(self)
+            require_workflow_wave_sources(self)
             self._release_return = self._release()
             if not waiting.retain:
                 raise waiting.error
@@ -710,7 +710,7 @@ class _WorkflowWave:
                 ChangeReviewCompletion.DISCLOSED_FAILURE,
             }:
                 raise PermissionError("workflow E required publication unresolved")
-        _workflow_wave_sources(self)
+        require_workflow_wave_sources(self)
         self._release_return = self._release()
         for result in launches:
             if isinstance(result, BaseException):
@@ -722,9 +722,8 @@ class _WorkflowWave:
 
 async def run_workflow_wave(phase, prepared, *, _retain_waits=False):
     """Private complete-wave consumer for the existing accepted phase owner."""
-    _workflow_wave_sources()
     wave = _WorkflowWave(phase, prepared, retain_waits=_retain_waits)
-    _workflow_wave_sources(wave)
+    require_workflow_wave_sources(wave)
     if wave.runtime._workflow_closing:
         raise PermissionError("workflow admission is closing")
     bound = []
@@ -785,7 +784,7 @@ async def run_workflow_wave(phase, prepared, *, _retain_waits=False):
             except BaseException:  # noqa: BLE001 - original driver result retains failure custody
                 break
         result = wave.driver.result()
-        _workflow_wave_sources(wave)
+        require_workflow_wave_sources(wave)
         if _retain_waits:
             for item in wave.unlaunched:
                 with item.authorization._lock:
@@ -828,7 +827,7 @@ def _workflow_close_current(association):
     if association is None:
         return
     wave, item = association
-    _workflow_wave_sources(wave)
+    require_workflow_wave_sources(wave)
     if (
         item._wave is not wave
         or item.phase is not wave.phase
@@ -839,10 +838,8 @@ def _workflow_close_current(association):
         raise PermissionError("workflow close enrollment changed")
 
 
-def _workflow_wave_sources(wave=None):
+def require_workflow_wave_sources(wave):
     """Validate the runtime resources owned by this registered native wave."""
-    if wave is None:
-        return
     if (
         not isinstance(wave, _WorkflowWave)
         or wave.runtime.chat_controller is not wave.phase._controller
@@ -865,7 +862,7 @@ def _workflow_wave_sources(wave=None):
 
 def _workflow_wave_release_return(wave, prepared):
     """Prove original release callouts, without certifying driver success."""
-    _workflow_wave_sources(wave)
+    require_workflow_wave_sources(wave)
     returned = wave._release_return
     current = (
         wave,
@@ -926,7 +923,7 @@ def _workflow_wave_return(wave, saved=None):
     """Retain/recheck the actual original wave's finite positive returns."""
     from . import console_workflow_preparation as preparation
 
-    _workflow_wave_sources(wave)
+    require_workflow_wave_sources(wave)
     current = (
         wave,
         wave.driver,

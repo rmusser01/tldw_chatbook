@@ -490,7 +490,7 @@ class SshMasterManager:
         Args:
             loc: A validated locator.
         """
-        from tldw_chatbook.Chat.console_ssh_custody import current_ssh_call
+        from tldw_chatbook.Tools.workspace_tool_executor import current_ssh_call
 
         native = current_ssh_call()
         if native is not None:
@@ -521,7 +521,7 @@ class SshMasterManager:
             known = self._sockets.get(key)
             if known is not None:
                 if known.exists():
-                    from tldw_chatbook.Chat.console_ssh_custody import accept_master
+                    from tldw_chatbook.Tools.workspace_tool_executor import accept_master
 
                     accept_master(self, loc, control_dir)
                     return
@@ -532,7 +532,7 @@ class SshMasterManager:
             elif self._master_alive(loc):
                 # A master from outside this process still owns the socket;
                 # starting ours would race for the same %C path.
-                from tldw_chatbook.Chat.console_ssh_custody import accept_master
+                from tldw_chatbook.Tools.workspace_tool_executor import accept_master
 
                 accept_master(self, loc, control_dir)
                 return
@@ -541,7 +541,7 @@ class SshMasterManager:
                 # its barrier (and app quit) need not wait for a handshake.
                 return
             self._spawn_master(loc, key, control_dir)
-            from tldw_chatbook.Chat.console_ssh_custody import accept_master
+            from tldw_chatbook.Tools.workspace_tool_executor import accept_master
 
             accept_master(self, loc, control_dir)
 
@@ -661,7 +661,7 @@ class SshMasterManager:
             *build_ssh_argv(loc, ["-O", "check", "-o", option], []),
         ]
         try:
-            from tldw_chatbook.Chat.console_ssh_custody import current_ssh_call
+            from tldw_chatbook.Tools.workspace_tool_executor import current_ssh_call
 
             native = current_ssh_call()
             completed = (
@@ -721,7 +721,7 @@ class SshMasterManager:
         ]
         argv = [self._ssh_bin, *build_ssh_argv(loc, options, [])]
         try:
-            from tldw_chatbook.Chat.console_ssh_custody import run_master_launcher
+            from tldw_chatbook.Tools.workspace_tool_executor import run_master_launcher
 
             completed = run_master_launcher(
                 self,
@@ -1321,7 +1321,7 @@ class RemoteWorkspaceTransport:
             raise ValueError(
                 f"python must be a bare interpreter name: {python!r}"
             )
-        from tldw_chatbook.Chat.console_ssh_custody import current_ssh_call
+        from tldw_chatbook.Tools.workspace_tool_executor import current_ssh_call
 
         native = current_ssh_call()
         if native is not None:

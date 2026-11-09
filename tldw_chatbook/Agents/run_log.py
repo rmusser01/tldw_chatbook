@@ -564,7 +564,7 @@ class RunLogWriter:
             self._active = False
             return
         try:
-            from tldw_chatbook.Chat.console_agent_sources import console_writer_source
+            from .native_source_storage import console_writer_source
 
             source = console_writer_source(self)
             with self._access_scope():
@@ -679,7 +679,7 @@ class RunLogWriter:
                 self._active = False
                 return
             run_dir.mkdir(parents=True, exist_ok=True)
-            from tldw_chatbook.Chat.console_agent_sources import console_writer_source
+            from .native_source_storage import console_writer_source
 
             source = console_writer_source(self)
             if source is not None:
@@ -856,7 +856,7 @@ class RunLogWriter:
         if not self._active or self.log_dir is None:
             return None
         try:
-            from tldw_chatbook.Chat.console_agent_sources import console_writer_source
+            from .native_source_storage import console_writer_source
 
             source = console_writer_source(self)
             with self._access_scope():
@@ -969,7 +969,7 @@ class RunLogWriter:
         if self.log_dir is None:
             return
         try:
-            from tldw_chatbook.Chat.console_agent_sources import console_writer_source
+            from .native_source_storage import console_writer_source
 
             source = console_writer_source(self)
             with self._access_scope():
@@ -1019,7 +1019,7 @@ class RunLogWriter:
         if not self._active or self.log_dir is None:
             return
         try:
-            from tldw_chatbook.Chat.console_agent_sources import console_writer_source
+            from .native_source_storage import console_writer_source
 
             source = console_writer_source(self)
             with self._access_scope():

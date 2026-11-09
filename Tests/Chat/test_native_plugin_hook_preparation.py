@@ -309,13 +309,13 @@ async def test_no_plugin_rows_leave_native_resources_cold(preparation):
 async def test_unqualified_ordinary_preparation_uses_existing_path(
     preparation, monkeypatch
 ):
-    from tldw_chatbook.Chat import console_workflow_runs
+    from tldw_chatbook.Utils import platform_files
 
     rig = preparation
     configuration = configuration_for(rig)
     await rig.runtime.dispose()
     monkeypatch.setattr(
-        console_workflow_runs, "native_workflow_qualified", lambda: False
+        platform_files, "supports_native_process_groups", lambda: False
     )
     runtime = ConsoleRuntime(rig.controller.app)
     runtime.set_chat_store(rig.store)

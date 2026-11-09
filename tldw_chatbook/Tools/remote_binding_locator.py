@@ -372,7 +372,7 @@ def canonicalize_locator(
     """
     argv = [ssh_bin, *build_ssh_argv(loc, ["-G"], [])]
     try:
-        from tldw_chatbook.Chat.console_ssh_custody import current_ssh_call
+        from tldw_chatbook.Tools.workspace_tool_executor import current_ssh_call
 
         native = current_ssh_call()
         completed = (

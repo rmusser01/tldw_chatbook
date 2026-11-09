@@ -255,6 +255,8 @@ async def mounted_workflow(tmp_path, mode):
                 assert stale_rows() == before and not provider.calls
             print("WORKFLOW_DEFAULT_STALE_ROW_RETAINED", flush=True)
             return
+        # Resume reconciles against the registry, so activate the rig's workspace.
+        rig.service.persistence.workspace_registry.set_active_workspace("w")
         async with host.run_test(
             size=(80, 24) if mode == "navigation" else (140, 42)
         ) as pilot:

@@ -379,7 +379,6 @@ async def _prepare_native_references(
         and not native_literal_arguments
     ):
         try:
-            from .console_reference_preparation import prepare_reference_expansion
             from .console_references import _native_reference_candidates
 
             candidates = tuple(_native_reference_candidates(clean_draft))
@@ -389,6 +388,8 @@ async def _prepare_native_references(
                 else None
             )
             if candidates:
+                from .console_reference_preparation import prepare_reference_expansion
+
                 async with prepare_reference_expansion(
                     self,
                     session,

@@ -204,11 +204,11 @@ def test_unqualified_platform_keeps_ordinary_change_review(
     request, monkeypatch, producer
 ):
     """Unqualified attachment must not advertise native ownership or refuse ordinary Git."""
-    from tldw_chatbook.Chat import console_workflow_runs
+    from tldw_chatbook.Utils import platform_files
     from tldw_chatbook.Workspaces.change_review_consent import RootReadinessState
 
     monkeypatch.setattr(
-        console_workflow_runs, "native_workflow_qualified", lambda: False
+        platform_files, "supports_native_process_groups", lambda: False
     )
     host = request.getfixturevalue(
         "native_initializer" if producer == "initializer" else "native_review"

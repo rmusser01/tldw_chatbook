@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import time
 from collections.abc import Callable
 from copy import deepcopy
@@ -9,11 +10,13 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from queue import Empty, Full, Queue
 from threading import RLock, Thread
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from tldw_chatbook.Agents.execution_capacity import CapacityRefused, WorkOrigin
 from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Workspaces.models import RuntimeBindingStatus
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Agents.execution_capacity import WorkOrigin
 
 
 class ChangeReviewState(str, Enum):
@@ -107,6 +110,34 @@ class _Registry(Protocol):
     ) -> ChangeReviewConsent: ...
 
     def list_folder_bindings(self, workspace_id: str) -> tuple[_FolderBinding, ...]: ...
+
+
+def hook_workspace_readers_current(
+    registry: object,
+    registry_class: type,
+    reader_anchors: tuple,
+    namespace: dict[str, object],
+) -> bool:
+    """Check the captured native registry readers for this hook preparation."""
+    return all(
+        owner is registry_class
+        and inspect.getattr_static(type(registry), label) is reader
+        and label not in vars(registry)
+        and reader.__code__ is reader_code
+        and reader.__defaults__ is reader_defaults
+        and reader.__kwdefaults__ is reader_kwdefaults
+        and reader.__closure__ is reader_closure
+        and reader.__globals__ is namespace
+        for (
+            owner,
+            label,
+            reader,
+            reader_code,
+            reader_defaults,
+            reader_kwdefaults,
+            reader_closure,
+        ) in reader_anchors
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,10 +274,14 @@ class ChangeReviewConsentService:
 
     def admit_turn(self, workspace_id: str) -> ChangeReviewAdmission:
         """Return current ready roots, scheduling missing roots without waiting."""
+        from tldw_chatbook.Agents.execution_capacity import WorkOrigin
+
         return self._admit(workspace_id, origin=WorkOrigin.AUTOMATIC)
 
     def capture_turn(self, workspace_id: str) -> ChangeReviewAdmission:
         """Read the same consent-bound roots without scheduling initialization."""
+        from tldw_chatbook.Agents.execution_capacity import WorkOrigin
+
         return self._admit(
             workspace_id, origin=WorkOrigin.AUTOMATIC, schedule_missing=False
         )
@@ -358,6 +393,8 @@ class ChangeReviewConsentService:
                 self._toggling.discard(workspace_id)
                 self._epochs[workspace_id] += 1
         if enabled:
+            from tldw_chatbook.Agents.execution_capacity import WorkOrigin
+
             self._admit(workspace_id, origin=WorkOrigin.MANUAL)
         return committed
 
@@ -367,6 +404,8 @@ class ChangeReviewConsentService:
 
     def retry_failed_roots(self, workspace_id: str) -> int:
         """Retry unsuccessful roots once using the explicit Settings cause."""
+        from tldw_chatbook.Agents.execution_capacity import WorkOrigin
+
         return self._admit(workspace_id, origin=WorkOrigin.MANUAL, retry=True)
 
     def begin_close(self) -> None:
@@ -447,6 +486,8 @@ class ChangeReviewConsentService:
                 queued = True
             return True
         except Exception as error:  # noqa: BLE001 -- scheduling failure becomes failed readiness
+            from tldw_chatbook.Agents.execution_capacity import CapacityRefused
+
             self._fail(work, busy=isinstance(error, (Full, CapacityRefused)))
             return False
         finally:
@@ -498,6 +539,8 @@ class ChangeReviewConsentService:
                     ):
                         self._run_work(work)
             except Exception as error:  # noqa: BLE001 -- one failed job must not kill the bounded worker
+                from tldw_chatbook.Agents.execution_capacity import CapacityRefused
+
                 self._fail(work, busy=isinstance(error, CapacityRefused))
             finally:
                 self._queue.task_done()

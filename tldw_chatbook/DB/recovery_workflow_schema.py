@@ -2,6 +2,8 @@
 
 import sqlite3
 
+from tldw_chatbook.Backup_Recovery.sqlite_validation import _migrate_installed_catalog
+
 WORKFLOW_OBJECTS = (
     "CREATE INDEX idx_workflow_conversation ON workflow_runs(conversation_id, created_at DESC, id)",
     "CREATE TABLE workflow_active_intervals (\n    id TEXT PRIMARY KEY,\n    workflow_id TEXT NOT NULL REFERENCES workflow_runs(id),\n    owner_id TEXT NOT NULL,\n    started_at REAL NOT NULL CHECK(started_at>=0),\n    ended_at REAL CHECK(ended_at>=started_at),\n    charged_seconds REAL NOT NULL DEFAULT 0 CHECK(charged_seconds>=0)\n)",
@@ -389,18 +391,7 @@ WORKFLOW_ADMISSION_MIGRATION = (
 
 def workflow_admission_catalog(catalog):
     """Derive the exact fixed migration's DDL, including SQLite ALTER quoting."""
-    with sqlite3.connect(":memory:") as conn:
-        for sql in sorted(catalog, key=lambda sql: not sql.startswith("CREATE TABLE")):
-            if not sql.startswith("CREATE TABLE sqlite_sequence"):
-                conn.execute(sql)
-        for sql in WORKFLOW_ADMISSION_MIGRATION:
-            conn.execute(sql)
-        return tuple(
-            row[0]
-            for row in conn.execute(
-                "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type,name"
-            )
-        )
+    return _migrate_installed_catalog(catalog, WORKFLOW_ADMISSION_MIGRATION)
 
 
 WORKFLOW_CHECKPOINT_OBJECTS = (
@@ -415,18 +406,7 @@ WORKFLOW_CHECKPOINT_MIGRATION = (
 
 
 def workflow_checkpoint_catalog(catalog):
-    with sqlite3.connect(":memory:") as conn:
-        for sql in sorted(catalog, key=lambda sql: not sql.startswith("CREATE TABLE")):
-            if not sql.startswith("CREATE TABLE sqlite_sequence"):
-                conn.execute(sql)
-        for sql in WORKFLOW_CHECKPOINT_MIGRATION:
-            conn.execute(sql)
-        return tuple(
-            row[0]
-            for row in conn.execute(
-                "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type,name"
-            )
-        )
+    return _migrate_installed_catalog(catalog, WORKFLOW_CHECKPOINT_MIGRATION)
 
 
 WORKFLOW_WINDOW_MIGRATION = (
@@ -440,18 +420,7 @@ WORKFLOW_WINDOW_MIGRATION = (
 
 def workflow_window_catalog(catalog):
     """Apply the exact additive v29 catalog without opening captured paths."""
-    with sqlite3.connect(":memory:") as conn:
-        for sql in sorted(catalog, key=lambda sql: not sql.startswith("CREATE TABLE")):
-            if not sql.startswith("CREATE TABLE sqlite_sequence"):
-                conn.execute(sql)
-        for sql in WORKFLOW_WINDOW_MIGRATION:
-            conn.execute(sql)
-        return tuple(
-            row[0]
-            for row in conn.execute(
-                "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type,name"
-            )
-        )
+    return _migrate_installed_catalog(catalog, WORKFLOW_WINDOW_MIGRATION)
 
 
 def _validate_workflow_windows(conn):
@@ -546,18 +515,7 @@ WORKFLOW_REPAIR_INPUT_MIGRATION = (
 
 def workflow_repair_input_catalog(catalog):
     """Apply exact v30 command-equality metadata without reconstructing authority."""
-    with sqlite3.connect(":memory:") as conn:
-        for sql in sorted(catalog, key=lambda sql: not sql.startswith("CREATE TABLE")):
-            if not sql.startswith("CREATE TABLE sqlite_sequence"):
-                conn.execute(sql)
-        for sql in WORKFLOW_REPAIR_INPUT_MIGRATION:
-            conn.execute(sql)
-        return tuple(
-            row[0]
-            for row in conn.execute(
-                "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type,name"
-            )
-        )
+    return _migrate_installed_catalog(catalog, WORKFLOW_REPAIR_INPUT_MIGRATION)
 
 
 WORKFLOW_RECOVERY_REVIEW_MIGRATION = (

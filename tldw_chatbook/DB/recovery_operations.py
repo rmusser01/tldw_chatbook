@@ -1837,29 +1837,32 @@ _AGENT_RUNS_SCHEMA += tuple(
 
 # Standalone pre-integration workflow versions used a different v25 meaning.
 # Freeze their exact catalogs separately; numeric labels never choose this bridge.
-_LEGACY_WORKFLOW_SCHEMAS = []
-for _catalog25 in dict.fromkeys(
-    workflow_catalog(catalog)
-    for version, catalog in _AGENT_RUNS_SCHEMA
-    if version == 24
-):
-    _legacy_catalog = _catalog25
-    for _legacy_version, _transform in enumerate(
-        (
-            None,
-            workflow_admission_catalog,
-            workflow_checkpoint_catalog,
-            workflow_window_catalog,
-            workflow_repair_input_catalog,
-            workflow_recovery_review_catalog,
-        ),
-        start=25,
+def _build_legacy_workflow_schemas():
+    schemas = []
+    for catalog25 in dict.fromkeys(
+        workflow_catalog(catalog)
+        for version, catalog in _AGENT_RUNS_SCHEMA
+        if version == 24
     ):
-        if _transform is not None:
-            _legacy_catalog = _transform(_legacy_catalog)
-        _LEGACY_WORKFLOW_SCHEMAS.append((_legacy_version, _legacy_catalog))
-_LEGACY_WORKFLOW_SCHEMAS = tuple(dict.fromkeys(_LEGACY_WORKFLOW_SCHEMAS))
-del _catalog25, _legacy_catalog, _legacy_version, _transform
+        legacy_catalog = catalog25
+        for legacy_version, transform in enumerate(
+            (
+                None,
+                workflow_admission_catalog,
+                workflow_checkpoint_catalog,
+                workflow_window_catalog,
+                workflow_repair_input_catalog,
+                workflow_recovery_review_catalog,
+            ),
+            start=25,
+        ):
+            if transform is not None:
+                legacy_catalog = transform(legacy_catalog)
+            schemas.append((legacy_version, legacy_catalog))
+    return tuple(dict.fromkeys(schemas))
+
+
+_LEGACY_WORKFLOW_SCHEMAS = _build_legacy_workflow_schemas()
 
 
 def _legacy_workflow_version(connection):

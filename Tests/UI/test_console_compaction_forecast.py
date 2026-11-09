@@ -99,6 +99,9 @@ async def test_automatic_forecast_matches_real_preflight_with_overhead_and_cap(
             console, controller, session, runtime, tasks = await _ask_console(
                 host, pilot, monkeypatch, adapter
             )
+            # These preflight controls call the original synchronous capture.
+            trust = await app.ensure_local_skill_trust_service()
+            assert app.local_skills_service.trust_service is trust
             assert not controller._agent_runtime_enabled
             gateway = controller.provider_gateway
             resolve = gateway.resolve_for_send
@@ -301,6 +304,9 @@ async def test_bound_skill_ask_gate_uses_its_overhead_before_regenerate_commits(
             console, controller, session, runtime, tasks = await _ask_console(
                 host, pilot, monkeypatch, adapter
             )
+            # These preflight controls call the original synchronous capture.
+            trust = await app.ensure_local_skill_trust_service()
+            assert app.local_skills_service.trust_service is trust
             assert controller._agent_bridge is not None
             gateway = controller.provider_gateway
             resolve = gateway.resolve_for_send

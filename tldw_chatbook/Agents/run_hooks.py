@@ -20,7 +20,8 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from contextlib import AbstractContextManager, ExitStack
+from contextlib import AbstractContextManager, ExitStack, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, get_args
 
@@ -59,6 +60,84 @@ HOOK_NOTIFY_MAX_DEPTH = 64
 # prerequisite for closing readers and reaping the owned subprocess.
 HOOK_POST_KILL_REAP_TIMEOUT_S: float = 5.0
 BLOCKING_EVENTS: frozenset[str] = frozenset({"UserPromptSubmit", "PreToolUse"})
+
+
+_prompt_handoff = ContextVar("legacy_prompt_hook_handoff", default=None)
+native_hook_submission = ContextVar("native_plugin_hook_submission", default=None)
+
+
+class _PromptHandoff:
+    def __init__(self, controller):
+        self.controller = controller
+        import asyncio
+
+        self.loop = asyncio.get_running_loop()
+        self.cancelled = self.closed = self.failed_write = self.deferred = False
+        self.event = None
+        self._lock = threading.Lock()
+
+    def attach(self, event):
+        with self._lock:
+            self.event = event
+            closed, failed = self.closed, self.failed_write
+        if closed:
+            event.host_done(required_write_ok=not failed)
+
+    def check(self):
+        if self.event is not None and not self.event.source.current_memory(
+            handoff=True
+        ):
+            raise RuntimeError("original hook outcome source changed")
+
+    def discard(self):
+        # Retirement is invoked under the existing store lock. Publish native
+        # retirement on the original host loop only after that lock returns.
+        if not self.loop.is_closed():
+            self.loop.call_soon_threadsafe(self.complete)
+
+    def complete(self, *, required_write_ok=True):
+        with self._lock:
+            self.closed = True
+            self.failed_write |= not required_write_ok
+            event, failed = self.event, self.failed_write
+        if event is not None:
+            event.cancel_queued_if_requested()
+            event.host_done(required_write_ok=not failed)
+
+
+@contextmanager
+def prompt_handoff(controller: Any) -> Iterator[None]:
+    """The original submit coroutine owns outcome consumption and all discards."""
+    handoff = _PromptHandoff(controller)
+    token = _prompt_handoff.set(handoff)
+    try:
+        yield
+    except BaseException:
+        handoff.cancelled = True
+        raise
+    finally:
+        if not handoff.deferred:
+            handoff.complete()
+        _prompt_handoff.reset(token)
+
+
+def prompt_handed_off(*, required_write_ok: bool = True) -> None:
+    handoff = _prompt_handoff.get()
+    if handoff is not None:
+        handoff.complete(required_write_ok=required_write_ok)
+
+
+def pending_prompt_handoff() -> _PromptHandoff | None:
+    handoff = _prompt_handoff.get()
+    if handoff is not None and handoff.event is not None and not handoff.closed:
+        return handoff
+    return None
+
+
+def check_prompt_handoff() -> None:
+    handoff = _prompt_handoff.get()
+    if handoff is not None:
+        handoff.check()
 
 
 @dataclass(frozen=True)
@@ -687,12 +766,10 @@ async def _capture_hook(
                     "Hook authority unavailable at launch."
                 ) from None
             if native is not None:
-                from tldw_chatbook.Chat.console_workflow_runs import (
-                    native_workflow_qualified,
-                )
+                from tldw_chatbook.Utils.platform_files import supports_native_process_groups
 
                 native.event.source.check()
-                if not native_workflow_qualified():
+                if not supports_native_process_groups():
                     raise RuntimeError("native hook group proof unavailable")
                 native.process_attempted()
             try:

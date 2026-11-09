@@ -878,7 +878,7 @@ async def _controller_accept_durable_turn(
                 return self._block(
                     session.id, "Hook continuation is no longer current."
                 )
-            from tldw_chatbook.Agents.legacy_hook_ownership import prompt_handed_off
+            from tldw_chatbook.Agents.run_hooks import prompt_handed_off
 
             prompt_handed_off(required_write_ok=False)
             # TASK-22251: the user-facing copy stays deliberately generic, but
@@ -948,7 +948,7 @@ async def _controller_accept_durable_turn(
             if citation_repair_contract is not None
             else None
         )
-        from tldw_chatbook.Agents.legacy_hook_ownership import pending_prompt_handoff
+        from tldw_chatbook.Agents.run_hooks import pending_prompt_handoff
 
         continuation = _source_controller._DurablePostcommitContinuation(
             preparation_id=preparation.preparation_id,

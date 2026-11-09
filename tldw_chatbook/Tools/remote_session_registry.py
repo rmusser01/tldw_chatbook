@@ -99,7 +99,7 @@ class RemoteSessionRegistry:
         """
         from tldw_chatbook.Tools.remote_session_worker import SessionStartError
         from tldw_chatbook.Tools.remote_workspace_transport import TransportFailureKind
-        from tldw_chatbook.Chat.console_ssh_custody import (
+        from tldw_chatbook.Tools.workspace_tool_executor import (
             accept_session,
             session_publication,
             starting_session,

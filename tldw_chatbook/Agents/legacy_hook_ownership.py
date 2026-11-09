@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from threading import Condition, Lock, RLock
-from typing import Any
 
 from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
 
 from .activation import _guard, execution
 from .execution_capacity import CapacityRefused, WorkOrigin, current_execution_owner
 
-_prompt_handoff = ContextVar("legacy_prompt_hook_handoff", default=None)
+from .run_hooks import _prompt_handoff
+
 _target_operation = ContextVar("legacy_hook_target_operation", default=None)
 
 
@@ -100,6 +99,9 @@ class _NativeLegacyHookSource(_EventCustodyRegistry):
                 self._condition.notify_all()
 
 
+NativeLegacyHookSource = _NativeLegacyHookSource
+
+
 class _EventSource:
     def __init__(self, issuer, session_id):
         self.issuer = issuer
@@ -114,10 +116,10 @@ class _EventSource:
         self.database = getattr(self.persistence, "db", None)
         self.targets = ()
         self.sources = _guard.captured_sources(None)
-        from tldw_chatbook.Chat.console_agent_sources import current_agent_sources
+        from .run_context import current_agent_sources
 
         self.agent_sources = current_agent_sources(self.controller)
-        from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
+        from .execution_capacity import current_ordinary_tree
 
         self.ordinary_tree = current_ordinary_tree(self.controller)
         parent = current_execution_owner()
@@ -407,77 +409,3 @@ class _TargetCustody:
     def invoke(self, callback, *args):
         with self.activate():
             return callback(*args)
-
-
-class _PromptHandoff:
-    def __init__(self, controller):
-        self.controller = controller
-        import asyncio
-
-        self.loop = asyncio.get_running_loop()
-        self.cancelled = self.closed = self.failed_write = self.deferred = False
-        self.event = None
-        self._lock = Lock()
-
-    def attach(self, event):
-        with self._lock:
-            self.event = event
-            closed, failed = self.closed, self.failed_write
-        if closed:
-            event.host_done(required_write_ok=not failed)
-
-    def check(self):
-        if self.event is not None and not self.event.source.current_memory(
-            handoff=True
-        ):
-            raise RuntimeError("original hook outcome source changed")
-
-    def discard(self):
-        # Retirement is invoked under the existing store lock. Publish native
-        # retirement on the original host loop only after that lock returns.
-        if not self.loop.is_closed():
-            self.loop.call_soon_threadsafe(self.complete)
-
-    def complete(self, *, required_write_ok=True):
-        with self._lock:
-            self.closed = True
-            self.failed_write |= not required_write_ok
-            event, failed = self.event, self.failed_write
-        if event is not None:
-            event.cancel_queued_if_requested()
-            event.host_done(required_write_ok=not failed)
-
-
-@contextmanager
-def prompt_handoff(controller: Any) -> Iterator[None]:
-    """The original submit coroutine owns outcome consumption and all discards."""
-    handoff = _PromptHandoff(controller)
-    token = _prompt_handoff.set(handoff)
-    try:
-        yield
-    except BaseException:
-        handoff.cancelled = True
-        raise
-    finally:
-        if not handoff.deferred:
-            handoff.complete()
-        _prompt_handoff.reset(token)
-
-
-def prompt_handed_off(*, required_write_ok: bool = True) -> None:
-    handoff = _prompt_handoff.get()
-    if handoff is not None:
-        handoff.complete(required_write_ok=required_write_ok)
-
-
-def pending_prompt_handoff() -> _PromptHandoff | None:
-    handoff = _prompt_handoff.get()
-    if handoff is not None and handoff.event is not None and not handoff.closed:
-        return handoff
-    return None
-
-
-def check_prompt_handoff() -> None:
-    handoff = _prompt_handoff.get()
-    if handoff is not None:
-        handoff.check()

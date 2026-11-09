@@ -833,7 +833,7 @@ class LocalToolProvider:
         self._path_specs_by_alias: dict[str, dict[str, LocalToolSpec]] = {}
         self._native_ssh_specs: dict[str, dict[str, LocalToolSpec]] = {}
 
-        from tldw_chatbook.Chat.console_workflow_preparation import (
+        from .run_context import (
             current_planning_preparation,
         )
 
@@ -2620,7 +2620,7 @@ class LocalToolProvider:
         oversize, transport) -> nothing, a deliberately weaker blind
         write rather than a false stale refusal. Never raises.
         """
-        from tldw_chatbook.Chat.console_workflow_preparation import (
+        from .run_context import (
             current_planning_preparation,
         )
 
@@ -3785,7 +3785,7 @@ def _filesystem_specs(
     workspace_executor: WorkspaceToolExecutor,
 ) -> list[LocalToolSpec]:
     """Build the shared native filesystem specs without optional tool factories."""
-    from tldw_chatbook.Chat.console_workflow_preparation import (
+    from .run_context import (
         current_planning_preparation,
     )
 
@@ -4116,7 +4116,7 @@ def _default_specs(
     watchlists_command_service: WatchlistsCommandService | None = None,
     character_service: CharacterToolService | None = None,
 ) -> list[LocalToolSpec]:
-    from tldw_chatbook.Chat.console_workflow_preparation import (
+    from .run_context import (
         current_planning_preparation,
     )
 
@@ -5513,8 +5513,6 @@ _NATIVE_SSH_PROVIDER_METHODS = {
 }
 
 # Definition-time originals: ordinary admission never invokes a source to qualify it.
-_ORDINARY_NATIVE_FACTORY_CODE = _default_specs.__code__
-_ORDINARY_NATIVE_EFFECTS = _NATIVE_WORKTREE_EFFECTS
 _ORDINARY_NATIVE_PROVIDER = LocalToolProvider
 _ORDINARY_NATIVE_PROVIDER_METHODS = tuple(
     (name, descriptor)
@@ -5548,3 +5546,13 @@ _ORDINARY_NATIVE_FUNCTIONS = tuple(
     )
     if hasattr(function, "__code__")
 )
+
+
+def is_native_local_provider(provider: object) -> bool:
+    """Recognize the original local provider class."""
+    return type(provider) is _ORDINARY_NATIVE_PROVIDER
+
+
+def native_worktree_effects() -> Mapping[str, str]:
+    """Return the immutable effect declarations shared with native tool specs."""
+    return _NATIVE_WORKTREE_EFFECTS

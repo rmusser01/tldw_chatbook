@@ -131,7 +131,7 @@ def submission_scope(controller, origin, session_id):
 
     @contextmanager
     def manual_submission():
-        from tldw_chatbook.Agents.legacy_hook_ownership import prompt_handoff
+        from tldw_chatbook.Agents.run_hooks import prompt_handoff
 
         with manual_work_scope(), prompt_handoff(controller):
             yield
@@ -266,7 +266,7 @@ async def prepare_submission_hooks(
             and getattr(hook_runtime.prepare_hooks_v2, "__func__", None)
             is ConsoleRuntime.prepare_hooks_v2 else {})
         try:
-            from .console_plugin_hook_preparation import submission_origin
+            from .console_hook_preparation import submission_origin
 
             with submission_origin(controller, session, configuration, origin):
                 lifecycle = await hook_runtime.prepare_hooks_v2(
@@ -318,7 +318,7 @@ async def submission_hook_input(
         return []
     lifecycle, scope, session_key = hook_owner
     if origin is ConsoleSubmissionOrigin.MANUAL:
-        from .console_plugin_hook_preparation import submission_origin
+        from .console_hook_preparation import submission_origin
 
         session = controller.store._sessions[session_key]
         with submission_origin(controller, session, None, origin):
@@ -378,7 +378,7 @@ async def legacy_submission_hook_input(controller, draft, session_id, hook_read=
         **shared,
     )
     if outcome is None or not (outcome.blocked or outcome.context):
-        from tldw_chatbook.Agents.legacy_hook_ownership import prompt_handed_off
+        from tldw_chatbook.Agents.run_hooks import prompt_handed_off
 
         prompt_handed_off()
     return outcome

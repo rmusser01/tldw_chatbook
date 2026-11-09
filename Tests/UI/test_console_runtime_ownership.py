@@ -3537,6 +3537,11 @@ async def test_prepared_native_start_allows_mounted_manual_send(
             assert composer.draft_text() == "original"
             from dataclasses import replace
 
+            store.replace_session_settings(
+                target.id, chat._session._blank_console_session_settings()
+            )
+            trust = await app.ensure_local_skill_trust_service()
+            assert app.local_skills_service.trust_service is trust
             request = replace(
                 request,
                 configuration=await controller.capture_turn_configuration_snapshot(
@@ -3667,6 +3672,8 @@ async def test_native_acceptance_consumes_only_open_target_revision(
             store.replace_session_settings(
                 target.id, chat._session._blank_console_session_settings()
             )
+            trust = await app.ensure_local_skill_trust_service()
+            assert app.local_skills_service.trust_service is trust
             request = replace(
                 request,
                 configuration=controller.resolve_turn_configuration_snapshot(target.id),
@@ -3916,3 +3923,122 @@ async def test_image_retirement_failure_cannot_skip_terminal_and_speech_cleanup(
         await ChatScreen.on_unmount(screen)
     assert calls[:2] == ["detach", "sealed"]
     assert all(calls.index(name) < calls.index("images") for name in ("terminal", "speech", "auto-speak"))
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_stops", [False, True], ids=["complete", "source-stop"])
+async def test_cold_native_start_commits_both_receipts(
+    tmp_path, _register_runtime_database_owners, source_stops
+):
+    """A cold handoff keeps its original receipts and preacceptance withdrawal."""
+    import json
+    from tldw_chatbook.config import get_user_data_dir
+    from Tests.Chat.test_console_chat_start import _native_start_rig
+
+    controller, store, runs, source, target, chain, request = await _native_start_rig(
+        tmp_path
+    )
+    app = _build_manually_mounted_console_app(
+        config_overrides={"splash_screen": {"enabled": False}},
+        user_data_dir=get_user_data_dir(),
+    )
+    persist_seeded_config(app, "splash_screen")
+    _attach_real_dbs(app, tmp_path)
+    _configure_native_ready_console(app)
+    from tldw_chatbook.config import get_cli_setting
+
+    assert get_cli_setting("splash_screen", "enabled", True) is False
+    rig_registered = False
+    try:
+        async with app.run_test(size=(160, 48)):
+            runtime = app.console_runtime
+            assert await asyncio.to_thread(controller._scratch_spaces.dispose)
+            controller._scratch_spaces = runtime._scratch_spaces
+            controller._owns_scratch_spaces = False
+            runtime.set_chat_store(store)
+            runtime.set_agent_bridge(controller._agent_bridge)
+            runtime.set_chat_controller(controller)
+            _register_runtime_database_owners(runtime, runs)
+            _register_runtime_database_owners(runtime, store.persistence.db)
+            rig_registered = True
+            from dataclasses import replace
+
+            chat = ChatScreen(app)
+            # Compose the same IO-free facade used by the Console skill discovery.
+            assert app.skills_scope_service is not None
+            store.replace_session_settings(
+                target.id, chat._session._blank_console_session_settings()
+            )
+            local_skills = vars(app).get("_local_skills_service")
+            assert vars(app).get("_local_skill_trust_service") is None
+            assert local_skills is None or vars(local_skills).get("_trust_service") is None
+            request = replace(
+                request,
+                configuration=await controller.capture_turn_configuration_snapshot(
+                    target.id,
+                    context_provider=chat._session._build_console_turn_execution_context,
+                ),
+                context_epoch=store.conversation_context_epoch(target.id),
+            )
+            assert request.configuration.skill_capture_pending
+            assert controller._chat_start._target_unchanged(request)
+            assert store.active_session_id == source.id
+            if source_stops:
+                entered = asyncio.Event()
+
+                async def held(_selection):
+                    entered.set()
+                    await asyncio.Event().wait()
+
+                controller._resolve_for_send_bounded = held
+                start = asyncio.create_task(controller._chat_start.start(request))
+                try:
+                    await asyncio.wait_for(entered.wait(), 5)
+                    assert len(runtime._turn_custody) == 1
+                    assert controller._chat_start.is_prepared(target.id)
+                    controller._signal_stop(session_id=source.id)
+                    outcome = await asyncio.wait_for(start, 5)
+                    assert outcome.launch_status == "not_started", outcome
+                    await asyncio.wait_for(asyncio.gather(*controller._chat_start.tasks()), 5)
+                    assert not runtime._turn_custody
+                    assert not controller._fleet_wake._automatic_primary_claims
+                    assert not controller.prompt_queue_coordinator.controls_generation(target.id)
+                    assert runs.automatic_work.snapshot(chain).used["generation"] == 0
+                    assert not store.persistence.db.get_messages_for_conversation(
+                        request.conversation_id
+                    )
+                    assert await store.drain_agent_handoff(target.id)
+                    assert target.draft == request.opening_prompt
+                    return
+                finally:
+                    controller._chat_start.withdraw_prepared(target.id, "test_cleanup")
+                    await asyncio.gather(start, return_exceptions=True)
+            outcome = await asyncio.wait_for(controller._chat_start.start(request), 20)
+            assert outcome.launch_status == "started", outcome
+            await asyncio.wait_for(asyncio.gather(*controller._chat_start.tasks()), 20)
+            attempt = runs.automatic_work.read_chat_start_attempt(
+                request.attempt_id, owner_id=controller._fleet_wake.runtime_owner_id
+            )
+            assert attempt.state == "completed"
+            assert runs.automatic_work.snapshot(chain).used["generation"] == 1
+            db = store.persistence.db
+            rows = db.get_messages_for_conversation(request.conversation_id)
+            users = [row for row in rows if row["sender"] == "user"]
+            assert len(users) == 1 and users[0]["content"] == request.opening_prompt
+            metadata = json.loads(users[0]["metadata_json"])
+            assert metadata["agent_chat_start"]["attempt_id"] == request.attempt_id
+            assert any(
+                row["sender"] == "assistant" and row["content"] == "target answer"
+                for row in rows
+            )
+            assert store.active_session_id == source.id
+            assert not controller.prompt_queue_coordinator.controls_generation(target.id)
+            assert not controller._fleet_wake._automatic_primary_claims
+            assert not runtime._turn_custody
+            assert not controller._chat_start.tasks()
+    finally:
+        await controller.shutdown()
+        if not rig_registered:
+            runs.close()
+            store.persistence.db.close_connection()

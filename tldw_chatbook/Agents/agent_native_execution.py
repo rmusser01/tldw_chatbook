@@ -73,12 +73,12 @@ def _prepare_workflow_child(
     Task8 supplies the genuine first-request plan and fully wired service.
     This prepares no provider call, capacity, run row or execution authority.
     """
-    from tldw_chatbook.Chat.console_agent_bridge import ConsoleFirstRequestPlan
-    from tldw_chatbook.Chat.console_provider_endpoints import (
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
         normalize_generic_endpoint_for_compare,
     )
 
     from .agent_routing import SpawnTarget
+    from .agent_service import ConsoleFirstRequestPlan
     from .execution_capacity import ExecutionOwner
     from .goal_models import GoalProviderRef
     from .run_log import RunLogWriter
@@ -261,10 +261,14 @@ def launch_workflow_task(
 
 def _workflow_launch_result(self, task, *, authorization, should_cancel, _wave=None):
     """Produce only this invocation's local value after normal own return."""
-    from tldw_chatbook.Backup_Recovery.participants import _core_operation
+    from tldw_chatbook.Backup_Recovery.participants import core_operation
 
     from .activation import execution
-    from .execution_capacity import CapacityRefused
+    from .execution_capacity import (
+        CapacityRefused,
+        require_workflow_capacity,
+        require_workflow_operation,
+    )
 
     native_host._workflow_launch_sources(self)
     self._check_workflow_launch_authorization(authorization)
@@ -314,7 +318,7 @@ def _workflow_launch_result(self, task, *, authorization, should_cancel, _wave=N
                     if receipt.failure is not None
                     else None
                 )
-                return native_host._WorkflowLaunchReturn(
+                return native_host.WorkflowLaunchReturn(
                     entry, receipt=receipt, error=error, duplicate=True
                 )
             if preparation is not None and (
@@ -332,7 +336,7 @@ def _workflow_launch_result(self, task, *, authorization, should_cancel, _wave=N
             entry.marker.append(None)
             native.launch_entry[:] = [entry]
 
-    @_core_operation(self.db)
+    @core_operation(self.db)
     def launch():
         owner = close_operation = operation = operations = None
         error = receipt = None
@@ -344,7 +348,7 @@ def _workflow_launch_result(self, task, *, authorization, should_cancel, _wave=N
             _wave_member=authorization,
         ) as claim:
             if claim is None:
-                error = native_host._WorkflowChildWait(
+                error = native_host.WorkflowChildWait(
                     "worktree_activity", "workflow worktree activity busy"
                 )
                 wait = True
@@ -365,7 +369,7 @@ def _workflow_launch_result(self, task, *, authorization, should_cancel, _wave=N
                     claim.bind_owner(owner)
                     native.activity_claims.append(claim)
                     bound = True
-                    native_host._workflow_capacity_sources(self.runtime_capacity, owner)
+                    require_workflow_capacity(self.runtime_capacity, owner)
                     with self.runtime_capacity._lock:
                         operations = owner._operations
                     with owner.activate():
@@ -381,14 +385,14 @@ def _workflow_launch_result(self, task, *, authorization, should_cancel, _wave=N
                                 break
                         if error is None and preparation is not None:
                             try:
-                                native_host._workflow_capacity_sources(
+                                require_workflow_capacity(
                                     self.runtime_capacity, owner
                                 )
                                 close_operation = owner.reserve_tool()
                                 with authorization._lock:
                                     native_host._workflow_launch_locked(entry)
                                     preparation._close_operation = close_operation
-                                native_host._workflow_capacity_sources(
+                                require_workflow_capacity(
                                     self.runtime_capacity, owner
                                 )
                                 operation = owner.reserve_tool()
@@ -450,7 +454,7 @@ def _workflow_launch_result(self, task, *, authorization, should_cancel, _wave=N
                             else:
                                 handle, failure = result
                                 if isinstance(failure, native_host._FleetAdmissionWait):
-                                    error = native_host._WorkflowChildWait(
+                                    error = native_host.WorkflowChildWait(
                                         "fleet_capacity", failure.error
                                     )
                                     wait = True
@@ -471,9 +475,9 @@ def _workflow_launch_result(self, task, *, authorization, should_cancel, _wave=N
         if receipt is None:
             if close_operation is not None:
                 native_host._workflow_launch_current(entry)
-                native_host._workflow_operation_sources(close_operation)
+                require_workflow_operation(close_operation)
                 close_operation.finish()
-                native_host._workflow_operation_sources(close_operation)
+                require_workflow_operation(close_operation)
                 with authorization._lock:
                     native_host._workflow_launch_locked(entry)
                     if preparation._close_operation is not close_operation:
@@ -482,7 +486,7 @@ def _workflow_launch_result(self, task, *, authorization, should_cancel, _wave=N
                         )
                     preparation._close_operation = None
             if owner is not None:
-                native_host._workflow_capacity_sources(self.runtime_capacity, owner)
+                require_workflow_capacity(self.runtime_capacity, owner)
                 owner.finish_root()
             if bound:
                 claim.settle(durable=True)
@@ -498,7 +502,7 @@ def _workflow_launch_result(self, task, *, authorization, should_cancel, _wave=N
                     with authorization._lock:
                         native_host._workflow_launch_locked(entry)
                         entry.waits[:] = [None]
-        return native_host._WorkflowLaunchReturn(
+        return native_host.WorkflowLaunchReturn(
             entry, owner, claim, operation, receipt, error, wait, known
         )
 
@@ -519,8 +523,10 @@ def _workflow_launch_result(self, task, *, authorization, should_cancel, _wave=N
 
 def _finish_workflow_launch(self, result):
     """Consume only the original invocation's actual own/wider return."""
+    from .execution_capacity import require_workflow_capacity, require_workflow_operation
+
     if (
-        type(result) is not native_host._WorkflowLaunchReturn
+        type(result) is not native_host.WorkflowLaunchReturn
         or result.entry.service is not self
     ):
         raise PermissionError("original workflow launch result required")
@@ -542,7 +548,7 @@ def _finish_workflow_launch(self, result):
         raise PermissionError("original workflow launch return unproven")
     operation = result.operation
     if operation is not None:
-        native_host._workflow_operation_sources(operation)
+        require_workflow_operation(operation)
         with entry.lock:
             native_host._workflow_launch_locked(entry)
             if entry.preparation._launch_operation is not operation:
@@ -557,7 +563,7 @@ def _finish_workflow_launch(self, result):
             ):
                 raise PermissionError("original workflow launch membership changed")
         operation.finish()
-        native_host._workflow_operation_sources(operation)
+        require_workflow_operation(operation)
         native_host._workflow_launch_current(entry)
         with entry.lock:
             native_host._workflow_launch_locked(entry)
@@ -566,7 +572,7 @@ def _finish_workflow_launch(self, result):
             entry.preparation._launch_operation = None
     if result.receipt is None:
         if result.owner is not None:
-            native_host._workflow_capacity_sources(self.runtime_capacity, result.owner)
+            require_workflow_capacity(self.runtime_capacity, result.owner)
             drains = []
             result.owner.on_drained(drains.append)
             if drains != [True]:
@@ -631,7 +637,7 @@ def _finalize_run_log(
 ) -> None:
     if writer is None:
         return
-    from tldw_chatbook.Chat.console_agent_sources import console_writer_source
+    from .native_source_storage import console_writer_source
 
     # Optional logging cannot invoke a replacement callback on the original
     # Console writer, including when finalizing a refused child.
@@ -1535,12 +1541,12 @@ def _launch_prepared_child_result(
                     with bridge_preparation.activate_source():
                         run_original_child()
                 return
-            from tldw_chatbook.Chat.console_agent_sources import (
-                _original_retained_source_stack,
+            from .native_source_storage import (
+                original_retained_source_stack,
             )
             from tldw_chatbook.DB.base_db import operation_owned_connection
 
-            with _original_retained_source_stack(tree, tree.source.databases) as stack:
+            with original_retained_source_stack(tree, tree.source.databases) as stack:
                 for db in dict.fromkeys(
                     db for db in tree.source.databases if db is not None
                 ):
@@ -1866,8 +1872,8 @@ def _run_owned(
     from .automatic_work_budget import AutomaticWorkLimits, AutomaticWorkRefused
     from .workflow_task_scope import (
         WorkflowTaskAuthorization,
-        _check_hooks,
-        _runtime,
+        require_workflow_hooks_idle,
+        require_workflow_runtime,
     )
 
     if (
@@ -1914,7 +1920,9 @@ def _run_owned(
         ):
             if automatic_work is not None and automatic_work.workflow is not None:
                 phase = automatic_work.workflow
-                _check_hooks(_runtime(phase), phase.attempt.session_id)
+                require_workflow_hooks_idle(
+                    require_workflow_runtime(phase), phase.attempt.session_id
+                )
                 if (
                     phase.attempt.purpose == "execution"
                     and workflow_task_authorization is None
@@ -1925,7 +1933,7 @@ def _run_owned(
                 and automatic_work.workflow is not None
                 and automatic_work.workflow.attempt.purpose == "planning"
             ):
-                from ..Chat.console_workflow_preparation import (
+                from .run_context import (
                     current_planning_preparation,
                 )
 

@@ -41,6 +41,7 @@ import weakref
 from loguru import logger
 from tldw_chatbook.Utils.input_validation import escape_markup
 
+from tldw_chatbook.Agents.activation import capture_callable_source
 from tldw_chatbook.Agents.approval_provenance import (
     ApprovalDecisions,
     append_denial_reason,
@@ -1636,77 +1637,12 @@ def _exclusion_paths_provider(
     return read
 
 
-#: Parity-matrix v1 wording (spec: "Run composition & tool parity"):
-#: git_* stays advertised for local aliases on mixed runs, but a remote
-#: alias refuses at CALL time with this typed message.
-_REMOTE_GIT_UNSUPPORTED_MESSAGE = "git tools not yet supported on SSH bindings"
+def __getattr__(name: str) -> Any:
+    if name == "_RemoteExecutorDispatchAdapter":
+        from tldw_chatbook.Tools.remote_workspace_executor import RemoteExecutorDispatchAdapter
 
-#: URI-in-path teaching copy (spec: "Model-facing surface"): the note
-#: shows alias -> URI mappings, so the refusal a URI path earns must
-#: teach the correct convention instead of a bare invalid-path error.
-_REMOTE_URI_PATH_MESSAGE = (
-    "remote roots take a path RELATIVE to the root, not a URI: use "
-    'root_alias "{alias}" with a relative path'
-)
-
-
-class _RemoteExecutorDispatchAdapter:
-    """Wire-dict-to-str adapter at the run-composition seam (Task 18).
-
-    ``LocalToolSpec`` handlers return the bounded result TEXT (the local
-    ``WorkspaceToolExecutor.execute`` contract) and the CAS/ledger sites
-    above them consume either seam via ``_response_result_text`` — but
-    every handler-facing slot expects a STR. The remote transport
-    executor returns the final wire-frame dict. Wrapping ONCE here (the
-    adapter Task 17 shipped test-only, now real) keeps every spec
-    handler transport-agnostic and gives the two call-time policies one
-    owner:
-
-    - git_* on a remote alias refuses with the parity-matrix typed error
-      (local aliases keep git tools — they hold different executors);
-    - a URI in a ``path``/``pattern`` argument refuses with the message
-      that teaches the ``root_alias`` + relative-path convention.
-
-    Raises whatever the inner executor raises (typed transport errors
-    included); the provider's protocol boundary renders them.
-    """
-
-    def __init__(self, inner: Any, *, alias: str) -> None:
-        self._inner = inner
-        self._alias = str(alias)
-
-    def execute(self, tool: str, args: dict[str, Any], *, intent: str) -> str:
-        from tldw_chatbook.Tools.remote_workspace_executor import (
-            RemoteWorkspaceExecutionError,
-        )
-
-        if tool.startswith("git_"):
-            raise RemoteWorkspaceExecutionError(
-                "git_unsupported_on_remote",
-                _REMOTE_GIT_UNSUPPORTED_MESSAGE,
-                admitted=False,
-            )
-        for key in ("path", "pattern"):
-            value = args.get(key) if isinstance(args, dict) else None
-            if isinstance(value, str) and "://" in value:
-                raise RemoteWorkspaceExecutionError(
-                    "uri_path_rejected",
-                    _REMOTE_URI_PATH_MESSAGE.format(alias=self._alias),
-                    admitted=False,
-                )
-        wire = self._inner.execute(tool, args, intent=intent)
-        result = wire.get("result") if isinstance(wire, dict) else wire
-        if not isinstance(result, str):
-            # Contract violation (a success frame without result text):
-            # refuse loudly rather than stringifying a wire dict.
-            raise RemoteWorkspaceExecutionError("protocol_failure", admitted=True)
-        return result
-
-    def ping(self) -> Any:
-        return self._inner.ping()
-
-    def maybe_schedule_recovery_probe(self) -> None:
-        self._inner.maybe_schedule_recovery_probe()
+        return RemoteExecutorDispatchAdapter
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _default_remote_run_executor_factory(
@@ -1727,6 +1663,7 @@ def _default_remote_run_executor_factory(
     """
     from tldw_chatbook.Tools.remote_binding_locator import parse_remote_locator
     from tldw_chatbook.Tools.remote_workspace_executor import (
+        RemoteExecutorDispatchAdapter,
         RemoteWorkspaceToolExecutor,
         ssh_binding_identity,
     )
@@ -1750,7 +1687,7 @@ def _default_remote_run_executor_factory(
     from .console_ssh_custody import register_ordinary_ssh_executor
 
     register_ordinary_ssh_executor(inner, binding, _default_remote_run_executor_factory)
-    return _RemoteExecutorDispatchAdapter(inner, alias=binding_id)
+    return RemoteExecutorDispatchAdapter(inner, alias=binding_id)
 
 
 def _default_remote_instruction_executor(
@@ -28668,11 +28605,7 @@ class ConsoleChatController:
 _HOOK_AUTHORITY_VALUES_ORIGINAL = (
     ConsoleChatController,
     '_hook_authority_values',
-    ConsoleChatController._hook_authority_values,
-    ConsoleChatController._hook_authority_values.__code__,
-    ConsoleChatController._hook_authority_values.__defaults__,
-    ConsoleChatController._hook_authority_values.__kwdefaults__,
-    ConsoleChatController._hook_authority_values.__closure__,
+    capture_callable_source(ConsoleChatController._hook_authority_values),
 )
 
 
@@ -28784,9 +28717,6 @@ def _stock_console_tool_composition_current(controller):
 _CONSOLE_TOOL_COMPOSITION_CHECKER = (_stock_console_tool_composition_current, _stock_console_tool_composition_current.__code__, globals())
 
 _CONSOLE_CONTEXT_PRESENTATION_READERS = tuple((name, function, function.__code__) for name in ("context_control_presentation_inputs", "_held_send_echo_id") for function in (getattr(ConsoleChatController, name),))
-_NATIVE_SSH_ADAPTER_METHODS = {
-    name: getattr(_RemoteExecutorDispatchAdapter, name) for name in ("execute", "ping")
-}
 
 _NATIVE_REMOTE_EXECUTOR_FACTORIES = (
     _default_remote_run_executor_factory,

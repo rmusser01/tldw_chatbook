@@ -17,6 +17,7 @@ from pydantic import (
     field_validator,
 )
 
+from tldw_chatbook.Agents.agent_models import ConsoleSubmissionOrigin as ConsoleSubmissionOrigin
 from tldw_chatbook.Chat.console_endpoint_provenance import (
     ConsoleEndpointProvenance,
 )
@@ -75,33 +76,6 @@ FEEDBACK_ACTIVE_RUN_STATUSES: frozenset["ConsoleRunStatus"] = frozenset(
         ConsoleRunStatus.RETRYING,
     }
 )
-
-
-class ConsoleSubmissionOrigin(str, Enum):
-    """Origin of a Console turn entering the accepted-send boundary.
-
-    ``AGENT_WAKE`` (PR3a-2 Task 5) is a machine-injected auto-wake turn:
-    it requires a coordinator-issued ``AgentWakeAuthorization`` (the
-    queue-token precedent), writes NO USER transcript row (a SYSTEM-class
-    machine-origin notice instead), never clears the composer, and its
-    notice reaches the model as a payload-only trailing user-role entry.
-    """
-
-    MANUAL = "manual"
-    QUEUED = "queued"
-    AGENT_WAKE = "agent_wake"
-    AGENT_CHAT_START = "agent_chat_start"
-    GOAL_ITERATION = "goal_iteration"
-    WORKFLOW_PHASE = "workflow_phase"
-
-    @property
-    def automatic(self) -> bool:
-        return self in {
-            self.AGENT_WAKE,
-            self.AGENT_CHAT_START,
-            self.GOAL_ITERATION,
-            self.WORKFLOW_PHASE,
-        }
 
 
 @dataclass(frozen=True, slots=True)

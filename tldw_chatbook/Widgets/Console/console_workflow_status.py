@@ -57,13 +57,32 @@ class ConsoleWorkflowHistory(SafeModalDismissMixin, ModalScreen[None]):
             yield Static("", id="workflow-page", markup=False)
             yield Select([], prompt="Choose a saved workflow", id="workflow-saved")
             with Horizontal(classes="workflow-actions"):
-                yield Button("Previous", id="workflow-prev", disabled=True)
-                yield Button("Next", id="workflow-next", disabled=True)
-                yield Button("Open", id="workflow-open", disabled=True)
-                yield Button("Retry", id="workflow-retry")
+                yield Button(
+                    "Previous",
+                    id="workflow-prev",
+                    disabled=True,
+                    classes="workflow-action",
+                )
+                yield Button(
+                    "Next",
+                    id="workflow-next",
+                    disabled=True,
+                    classes="workflow-action",
+                )
+                yield Button(
+                    "Open",
+                    id="workflow-open",
+                    disabled=True,
+                    classes="workflow-action",
+                )
+                yield Button("Retry", id="workflow-retry", classes="workflow-action")
             with Horizontal(classes="workflow-actions"):
-                yield Button("Close", id="workflow-close")
-                yield Button("New workflow", id="workflow-new")
+                yield Button("Close", id="workflow-close", classes="workflow-action")
+                yield Button(
+                    "New workflow",
+                    id="workflow-new",
+                    classes="workflow-action",
+                )
 
     def on_mount(self):
         self.query_one("#workflow-retry").display = False
@@ -192,8 +211,16 @@ class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
             with VerticalScroll(classes="workflow-scroll"):
                 yield Select([], prompt="Select a saved result", id="workflow-results")
                 with Horizontal(id="workflow-result-pages", classes="workflow-actions"):
-                    yield Button("Previous results", id="workflow-result-prev")
-                    yield Button("Next results", id="workflow-result-next")
+                    yield Button(
+                        "Previous results",
+                        id="workflow-result-prev",
+                        classes="workflow-action",
+                    )
+                    yield Button(
+                        "Next results",
+                        id="workflow-result-next",
+                        classes="workflow-action",
+                    )
                 yield Static("", id="workflow-evidence", markup=False)
                 yield Static("", id="workflow-plan-review", markup=False)
                 yield Static("", id="workflow-accounting", markup=False)
@@ -201,8 +228,16 @@ class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
                 with Horizontal(
                     id="workflow-capture-pages", classes="workflow-actions"
                 ):
-                    yield Button("Newer windows", id="workflow-window-newer")
-                    yield Button("Older windows", id="workflow-window-older")
+                    yield Button(
+                        "Newer windows",
+                        id="workflow-window-newer",
+                        classes="workflow-action",
+                    )
+                    yield Button(
+                        "Older windows",
+                        id="workflow-window-older",
+                        classes="workflow-action",
+                    )
                 yield Select(
                     [], prompt="Choose a Change Review window", id="workflow-windows"
                 )
@@ -218,30 +253,62 @@ class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
                 with Horizontal(
                     id="workflow-history-actions", classes="workflow-actions"
                 ):
-                    yield Button("Review prior effects", id="workflow-recovery")
-                    yield Button("Remove stored results", id="workflow-remove")
+                    yield Button(
+                        "Review prior effects",
+                        id="workflow-recovery",
+                        classes="workflow-action",
+                    )
+                    yield Button(
+                        "Remove stored results",
+                        id="workflow-remove",
+                        classes="workflow-action",
+                    )
             yield Static("Loading workflow…", id="workflow-notice", markup=False)
             with Horizontal(classes="workflow-actions"):
-                yield Button("Close", id="workflow-close")
-                yield Button("Refresh", id="workflow-refresh")
-                yield Button("Pause", id="workflow-pause", disabled=True)
-                yield Button("Resume", id="workflow-resume", disabled=True)
-                yield Button("Stop", id="workflow-stop", disabled=True)
+                yield Button("Close", id="workflow-close", classes="workflow-action")
+                yield Button(
+                    "Refresh",
+                    id="workflow-refresh",
+                    classes="workflow-action",
+                )
+                yield Button(
+                    "Pause",
+                    id="workflow-pause",
+                    disabled=True,
+                    classes="workflow-action",
+                )
+                yield Button(
+                    "Resume",
+                    id="workflow-resume",
+                    disabled=True,
+                    classes="workflow-action",
+                )
+                yield Button(
+                    "Stop",
+                    id="workflow-stop",
+                    disabled=True,
+                    classes="workflow-action",
+                )
             with Horizontal(classes="workflow-actions"):
                 yield Button(
                     "Approve plan and start",
                     id="workflow-approve",
                     variant="primary",
                     disabled=True,
+                    classes="workflow-action",
                 )
                 yield Button(
                     "Accept result",
                     id="workflow-accept",
                     variant="primary",
                     disabled=True,
+                    classes="workflow-action",
                 )
                 yield Button(
-                    "Revise remaining plan", id="workflow-revise", disabled=True
+                    "Revise remaining plan",
+                    id="workflow-revise",
+                    disabled=True,
+                    classes="workflow-action",
                 )
 
     def on_mount(self):

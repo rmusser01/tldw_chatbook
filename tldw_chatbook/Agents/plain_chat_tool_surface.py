@@ -238,6 +238,16 @@ def tool_kill_switch_engaged(app: Any) -> bool:
         return True
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class AppToolKillSwitch:
+    """The live switch reader bound to an app by the Console runtime."""
+
+    app: Any
+
+    def __call__(self) -> bool:
+        return tool_kill_switch_engaged(self.app)
+
+
 def _bridge_local_tools_available(bridge: Any | None) -> bool:
     check = getattr(bridge, "light_surface_local_tools_available", None)
     if not callable(check):
@@ -272,7 +282,12 @@ def offered_mcp_tool_count(
     return len(user_mcp_tool_names(mcp_provider))
 
 
-def offered_builtin_tool_count(bridge: Any | None, session_id: str | None = None) -> int:
+def offered_builtin_tool_count(
+    bridge: Any | None,
+    session_id: str | None = None,
+    *,
+    composed_switch: tuple[Any, bool] | None = None,
+) -> int:
     """The light surface's own (non-MCP) tools, for the Tools chip.
 
     The chip only ever counted MCP tools (task-1234 F7), so the full surface
@@ -281,11 +296,13 @@ def offered_builtin_tool_count(bridge: Any | None, session_id: str | None = None
     if not _bridge_is_light(bridge, session_id):
         return 0
     try:
-        return len(
-            light_surface_tool_schemas(
-                local_tools_available=_bridge_local_tools_available(bridge)
-            )
-        )
+        available = None
+        from_composition = getattr(bridge, "composed_local_tools_available", None)
+        if composed_switch is not None and callable(from_composition):
+            available = from_composition(*composed_switch)
+        if available is None:
+            available = _bridge_local_tools_available(bridge)
+        return len(light_surface_tool_schemas(local_tools_available=available))
     except Exception:  # noqa: BLE001 -- a chip never breaks a send
         return 0
 

@@ -210,10 +210,6 @@ class ConsoleLibraryPolicyCoordinator:
             raise KeyError(f"Unknown Console session: {session_id}") from None
 
 
-_CONSOLE_LIBRARY_EXECUTION_CAPTURE = (
-    ConsoleLibraryPolicyCoordinator.capture_for_execution,
-    ConsoleLibraryPolicyCoordinator.capture_for_execution.__code__,
-)
 _CONSOLE_LIBRARY_EXECUTION_NATIVE_METHODS = tuple(
     (name, method, method.__code__)
     for name, method in (

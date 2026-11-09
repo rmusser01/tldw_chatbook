@@ -16,7 +16,10 @@ from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
 from tldw_chatbook.Chat.console_preparation_reads import run_preparation_read
 from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
-from tldw_chatbook.Workspaces.change_revert import RevertRefusedError
+from tldw_chatbook.Workspaces.change_tracking import (
+    NativeUndoIssuer as NativeUndoIssuer,
+    RevertRefusedError,
+)
 from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
 
 _current_undo = ContextVar("native_confirmed_undo", default=None)
@@ -41,41 +44,6 @@ def capture_undo(provider):
         return None
     with issuer.runtime._first_send_source_scope():
         return _UndoConfirmation(issuer, provider)
-
-
-class NativeUndoIssuer:
-    """Runtime-owned observations of issued work, without another work queue."""
-
-    def __init__(self, runtime):
-        self.runtime = runtime
-        self.capacity = runtime._execution_capacity
-        self.activity = runtime._worktree_activity
-        self.pending = set()
-        self.closed = False
-
-    def begin_close(self):
-        with self.runtime._execution_capacity_lock:
-            self.closed = True
-            calls = tuple(self.pending)
-        for call in calls:
-            call.prevent_start()
-
-    async def drain(self):
-        self.begin_close()
-        with self.runtime._execution_capacity_lock:
-            pending = tuple(self.pending)
-        if not pending:
-            return False
-        task = asyncio.create_task(
-            asyncio.to_thread(lambda: [call.retired.wait() for call in pending])
-        )
-        cancelled = False
-        while True:
-            try:
-                await asyncio.shield(task)
-                return cancelled
-            except asyncio.CancelledError:
-                cancelled = True
 
 
 class _UndoConfirmation:

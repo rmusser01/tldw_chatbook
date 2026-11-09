@@ -1388,11 +1388,7 @@ class ServiceWiringMixin(
             candidate = self._build_local_skill_trust_service()
             self._local_skill_trust_service = candidate
             if _skill_wiring._skill_trust_publisher.get() is not None:
-                from .Chat.console_configuration_preparation import (
-                    record_native_skill_trust_candidate,
-                )
-
-                record_native_skill_trust_candidate(self, candidate)
+                _skill_wiring.record_native_skill_trust_candidate(self, candidate)
         return self._local_skill_trust_service
 
     @local_skill_trust_service.setter

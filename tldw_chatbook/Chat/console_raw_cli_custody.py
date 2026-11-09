@@ -2,169 +2,26 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from contextlib import ExitStack, contextmanager
-from contextvars import ContextVar
 from pathlib import Path
 from threading import Event, Lock
 
-from tldw_chatbook.Agents.activation import _guard
-from tldw_chatbook.Agents.execution_capacity import CapacityRefused, WorkOrigin
+from tldw_chatbook.Agents.activation import (
+    captured_sources,
+    raw_cli_storage_execution,
+    selected_sources,
+)
 from tldw_chatbook.DB.base_db import operation_owned_connection
+from tldw_chatbook.Tools.raw_cli_executor import (
+    _current_call,
+    bind_model_raw_cli as bind_model_raw_cli,
+    capture_model_raw_cli as capture_model_raw_cli,
+    current_raw_cli_call as current_raw_cli_call,
+)
 from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
-from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
 
-_current_call = ContextVar("native_raw_cli_call", default=None)
-
-
-def current_raw_cli_call(runtime, request):
-    call = _current_call.get()
-    if call is not None:
-        if call.raw is not runtime or call.request is not request:
-            raise RuntimeError("original RawCLI invocation changed")
-        call.check()
-    return call
-
-
-def capture_model_raw_cli(registry, name):
-    from ..Agents.raw_shell_tool_provider import RawShellToolProvider
-    from .console_raw_cli import RawCliRuntime
-    from .console_workflow_runs import native_workflow_qualified
-
-    selection = registry.resolve_owner_for_name(name)
-    if (
-        not native_workflow_qualified()
-        or selection is None
-        or type(selection[1]) is not RawShellToolProvider
-        or type(selection[1]._runtime) is not RawCliRuntime
-    ):
-        return None
-    from ..Tools.raw_cli_executor import RawShellExecutor
-
-    if type(selection[1]._runtime._executor_or_default()) is not RawShellExecutor:
-        # Additional process custody belongs only to the stock executor.
-        return None
-    return _ModelRawCliCall(registry, name, selection)
-
-
-class _ModelRawCliCall:
-    def __init__(self, registry, name, selection):
-        self.registry, self.name, self.selection = registry, name, selection
-        self.provider, self.raw = selection[1], selection[1]._runtime
-        self.generation = registry._catalog_generation
-        self.catalog = registry._catalog_snapshot
-        self.operation = self.request = None
-        self.physical_proven = True
-
-    def check_memory(self):
-        if (
-            self.provider._runtime is not self.raw
-            or self.registry._catalog_generation != self.generation
-            or self.registry._catalog_snapshot is not self.catalog
-        ):
-            raise RuntimeError("original RawCLI provider changed")
-
-    def check(self):
-        self.check_memory()
-        if self.registry.resolve_owner_for_name(self.name) != self.selection:
-            raise RuntimeError("original RawCLI catalog selection changed")
-
-    @contextmanager
-    def activate(self, operation):
-        if operation is None:
-            yield
-            return
-        self.check()
-        self.operation = operation
-        token = _current_call.set(self)
-        try:
-            yield
-        finally:
-            if not self.physical_proven:
-                operation.mark_stopping()
-                operation.owner.mark_cleanup_unproven()
-                Event().wait()
-            _current_call.reset(token)
-            self.operation = None
-
-
-def bind_model_raw_cli(provider, request):
-    call = _current_call.get()
-    if call is None:
-        return
-    if type(call) is not _ModelRawCliCall or call.provider is not provider:
-        raise RuntimeError("original RawCLI caller changed")
-    call.check()
-    call.request = request
-
-
-class NativeRawCliSource:
-    """App attachment; never grants authority from a session ID or caller label."""
-
-    def __init__(self, runtime):
-        self.runtime, self.app = runtime, runtime._app
-        self.raw = self.app.raw_cli_runtime
-        self.pending = set()
-
-    def capture(self, raw, session_id, invocation_id):
-        with self.runtime._first_send_source_scope():
-            if raw is not self.raw:
-                raise RuntimeError("original RawCLI runtime changed")
-            call = _UserRawCliCall(self, session_id, invocation_id)
-            with call.activate():
-                call.check()
-                call.capacity = call.capacity or self.runtime.execution_capacity
-                call.activity = call.activity or self.runtime.worktree_activity
-                call.check()
-                with call.activity.prelaunch(
-                    footprint=WorktreeFootprint(opaque=True)
-                ) as claim:
-                    if claim is None:
-                        raise CapacityRefused("raw_cli_activity_busy")
-                    owner = call.capacity.begin_execution(
-                        origin=WorkOrigin.MANUAL,
-                        conversation_id=call.session.persisted_conversation_id or "",
-                    )
-                    try:
-                        operation = owner.reserve_tool()
-                    except BaseException:
-                        owner.finish_root()
-                        raise
-                    try:
-                        with self.runtime._execution_capacity_lock:
-                            call.check_memory()
-                            claim.bind_owner(owner)
-                            call.owner, call.operation, call.claim = (
-                                owner,
-                                operation,
-                                claim,
-                            )
-                            self.pending.add(call)
-                            # Overlap capture with this original pending lifetime.
-                            self.runtime._first_send_sources += 1
-                    except BaseException:
-                        operation.finish()
-                        owner.finish_root()
-                        raise
-            return call
-
-    async def drain(self):
-        pending = tuple(self.pending)
-        for call in pending:
-            call.cancel_unstarted()
-        if not pending:
-            return False
-        task = asyncio.create_task(
-            asyncio.to_thread(lambda: [c.retired.wait() for c in pending])
-        )
-        cancelled = False
-        while True:
-            try:
-                await asyncio.shield(task)
-                return cancelled
-            except asyncio.CancelledError:
-                cancelled = True
+from .console_raw_cli import NativeRawCliSource as NativeRawCliSource
 
 
 class _UserRawCliCall:
@@ -211,10 +68,10 @@ class _UserRawCliCall:
         self._operation_finished = Event()
         self._storage_stack = None
         self._refuse_unstarted = None
-        self.selection_sources = _guard.sources(self)
+        self.selection_sources = selected_sources(self)
         self.sources = tuple(
             dict.fromkeys(
-                (*_guard.captured_sources(self), ("agents.history", self.log_root))
+                (*captured_sources(self), ("agents.history", self.log_root))
             )
         )
 
@@ -269,7 +126,7 @@ class _UserRawCliCall:
 
     def check(self):
         self.check_memory()
-        if _guard.sources(self) != self.selection_sources:
+        if selected_sources(self) != self.selection_sources:
             raise RuntimeError("original RawCLI storage selection changed")
         if (
             self.chain is not None
@@ -283,7 +140,7 @@ class _UserRawCliCall:
     @contextmanager
     def activate(self):
         with ExitStack() as stack:
-            stack.enter_context(_guard.execution(self, resolve=lambda _: self.sources))
+            stack.enter_context(raw_cli_storage_execution(self))
             if self.owner is not None:
                 stack.enter_context(self.owner.activate())
             for db in dict.fromkeys((self._db, self.database, self.registry_db)):
@@ -352,12 +209,12 @@ class _UserRawCliCall:
             self.receipts = receipts
             if self._db is None:
                 raise RuntimeError("original RawCLI storage unavailable")
-            self.selection_sources = _guard.sources(self)
+            self.selection_sources = selected_sources(self)
             self.sources = tuple(
                 dict.fromkeys((*self.sources, *self.selection_sources))
             )
             self._storage_stack.enter_context(
-                _guard.execution(self, resolve=lambda _: self.sources)
+                raw_cli_storage_execution(self)
             )
             self._storage_stack.enter_context(operation_owned_connection(self._db))
         self.check()

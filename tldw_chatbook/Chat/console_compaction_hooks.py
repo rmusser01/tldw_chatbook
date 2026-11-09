@@ -54,7 +54,12 @@ async def _hooks_for_compaction(
         )
         try:
             lifecycle = await runtime.prepare_hooks_v2(
-                session_id, reason="resume", configuration=configuration
+                session_id, reason="resume", configuration=configuration,
+                **(
+                    {"_standalone_compaction": True}
+                    if getattr(configuration, "mcp_capture_pending", False)
+                    else {}
+                ),
             )
         except BaseException:
             operation = (task, submissions.get(task, operation[1]), *operation[2:])

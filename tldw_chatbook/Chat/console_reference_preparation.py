@@ -8,7 +8,7 @@ import shutil
 from contextlib import ExitStack, asynccontextmanager, contextmanager, nullcontext
 from pathlib import Path
 
-from tldw_chatbook.Agents.activation import _guard, execution
+from tldw_chatbook.Agents.activation import captured_sources, execution
 from tldw_chatbook.Agents.execution_capacity import CapacityRefused, WorkOrigin
 from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Tools import workspace_file_roots as roots_api
@@ -226,7 +226,7 @@ class _ReferenceRead:
 
     def __init__(self, controller, session, origin, text, candidates):
         from . import console_references as refs
-        from .console_workflow_runs import native_workflow_qualified
+        from tldw_chatbook.Utils.platform_files import supports_native_process_groups
 
         self.controller, self.store, self.session = (
             controller,
@@ -242,8 +242,8 @@ class _ReferenceRead:
         self.registry = getattr(self.app, "workspace_registry_service", None)
         self.registry_db = getattr(self.registry, "db", None)
         self.identity = _session_identity(session)
-        self.sources = _guard.captured_sources(None)
-        self.native = self.runtime is not None and native_workflow_qualified()
+        self.sources = captured_sources(None)
+        self.native = self.runtime is not None and supports_native_process_groups()
         self.capacity = getattr(self.runtime, "_execution_capacity", None)
         self.activity = getattr(self.runtime, "_worktree_activity", None)
         self.origin = WorkOrigin.AUTOMATIC if origin.automatic else WorkOrigin.MANUAL
@@ -297,7 +297,7 @@ class _ReferenceRead:
 
     def check(self):
         self.check_memory()
-        if _guard.captured_sources(None) != self.sources:
+        if captured_sources(None) != self.sources:
             raise RuntimeError("reference activation source changed")
         if self.authority is not None:
             self.authority.check()

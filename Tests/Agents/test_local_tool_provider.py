@@ -5155,9 +5155,6 @@ def test_pending_summary_preserves_original_nested_inputs_outside_legacy_seriali
         row.captured_arguments["character"]["private_note"] == "private-original-body"
     )
 
-
-
-
 @pytest.fixture
 def workflow_file_authorization(tmp_path, monkeypatch):
     """Issue the real private accepted phase custody for provider boundary tests."""

@@ -144,7 +144,7 @@ def _invoke_detailed(
         selected_spec = authority_specs[name]
     else:
         selected_spec = spec
-    from tldw_chatbook.Chat.console_ssh_custody import bind_model_ssh
+    from tldw_chatbook.Tools.workspace_tool_executor import bind_model_ssh
 
     bind_model_ssh(self, authority, selected_spec)
     promotion_invocation = self._invoke_promotion(
@@ -269,7 +269,7 @@ def _invoke_detailed(
                         dispatch_started=False,
                         provider_terminal=native_host.LocalProviderTerminal.NOT_STARTED,
                     )
-            from tldw_chatbook.Chat.console_ssh_custody import bind_model_ssh
+            from tldw_chatbook.Tools.workspace_tool_executor import bind_model_ssh
 
             bind_model_ssh(self, authority, handler_spec)
             dispatch_started = True

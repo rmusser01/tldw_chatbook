@@ -231,6 +231,20 @@ class ArchiveRecoveryRuntime:
             self._accepted_proofs[id(proof)] = (proof, turn_id)
             self._proofs.pop(id(proof), None)
 
+    def accepted_user_turn(self, proof: object, session_id: str) -> str | None:
+        """Read original user custody without consuming or issuing authority."""
+        accepted = self._accepted_proofs.get(id(proof))
+        if (
+            not self._closing
+            and session_id not in self._closed_sessions
+            and type(proof) is _UserOriginProof
+            and accepted is not None
+            and accepted[0] is proof
+            and proof.session_id == session_id
+        ):
+            return accepted[1]
+        return None
+
     def release_user_proof(self, proof: object) -> None:
         """Drop provenance when custody ends without agent admission."""
         self._accepted_proofs.pop(id(proof), None)

@@ -5,6 +5,8 @@ from __future__ import annotations
 import codecs
 from collections.abc import Callable, Mapping
 import contextlib
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 import math
 import multiprocessing
@@ -20,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from threading import Event
 import time
 from typing import Any, BinaryIO, Literal, TypeAlias
 
@@ -1157,6 +1160,114 @@ def _cleanup_tree(tree: ExecutorProcessTree, *, terminate: bool) -> bool:
         return tree.terminate_tree() if terminate else tree.close()
     except Exception:
         return False
+
+
+_current_call = ContextVar("native_raw_cli_call", default=None)
+
+
+def current_raw_cli_call(runtime, request):
+    call = _current_call.get()
+    if call is not None:
+        if call.raw is not runtime or call.request is not request:
+            raise RuntimeError("original RawCLI invocation changed")
+        call.check()
+    return call
+
+
+class _ModelRawCliCall:
+    def __init__(self, registry, name, selection):
+        self.registry, self.name, self.selection = registry, name, selection
+        self.provider, self.raw = selection[1], selection[1]._runtime
+        self.generation = registry._catalog_generation
+        self.catalog = registry._catalog_snapshot
+        self.operation = self.request = None
+        self.physical_proven = True
+
+    def check_memory(self):
+        if (
+            self.provider._runtime is not self.raw
+            or self.registry._catalog_generation != self.generation
+            or self.registry._catalog_snapshot is not self.catalog
+        ):
+            raise RuntimeError("original RawCLI provider changed")
+
+    def check(self):
+        self.check_memory()
+        if self.registry.resolve_owner_for_name(self.name) != self.selection:
+            raise RuntimeError("original RawCLI catalog selection changed")
+
+    @contextmanager
+    def activate(self, operation):
+        if operation is None:
+            yield
+            return
+        self.check()
+        self.operation = operation
+        token = _current_call.set(self)
+        try:
+            yield
+        finally:
+            if not self.physical_proven:
+                operation.mark_stopping()
+                operation.owner.mark_cleanup_unproven()
+                Event().wait()
+            _current_call.reset(token)
+            self.operation = None
+
+
+def ordinary_raw_shell_metadata(tree):
+    """Read the actual runtime and primitive app policy without invoking callbacks."""
+    from inspect import getattr_static
+
+    from ..Chat.console_raw_cli import RawCliRuntime
+
+    raw = getattr_static(tree.app, "raw_cli_runtime", None)
+    if raw is None:
+        return None, False, ()
+    if not isinstance(raw, RawCliRuntime):
+        return raw, True, ("unknown",)
+    app_config = getattr_static(tree.app, "app_config", None)
+    console = app_config.get("console", {}) if type(app_config) is dict else {}
+    if type(console) is not dict:
+        return raw, True, ("unknown",)
+    permitted = console.get("raw_cli_permitted") is True
+    armed = getattr_static(raw, "_armed") is True
+    return raw, permitted and armed, (id(app_config), id(console))
+
+
+def is_native_raw_cli_runtime(runtime: object) -> bool:
+    """Check the exact Raw CLI runtime class used by native execution."""
+    from ..Chat.console_raw_cli import RawCliRuntime
+
+    return type(runtime) is RawCliRuntime
+
+
+def capture_model_raw_cli(registry, name):
+    from ..Agents.raw_shell_tool_provider import RawShellToolProvider
+    from tldw_chatbook.Utils.platform_files import supports_native_process_groups
+
+    selection = registry.resolve_owner_for_name(name)
+    if (
+        not supports_native_process_groups()
+        or selection is None
+        or type(selection[1]) is not RawShellToolProvider
+        or not is_native_raw_cli_runtime(selection[1]._runtime)
+    ):
+        return None
+    if type(selection[1]._runtime._executor_or_default()) is not RawShellExecutor:
+        # Additional process custody belongs only to the stock executor.
+        return None
+    return _ModelRawCliCall(registry, name, selection)
+
+
+def bind_model_raw_cli(provider, request):
+    call = _current_call.get()
+    if call is None:
+        return
+    if type(call) is not _ModelRawCliCall or call.provider is not provider:
+        raise RuntimeError("original RawCLI caller changed")
+    call.check()
+    call.request = request
 
 
 class RawShellExecutor:

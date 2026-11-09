@@ -41,6 +41,7 @@ FutureTimeoutError = _futures.TimeoutError
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
+    from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
     from tldw_chatbook.Workspaces.worktree_activity import WorktreeActivityClaim
 
     from .agent_worktree import AgentWorktree
@@ -726,7 +727,7 @@ def _append_workspace_context_note(system_content: str, note: str) -> str:
 _UNCAPTURED_INSTRUCTIONS = object()
 
 
-class _WorkflowChildWait(PermissionError):
+class WorkflowChildWait(PermissionError):
     """Typed no-dispatch wait; retry only the original prepared authorization."""
 
     def __init__(
@@ -789,7 +790,7 @@ class _WorkflowLaunchEntry:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class _WorkflowLaunchReturn:
+class WorkflowLaunchReturn:
     entry: _WorkflowLaunchEntry = dataclasses.field(repr=False)
     owner: Any = dataclasses.field(default=None, repr=False)
     claim: Any = dataclasses.field(default=None, repr=False)
@@ -799,6 +800,10 @@ class _WorkflowLaunchReturn:
     wait: bool = False
     known: bool = True
     duplicate: bool = False
+
+
+_WorkflowChildWait = WorkflowChildWait
+_WorkflowLaunchReturn = WorkflowLaunchReturn
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -823,6 +828,9 @@ class _PreparedWorkflowChild:
     source_observation: tuple | None = dataclasses.field(default=None, repr=False)
 
 
+WorkflowChildPreparation = _PreparedWorkflowChild
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class ModelRequest:
     """Exact bounded provider request used by budgeting and dispatch."""
@@ -838,6 +846,35 @@ class RunLogRequestPlan:
     requested: bool
     eviction_enabled: bool
     min_recent_rounds: int
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ConsoleFirstRequestPlan:
+    """Pure, disposable inputs for the Console agent's first model request."""
+
+    registry: ToolCatalogRegistry
+    allowed_tools: tuple[str, ...]
+    builtin_names: tuple[str, ...]
+    local_names: tuple[str, ...]
+    skill_names: frozenset[str]
+    config: AgentConfig
+    schemas: FirstRequestSchemaPlan
+    run_log: RunLogRequestPlan
+    messages: list[dict]
+    api_endpoint: str
+    profile_context_snapshot: ProfileContextSnapshot
+    # Raw selection id before family flattening (``custom-ep:<slug>`` when
+    # the session's provider names a registry endpoint; otherwise equals
+    # ``api_endpoint``). Spawn resolution uses it as ``parent_provider`` so
+    # an inheriting child snapshots the endpoint, not the execution family.
+    selected_provider: str = ""
+    # TASK-34100.5.3 (review round 1): the planner inputs the context meter
+    # re-runs against another resolution (``console_tool_surface_preview``).
+    # A factory, so only a live send pays for copying the catalog.
+    tool_surface_inputs: Callable[[], Any] | None = None
+    # Light surface only: the names from the user's own sources (Library,
+    # MCP servers they added, an armed shell) that the plan kept.
+    user_source_names: tuple[str, ...] = ()
 
 
 def _chat_create_runtime_schemas(
@@ -2182,7 +2219,7 @@ def _call_with_timeout(
     from .workflow_task_scope import current_task_authorization
 
     workflow = current_task_authorization()
-    from ..Chat.console_workflow_preparation import current_planning_preparation
+    from .run_context import current_planning_preparation
 
     workflow_prepared = current_planning_preparation()
     planning_prepared = workflow_prepared
@@ -2203,6 +2240,8 @@ def _call_with_timeout(
         if workflow_prepared is not None
         else None
     )
+    goal = automatic_work.goal if automatic_work is not None else None
+    ordinary_goal = ordinary is not None and workflow_prepared is None and goal is not None
     retained_source = None
     if ordinary is not None:
         if owner not in ordinary.members or owner.capacity is not ordinary.capacity:
@@ -2220,7 +2259,7 @@ def _call_with_timeout(
 
     @worker_guard(execution_owner)
     def _admitted_call() -> None:
-        from ..Chat.console_ordinary_tree import bind_ordinary_tree
+        from .execution_capacity import bind_ordinary_tree
 
         with (
             bind_ordinary_tree(ordinary),
@@ -2242,10 +2281,17 @@ def _call_with_timeout(
                     if source_scope is not None
                     else contextlib.nullcontext()
                 ):
+                    from .activation import owned_goal_storage
+
+                    # Goal borrows the admitted source's handles until its own
+                    # storage scope returns, before the source verifies return.
                     with (
                         owner.activate()
                         if source_scope is not None
-                        else contextlib.nullcontext()
+                        else contextlib.nullcontext(),
+                        owned_goal_storage(goal._coordinator.service)
+                        if ordinary_goal
+                        else contextlib.nullcontext(),
                     ):
                         try:
                             box["dispatch_state"] = "settled"
@@ -2297,7 +2343,11 @@ def _call_with_timeout(
                 owned_goal_storage(workflow_prepared.service)
                 if workflow_prepared is not None
                 else contextlib.nullcontext(),
-                automatic_work.scope() if automatic_work else contextlib.nullcontext(),
+                automatic_work._bound_scope()
+                if ordinary_goal
+                else automatic_work.scope()
+                if automatic_work
+                else contextlib.nullcontext(),
                 workflow.scope() if workflow is not None else contextlib.nullcontext(),
                 owner.activate() if workflow is not None else contextlib.nullcontext(),
                 bind_tool_output_sink(output_sink),
@@ -5291,7 +5341,7 @@ class AgentService:
             and parent_run_id is None
             and writer is not None
         ):
-            from tldw_chatbook.Chat.console_agent_sources import console_writer_source
+            from .native_source_storage import console_writer_source
 
             console_writer_source(writer)
             writer.bind(run_id)
@@ -8055,7 +8105,7 @@ class AgentService:
             )
             durable_content = _replace_process_handles(safe_content, durable_handle_ids)
             altered = altered or durable_content != safe_content
-            from tldw_chatbook.Chat.console_agent_sources import console_writer_source
+            from .native_source_storage import console_writer_source
 
             console_writer_source(writer)
             record_number = writer.append(
@@ -9302,7 +9352,7 @@ class AgentService:
         # _run_one, since they never call run_turn themselves. The catalog
         # is listed fresh at this point, so skill CRUD since the last run
         # is always picked up with no separate invalidation signal needed.
-        from ..Chat.console_workflow_preparation import current_planning_preparation
+        from .run_context import current_planning_preparation
 
         if current_planning_preparation() is None:
             self.registry.reset_catalog_cache()
@@ -9556,8 +9606,10 @@ def _workflow_native_sources(service):
 
 def _workflow_launch_sources(service):
     """Validate runtime ownership; task/revision checks remain at admission."""
+    from .execution_capacity import require_workflow_capacity
+
     _workflow_native_sources(service)
-    _workflow_capacity_sources(service.runtime_capacity)
+    require_workflow_capacity(service.runtime_capacity)
 
 
 def _workflow_launch_locked(entry):
@@ -9628,32 +9680,13 @@ def _workflow_launch_current(entry):
         raise PermissionError("workflow launch kind required")
 
 
-def _workflow_operation_sources(operation):
-    from .execution_capacity import OwnedOperation
-
-    if not isinstance(operation, OwnedOperation):
-        raise PermissionError("native workflow operation required")
-    _workflow_capacity_sources(operation.owner.capacity, operation.owner)
-
-
-def _workflow_capacity_sources(capacity, owner=None):
-    from .execution_capacity import ExecutionOwner, RuntimeCapacity
-
-    if (
-        not isinstance(capacity, RuntimeCapacity)
-        or owner is not None
-        and (not isinstance(owner, ExecutionOwner) or owner.capacity is not capacity)
-    ):
-        raise PermissionError("native workflow capacity required")
-
-
 def _workflow_capacity_wait(entry, error, owner, returned, operations=None):
     """Accept a native capacity refusal only before any task operation escaped."""
-    from .execution_capacity import CapacityRefused
+    from .execution_capacity import CapacityRefused, require_workflow_capacity
 
     _workflow_launch_current(entry)
     capacity = entry.service.runtime_capacity
-    _workflow_capacity_sources(capacity, owner)
+    require_workflow_capacity(capacity, owner)
     expected = (
         {"child_capacity", "automatic_child_capacity"}
         if owner is None

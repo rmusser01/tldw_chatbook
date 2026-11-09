@@ -16,7 +16,7 @@ from tldw_chatbook.Utils.path_validation import validate_existing_absolute_direc
 
 from .budgets import HookTicket
 from .models import HookEvent, HookHandler, HookResult
-from .ownership import HookProcessOwner
+from .ownership import HookProcessOwner, join_hook_worker
 from .validation import decode_result
 
 STDOUT_BYTES = 16 * 1024
@@ -198,11 +198,9 @@ class CommandExecutor:
     async def _thread_call(self, job: CommandJob, callback, *args):
         if job.native_target is None:
             return await asyncio.to_thread(callback, *args)
-        from tldw_chatbook.Chat.console_plugin_hook_preparation import _joined
-
         task = asyncio.create_task(asyncio.to_thread(callback, *args))
         try:
-            return await _joined(task, job.stop)
+            return await join_hook_worker(task, job.stop)
         except asyncio.CancelledError:
             # The original worker has returned. Preserve its token/transport
             # result so cancellation can settle the actual resource it created.

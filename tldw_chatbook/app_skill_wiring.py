@@ -1,4 +1,7 @@
+import asyncio
+import threading
 from contextvars import ContextVar
+from dataclasses import dataclass, field
 from typing import (  # noqa: UP035 - preserve original public annotation objects
     Any,
     Callable,
@@ -8,6 +11,63 @@ from typing import (  # noqa: UP035 - preserve original public annotation object
 from . import app_service_wiring as _source_wiring
 
 _skill_trust_publisher = ContextVar("console_skill_trust_publisher", default=None)
+
+
+@dataclass(slots=True)
+class _SkillTrustPublisher:
+    preparation: Any = field(repr=False)
+    thread_id: int
+    task: Any = field(repr=False)
+    guard: Any = field(repr=False)
+    candidate: Any = field(default=None, repr=False)
+    active: bool = True
+
+
+def _skill_publisher_identity():
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:
+        task = None
+    return threading.get_ident(), task
+
+
+def record_native_skill_trust_candidate(app, candidate):
+    """Observe only the original publisher's actual just-assigned candidate."""
+    import inspect
+    import sys
+    from types import FunctionType
+
+    marker = _skill_trust_publisher.get()
+    if type(marker) is not _SkillTrustPublisher or not marker.active:
+        return
+    if _skill_publisher_identity() != (marker.thread_id, marker.task):
+        return
+    source = marker.preparation.trust_source
+    if source is None or source.app is not app or candidate is None:
+        return
+    frame = sys._getframe(1)
+    getter = inspect.getattr_static(type(app), "local_skill_trust_service", None)
+    initializer = inspect.getattr_static(
+        type(app), "ensure_local_skill_trust_service", None
+    )
+    if not (
+        frame.f_locals.get("self") is app
+        and (
+            (
+                isinstance(getter, property)
+                and frame.f_code is getter.fget.__code__
+                and frame.f_locals.get("candidate") is candidate
+            )
+            or (
+                type(initializer) is FunctionType
+                and frame.f_code is initializer.__code__
+                and frame.f_locals.get("service") is candidate
+            )
+        )
+        and vars(app).get("_local_skill_trust_service") is candidate
+    ):
+        return
+    marker.candidate = candidate
 
 
 class _ConsoleSkillTrustSource(NamedTuple):
@@ -1124,9 +1184,5 @@ class SkillServiceWiringMixin:
                     published_candidate = service
             winner = self._local_skill_trust_service
         if published_candidate is not None and _skill_trust_publisher.get() is not None:
-            from .Chat.console_configuration_preparation import (
-                record_native_skill_trust_candidate,
-            )
-
             record_native_skill_trust_candidate(self, published_candidate)
         return winner

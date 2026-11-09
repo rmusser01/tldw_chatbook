@@ -339,7 +339,7 @@ def _leased_operation(
     return "git_branches", {}
 
 
-_NATIVE_VIRTUAL_CLASS = VirtualCliRegistry
+NATIVE_VIRTUAL_CLASS = VirtualCliRegistry
 _NATIVE_VIRTUAL_METHODS = tuple(
     (name, value)
     for name, value in vars(VirtualCliRegistry).items()

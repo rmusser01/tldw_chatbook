@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import sys
 import threading
 from dataclasses import dataclass
 
@@ -214,23 +215,28 @@ class HeldAdmission:
         console._hooks._permissions = lambda: _Owner(real())
 
 
-def mark_admission(console, timeline: Timeline) -> list[Paint | None]:
-    """Record when the synchronous admission starts, and what is on screen.
+@contextlib.contextmanager
+def mark_admission(console, timeline: Timeline):
+    """Observe the actual received intake without replacing its context builder."""
+    from tldw_chatbook.UI.Console_Modules.wiring import receive_console_visible_intent
 
-    Returns a list that receives the last compositor commit at that instant
-    (``None`` when nothing was committed since ``install``).
-    """
     shown: list[Paint | None] = []
-    real = console._session._build_console_turn_execution_context
+    previous = sys.getprofile()
+    intake = receive_console_visible_intent.__code__
 
-    def recording_build(session_id):
-        timeline.mark("admission")
-        paints = [value for kind, value in timeline.entries if kind == "paint"]
-        shown.append(paints[-1] if paints else None)
-        return real(session_id)
+    def observe(frame, event, arg):
+        if previous is not None:
+            previous(frame, event, arg)
+        if event == "call" and frame.f_code is intake and frame.f_locals["screen"] is console:
+            timeline.mark("admission")
+            paints = [value for kind, value in timeline.entries if kind == "paint"]
+            shown.append(paints[-1] if paints else None)
 
-    console._session._build_console_turn_execution_context = recording_build
-    return shown
+    sys.setprofile(observe)
+    try:
+        yield shown
+    finally:
+        sys.setprofile(previous)
 
 
 def mark_send_start(console, timeline: Timeline) -> list[Paint | None]:
@@ -334,12 +340,12 @@ async def check_sending_row_before_admission(size: tuple[int, int]) -> None:
         with eager_tasks():
             console, _composer = await ready_console(host, pilot, gateway)
             at_send = mark_send_start(console, timeline)
-            at_admission = mark_admission(console, timeline)
             timeline.install()
             try:
-                timeline.mark("enter")
-                press(host, "enter", "\r")
-                await until(gateway.validation_started.is_set)
+                with mark_admission(console, timeline) as at_admission:
+                    timeline.mark("enter")
+                    press(host, "enter", "\r")
+                    await until(gateway.validation_started.is_set)
                 # The frame on screen when the send starts, and so through
                 # its synchronous admission, is the whole acknowledgement.
                 assert len(at_send) == 1 and len(at_admission) == 1

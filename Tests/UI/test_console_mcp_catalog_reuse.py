@@ -198,8 +198,36 @@ async def test_run_start_reads_the_kill_switch_once_for_mcp_and_local_tools():
 
 
 @pytest.mark.asyncio
+async def test_tools_chip_reads_live_switch_when_composition_needs_no_store():
+    """A no-demand compose cannot imply that the Tools chip's switch is off."""
+    from tldw_chatbook.Agents.plain_chat_tool_surface import light_surface_tool_schemas
+    from tldw_chatbook.Chat.console_run_start_tools import LocalKillSwitchRead
+
+    async def check(c: _Console) -> None:
+        controller = c.console._ensure_console_chat_controller()
+        session_id = controller.store.active_session_id
+        assert controller._agent_bridge.light_surface_for((), session_id=session_id)
+        c.service.set_kill_switch(True)
+        c.reads.reset()
+        provider = await controller._compose_mcp_provider(
+            session_id, local_kill_switch=LocalKillSwitchRead(_include_mcp=False, _need_local=False)
+        )
+        assert provider is None
+        assert c.reads.calls["get_kill_switch"] == 1
+        assert c.app.console_tool_count == len(
+            light_surface_tool_schemas(local_tools_available=False)
+        )
+
+    await _with_console(check)
+
+
+@pytest.mark.asyncio
 async def test_an_unchanged_catalog_is_reused_until_the_kill_switch_changes():
     """AC#4: the kill switch turned on before run start still drops MCP."""
+
+    from tldw_chatbook.config import save_setting_to_cli_config
+
+    assert save_setting_to_cli_config("tools", "full_agent_tools_enabled", True)
 
     async def check(c: _Console) -> None:
         first, _gate, _local, _hook = await _run_start(c.console)

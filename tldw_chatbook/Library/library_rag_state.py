@@ -10,6 +10,7 @@ stays a pure function of the value it returns.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 import html
 import re
@@ -74,6 +75,84 @@ LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES: tuple[str, ...] = (
     "conversations",
     "prompts",
 )
+
+#: The Console's Library RAG source-type default: exactly the three kinds
+#: retrieval has always run over from this screen (prompts OFF). It is the
+#: ONE default -- `chat_screen.CONSOLE_LIBRARY_RAG_SOURCE_SCOPE` is this
+#: same tuple -- so making the row editable (RAG-44) changes nothing until
+#: a user actually touches a toggle.
+CONSOLE_RAG_DEFAULT_SOURCE_TYPES: tuple[str, ...] = (
+    "notes",
+    "media",
+    "conversations",
+)
+#: The Console's leading noun for the source-scope line. NOT "Scope": the
+#: Console already spends that word on the retrieval ITEM scope ("Scope: 2
+#: items" in the rail and status strip), which is a different concept --
+#: this line says which KINDS of sources retrieval reads.
+CONSOLE_RAG_SOURCE_SUMMARY_PREFIX = "Sources"
+
+
+def normalize_console_rag_source_types(value: Any) -> tuple[str, ...]:
+    """Return a usable Console RAG source-type selection from loose input.
+
+    Every boundary the selection crosses (modal construction, the screen's
+    stored attribute, restored screen state) runs through here, so a
+    legacy payload, an unknown identifier, or a non-sequence can never
+    reach a retrieval request. Unknown values are dropped and the result
+    is ordered canonically; an unusable or empty result falls back to
+    `CONSOLE_RAG_DEFAULT_SOURCE_TYPES` rather than retrieving over
+    nothing.
+
+    Args:
+        value: Any candidate selection (sequence of source-type ids).
+
+    Returns:
+        A canonical, non-empty tuple of known source-type identifiers.
+    """
+    if isinstance(value, str) or not isinstance(value, Iterable):
+        return CONSOLE_RAG_DEFAULT_SOURCE_TYPES
+    try:
+        candidates = {str(item).strip().lower() for item in value}
+    except TypeError:
+        return CONSOLE_RAG_DEFAULT_SOURCE_TYPES
+    normalized = tuple(
+        source_type
+        for source_type in LIBRARY_RAG_SCOPE_TOGGLE_SOURCE_TYPES
+        if source_type in candidates
+    )
+    return normalized or CONSOLE_RAG_DEFAULT_SOURCE_TYPES
+
+
+CONSOLE_LIBRARY_SEARCH_QUERY_MAX_CHARS = 2_000
+
+
+def sanitize_console_library_rag_query(value: Any) -> str:
+    """Return a normalized, validation-safe Console Library query."""
+    sanitized = sanitize_string(
+        str(value or ""), max_length=CONSOLE_LIBRARY_SEARCH_QUERY_MAX_CHARS
+    )
+    query = " ".join(sanitized.strip().split())
+    if not query:
+        return ""
+    if not validate_text_input(
+        query,
+        max_length=CONSOLE_LIBRARY_SEARCH_QUERY_MAX_CHARS,
+        allow_html=False,
+    ):
+        return ""
+    return query
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleLibrarySearchResult:
+    """One-shot Library search request returned by the modal."""
+
+    query: str
+    run: bool
+    source_types: tuple[str, ...] = CONSOLE_RAG_DEFAULT_SOURCE_TYPES
+
+
 #: The evidence depth used when the active RAG profile cannot be read at all
 #: (TASK-15020/B3). This used to be `LIBRARY_RAG_DEFAULT_TOP_K` -- the window's
 #: actual, unconfigurable default -- while the Console's Library RAG entry

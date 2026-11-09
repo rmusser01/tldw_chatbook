@@ -923,11 +923,11 @@ async def test_revocation_during_actual_nested_capture_discards_without_host_lea
 async def test_unqualified_ordinary_mcp_keeps_real_existing_dispatch(
     mcp_case, monkeypatch
 ):
-    from tldw_chatbook.Chat import console_workflow_runs
+    from tldw_chatbook.Utils import platform_files
 
     case = mcp_case
     monkeypatch.setattr(
-        console_workflow_runs, "native_workflow_qualified", lambda: False
+        platform_files, "supports_native_process_groups", lambda: False
     )
     engine = case.runtime.ensure_hooks_v2(
         case.rig.session.id, (mcp_handler(),), lambda *_: True

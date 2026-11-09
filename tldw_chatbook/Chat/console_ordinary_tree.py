@@ -3,45 +3,25 @@
 from __future__ import annotations
 
 import asyncio
-import json
-from concurrent.futures import Future
-from contextlib import contextmanager
-from contextvars import ContextVar
-from dataclasses import dataclass, field
 from inspect import getattr_static
-from threading import Lock
-from types import FunctionType
 
-from tldw_chatbook.Agents.execution_capacity import CapacityRefused, WorkOrigin
+from tldw_chatbook.Agents.activation import (
+    callable_source_current as _function_unchanged,
+    capture_callable_source as _function_record,
+)
+from tldw_chatbook.Agents.execution_capacity import (
+    WorkOrigin,
+    bind_ordinary_tree as bind_ordinary_tree,
+    current_ordinary_tree as current_ordinary_tree,
+    set_current_ordinary_tree,
+)
+from tldw_chatbook.Agents.ordinary_tree import (
+    OrdinaryTurn as _OrdinaryTurn,
+    capture_ordinary_personal_service as _capture_personal_service,
+    encode_ordinary_receipt as _json,
+)
 from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
 from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint, WorktreeScope
-
-_current = ContextVar("ordinary_console_tree", default=None)
-
-
-@dataclass
-class _Member:
-    settlement: object
-    run_id: str | None = None
-    row_started: bool = False
-    steps: dict = field(default_factory=dict)
-    terminal: tuple | None = None
-    capture_failed: bool = False
-    host_returned: bool = False
-    durable: bool = False
-    drained: bool = False
-
-
-def _json(value):
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
-
-
-def current_ordinary_tree(controller=None):
-    tree = _current.get()
-    if tree is not None and (controller is None or tree.controller is controller):
-        return tree
-    return None
-
 
 def _bootstrap_personal_service(app):
     from tldw_chatbook.Personal_Context.bootstrap import (
@@ -61,829 +41,8 @@ def finish_ordinary_submission(controller, task):
         try:
             tree.finish()
         finally:
-            if _current.get() is tree:
-                _current.set(None)
-
-
-@contextmanager
-def bind_ordinary_tree(tree):
-    token = _current.set(tree)
-    try:
-        if tree is None:
-            yield
-        else:
-            with tree.owner.activate():
-                yield
-    finally:
-        _current.reset(token)
-
-
-class _OrdinaryTurn:
-    def __init__(
-        self, controller, session, configuration, origin, source, agent_eligible
-    ):
-        self.controller, self.session = controller, session
-        self.runtime, self.store, self.app = (
-            controller._hooks_v2_runtime,
-            controller.store,
-            controller.app,
-        )
-        self.source, self.configuration = source, configuration
-        self.original_configuration = configuration
-        self.agent_eligible = agent_eligible
-        self.persistence = self.store.persistence
-        self.incarnation = session.incarnation_id
-        self.binding_revision = session.conversation_binding_revision
-        self.workspace = session.workspace_id
-        self.conversation = session.persisted_conversation_id
-        self.launch_key = self.conversation or session.id
-        self.origin = WorkOrigin.AUTOMATIC if origin.automatic else WorkOrigin.MANUAL
-        self.capacity, self.activity = (
-            self.runtime.execution_capacity,
-            self.runtime.worktree_activity,
-        )
-        self.owner = self.claim = self.footprint = None
-        self.permission = self.permission_path = None
-        self.native_permission_publication = None
-        self.reference = None
-        self.snapshot_sources = []
-        self.ssh_sources = {}
-        self.local_maximum = {}
-        self.local_source_values = ()
-        self.raw_projection = None
-        self.local_providers = {}
-        self.other_maximum = {}
-        self.catalogs = {}
-        self.mcp_entries = {}
-        self.mcp_source_maximum = None
-        self.goal_catalog_permits = lambda _source, _name: True
-        self.virtual_commands = frozenset()
-        self.virtual_providers = {}
-        self.builtin_maximum = {}
-        self.builtin_classes = {}
-        self.builtin_providers = {}
-        self.catalog_permits = lambda _source, _name: False
-        self.library_maximum = frozenset()
-        self.library_factory = None
-        self.library_services = {}
-        self.library_providers = {}
-        self.personal_getter = None
-        self.personal_service = None
-        self.personal_native = False
-        self.personal_source_values = ()
-        self.members = {}
-        self.runs = {}
-        self.future_events = {}
-        self.stop_notification = None
-        self.scratch_lease = None
-        self.source_scopes = 0
-        self.settled = False
-        self.retired = Future()
-        self.lock = Lock()
-        self.sealed = False
-        self.primary_hosts = set()
-        self.primary_finishing = False
-
-    def check(self):
-        if (
-            self.controller._hooks_v2_runtime is not self.runtime
-            or self.runtime._chat_controller is not self.controller
-            or self.runtime._chat_store is not self.store
-            or self.controller.store is not self.store
-            or self.store.persistence is not self.persistence
-            or self.store._sessions.get(self.session.id) is not self.session
-            or self.session.incarnation_id != self.incarnation
-            or self.session.conversation_binding_revision != self.binding_revision
-            or self.session.workspace_id != self.workspace
-            or self.session.persisted_conversation_id != self.conversation
-            or self.runtime._execution_capacity is not self.capacity
-            or self.runtime._worktree_activity is not self.activity
-        ):
-            raise RuntimeError("original ordinary turn source changed")
-        if self.source is not None:
-            self.source.check_memory()
-
-    def retain_mcp_permission_publication(self, publication):
-        """Keep the actual publisher's resource receipt under this opaque claim."""
-        self.borrow(self.runtime)
-        service, store, candidate, _binding, path = publication
-        if (
-            self.native_permission_publication is not None
-            or self.permission is not None
-            or getattr(self.app, "unified_mcp_service", None) is not service
-            or service.local_service.store is not store
-            or service._permission_store is not candidate
-        ):
-            raise RuntimeError("Ordinary MCP permission publication changed.")
-        self.permission, self.permission_path = candidate, path
-        self.native_permission_publication = publication
-
-    def check_local_sources(self):
-        self.check()
-        if self.raw_projection is not None:
-            original, was_reachable, values = self.raw_projection
-            current, reachable, sources = _raw_shell_metadata(self)
-            if (
-                current is not original
-                or reachable
-                and not was_reachable
-                or values != sources
-            ):
-                raise RuntimeError("ordinary raw shell maximum changed")
-        for obj, name, value, _code in self.local_source_values:
-            current = getattr_static(obj, name, None)
-            if current is not value:
-                raise RuntimeError("ordinary local resource maximum changed")
-
-    def check_personal_source(self, app=None):
-        self.check()
-        if app is not None and app is not self.app:
-            raise RuntimeError("ordinary personal context app changed")
-        if (
-            getattr_static(self.app, "_personal_context_service", None)
-            is not self.personal_service
-        ):
-            raise RuntimeError("ordinary personal context cached source changed")
-        if any(
-            getattr_static(obj, name, None) is not value
-            for obj, name, value in self.personal_source_values
-        ):
-            raise RuntimeError("ordinary personal context source changed")
-
-    def publish_personal_service(self, app, service):
-        self.check_personal_source(app)
-        native = _capture_personal_service(self, service)
-        if not native and not self.footprint.opaque:
-            raise RuntimeError("ordinary personal context publication widened")
-        self.personal_service = service
-
-    def bind_local_provider(self, provider, names):
-        """Validate the one real composition against the original native maximum."""
-        from tldw_chatbook.Agents import local_tool_provider as local
-        from tldw_chatbook.MCP.permission_store import resolve_effective_state_by_key
-        from tldw_chatbook.Tools.remote_root_types import is_remote, local_root_path
-
-        self.check_local_sources()
-        if type(provider) is not local._ORDINARY_NATIVE_PROVIDER:
-            if not self.footprint.opaque:
-                raise RuntimeError("unknown ordinary local provider")
-            return
-        payload = (
-            self.source.permission.load()
-            if self.source.permission is not None
-            else None
-        )
-        if payload is None and not self.footprint.opaque:
-            raise RuntimeError("ordinary local permission source unavailable")
-        reachable = tuple(
-            name
-            for name in names
-            if self.catalog_permits("local", name)
-            and (
-                name == "ask_user"
-                or payload is None
-                or resolve_effective_state_by_key(
-                    payload,
-                    local.LOCAL_SERVER_KEY,
-                    name,
-                    profile_id=self.configuration.tool_policy_profile_id,
-                ).state
-                != "deny"
-            )
-        )
-        specs = provider._specs
-        for name in reachable:
-            spec = specs[name]
-            if (
-                name not in self.local_maximum
-                or spec.worktree_effect != self.local_maximum[name]
-            ):
-                raise RuntimeError("ordinary local catalog widened")
-        if not self.footprint.opaque:
-            for authority in (provider._admitted_roots or {}).values():
-                if is_remote(authority.root):
-                    raise RuntimeError("ordinary local root widened to SSH")
-                root = local_root_path(authority.root, site="ordinary maximum")
-                self._require_covered_root(root, write=authority.allow_write)
-            self._require_covered_root(provider._root, write=False)
-            if provider._spill_dir is not None:
-                self._require_covered_root(provider._spill_dir.parent, write=True)
-        self.local_providers[provider] = _capture_local_provider_sources(
-            provider, reachable
-        )
-
-    def bind_builtin_provider(self, provider, names):
-        from tldw_chatbook.Agents import tool_catalog as catalog
-        from tldw_chatbook.MCP.permission_store import (
-            BUILTIN_TOOL_SERVER_KEY,
-            resolve_effective_state_by_key,
-        )
-
-        self.check_local_sources()
-        if type(provider) is not catalog._NATIVE_ORDINARY_BUILTIN_PROVIDER:
-            if not self.footprint.opaque:
-                raise RuntimeError("unknown ordinary builtin provider")
-            return
-        payload = (
-            self.source.permission.load()
-            if self.source is not None and self.source.permission is not None
-            else None
-        )
-        retained = {}
-        for name in names:
-            if not self.catalog_permits("builtin", name):
-                continue
-            tool = provider._tools[name]
-            if name not in catalog.ALWAYS_ON_BUILTIN_NAMES and (
-                payload is not None
-                and (
-                    payload.get("kill_switch", False)
-                    or resolve_effective_state_by_key(
-                        payload,
-                        BUILTIN_TOOL_SERVER_KEY,
-                        name,
-                        profile_id=self.configuration.tool_policy_profile_id,
-                    ).state
-                    == "deny"
-                )
-                or self.session.ephemeral
-                and name in {"create_note", "update_note", "write_file"}
-            ):
-                continue
-            if (
-                name not in self.builtin_maximum
-                or type(tool) is not self.builtin_classes.get(name)
-            ) and (self.builtin_classes or not self.footprint.opaque):
-                raise RuntimeError("ordinary builtin catalog widened")
-            retained[name] = tool
-        if not self.footprint.opaque:
-            self._require_covered_root(provider._sandbox_root, write=True)
-        self.builtin_providers[provider] = retained
-
-    def check_builtin_call(self, provider, name):
-        self.check_local_sources()
-        tool = self.builtin_providers[provider].get(name)
-        if tool is None or provider._tools.get(name) is not tool:
-            raise RuntimeError("ordinary builtin call outside original maximum")
-
-    def _require_covered_root(self, root, *, write):
-        chain = capture_directory_chain(root)
-        scopes = (
-            self.footprint.writes
-            if write
-            else self.footprint.reads + self.footprint.writes
-        )
-        if not any(
-            scope.root == chain and scope.path == chain.canonical_root
-            for scope in scopes
-        ):
-            raise RuntimeError("ordinary local root outside original maximum")
-
-    def check_local_call(self, provider, name):
-        self.check_local_sources()
-        retained = self.local_providers.get(provider)
-        if retained is None:
-            if self.footprint.opaque:
-                return
-            raise RuntimeError("ordinary local provider was not composed")
-        _check_local_provider_sources(provider, retained)
-        original = dict(retained[0]).get(name)
-        if original is None or provider._specs.get(name) is not original:
-            raise RuntimeError("ordinary local call outside original maximum")
-        if not self.footprint.opaque and provider._agent_roots:
-            raise RuntimeError("ordinary local child root outside maximum")
-
-    def bind_virtual_provider(self, provider):
-        from tldw_chatbook.Agents.virtual_cli_provider import _NATIVE_VIRTUAL_CLASS
-        from tldw_chatbook.Tools.remote_root_types import is_remote, local_root_path
-        from tldw_chatbook.Tools.workspace_tool_executor import (
-            _NATIVE_ORDINARY_EXECUTOR_CLASS,
-        )
-
-        if type(provider) is not _NATIVE_VIRTUAL_CLASS:
-            if not self.footprint.opaque:
-                raise RuntimeError("ordinary virtual source widened")
-            return
-        roots = tuple((provider._admitted_roots or {}).items())
-        registries = (
-            (None, provider._registry),
-            *provider._registries_by_alias.items(),
-        )
-        held = []
-        for alias, registry in registries:
-            executor = getattr_static(registry, "_workspace_executor", None)
-            root = getattr_static(registry, "_root", None)
-            remote = getattr_static(registry, "_remote_root", None)
-            held.append((alias, registry, executor, root, remote))
-            if remote is None and executor is not None:
-                if (
-                    type(executor) is not _NATIVE_ORDINARY_EXECUTOR_CLASS
-                    and not self.footprint.opaque
-                ):
-                    raise RuntimeError("ordinary virtual local executor widened")
-                for name in (
-                    "_workspace_root",
-                    "_authority_chain",
-                    "_user_exclusion_paths",
-                ):
-                    value = getattr_static(executor, name, None)
-                    self.local_source_values += ((executor, name, value, None),)
-                if not self.footprint.opaque:
-                    self._require_covered_root(
-                        getattr_static(executor, "_workspace_root", None), write=False
-                    )
-            if not self.footprint.opaque:
-                if remote is not None:
-                    raise RuntimeError("ordinary virtual root widened to SSH")
-                self._require_covered_root(root, write=False)
-        for _alias, authority in roots:
-            if not self.footprint.opaque:
-                if is_remote(authority.root):
-                    raise RuntimeError("ordinary virtual authority widened to SSH")
-                self._require_covered_root(
-                    local_root_path(authority.root, site="ordinary virtual maximum"),
-                    write=False,
-                )
-        self.virtual_providers[provider] = roots, tuple(held)
-
-    def check_virtual_call(self, provider, args=None):
-        self.check_local_sources()
-        if args is not None and args.get("command") not in self.virtual_commands:
-            raise RuntimeError("ordinary virtual command outside original maximum")
-        retained = self.virtual_providers.get(provider)
-        if retained is None:
-            if self.footprint.opaque:
-                return
-            raise RuntimeError("ordinary virtual provider was not composed")
-        roots, registries = retained
-        current = getattr_static(provider, "_admitted_roots", None) or {}
-        aliases = getattr_static(provider, "_registries_by_alias", None)
-        if (
-            type(current) is not dict
-            or type(aliases) is not dict
-            or len(current) != len(roots)
-            or any(current.get(alias) is not authority for alias, authority in roots)
-        ):
-            raise RuntimeError("ordinary virtual root source changed")
-        for alias, registry, executor, root, remote in registries:
-            selected = (
-                getattr_static(provider, "_registry", None)
-                if alias is None
-                else aliases.get(alias)
-            )
-            if selected is not registry or any(
-                getattr_static(registry, name, None) is not original
-                for name, original in (
-                    ("_workspace_executor", executor),
-                    ("_root", root),
-                    ("_remote_root", remote),
-                )
-            ):
-                raise RuntimeError("ordinary virtual executor source changed")
-
-    def check_library_factory(self):
-        self.check_local_sources()
-        if not self.footprint.opaque and (
-            self.controller._library_provider_factory is not self.library_factory
-            or self.runtime._library_provider_factory is not self.library_factory
-            or self.library_factory.runtime is not self.runtime
-            or self.runtime._app is not self.app
-        ):
-            raise RuntimeError("ordinary Library construction resource changed")
-
-    def bind_library_provider(self, provider, names):
-        self.check_library_factory()
-        if any(
-            self.catalog_permits("library", name) and name not in self.library_maximum
-            for name in names
-        ):
-            raise RuntimeError("ordinary Library catalog widened")
-        service = getattr_static(provider, "_service", None)
-        if not self.footprint.opaque:
-            from tldw_chatbook.Agents import library_tool_provider
-            from tldw_chatbook.Library import local_library_tool_service
-
-            if (
-                type(provider)
-                is not library_tool_provider._NATIVE_ORDINARY_LIBRARY_CLASS
-                or type(service)
-                is not local_library_tool_service._NATIVE_ORDINARY_LIBRARY_CLASS
-            ):
-                raise RuntimeError("ordinary Library source outside bounded maximum")
-            for name, original in self.library_services.items():
-                if getattr_static(service, name, None) is not original:
-                    raise RuntimeError("ordinary Library backend changed")
-        self.library_providers[provider] = (service, frozenset(names))
-
-    def check_library_call(self, provider, name):
-        self.check_library_factory()
-        service, names = self.library_providers[provider]
-        if (
-            name not in names
-            or getattr_static(provider, "_service", None) is not service
-        ):
-            raise RuntimeError("ordinary Library dispatch source changed")
-        if not self.footprint.opaque and any(
-            getattr_static(service, name, None) is not original
-            for name, original in self.library_services.items()
-        ):
-            raise RuntimeError("ordinary Library backend changed")
-
-    def bind_catalog(self, registry, names):
-        """Retain the original final dispatch records, after normal narrowing."""
-        self.check_local_sources()
-        records = {}
-        for name in names:
-            resolved = registry.resolve_owner_for_name(name)
-            if resolved is None:
-                # Runtime tools such as spawn are owned by AgentService, not
-                # supplied as a provider callback by this registry.
-                continue
-            tool_id, provider = resolved
-            source = registry._source_for(tool_id)
-            if not self.goal_catalog_permits(source, name):
-                # Goal.narrow_config consumes this same registry after normal
-                # composition. Unreachable entries grant no receiving record.
-                continue
-            if provider in self.local_providers:
-                self.check_local_call(provider, name)
-            elif provider in self.builtin_providers:
-                self.check_builtin_call(provider, name)
-            elif provider in self.library_providers:
-                self.check_library_call(provider, name)
-            elif source == "virtual_cli":
-                if name not in self.other_maximum.get(source, ()):
-                    raise RuntimeError("ordinary virtual maximum widened")
-                self.bind_virtual_provider(provider)
-            elif source == "mcp":
-                from tldw_chatbook.Agents.mcp_tool_provider import (
-                    _CONTROLLER_COMPOSE_FACTORY,
-                )
-                from tldw_chatbook.MCP.permission_store import definition_hash
-
-                from . import console_agent_bridge as bridge
-
-                if type(provider) is not bridge._NATIVE_ORDINARY_COLLISION_PROVIDER:
-                    raise RuntimeError("ordinary MCP collision view changed")
-                underlying = getattr_static(provider, "_provider", None)
-                allowed = getattr_static(provider, "_allowed_names", None)
-                table = getattr_static(underlying, "_entry_by_llm_name", None)
-                entry = (
-                    table.get(tool_id)
-                    if type(underlying) is _CONTROLLER_COMPOSE_FACTORY
-                    and type(table) is dict
-                    else None
-                )
-                if (
-                    entry is None
-                    or self.session.ephemeral
-                    or name not in allowed
-                    or self.configuration.mcp_definition_maximum.get(entry[0].tool_id)
-                    != definition_hash(entry[0].description, entry[0].input_schema)
-                ):
-                    raise RuntimeError("ordinary MCP maximum widened")
-                self.check_mcp_definition(entry[0], name)
-                self.mcp_entries[provider, tool_id] = (
-                    underlying,
-                    allowed,
-                    table,
-                    entry,
-                )
-            elif source in {"skill", "plugin"}:
-                if self.session.ephemeral or name not in {
-                    row.get("name")
-                    for row in self.configuration.skill_context_maximum.get(
-                        "available_skills", ()
-                    )
-                }:
-                    raise RuntimeError("ordinary skill maximum widened")
-            elif name not in self.other_maximum.get(source, ()):
-                raise RuntimeError("ordinary provider maximum widened")
-            records[name] = (tool_id, provider, source)
-        self.catalogs[registry] = records
-
-    def check_catalog_call(self, registry, name, provider):
-        self.check_local_sources()
-        records = self.catalogs.get(registry)
-        if records is None:
-            raise RuntimeError("ordinary catalog was not originally composed")
-        record = records.get(name)
-        if record is None or record[1] is not provider:
-            raise RuntimeError("ordinary dispatch outside original catalog")
-        tool_id, _provider, source = record
-        current = registry.resolve_owner_for_name(name)
-        if current is None or current[0] != tool_id or current[1] is not provider:
-            raise RuntimeError("ordinary catalog owner changed")
-        if source == "mcp":
-            from tldw_chatbook.MCP.permission_store import definition_hash
-
-            underlying, allowed, table, entry = self.mcp_entries[provider, tool_id]
-            if (
-                getattr_static(provider, "_provider", None) is not underlying
-                or getattr_static(provider, "_allowed_names", None) is not allowed
-                or getattr_static(underlying, "_entry_by_llm_name", None) is not table
-                or table.get(tool_id) is not entry
-                or self.configuration.mcp_definition_maximum.get(entry[0].tool_id)
-                != definition_hash(entry[0].description, entry[0].input_schema)
-            ):
-                raise RuntimeError("ordinary MCP definition source changed")
-            self.check_mcp_definition(entry[0], name)
-        if (
-            source == "raw_shell"
-            and getattr_static(provider, "_runtime", None) is not self.raw_projection[0]
-        ):
-            raise RuntimeError("ordinary raw runtime changed")
-        if source == "personal-context":
-            self.check_personal_source()
-        if source == "virtual_cli":
-            self.check_virtual_call(provider)
-
-    def check_mcp_definition(self, tool, name):
-        if self.mcp_source_maximum is None:
-            if not self.footprint.opaque:
-                raise RuntimeError("ordinary MCP source maximum unavailable")
-            return
-        original = self.mcp_source_maximum.get(tool.tool_id)
-        if original != (tool.tool_id, tool.server_key, tool.name, name):
-            raise RuntimeError("ordinary MCP name source changed")
-
-    def has_admitted_members(self):
-        with self.lock:
-            owners = tuple(self.members)
-        return any(owner.is_admitted for owner in owners)
-
-    def persisted(self, store, session, identity):
-        """Consume only the original store's committed publication callback."""
-        if store is not self.store or session is not self.session:
-            return
-        if (
-            self.conversation is not None
-            and self.conversation != identity.conversation_id
-        ):
-            raise RuntimeError("ordinary turn conversation rebound")
-        if session.persisted_conversation_id != identity.conversation_id:
-            raise RuntimeError("ordinary committed publication unavailable")
-        previous = self.conversation
-        self.conversation = identity.conversation_id
-        try:
-            self.check()
-        except BaseException:
-            self.conversation = previous
-            raise
-
-    def admit(self, footprint):
-        self.check()
-        if self.runtime._disposed or self.controller._disposed:
-            raise CapacityRefused("runtime_closed")
-        with self.activity.prelaunch(footprint=footprint) as claim:
-            if claim is None:
-                raise CapacityRefused("worktree_activity_busy")
-            owner = self.capacity.begin_execution(
-                origin=self.origin, conversation_id=self.launch_key
-            )
-            try:
-                self.check()
-                claim.bind_owner(owner)
-            except BaseException:
-                owner.finish_root()
-                raise
-            self.owner, self.claim, self.footprint = owner, claim, footprint
-            self.members[owner] = _Member(claim)
-        if self.configuration.scratch_space is not None:
-            self.scratch_lease = self.controller._scratch_spaces.lease(
-                self.configuration.scratch_space
-            )
-            try:
-                self.scratch_lease.__enter__()
-            except BaseException:
-                self.scratch_lease = None
-                owner.finish_root()
-                claim.settle(durable=True)
-                raise
-        owner.on_drained(lambda proven: self._drained(owner, proven))
-        with self.runtime._execution_capacity_lock:
-            closing = self.runtime._disposed
-            if not closing:
-                self.runtime._ordinary_turns.add(self)
-        if closing:
-            # No effect producer can see this unpublished admission. Retire its
-            # original private lease/claim outside runtime bookkeeping.
-            self.sealed = True
-            self.host_returned(owner)
-            owner.finish_root()
-            raise CapacityRefused("runtime_closed")
-
-    @contextmanager
-    def retain_source_scope(self, *, _cleanup_state=None):
-        """Reuse the original live scratch lease, including after tombstoning."""
-        with self.lock:
-            if (
-                self.scratch_lease is None
-                and self.configuration.scratch_space is not None
-            ):
-                raise RuntimeError("original ordinary scratch lease retired")
-            self.source_scopes += 1
-        try:
-            yield
-        finally:
-            if _cleanup_state is None or _cleanup_state[0]:
-                with self.lock:
-                    self.source_scopes -= 1
-                self._retire_scratch()
-
-    def _drained(self, owner, proven):
-        with self.lock:
-            self.members[owner].drained = proven is True
-        self._retire_scratch()
-
-    def _retire_scratch(self):
-        lease = None
-        settlements = ()
-        elected = False
-        with self.lock:
-            if (
-                not self.settled
-                and self.sealed
-                and not self.source_scopes
-                and all(
-                    member.host_returned and member.durable and member.drained
-                    for member in self.members.values()
-                )
-            ):
-                self.settled = True
-                elected = True
-                lease, self.scratch_lease = self.scratch_lease, None
-                settlements = tuple(
-                    member.settlement for member in self.members.values()
-                )
-        if lease is not None:
-            lease.__exit__(None, None, None)
-        for settlement in settlements:
-            settlement.settle(durable=True)
-        if elected:
-            # Election is not proof: lease cleanup and every original
-            # settlement callback must have actually returned first.
-            self.retired.set_result(None)
-            with self.runtime._execution_capacity_lock:
-                self.runtime._ordinary_turns.discard(self)
-            self.runtime._wake_first_send()
-
-    def borrow(self, runtime, *, opaque=True):
-        self.check()
-        if (
-            runtime is not self.runtime
-            or self.sealed
-            or runtime._disposed
-            or self.controller._disposed
-        ):
-            raise CapacityRefused("ordinary_turn_closed")
-        if opaque and not self.footprint.opaque:
-            raise RuntimeError("ordinary maximum does not cover this effect")
-        self.activity.validate_claim(
-            self.claim, owner=self.owner, footprint=self.footprint
-        )
-        return self.owner
-
-    def attach(self, owner):
-        self.check()
-        if self.sealed or self.runtime._disposed or self.controller._disposed:
-            raise CapacityRefused("ordinary_turn_closed")
-        for source in self.snapshot_sources:
-            try:
-                source.prepare_survivor()
-            except CapacityRefused:
-                # Capture remains best effort. Its original finalizer will
-                # disclose the unavailable survivor admission if needed.
-                pass
-        settlement = self.claim.attach_child(owner)
-        with self.lock:
-            self.members[owner] = _Member(settlement)
-        owner.on_drained(lambda proven: self._drained(owner, proven))
-
-    def row_started(self, owner, run_id):
-        with self.lock:
-            member = self.members[owner]
-            member.row_started = True
-            member.run_id = run_id
-            self.runs[run_id] = member
-
-    def required_steps(self, run_id, records):
-        """Retain the actual serializer output, before the original write attempt."""
-        with self.lock:
-            member = self.runs.get(run_id)
-            if member is None:
-                return
-            if records is None:
-                member.capture_failed = True
-            else:
-                member.steps.update((index, _json(record)) for index, record in records)
-
-    def required_terminal(self, run_id, status, result, budget_tokens):
-        with self.lock:
-            member = self.runs.get(run_id)
-            if member is not None:
-                member.terminal = (status, result, budget_tokens)
-
-    def retain_event(self, scope):
-        from tldw_chatbook.Agents.execution_capacity import current_execution_owner
-
-        owner = current_execution_owner()
-        with self.lock:
-            owner = owner if owner in self.members else self.owner
-            self.future_events[scope] = owner
-
-    def consume_event(self, scope):
-        with self.lock:
-            self.future_events.pop(scope, None)
-
-    def close_unused_events(self, owner):
-        with self.lock:
-            scopes = tuple(
-                scope for scope, member in self.future_events.items() if member is owner
-            )
-            for scope in scopes:
-                self.future_events.pop(scope)
-        for scope in scopes:
-            scope.close()
-
-    def host_returned(self, owner):
-        with self.lock:
-            member = self.members.get(owner)
-            if member is None or member.host_returned:
-                return
-            member.host_returned = True
-        proven = not member.row_started
-        if (
-            member.row_started
-            and not member.capture_failed
-            and member.terminal is not None
-        ):
-            # Use the original database and its canonical decoded records. Never
-            # infer durability from a swallowed exception or a UI run outcome.
-            try:
-                with self.source.activate():
-                    row = self.source.databases[0].get_run(member.run_id)
-                status, result, tokens = member.terminal
-                stored = {step["index"]: _json(step) for step in row["steps"]}
-                proven = (
-                    row["status"] == status
-                    and _json(row.get("result")) == _json(result)
-                    and (
-                        tokens is None
-                        or _json(row.get("budget_tokens")) == _json(tokens)
-                    )
-                    and bool(member.steps)
-                    and all(
-                        stored.get(index) == value
-                        for index, value in member.steps.items()
-                    )
-                )
-            except Exception:  # noqa: BLE001 - uncertainty retains the original claim
-                proven = False
-        with self.lock:
-            member.durable = proven
-        self._retire_scratch()
-
-    def finish(self):
-        with self.lock:
-            self.sealed = True
-        self._finish_primary_if_returned()
-
-    def retain_primary_host(self):
-        """Retain the original native primary callback before its existing queue."""
-        self.check()
-        token = object()
-        with self.lock:
-            if self.sealed:
-                raise CapacityRefused("ordinary_turn_closed")
-            self.primary_hosts.add(token)
-        return token
-
-    def primary_host_returned(self, token):
-        with self.lock:
-            if token not in self.primary_hosts:
-                return
-            self.primary_hosts.remove(token)
-        self._finish_primary_if_returned()
-
-    def _finish_primary_if_returned(self):
-        with self.lock:
-            if not self.sealed or self.primary_hosts or self.primary_finishing:
-                return
-            self.primary_finishing = True
-        if self.owner is not None:
-            with (
-                self.source.activate()
-                if self.source is not None
-                else self.retain_source_scope()
-            ):
-                if self.stop_notification is not None:
-                    _engine, custody = self.stop_notification
-                    if custody is not None and not custody.notification_claimed:
-                        custody.abandon_unstarted()
-                self.close_unused_events(self.owner)
-                self.host_returned(self.owner)
-                self.owner.finish_root()
+            if current_ordinary_tree() is tree:
+                set_current_ordinary_tree(None)
 
 
 async def admit_ordinary_turn(
@@ -900,12 +59,11 @@ async def admit_ordinary_turn(
     """Select original sources before acquiring the complete ordinary footprint."""
     from tldw_chatbook.Agents.activation import worker_guard
 
-    from .console_agent_sources import current_agent_sources
+    from .console_preparation_reads import current_agent_sources
     from .console_preparation_reads import run_preparation_read
-    from .console_reference_preparation import _ReferenceRead
-    from .console_workflow_runs import native_workflow_qualified
+    from tldw_chatbook.Utils.platform_files import supports_native_process_groups
 
-    if controller._hooks_v2_runtime is None or not native_workflow_qualified():
+    if controller._hooks_v2_runtime is None or not supports_native_process_groups():
         return None, configuration
     existing = current_ordinary_tree(controller)
     if existing is not None:
@@ -915,6 +73,28 @@ async def admit_ordinary_turn(
     tree = _OrdinaryTurn(
         controller, session, configuration, origin, source, agent_eligible
     )
+    recovery = getattr(controller, "_archive_recovery_runtime", None)
+    claim = source.received_claim if source is not None else None
+    if (
+        agent_eligible
+        and claim is not None
+        and tree.store.received_turn_is_current(claim)
+        and tree.origin is WorkOrigin.MANUAL
+        and not session.ephemeral
+        and session.runtime_backend == "local"
+        and configuration.recovery_user_origin is not None
+        and recovery is not None
+        and recovery is tree.runtime._archive_recovery
+    ):
+        from .archive_recovery.runtime import ArchiveRecoveryRuntime
+
+        if type(recovery) is ArchiveRecoveryRuntime:
+            turn_id = recovery.accepted_user_turn(
+                configuration.recovery_user_origin, session.id
+            )
+            if turn_id == claim.request_id:
+                tree.archive_recovery = (recovery, turn_id)
+
     from .console_configuration_preparation import (
         original_mcp_capture_matches,
         original_skill_capture_preparation,
@@ -950,6 +130,8 @@ async def admit_ordinary_turn(
     def capture():
         tree.check()
         if candidates:
+            from .console_reference_preparation import _ReferenceRead
+
             tree.reference = _ReferenceRead(
                 controller, session, origin, text, candidates
             )
@@ -981,7 +163,7 @@ async def admit_ordinary_turn(
             if pending is None:
                 pending = controller._ordinary_submissions = {}
             pending[asyncio.current_task()] = tree
-    _current.set(tree)
+    set_current_ordinary_tree(tree)
     if pending_skill:
         from contextlib import nullcontext
         from dataclasses import replace
@@ -1135,6 +317,7 @@ async def admit_ordinary_turn(
                     mcp_definition_sources=selected.sources,
                     mcp_definition_complete=selected.complete,
                     mcp_capture_pending=False,
+                    mcp_definition_capture="captured",
                 )
                 tree.configuration = configuration
                 if tree.source is not None:
@@ -1377,7 +560,7 @@ def _capture_maximum(tree, *, hook_read=None):
                 if payload is None or not payload.get("kill_switch", False):
                     tree.local_maximum = {
                         name: effect
-                        for name, effect in local._NATIVE_WORKTREE_EFFECTS.items()
+                        for name, effect in local.native_worktree_effects().items()
                         if advertised(name)
                         and catalog_allowed("local", name)
                         and (
@@ -1399,7 +582,9 @@ def _capture_maximum(tree, *, hook_read=None):
                         and advertised("shell_exec")
                         and catalog_allowed("raw_shell", "shell_exec")
                     ):
-                        original, raw_reachable, raw_values = _raw_shell_metadata(tree)
+                        from tldw_chatbook.Tools.raw_cli_executor import ordinary_raw_shell_metadata
+
+                        original, raw_reachable, raw_values = ordinary_raw_shell_metadata(tree)
                         tree.raw_projection = (original, raw_reachable, raw_values)
                         opaque |= raw_values[:1] == ("unknown",)
                         if raw_reachable and (
@@ -1457,86 +642,6 @@ def _capture_maximum(tree, *, hook_read=None):
     return WorktreeFootprint(tuple(reads), tuple(writes), opaque)
 
 
-def _capture_local_provider_sources(provider, names):
-    """Retain the actual composed receiving maps, not detached catalog labels."""
-    specs = tuple((name, provider._specs[name]) for name in names)
-    roots = tuple((provider._admitted_roots or {}).items())
-    aliases = tuple(
-        (alias, tuple(mapping.items()))
-        for alias, mapping in provider._path_specs_by_alias.items()
-    )
-    return specs, roots, aliases
-
-
-def _check_local_provider_sources(provider, retained):
-    """Reuse the original ordinary receiving-instance checks before effects."""
-    specs, roots, aliases = retained
-    if any(provider._specs.get(name) is not spec for name, spec in specs):
-        raise RuntimeError("ordinary local call outside original maximum")
-    current_roots = provider._admitted_roots or {}
-    if len(current_roots) != len(roots) or any(
-        current_roots.get(alias) is not authority for alias, authority in roots
-    ):
-        raise RuntimeError("ordinary local root source changed")
-    current_aliases = provider._path_specs_by_alias
-    if len(current_aliases) != len(aliases) or any(
-        alias not in current_aliases
-        or len(current_aliases[alias]) != len(entries)
-        or any(current_aliases[alias].get(tool) is not spec for tool, spec in entries)
-        for alias, entries in aliases
-    ):
-        raise RuntimeError("ordinary local handler source changed")
-
-
-def _raw_shell_metadata(tree):
-    """Read the actual runtime and primitive app policy without invoking callbacks."""
-    from .console_raw_cli import RawCliRuntime
-
-    raw = getattr_static(tree.app, "raw_cli_runtime", None)
-    if raw is None:
-        return None, False, ()
-    if not isinstance(raw, RawCliRuntime):
-        return raw, True, ("unknown",)
-    app_config = getattr_static(tree.app, "app_config", None)
-    console = app_config.get("console", {}) if type(app_config) is dict else {}
-    if type(console) is not dict:
-        return raw, True, ("unknown",)
-    permitted = console.get("raw_cli_permitted") is True
-    armed = getattr_static(raw, "_armed") is True
-    return raw, permitted and armed, (id(app_config), id(console))
-
-
-def _function_record(function):
-    return (
-        function,
-        function.__code__,
-        function.__defaults__,
-        function.__kwdefaults__,
-        tuple((function.__kwdefaults__ or {}).items()),
-        function.__closure__,
-        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
-    )
-
-
-def _function_unchanged(record):
-    function, code, defaults, kwdefaults, entries, closure, cells = record
-    return (
-        type(function) is FunctionType
-        and function.__code__ is code
-        and function.__defaults__ is defaults
-        and function.__kwdefaults__ is kwdefaults
-        and (
-            kwdefaults is None
-            or len(kwdefaults) == len(entries)
-            and all(
-                key in kwdefaults and kwdefaults[key] is value for key, value in entries
-            )
-        )
-        and function.__closure__ is closure
-        and all(cell.cell_contents is value for cell, value in cells)
-    )
-
-
 def _capture_builtin_maximum(tree, advertised, catalog_allowed):
     """Project declared effects and retain the actual tool classes for composition."""
     import importlib
@@ -1558,7 +663,7 @@ def _capture_builtin_maximum(tree, advertised, catalog_allowed):
             effects[name] = "none"
             tree.builtin_classes[name] = cls
     payload = _permission_payload(tree)
-    for entry in catalog._GATEABLE_BUILTINS:
+    for entry in catalog.gateable_builtin_tools():
         if not config.coerce_bool_setting(
             config.get_cli_setting("tools", entry.gate_key, False), False
         ):
@@ -1741,6 +846,12 @@ def _capture_other_providers(tree):
     from tldw_chatbook.Agents import tool_catalog
 
     opaque = False
+    if tree.archive_recovery is not None:
+        tree.other_maximum["archive_recovery"] = frozenset(
+            name
+            for name in tool_catalog.RECOVERY_RESERVED_TOOL_NAMES
+            if tree.catalog_permits("archive_recovery", name)
+        )
     canvas = getattr_static(tree.store, "canvas_turn_controller", None)
     tree.local_source_values += ((tree.store, "canvas_turn_controller", canvas, None),)
     if canvas is not None and config.get_canvas_execution_enabled():
@@ -1792,30 +903,3 @@ def _capture_other_providers(tree):
             if tree.catalog_permits("raw_shell", "shell_exec"):
                 tree.other_maximum["raw_shell"] = frozenset({"shell_exec"})
     return opaque
-
-
-def _capture_personal_service(tree, instance):
-    """Retain the actual private repository and encryption resources."""
-    from tldw_chatbook.Personal_Context.key_protector import (
-        InMemoryProfileKeyProtector,
-        KeyringProfileKeyProtector,
-    )
-    from tldw_chatbook.Personal_Context.repository import PersonalContextRepository
-    from tldw_chatbook.Personal_Context.service import PersonalContextService
-
-    if type(instance) is not PersonalContextService:
-        return False
-    repository = getattr_static(instance, "_repository", None)
-    tree.personal_source_values += ((instance, "_repository", repository),)
-    if repository is None:
-        return True
-    path = getattr_static(repository, "db_path", None)
-    protector = getattr_static(repository, "_protector", None)
-    tree.personal_source_values += (
-        (repository, "db_path", path),
-        (repository, "_protector", protector),
-    )
-    return type(repository) is PersonalContextRepository and type(protector) in (
-        KeyringProfileKeyProtector,
-        InMemoryProfileKeyProtector,
-    )

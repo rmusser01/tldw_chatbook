@@ -15,7 +15,6 @@ from tldw_chatbook.Agents.automatic_work_budget import (
     AutomaticWorkLimits,
     AutomaticWorkRefused,
 )
-from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
 
 if TYPE_CHECKING:
     import asyncio
@@ -118,8 +117,10 @@ def _dispatch_identity(proof, ledger):
 
 
 def native_workflow_qualified() -> bool:
-    """Return the metadata-only platform qualification for native group custody."""
-    return os.name == "posix" and hasattr(os, "killpg")
+    """Return the platform qualification used by native Console workflows."""
+    from tldw_chatbook.Utils.platform_files import supports_native_process_groups
+
+    return supports_native_process_groups()
 
 
 def _live_owner(controller, session_id, attempt):
@@ -163,6 +164,8 @@ class WorkflowPhaseAuthorization:
         )
         if self._session is not _session:
             raise AutomaticWorkRefused("workflow_session_changed")
+        from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
+
         self.context = AutomaticWorkContext(
             self._ledger,
             attempt.chain_id,
@@ -312,7 +315,7 @@ class WorkflowPhaseAuthorization:
     def _control(self, decision=None, *, expected_control_revision=None):
         """Atomically revoke new work; only original committed tasks may finish Pause."""
         from tldw_chatbook.Agents.workflow_models import WorkflowDecision
-        from tldw_chatbook.Agents.workflow_task_scope import _runtime
+        from tldw_chatbook.Agents.workflow_task_scope import require_workflow_runtime
 
         if decision is None:
             if self.attempt.purpose != "planning" or expected_control_revision is None:
@@ -338,7 +341,7 @@ class WorkflowPhaseAuthorization:
                         expected_control_revision,
                         "stopped",
                     )
-            runtime = _runtime(self)
+            runtime = require_workflow_runtime(self)
             for prepared in tuple(runtime._workflow_preparations):
                 if prepared.phase is self:
                     prepared.cancel_event.set()
@@ -408,7 +411,7 @@ class WorkflowPhaseAuthorization:
                     else {}
                 )
         if decision.action == "stop":
-            runtime = _runtime(self)
+            runtime = require_workflow_runtime(self)
             for wave in tuple(runtime._workflow_waves):
                 if wave.phase is self:
                     wave.stopping.set()
@@ -477,11 +480,11 @@ def _remaining_storage_return(databases):
             raise RuntimeError("original source database handle did not return")
 
 
-def _check_remaining_unused(read, service, phase):
+def require_remaining_unused(read, service, phase):
     """Admit only the original returned read's required unused terminal write."""
     from tldw_chatbook.Agents.execution_capacity import current_execution_owner
 
-    from .console_preparation_reads import preparation_source_for
+    from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import preparation_source_for
 
     if (
         type(read) is not _RemainingAcceptance
@@ -516,6 +519,9 @@ def _check_remaining_unused(read, service, phase):
         raise AutomaticWorkRefused("workflow_original_unused_acceptance_required")
 
 
+_check_remaining_unused = require_remaining_unused
+
+
 def _accept_workflow_phase(
     controller, attempt_id: str, *, session_id: str, _remaining_read=None
 ):
@@ -545,7 +551,7 @@ def _accept_workflow_phase(
         if repeated is not None and attempt.state == "prepared":
             from tldw_chatbook.Agents.execution_capacity import current_execution_owner
 
-            from .console_preparation_reads import preparation_source_for
+            from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import preparation_source_for
 
             read = _remaining_read
             if (
@@ -583,7 +589,7 @@ def _accept_workflow_phase(
 def _capture_workflow_read(controller, source, issuing):
     import asyncio
 
-    from .console_preparation_reads import preparation_read_for
+    from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import preparation_read_for
 
     read = preparation_read_for(controller)
     if (
@@ -637,11 +643,11 @@ async def _accept_remaining_workflow_phase(
     """
     import asyncio
 
-    from tldw_chatbook.Agents.activation import _guard, execution
+    from tldw_chatbook.Agents.activation import captured_sources, execution
     from tldw_chatbook.Agents.execution_capacity import CapacityRefused, WorkOrigin
     from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
     from tldw_chatbook.Agents.workflow_models import WorkflowDecision
-    from tldw_chatbook.Agents.workflow_task_scope import _check_hooks
+    from tldw_chatbook.Agents.workflow_task_scope import require_workflow_hooks_idle
     from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
 
     from .console_preparation_reads import run_preparation_read
@@ -668,7 +674,7 @@ async def _accept_remaining_workflow_phase(
         session.persisted_conversation_id,
         session.project_instruction_state,
     )
-    policy, sources = _policy_identity(), _guard.captured_sources(bridge)
+    policy, sources = _policy_identity(), captured_sources(bridge)
     loop, issuing = asyncio.get_running_loop(), asyncio.current_task()
     # This one invocation's original cap remains here on cancellation as well.
     cell = _RemainingAcceptance(
@@ -760,7 +766,7 @@ async def _accept_remaining_workflow_phase(
                 owned_goal_storage(service),
             ):
                 current()
-                if _guard.captured_sources(bridge) != sources:
+                if captured_sources(bridge) != sources:
                     raise AutomaticWorkRefused("workflow_native_source_changed")
                 with activity.prelaunch(
                     footprint=WorktreeFootprint(opaque=True)
@@ -790,7 +796,7 @@ async def _accept_remaining_workflow_phase(
                     try:
                         current()
                         activity.validate_opaque_claim(claim, owner=owner)
-                        _check_hooks(runtime, session_id)
+                        require_workflow_hooks_idle(runtime, session_id)
                         if not binding.guard(False):
                             raise AutomaticWorkRefused("workflow_task_binding_changed")
                         snapshot = service.get(decision.workflow_id)
@@ -895,7 +901,7 @@ async def _accept_remaining_workflow_phase(
         if not cell.scopes_returned:
             raise AutomaticWorkRefused("workflow_original_storage_return_required")
         if (error is not None or not cell.host) and cell.phase is not None:
-            from tldw_chatbook.Backup_Recovery.participants import _core_operation
+            from tldw_chatbook.Backup_Recovery.participants import core_operation
 
             def settle_unused():
                 cell.terminal_read_return = _capture_workflow_read(
@@ -906,10 +912,10 @@ async def _accept_remaining_workflow_phase(
                     execution(bridge, sources=sources),
                     cell.owner.activate(),
                     owned_goal_storage(service),
-                    _core_operation(database),
+                    core_operation(database),
                 ):
                     originals()
-                    if _guard.captured_sources(bridge) != sources:
+                    if captured_sources(bridge) != sources:
                         raise AutomaticWorkRefused("workflow_native_source_changed")
                     if not binding.guard(False):
                         raise AutomaticWorkRefused("workflow_task_binding_changed")
@@ -1187,7 +1193,6 @@ def _quiescence_source(cell):
     ):
         raise AutomaticWorkRefused("workflow_quiescence_source_changed")
     _native_fence_sources(phase, phase._ledger)
-    _quiescence_wave._workflow_wave_sources()
     for saved in cell.preparations:
         item, auth, native, frame, configuration, source, lifetime, scope, reads = saved
         if (
@@ -1246,6 +1251,7 @@ def _quiescence_physical(cell):
                 and record.claim.id in coordinator.runtime.worktree_activity._claims
             ):
                 raise RuntimeError("workflow finite return unproven")
+    from . import console_workflow_wave as _quiescence_wave
     for saved in cell.waves:
         wave = saved[0]
         if wave.phase is not cell.phase:
@@ -1271,6 +1277,7 @@ def _quiescence_evidence(
 ):
     """Match one unknown contribution using only already-held native context."""
     from tldw_chatbook.Agents import automatic_work_runtime as automatic
+    from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
     from tldw_chatbook.Agents import workflow_task_scope as tasks
 
     phase = None
@@ -1402,7 +1409,7 @@ class ConsoleWorkflowCoordinator:
         """Sequence the same native read and its host return without another task."""
         import asyncio
 
-        from tldw_chatbook.Agents.activation import _guard, worker_guard
+        from tldw_chatbook.Agents.activation import captured_sources, worker_guard
         from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
         from tldw_chatbook.Agents.workflow_run_service import WorkflowRunService
 
@@ -1429,7 +1436,7 @@ class ConsoleWorkflowCoordinator:
         bridge, store = controller._agent_bridge, controller.store
         database, persistence = service.db, service.persistence
         registry = persistence.workspace_registry
-        sources = _guard.captured_sources(bridge)
+        sources = captured_sources(bridge)
         future = self.loop.create_future()
         cell = _WorkflowMetadataRead(
             workflow_id, issuing, run, run.phase if run is not None else None, future
@@ -1461,7 +1468,7 @@ class ConsoleWorkflowCoordinator:
                 or database is not bridge.runs_db
                 or service.persistence is not persistence
                 or persistence.workspace_registry is not registry
-                or _guard.captured_sources(bridge) != sources
+                or captured_sources(bridge) != sources
                 or self._metadata_cells.get(cell) is not future
                 or cell.disposed is not future
                 or cell.issuing is not issuing
@@ -2462,8 +2469,9 @@ class ConsoleWorkflowCoordinator:
 
         from loguru import logger
 
-        from .console_goal_runs import goal_provider_ref
+        from .console_provider_endpoints import goal_provider_ref
         from .console_workflow_preparation import prepare_workflow_reply
+        from . import console_workflow_wave as _quiescence_wave
         from .console_workflow_wave import run_workflow_wave
 
         unsubscribe = self._subscribe_availability(
@@ -2695,7 +2703,7 @@ class ConsoleWorkflowCoordinator:
         """Track the original control's complete worker and reader return."""
         import asyncio
 
-        from tldw_chatbook.Agents.activation import _guard, worker_guard
+        from tldw_chatbook.Agents.activation import captured_sources, worker_guard
         from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
 
         from . import console_preparation_reads as native
@@ -2707,7 +2715,7 @@ class ConsoleWorkflowCoordinator:
         )
         service, runtime, store = self.service, self.runtime, self.controller.store
         issuing = asyncio.current_task()
-        sources = _guard.captured_sources(bridge)
+        sources = captured_sources(bridge)
         databases = (
             service.db,
             service.persistence.db,
@@ -2735,7 +2743,7 @@ class ConsoleWorkflowCoordinator:
                 or self._runs.get(run.workflow_id) is not run
                 or run.phase is not phase
                 or run.control_return is not control_return
-                or _guard.captured_sources(bridge) != sources
+                or captured_sources(bridge) != sources
             ):
                 raise PermissionError("workflow original control source changed")
             phase._check_owner()
@@ -3120,9 +3128,6 @@ class ConsoleWorkflowCoordinator:
             if _runtime_disposal is self.runtime:
                 return cancellation
             raise cancellation
-
-
-from . import console_workflow_wave as _quiescence_wave
 
 _COORDINATOR_CLASS = ConsoleWorkflowCoordinator
 _QUIESCENCE_CLASS = _WorkflowQuiescence

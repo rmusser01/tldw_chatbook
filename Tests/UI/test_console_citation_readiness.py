@@ -93,6 +93,7 @@ async def test_edit_waits_for_original_key_and_rechecks_original_target(
 ):
     db, store, _user, message, repository, entered, release = cited_store
     opened = []
+    scheduled = []
     current = {"store": store, "controller": None}
 
     async def push_screen(modal, callback):
@@ -104,7 +105,7 @@ async def test_edit_waits_for_original_key_and_rechecks_original_target(
     screen = SimpleNamespace(
         app_instance=SimpleNamespace(notify=lambda *args, **kwargs: None),
         app=SimpleNamespace(push_screen=push_screen),
-        run_worker=lambda coroutine, **kwargs: coroutine.close(),
+        run_worker=lambda work, **kwargs: scheduled.append((work, kwargs)),
     )
     controller = stub_message_controller(
         screen,
@@ -145,6 +146,7 @@ async def test_edit_waits_for_original_key_and_rechecks_original_target(
             assert outcomes == [None]
             assert len(opened) == 1
             opened[0][1](ConsoleEditResult(text=message.content, resend=False))
+            assert scheduled == [(sync, {"exclusive": True, "group": "console-sync"})]
             after = db.get_message_by_id(message.persisted_message_id)
             assert after["version"] > before["version"]
             reopened = _repository(db)
@@ -155,6 +157,7 @@ async def test_edit_waits_for_original_key_and_rechecks_original_target(
             assert active.summary.namespace.trace_id == "trace-1"
         else:
             assert opened == []
+            assert scheduled == []
             assert dict(db.get_message_by_id(message.persisted_message_id)) == before
     finally:
         release.set()

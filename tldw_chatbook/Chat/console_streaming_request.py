@@ -646,7 +646,7 @@ def chat_call_impl(
     # timeout above was the last line of defence against.
     from tldw_chatbook.Chat.stream_stall_watchdog import StreamStallError
 
-    from .console_workflow_preparation import current_workflow_preparation
+    from .console_preparation_reads import current_workflow_preparation
 
     workflow_preparation = current_workflow_preparation()
 

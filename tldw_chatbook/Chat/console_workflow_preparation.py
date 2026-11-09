@@ -7,23 +7,24 @@ import inspect
 import threading
 import time
 from contextlib import contextmanager, nullcontext
-from contextvars import ContextVar
 from dataclasses import dataclass, field
 
-from tldw_chatbook.Agents.activation import execution
+from tldw_chatbook.Agents.activation import execution, owned_goal_storage
 from tldw_chatbook.Agents.execution_capacity import WorkOrigin
-from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
+from tldw_chatbook.Agents.run_context import bind_workflow_preparation
 from tldw_chatbook.Agents.workflow_task_scope import (
-    _check_hooks,
-    _prepare_workflow_task,
-    _runtime,
+    prepare_workflow_task,
+    require_workflow_hooks_idle,
+    require_workflow_runtime,
 )
 
-from .console_goal_runs import goal_provider_ref
-from .console_preparation_reads import run_preparation_read
-from .console_workflow_runs import WorkflowPhaseAuthorization
+from .console_provider_endpoints import goal_provider_ref
+from .console_preparation_reads import (
+    current_planning_preparation as current_planning_preparation,
+    current_workflow_preparation,
+    run_preparation_read,
+)
 
-_CURRENT = ContextVar("native_workflow_preparation", default=None)
 _PLANNING_INPUT = object()
 
 
@@ -61,31 +62,6 @@ class _PlanningPreparationRead:
     closing: bool = False
     before_issue: object = field(default=None, repr=False)
     configuration_return: object = field(default=None, repr=False)
-
-
-def current_workflow_preparation(controller=None):
-    prepared = _CURRENT.get()
-    if (
-        prepared is None
-        or controller is not None
-        and prepared.controller is not controller
-    ):
-        return None
-    return prepared
-
-
-def current_planning_preparation(controller=None):
-    """Return only the original current native planning producer, not a flag."""
-    prepared = current_workflow_preparation(controller)
-    if (
-        type(prepared) is _PreparedWorkflowReply
-        and type(prepared.phase) is WorkflowPhaseAuthorization
-        and prepared.phase.attempt.purpose == "planning"
-        and prepared.task_id is None
-        and prepared in prepared.runtime._workflow_preparations
-    ):
-        return prepared
-    return None
 
 
 def _planning_release_source(prepared, binding, *, scope_live=False, slots_live=False):
@@ -186,6 +162,50 @@ def _planning_release_source(prepared, binding, *, scope_live=False, slots_live=
                 raise PermissionError("planning primary token changed")
 
 
+def registered_planning_preparation(prepared: object) -> _PreparedWorkflowReply | None:
+    """Check the original native reply and its live planning registration."""
+    from .console_workflow_runs import WorkflowPhaseAuthorization
+
+    if (
+        type(prepared) is _PreparedWorkflowReply
+        and type(prepared.phase) is WorkflowPhaseAuthorization
+        and prepared.phase.attempt.purpose == "planning"
+        and prepared.task_id is None
+        and prepared in prepared.runtime._workflow_preparations
+    ):
+        return prepared
+    return None
+
+
+def current_workflow_execution_local_tools(registry, allowed, local_provider):
+    """Keep the original accepted task's captured local catalog in its request."""
+    from tldw_chatbook.Agents.workflow_task_scope import WorkflowTaskAuthorization
+
+    prepared = current_workflow_preparation()
+    if (
+        type(prepared) is not _PreparedWorkflowReply
+        or prepared not in prepared.runtime._workflow_preparations
+    ):
+        return ()
+    authorization = prepared.authorization
+    if (
+        type(authorization) is not WorkflowTaskAuthorization
+        or authorization.registry is not registry
+        or prepared.phase is not authorization.phase
+        or prepared.phase._task_scopes.get(prepared.task_id) is not authorization
+        or frozenset(allowed) != frozenset(authorization.task.allowed_tools)
+    ):
+        return ()
+    for provider, (specs, _roots, _aliases) in prepared.local_providers.items():
+        if provider is local_provider:
+            prepared.borrow_preparation(prepared.runtime)
+            prepared.check()
+            return tuple(
+                name for name, _spec in specs if authorization.permits_name(name)
+            )
+    return ()
+
+
 class _PreparedWorkflowReply:
     """Original source and retained native frame, never restored from saved IDs."""
 
@@ -219,7 +239,7 @@ class _PreparedWorkflowReply:
         self._planning_repair_source = None
         self.controller = phase._controller if phase is not None else controller
         self.runtime = (
-            _runtime(phase) if phase is not None else controller._hooks_v2_runtime
+            require_workflow_runtime(phase) if phase is not None else controller._hooks_v2_runtime
         )
         self.store = self.controller.store
         self.app = self.controller.app
@@ -427,34 +447,30 @@ class _PreparedWorkflowReply:
             raise PermissionError("planning executor fields changed")
 
     def check_local_sources(self):
-        from .console_ordinary_tree import _check_local_provider_sources
+        from tldw_chatbook.Agents.ordinary_tree import check_ordinary_local_provider_sources
 
         planning = self.phase is None or self.phase.attempt.purpose == "planning"
         if planning:
             for executor in self._planning_executors:
                 self.check_planning_executor(executor)
         for provider, retained in self.local_providers.items():
-            _check_local_provider_sources(provider, retained)
+            check_ordinary_local_provider_sources(provider, retained)
         if self._planning_builtins:
             from tldw_chatbook.Agents.tool_catalog import (
-                _NATIVE_ORDINARY_ALWAYS_ON_CLASSES,
+                planning_builtin_selection_changed,
             )
 
             for provider, tools in self._planning_builtins:
-                if tuple(provider._tools.items()) != tools or any(
-                    type(tool) not in _NATIVE_ORDINARY_ALWAYS_ON_CLASSES
-                    for tool in provider._tools.values()
-                ):
+                if planning_builtin_selection_changed(provider, tools):
                     raise PermissionError("planning builtin selection changed")
 
     @contextmanager
     def activate_source(self):
-        token = _CURRENT.set(self)
-        try:
-            with self.source.activate() if self.source is not None else nullcontext():
-                yield
-        finally:
-            _CURRENT.reset(token)
+        with (
+            bind_workflow_preparation(self),
+            self.source.activate() if self.source is not None else nullcontext(),
+        ):
+            yield
 
     def borrow_preparation(self, runtime):
         from tldw_chatbook.Agents.execution_capacity import current_execution_owner
@@ -696,7 +712,7 @@ class _PreparedWorkflowReply:
     def check(self):
         self.require_current()
         self.phase.check()
-        _check_hooks(self.runtime, self.session.id)
+        require_workflow_hooks_idle(self.runtime, self.session.id)
         if not self.binding.guard(False):
             raise PermissionError("workflow native binding changed")
         if self.authorization is not None:
@@ -801,10 +817,10 @@ class _PreparedWorkflowReply:
                 ):
                     if roots and claim is None:
                         from tldw_chatbook.Agents.agent_service import (
-                            _WorkflowChildWait,
+                            WorkflowChildWait,
                         )
 
-                        failure = record.body_error = _WorkflowChildWait(
+                        failure = record.body_error = WorkflowChildWait(
                             "worktree_activity", "workflow preparation busy"
                         )
                     else:
@@ -1321,12 +1337,10 @@ class _PreparedWorkflowReply:
             from tldw_chatbook.Agents import tool_catalog
             from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
             from tldw_chatbook.Agents.workflow_task_scope import (
-                _prepare_planning_authorization,
+                prepare_planning_authorization,
             )
 
-            from .console_ordinary_tree import (
-                _capture_local_provider_sources,
-            )
+            from tldw_chatbook.Agents.ordinary_tree import capture_ordinary_local_provider_sources
 
             if skills:
                 raise PermissionError("original bounded planning catalog required")
@@ -1347,20 +1361,18 @@ class _PreparedWorkflowReply:
                     ) is not provider._specs.get(name):
                         raise PermissionError("original bounded planning tool required")
                     providers.setdefault(provider, []).append(name)
-                elif (
-                    type(provider) is not tool_catalog._NATIVE_ORDINARY_BUILTIN_PROVIDER
-                ):
+                elif not tool_catalog.is_native_builtin_provider(provider):
                     raise PermissionError("original pure planning tool required")
                 else:
                     builtins.add(provider)
             self.local_providers = {
-                p: _capture_local_provider_sources(p, n) for p, n in providers.items()
+                p: capture_ordinary_local_provider_sources(p, n) for p, n in providers.items()
             }
             self._planning_builtins = tuple(
                 (provider, tuple(provider._tools.items())) for provider in builtins
             )
             self.check_local_sources()
-            self.authorization = _prepare_planning_authorization(self, registry, names)
+            self.authorization = prepare_planning_authorization(self, registry, names)
             registry._planning_future_shell = self._capture_planning_shell_metadata()
             messages = self.service.prepare_planning_inputs(self, catalog)
             self.check()
@@ -1371,7 +1383,7 @@ class _PreparedWorkflowReply:
                 tuple(n for n in local if n in names),
                 frozenset(),
             )
-        self.authorization = _prepare_workflow_task(
+        self.authorization = prepare_workflow_task(
             self.phase,
             task_id=self.task_id,
             registry=registry,
@@ -1381,7 +1393,7 @@ class _PreparedWorkflowReply:
         if not self.authorization.physical_footprint.opaque:
             from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 
-            from .console_ordinary_tree import _capture_local_provider_sources
+            from tldw_chatbook.Agents.ordinary_tree import capture_ordinary_local_provider_sources
 
             providers = {}
 
@@ -1399,7 +1411,7 @@ class _PreparedWorkflowReply:
                         )
                     providers.setdefault(provider, []).append(name)
             self.local_providers = {
-                provider: _capture_local_provider_sources(provider, names)
+                provider: capture_ordinary_local_provider_sources(provider, names)
                 for provider, names in providers.items()
             }
         self.check()
@@ -1427,7 +1439,9 @@ class _PreparedWorkflowReply:
             _capture_console_definition_selection,
         )
 
-        from .console_agent_sources import _AgentSources
+        from tldw_chatbook.Agents.native_source_storage import (
+            NativeAgentSources as _AgentSources,
+        )
         from .console_configuration_capture import (
             CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
         )
@@ -1549,6 +1563,7 @@ class _PreparedWorkflowReply:
                     mcp_definition_sources=selected.sources,
                     mcp_definition_complete=selected.complete,
                     mcp_capture_pending=False,
+                    mcp_definition_capture="captured",
                 )
             roots, aliases, skipped = capture_change_review_admission(
                 self.controller.app, self.session.workspace_id
@@ -1638,7 +1653,8 @@ class _PreparedWorkflowReply:
                 RawShellToolProvider,
             )
 
-            from . import console_ordinary_tree
+            from tldw_chatbook.Tools.raw_cli_executor import ordinary_raw_shell_metadata
+
             from .console_chat_controller import build_combined_review_hook
             from .console_raw_cli_custody import NativeRawCliSource
 
@@ -1653,7 +1669,7 @@ class _PreparedWorkflowReply:
                     or source.raw is not self.app.raw_cli_runtime
                 ):
                     raise PermissionError("original workflow shell source required")
-                raw, reachable, values = console_ordinary_tree._raw_shell_metadata(self)
+                raw, reachable, values = ordinary_raw_shell_metadata(self)
                 if raw is not source.raw or not reachable or values[:1] == ("unknown",):
                     raise PermissionError("workflow shell unavailable")
                 return values
@@ -1963,9 +1979,7 @@ class _PreparedWorkflowReply:
 
     def _close_on_native_owner(self, owner):
         """Return the original frame inside its pre-held native child operation."""
-        from tldw_chatbook.Agents.agent_service import (
-            _workflow_operation_sources,
-        )
+        from tldw_chatbook.Agents.execution_capacity import require_workflow_operation
 
         _storage_source_current(self.source, preparation=self)
         with self.authorization._lock:
@@ -1988,9 +2002,9 @@ class _PreparedWorkflowReply:
                 self.check_local_sources()
                 self._lifetime.__exit__(None, None, None)
                 self._native_closed = True
-            _workflow_operation_sources(operation)
+            require_workflow_operation(operation)
             operation.finish()
-        _workflow_operation_sources(operation)
+        require_workflow_operation(operation)
         with self.authorization._lock:
             if self._close_operation is not operation:
                 raise PermissionError("original workflow close operation changed")
@@ -2185,11 +2199,12 @@ class _PreparedWorkflowReply:
         )
         from tldw_chatbook.MCP.permission_store import resolve_effective_state_by_key
 
-        from .console_ordinary_tree import _raw_shell_metadata
+        from tldw_chatbook.Tools.raw_cli_executor import ordinary_raw_shell_metadata
+
         from .console_raw_cli_custody import NativeRawCliSource
 
         source = self.runtime._raw_cli_source
-        raw, reachable, values = _raw_shell_metadata(self)
+        raw, reachable, values = ordinary_raw_shell_metadata(self)
         from tldw_chatbook.MCP.console_snapshot import _CapturedSources
 
         payload = (
@@ -2223,7 +2238,7 @@ class _PreparedWorkflowReply:
                 )
             )
             == "deny"
-            or native._MODEL_SCHEMA != native._PLANNING_SHELL_SCHEMA
+            or native.planning_shell_schema_changed()
         ):
             return None
         schema = native.raw_shell_schema(
@@ -2469,7 +2484,7 @@ class _PreparedWorkflowReply:
     async def _retire_returned_planning(self, error):
         """Hand durable admission/charges to recovery before retryable recording."""
         self._planning_physical_proof()
-        from tldw_chatbook.Agents.workflow_run_service import _workflow_root_identity
+        from tldw_chatbook.Agents.workflow_models import workflow_root_identity
         from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
         from tldw_chatbook.Workspaces.worktree_activity import (
             WorktreeFootprint,
@@ -2478,7 +2493,7 @@ class _PreparedWorkflowReply:
 
         try:
             chain = capture_directory_chain(self.binding.root)
-            if _workflow_root_identity(chain) == self.planning_root:
+            if workflow_root_identity(chain) == self.planning_root:
                 self.runtime.worktree_activity.protect_recovery(
                     self.phase.attempt.workflow_id,
                     WorktreeFootprint(
@@ -2790,12 +2805,14 @@ async def prepare_workflow_reply(
     bridge, *, phase, task_id, binding, resolution, **kwargs
 ):
     """Private producer; the public coordinator still requires phase snapshot custody."""
+    from .console_workflow_runs import WorkflowPhaseAuthorization
+
     if (
         type(phase) is not WorkflowPhaseAuthorization
         or phase.context.workflow is not phase
     ):
         raise PermissionError("original workflow phase required")
-    if _runtime(phase)._workflow_closing:
+    if require_workflow_runtime(phase)._workflow_closing:
         raise PermissionError("workflow admission is closing")
     from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
     from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
@@ -3123,7 +3140,7 @@ async def prepare_workflow_planning(
 
         async def select_native():
             prepared.service.db.automatic_work._workflow_enabled()
-            _check_hooks(runtime, session_id)
+            require_workflow_hooks_idle(runtime, session_id)
             if not binding.guard(False):
                 raise PermissionError("workflow native binding changed")
             selection = controller._provider_selection_for_session(session_id)
@@ -3284,6 +3301,22 @@ async def prepare_workflow_planning(
         prepared._planning_preparation_returned.set()
 
 
+def require_returned_planning(prepared, service, error: BaseException) -> None:
+    """Require the prepared reply’s original planning return for this service."""
+    if (
+        not isinstance(prepared, _PreparedWorkflowReply)
+        or prepared.service is not service
+        or prepared.runtime is not service._runtime
+        or prepared.phase is None
+        or prepared.phase.attempt.purpose != "planning"
+        or not isinstance(error, BaseException)
+    ):
+        raise ValueError("workflow_planning_return_required")
+    returned = prepared.planning_recovery_return()
+    if returned.error is not error:
+        raise ValueError("workflow_planning_return_required")
+
+
 def _finite_owner_return(owner, capacity, operation=None):
     """Require positive native retirement of the actual owner and operation."""
     from tldw_chatbook.Agents.execution_capacity import ExecutionOwner, OwnedOperation
@@ -3303,6 +3336,10 @@ def _finite_owner_return(owner, capacity, operation=None):
 
 
 def _storage_source_current(source=None, *, preparation=None):
+    from tldw_chatbook.Agents.native_source_storage import (
+        STORAGE_SOURCE_CLASS as _STORAGE_SOURCE_CLASS,
+    )
+
     if preparation is not None and (
         not isinstance(preparation, _PreparedWorkflowReply)
         or source is not preparation.source
@@ -3371,12 +3408,10 @@ def _storage_source_current(source=None, *, preparation=None):
 from pathlib import Path as _StoragePath
 
 from tldw_chatbook.Agents.agent_service import (
-    _PreparedWorkflowChild as _STORAGE_NATIVE_CLASS,
+    WorkflowChildPreparation as _STORAGE_NATIVE_CLASS,
 )
 from tldw_chatbook.Agents.workflow_task_scope import (
     WorkflowTaskAuthorization as _STORAGE_AUTH_CLASS,
 )
-
-from .console_agent_sources import _AgentSources as _STORAGE_SOURCE_CLASS
 
 _STORAGE_PATH_CLASS = type(_StoragePath())

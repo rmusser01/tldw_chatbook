@@ -247,6 +247,34 @@ def current_execution_owner() -> ExecutionOwner | None:
     return _current_owner.get()
 
 
+_current_ordinary_tree = ContextVar("ordinary_console_tree", default=None)
+
+
+def current_ordinary_tree(controller=None):
+    tree = _current_ordinary_tree.get()
+    if tree is not None and (controller is None or tree.controller is controller):
+        return tree
+    return None
+
+
+def set_current_ordinary_tree(tree):
+    """Publish or clear the ordinary tree in the originating execution context."""
+    _current_ordinary_tree.set(tree)
+
+
+@contextmanager
+def bind_ordinary_tree(tree):
+    token = _current_ordinary_tree.set(tree)
+    try:
+        if tree is None:
+            yield
+        else:
+            with tree.owner.activate():
+                yield
+    finally:
+        _current_ordinary_tree.reset(token)
+
+
 class ExecutionOwner:
     """A run's root and physical operations, guarded by the runtime lock."""
 
@@ -402,3 +430,20 @@ class OwnedOperation:
         self.owner._invoke_callbacks(callbacks, outcome)
         if released or self.owner.child and outcome is True:
             self.owner.capacity._notify_tool_available()
+
+
+def require_workflow_operation(operation: object) -> None:
+    """Require the native workflow operation and its original capacity owner."""
+    if not isinstance(operation, OwnedOperation):
+        raise PermissionError("native workflow operation required")
+    require_workflow_capacity(operation.owner.capacity, operation.owner)
+
+
+def require_workflow_capacity(capacity: object, owner: object = None) -> None:
+    """Require native capacity and, when present, its original execution owner."""
+    if (
+        not isinstance(capacity, RuntimeCapacity)
+        or owner is not None
+        and (not isinstance(owner, ExecutionOwner) or owner.capacity is not capacity)
+    ):
+        raise PermissionError("native workflow capacity required")

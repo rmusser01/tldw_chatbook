@@ -2470,6 +2470,20 @@ _CONTROLLER_COMPOSE_COUNT_GETTER = (
 )
 
 
+def observe_controller_catalog_entry(
+    underlying: object, tool_id: str,
+) -> tuple[object, tuple[HubTool, EffectiveToolState] | None]:
+    """Read a stock table and its current entry without invoking the provider."""
+    table = inspect.getattr_static(underlying, "_entry_by_llm_name", None)
+    entry = (
+        table.get(tool_id)
+        if type(underlying) is _CONTROLLER_COMPOSE_FACTORY
+        and type(table) is dict
+        else None
+    )
+    return table, entry
+
+
 def controller_factory_current(factory) -> bool:
     if (
         sys.modules.get(__name__) is not _CONTROLLER_COMPOSE_MODULE
@@ -2646,3 +2660,49 @@ _CONTROLLER_COMPOSE_HELPERS = tuple(
     )
     for function in (vars(owner)[name],)
 )
+
+
+class CollisionFilteredMCPProvider:
+    """View over a composed MCP provider that hides collision-excluded entries.
+
+    Registered into the run's registry INSTEAD OF the raw provider, so
+    ``ToolCatalogRegistry.list_catalog()`` (a raw sweep across every
+    registered provider) never surfaces a shadowed MCP entry either --
+    mirrors ``_non_colliding_skill_entries``'s own raw-catalog exclusion
+    invariant (a colliding skill is filtered out before ``SkillToolProvider``
+    is even constructed, so its catalog never contains it). MCP tools are
+    already fully composed by the time this run sees them (T3: composed
+    once, by the caller, on the main loop), so this wraps rather than
+    reconstructs -- a read-time filter only. The underlying provider's own
+    state (its composed catalog, per-turn decision stamps) is never
+    touched, and ``invoke``/``load_schema`` are simple pass-throughs: a
+    filtered-out tool id can never reach them anyway, since the registry's
+    own owner/name caches are built exclusively from this wrapper's
+    (already-filtered) ``list_catalog()``.
+    """
+
+    def __init__(self, provider: Any, allowed_names: frozenset[str]) -> None:
+        self._provider = provider
+        self._allowed_names = allowed_names
+
+    def list_catalog(self) -> list[ToolCatalogEntry]:
+        return [
+            entry
+            for entry in self._provider.list_catalog()
+            if entry.name in self._allowed_names
+        ]
+
+    def hook_operation(self, tool_id: str) -> str | None:
+        if not any(entry.id == tool_id for entry in self.list_catalog()):
+            return None
+        classify = getattr(self._provider, "hook_operation", None)
+        return classify(tool_id) if callable(classify) else None
+
+    def load_schema(self, tool_id: str) -> ToolSchema:
+        return self._provider.load_schema(tool_id)
+
+    def invoke(self, tool_id: str, args: dict) -> ToolResult:
+        return self._provider.invoke(tool_id, args)
+
+
+NATIVE_COLLISION_FILTERED_MCP_PROVIDER = CollisionFilteredMCPProvider

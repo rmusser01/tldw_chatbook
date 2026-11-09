@@ -277,6 +277,7 @@ async def exercise():
     library_code = type(controller)._capture_turn_library_authority.__code__
     first_library_code = preparation.finish_first_library_execution_read.__code__
     library_authorities, first_library_checks = [], []
+    execution_proofs = []
     from tldw_chatbook.Chat.console_dispatch_checkpoint import ConsoleTurnLibraryAuthority
     from tldw_chatbook.Chat.console_ordinary_tree import admit_ordinary_turn
     admission_code = admit_ordinary_turn.__code__
@@ -286,6 +287,7 @@ async def exercise():
             receipts.append(arg)
         if event == 'call' and frame.f_code is admission_code and not witnesses:
             config = frame.f_locals['configuration']
+            execution_proofs.append(config.recovery_user_origin)
             witnesses.append((config.mcp_capture_pending, preparation.original_mcp_capture_matches(
                 controller, session, config, pending=config.mcp_capture_pending,
             )))
@@ -322,8 +324,17 @@ async def exercise():
             turn_id = runtime.accept_received_intent(intent, _configuration_preparation=source)
         record = runtime._turn_custody[turn_id] if turn_id is not None else None
         try:
+            if sys.argv[2] == 'mounted':
+                assert record.request.configuration is configuration
+                proof = record.request.recovery_user_origin
+                recovery = runtime.ensure_archive_recovery()
+                assert proof is not None
+                assert recovery._accepted_proofs[id(proof)] == (proof, turn_id)
             if record is not None:
                 result = await record.task
+            if sys.argv[2] == 'mounted':
+                assert len(execution_proofs) == 1 and execution_proofs[0] is proof
+                assert id(proof) not in recovery._accepted_proofs
             if queued_case:
                 if queue_before_case:
                     assert result.status.value == 'reroute_normal_send'

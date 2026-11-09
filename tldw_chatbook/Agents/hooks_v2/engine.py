@@ -348,7 +348,7 @@ class HookEngine:
 
     def prehold_event(self, event: HookEvent) -> HookEventExecution | None:
         """Admit this producer's finite later event under original ordinary custody."""
-        from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
+        from ..execution_capacity import current_ordinary_tree
 
         if current_ordinary_tree() is None or not self._native_commands_required:
             return None

@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager, contextmanager
-from contextvars import ContextVar
 
-from tldw_chatbook.Agents.activation import _guard, execution
+from tldw_chatbook.Agents.activation import captured_sources, execution
 from tldw_chatbook.Agents.execution_capacity import (
     CapacityRefused,
     WorkOrigin,
@@ -14,99 +12,8 @@ from tldw_chatbook.Agents.execution_capacity import (
 )
 from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
 
-from .console_hook_preparation import hook_preparation_source_current
-from .console_preparation_reads import (
-    _READS_LOCK,
-    ConsolePreparationRead,
-    _observe_locked,
-    _retire,
-)
+from .console_preparation_reads import NativePluginHookPreparation as NativePluginHookPreparation
 from .console_turn_context import _freeze
-
-_submission = ContextVar("native_plugin_hook_submission", default=None)
-
-
-@contextmanager
-def submission_origin(controller, session, configuration, origin):
-    """Bind only the original validated submission task, never event labels."""
-    token = _submission.set(
-        (asyncio.current_task(), controller, session, configuration, origin)
-    )
-    try:
-        yield
-    finally:
-        _submission.reset(token)
-
-
-async def _joined(task, cancel=None):
-    cancelled = None
-    while not task.done():
-        try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError as error:
-            cancelled = error
-            if cancel is not None:
-                cancel()
-        except BaseException:  # noqa: BLE001 - consume the original task below.
-            break
-    try:
-        result = task.result()
-    except BaseException:
-        if cancelled is not None:
-            raise cancelled from None
-        raise
-    if cancelled is not None:
-        raise cancelled
-    return result
-
-
-class NativePluginHookPreparation:
-    """Sticky original Runtime attachment; construction only retains metadata."""
-
-    def __init__(self, runtime):
-        self.runtime = runtime
-        self.app = runtime._app
-        self.capacity = runtime._execution_capacity
-        self.activity = runtime._worktree_activity
-
-    def pin_resources(self):
-        if self.capacity is None:
-            self.capacity = self.runtime._execution_capacity
-        if self.activity is None:
-            self.activity = self.runtime._worktree_activity
-
-    @asynccontextmanager
-    async def capture(self, source, service, configuration, review):
-        request = _Preparation(self, source, service, configuration, review)
-        read = ConsolePreparationRead(
-            self.runtime,
-            request.invoke,
-            source,
-            asyncio.current_task(),
-            source.session_id,
-            asyncio.get_running_loop().create_future(),
-        )
-        with _READS_LOCK:
-            _observe_locked(read, self.runtime._preparation_reads)
-            observer = getattr(source.controller, "_preparation_reads", None)
-            if observer is not None:
-                _observe_locked(read, observer)
-        try:
-            # Admission and original release callbacks stay off the host loop.
-            await _joined(
-                asyncio.create_task(asyncio.to_thread(request.admit)), request.cancel
-            )
-            read._producer = asyncio.create_task(request.invoke())
-            result = await _joined(read._producer, request.cancel)
-            request.check(service)
-            yield result, request
-            request.check(service)
-        finally:
-            try:
-                await _joined(asyncio.create_task(asyncio.to_thread(request.finish)))
-            finally:
-                _retire(read)
-
 
 class _Preparation:
     # This request has no new durable payload. Plugin callbacks retain their
@@ -153,8 +60,9 @@ class _Preparation:
             for row in self.maximum.get("available_skills", ())
             if row.get("plugin_owned") and self.snapshot_store is not None
         )
-        self.sources = _guard.captured_sources(None)
+        self.sources = captured_sources(None)
         self.claim = self.owner = self.operation = None
+        from tldw_chatbook.Agents.run_hooks import native_hook_submission as _submission
         from .console_ordinary_tree import current_ordinary_tree
 
         self.ordinary_tree = current_ordinary_tree(source.controller)
@@ -183,6 +91,8 @@ class _Preparation:
 
     def check_memory(self, service):
         """No external reads or user callbacks under the plugin publication lock."""
+        from .console_hook_preparation import hook_preparation_source_current
+
         issuer, runtime, source = self.issuer, self.issuer.runtime, self.source
         for _key, component, workspace, snapshot in self.snapshots:
             if snapshot is None or not service.published_current(snapshot):
@@ -257,11 +167,13 @@ class _Preparation:
 
     async def join(self, future):
         """Retain the original service Future; cancellation cannot cancel its job."""
-        return await _joined(asyncio.wrap_future(future), self.cancel)
+        from tldw_chatbook.Agents.hooks_v2.ownership import join_hook_worker
+
+        return await join_hook_worker(asyncio.wrap_future(future), self.cancel)
 
     def check(self, service):
         self.check_memory(service)
-        if _guard.captured_sources(None) != self.sources:
+        if captured_sources(None) != self.sources:
             raise RuntimeError("Plugin hook activation source changed.")
 
     def admit(self):
@@ -315,6 +227,118 @@ class _Preparation:
                 )
         finally:
             _hook_preparation.reset(token)
+
+    def require_original_mcp(self):
+        from .console_configuration_preparation import (
+            original_mcp_capture_matches,
+            pending_mcp_witness,
+        )
+
+        self.check(self.service)
+        controller, session = self.source.controller, self.source.session
+        configuration = self.configuration
+        witness = pending_mcp_witness(configuration)
+        if (
+            type(witness) is not tuple
+            or witness[-4] is not configuration
+            or not original_mcp_capture_matches(
+                controller, session, configuration, pending=True
+            )
+        ):
+            raise PermissionError("Original compaction MCP capture changed.")
+
+    async def resolve_compaction_mcp(self):
+        """Capture the original MCP ceiling under this hook's live reservation."""
+        from dataclasses import replace
+        from functools import partial
+        from tldw_chatbook.MCP.console_snapshot import (
+            _CapturedSources,
+            _capture_console_definition_selection,
+            standard_console_sources,
+        )
+        from .console_configuration_capture import (
+            CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
+            _capture_mcp_definition_selection,
+        )
+        from .console_configuration_preparation import (
+            consume_native_mcp_permission_publication,
+        )
+        from .console_preparation_reads import run_preparation_read
+
+        configuration = self.configuration
+        controller, session = self.source.controller, self.source.session
+        mcp = getattr(controller.app, "unified_mcp_service", None)
+        permission = getattr(mcp, "_permission_store", None)
+        def reservation_current():
+            self.check(self.service)
+            if (
+                not self.owner.is_admitted
+                or self.operation is None
+                or getattr(controller.app, "unified_mcp_service", None) is not mcp
+            ):
+                raise PermissionError("Original compaction MCP reservation changed.")
+
+        def current():
+            reservation_current()
+            self.require_original_mcp()
+            if getattr(mcp, "_permission_store", None) is not permission:
+                raise PermissionError("Original compaction MCP permission source changed.")
+
+        with execution(sources=self.sources), self.owner.activate():
+            current()
+
+            async def run_native(callback, *, check=current):
+                return await run_preparation_read(
+                    callback,
+                    creator=controller,
+                    session_id=session.id,
+                    reads=controller._preparation_reads,
+                    observers=(self.issuer.runtime._preparation_reads,),
+                    require_current=check,
+                )
+
+            if permission is None:
+                if not standard_console_sources(mcp):
+                    raise PermissionError("Original compaction MCP permission source unavailable.")
+                publisher = _CapturedSources(mcp)
+
+                def publication_current():
+                    reservation_current()
+                    publisher.require_current()
+
+                permission = await run_native(publisher.permission_owner, check=publication_current)
+                publication = publisher.native_permission_publication
+                if publication is None or publication[2] is not permission:
+                    raise PermissionError("Original compaction MCP publication unavailable.")
+                self.permission = permission
+                self.permission_path = publication[4]
+                self.native_permission_publication = publication
+                consume_native_mcp_permission_publication(self)
+                current()
+
+            policy = {
+                "profile_id": configuration.tool_policy_profile_id,
+                "persona_policy_rules": configuration.persona_policy_rules,
+                "_admitted": True,
+            }
+            if standard_console_sources(mcp):
+                selected = await _capture_console_definition_selection(
+                    mcp, CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
+                    _run_native=run_native, **policy,
+                )
+            else:
+                selected = await run_native(partial(
+                    _capture_mcp_definition_selection, controller.app, **policy,
+                ))
+            current()
+        return replace(
+            configuration,
+            mcp_tool_maximum=frozenset(selected.definitions),
+            mcp_definition_maximum=selected.definitions,
+            mcp_definition_sources=selected.sources,
+            mcp_definition_complete=selected.complete,
+            mcp_capture_pending=False,
+        )
 
     def finish(self):
         if self.operation is not None:

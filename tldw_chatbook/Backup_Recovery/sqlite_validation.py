@@ -1282,12 +1282,30 @@ def _canvas_payload_issues(connection, restrictions):
     return ()
 
 
-def _reference(schema):
+def _open_installed_schema():
     from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
-    with closing(
-        connect_private_sqlite("recovery.validation_schema", ":memory:")
-    ) as reference:
+    return connect_private_sqlite("recovery.validation_schema", ":memory:")
+
+
+def _migrate_installed_catalog(catalog, migration):
+    """Replay fixed installed DDL to derive the exact SQLite catalog."""
+    with closing(_open_installed_schema()) as connection:
+        for sql in sorted(catalog, key=lambda sql: not sql.startswith("CREATE TABLE")):
+            if not sql.startswith("CREATE TABLE sqlite_sequence"):
+                connection.execute(sql)
+        for sql in migration:
+            connection.execute(sql)
+        return tuple(
+            row[0]
+            for row in connection.execute(
+                "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type,name"
+            )
+        )
+
+
+def _reference(schema):
+    with closing(_open_installed_schema()) as reference:
         reference.execute("PRAGMA trusted_schema=OFF")
         with _canvas_schema_access(reference, schema):
             # Execute only the installed catalog, never the candidate's SQL text.
@@ -1422,14 +1440,47 @@ def _check(connection, owner, policy, restrictions):
         return (), version
 
 
+def _write_normalized_candidate(connection, destination, restrictions, cancel):
+    from tldw_chatbook.DB.private_sqlite import (
+        _backup_pages,
+        _connect_recovery_candidate,
+        _restore_destination_mode,
+    )
+
+    from .native_files import create_private_file
+
+    def progress_guard():
+        if cancel.is_set():
+            raise InterruptedError("cancelled")
+        if restrictions.expired():
+            raise ValueError("detached_sqlite_limit")
+
+    with create_private_file(destination):
+        pass
+    with closing(_connect_recovery_candidate(destination, writable=True)) as output:
+        output.enable_load_extension(False)
+        output.execute("PRAGMA trusted_schema=OFF")
+        _backup_pages(
+            connection, output, restore=False, progress_guard=progress_guard, pages=64
+        )
+        _restore_destination_mode(output, "delete", restore=False)
+
+
 def _validate_candidate(
-    owner: OwnerAdapter, candidate: Path, cancel: Event, *, migrate: bool
+    owner: OwnerAdapter,
+    candidate: Path,
+    cancel: Event,
+    *,
+    migrate: bool,
+    normalize_to: Path | None = None,
 ) -> tuple[tuple[str, ...], int | None]:
     """Validate installed content; optionally migrate this disposable file only."""
     from tldw_chatbook.DB.private_sqlite import open_recovery_validation
 
     restrictions = None
     if cancel.is_set():
+        if normalize_to is not None:
+            raise InterruptedError("cancelled")
         return (("cancelled",), None)
     try:
         installed = _installed_owner(owner.owner_id)
@@ -1439,13 +1490,18 @@ def _validate_candidate(
         with open_recovery_validation(
             installed.owner_id,
             candidate,
-            writable=migrate,
+            writable=migrate or normalize_to is not None,
             with_restrictions=True,
             cancel=cancel,
         ) as (connection, restrictions):
             issues, version = _check(connection, installed, policy, restrictions)
             if issues:
                 return (issues, None)
+            if normalize_to is not None:
+                _write_normalized_candidate(
+                    connection, normalize_to, restrictions, cancel
+                )
+                return ((), version)
             if migrate and version != max(policy.versions):
                 shipped_checkpoint = False
                 if installed.owner_id == "db.chachanotes.primary":
@@ -1656,6 +1712,8 @@ def _validate_candidate(
         MemoryError,
         InterruptedError,
     ) as error:
+        if normalize_to is not None:
+            raise
         if cancel.is_set():
             return (("cancelled",), None)
         if restrictions is not None and restrictions.expired():
@@ -1667,6 +1725,19 @@ def _validate_candidate(
         }:
             return ((str(error),), None)
         return (("sqlite_validation_unavailable",), None)
+
+
+def normalize_detached_candidate(
+    owner: OwnerAdapter, source: Path, destination: Path, cancel: Event
+) -> int:
+    """Copy a validated disposable candidate, then revalidate the closed output."""
+    installed = _installed_owner(owner.owner_id)
+    issues, _ = _validate_candidate(
+        installed, source, cancel, migrate=False, normalize_to=destination
+    )
+    if issues:
+        raise ValueError(issues[0])
+    return validated_schema_version(installed, destination, cancel)
 
 
 def validate_candidate(

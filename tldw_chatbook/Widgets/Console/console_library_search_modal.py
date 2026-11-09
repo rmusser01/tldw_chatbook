@@ -2,47 +2,21 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Sequence
 
-from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
-
-from .console_rag_settings_modal import (
+from tldw_chatbook.Library.library_rag_state import (
+    CONSOLE_LIBRARY_SEARCH_QUERY_MAX_CHARS,
     CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
     CONSOLE_RAG_SOURCE_SUMMARY_PREFIX,
-    ConsoleRagSettingsModal,
-    console_rag_source_toggle_label,
+    ConsoleLibrarySearchResult,
     normalize_console_rag_source_types,
+    sanitize_console_library_rag_query,
 )
 
-CONSOLE_LIBRARY_SEARCH_QUERY_MAX_CHARS = 2_000
-
-
-def sanitize_console_library_rag_query(value: Any) -> str:
-    """Return a normalized, validation-safe Console Library query."""
-    sanitized = sanitize_string(
-        str(value or ""), max_length=CONSOLE_LIBRARY_SEARCH_QUERY_MAX_CHARS
-    )
-    query = " ".join(sanitized.strip().split())
-    if not query:
-        return ""
-    if not validate_text_input(
-        query,
-        max_length=CONSOLE_LIBRARY_SEARCH_QUERY_MAX_CHARS,
-        allow_html=False,
-    ):
-        return ""
-    return query
-
-
-@dataclass(frozen=True, slots=True)
-class ConsoleLibrarySearchResult:
-    """One-shot Library search request returned by the modal."""
-
-    query: str
-    run: bool
-    source_types: tuple[str, ...] = CONSOLE_RAG_DEFAULT_SOURCE_TYPES
-
+from .console_rag_settings_modal import (
+    ConsoleRagSettingsModal,
+    console_rag_source_toggle_label,
+)
 
 class ConsoleLibrarySearchModal(ConsoleRagSettingsModal):
     """Search now without reading or changing standing Library policy."""

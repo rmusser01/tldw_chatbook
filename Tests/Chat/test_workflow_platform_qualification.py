@@ -11,6 +11,7 @@ from Tests.Agents.test_hook_permissions import hook_file as _hook_file
 from Tests.Agents.workflow_support import make_workflow_request, plan_data
 from Tests.Chat.test_console_first_send_atomicity import _controller
 from tldw_chatbook.Chat import console_workflow_runs
+from tldw_chatbook.Utils import platform_files
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 
 hook_file = _hook_file
@@ -22,7 +23,7 @@ async def test_unqualified_policy_keeps_actual_granted_ordinary_hooks(
     tmp_path, monkeypatch, hook_file, enabled
 ):
     monkeypatch.setattr(
-        console_workflow_runs, "native_workflow_qualified", lambda: False, raising=False
+        platform_files, "supports_native_process_groups", lambda: False
     )
     marker = tmp_path / "ordinary-ran"
     raw = toml.loads(hook_file.read_text())
@@ -69,7 +70,7 @@ async def test_enabled_flag_cannot_accept_unqualified_native_authority_but_histo
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     monkeypatch.setattr(
-        console_workflow_runs, "native_workflow_qualified", lambda: False, raising=False
+        platform_files, "supports_native_process_groups", lambda: False
     )
     setting = lambda key, default: True if key == "workflow_runs_enabled" else default
     monkeypatch.setattr(run_log, "_setting", setting)

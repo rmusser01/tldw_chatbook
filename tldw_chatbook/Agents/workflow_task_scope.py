@@ -15,8 +15,7 @@ from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
 from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint, WorktreeScope
 
 from .agent_models import ToolCall
-from .automatic_work_budget import AutomaticWorkRefused
-from .run_context import current_run_id
+from .run_context import current_planning_preparation, current_run_id
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
@@ -42,10 +41,13 @@ _PURE_BUILTINS = frozenset({"calculator", "get_current_datetime"})
 
 
 def _refuse(reason: str) -> None:
+    from .automatic_work_budget import AutomaticWorkRefused
+
     raise AutomaticWorkRefused(f"workflow_task_{reason}")
 
 
-def _runtime(phase):
+def require_workflow_runtime(phase: WorkflowPhaseAuthorization) -> ConsoleRuntime:
+    """Return the phase controller’s current attached runtime or refuse."""
     controller = phase._controller
     runtime = getattr(getattr(controller, "app", None), "console_runtime", None)
     if runtime is None:
@@ -59,7 +61,8 @@ def _runtime(phase):
     return runtime
 
 
-def _check_hooks(runtime, session_id: str) -> None:
+def require_workflow_hooks_idle(runtime: ConsoleRuntime, session_id: str) -> None:
+    """Require the original hook engine to have no effects or pending work."""
     # Effectful or unfinished hooks cannot enter a workflow task.
     from tldw_chatbook import config
 
@@ -73,13 +76,13 @@ def _check_hooks(runtime, session_id: str) -> None:
         _refuse("effectful_hooks_unsupported")
     engine = getattr(runtime, "run_hooks_engine", None)
     if engine is not None:
-        from .legacy_hook_ownership import _NativeLegacyHookSource
+        from .legacy_hook_ownership import NativeLegacyHookSource
         from .run_hooks import RunHooksEngine
 
         issuer = getattr(runtime, "_legacy_hooks_source", None)
         if (
             type(engine) is not RunHooksEngine
-            or type(issuer) is not _NativeLegacyHookSource
+            or type(issuer) is not NativeLegacyHookSource
         ):
             _refuse("effectful_hooks_unsupported")
         # Another workflow's source-only capture must actually return before
@@ -112,6 +115,9 @@ def _check_hooks(runtime, session_id: str) -> None:
     engine = engines.get(session_id)
     if engine is not None and engine.definitions:
         _refuse("effectful_hooks_unsupported")
+
+
+_check_hooks = require_workflow_hooks_idle
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -195,9 +201,9 @@ class WorkflowTaskAuthorization:
     def _check_sources(self) -> None:
         for preparation in self._bridge_preparation:
             preparation._check_task_source(self)
-        if _runtime(self.phase) is not self._runtime:
+        if require_workflow_runtime(self.phase) is not self._runtime:
             _refuse("runtime_changed")
-        _check_hooks(self._runtime, self.claim.session_id)
+        require_workflow_hooks_idle(self._runtime, self.claim.session_id)
         if not self.binding.guard(False):
             _refuse("binding_changed")
         root = self.physical_footprint.reads + self.physical_footprint.writes
@@ -279,12 +285,10 @@ class WorkflowTaskAuthorization:
             )
             self._binding_state.append((owner, activity_claim))
         if prepared is not None:
-            from ..Chat.console_workflow_wave import (
-                _workflow_wave_sources,
-            )
+            from ..Chat.console_workflow_wave import require_workflow_wave_sources
 
             if wave is not None:
-                _workflow_wave_sources(wave)
+                require_workflow_wave_sources(wave)
             with self._lock:
                 if (
                     self._bridge_preparation[0] is not prepared
@@ -376,7 +380,7 @@ class WorkflowTaskAuthorization:
         }
 
 
-def _prepare_workflow_task(
+def prepare_workflow_task(
     phase, *, task_id: str, registry, binding
 ) -> WorkflowTaskAuthorization:
     """Issue at most one private preparation per task from original phase custody."""
@@ -397,6 +401,9 @@ def _prepare_workflow_task(
         return authorization
 
 
+_prepare_workflow_task = prepare_workflow_task
+
+
 def _prepare_task(
     phase, *, task_id: str, registry, binding
 ) -> WorkflowTaskAuthorization:
@@ -414,8 +421,8 @@ def _prepare_task(
     ):
         _refuse("private_phase_required")
     phase.check()
-    runtime = _runtime(phase)
-    _check_hooks(runtime, phase.attempt.session_id)
+    runtime = require_workflow_runtime(phase)
+    require_workflow_hooks_idle(runtime, phase.attempt.session_id)
     if type(binding) is not RunAdmittedWorkspaceRoot:
         _refuse("binding_required")
     with execution(phase._ledger):
@@ -650,6 +657,8 @@ def check_task_call(
     call: ToolCall,
 ) -> None:
     """Apply one stable fail-closed restriction without granting permission."""
+    from .automatic_work_budget import AutomaticWorkRefused
+
     try:
         _check_task_call(authorization, registry=registry, call=call)
     except AutomaticWorkRefused:
@@ -778,15 +787,12 @@ class WorkflowPlanningAuthorization:
         )
 
 
-def _prepare_planning_authorization(prepared, registry, allowed):
+def prepare_planning_authorization(prepared, registry, allowed) -> WorkflowPlanningAuthorization:
+    """Bind the approved read-only planning catalog to its prepared reply."""
     return WorkflowPlanningAuthorization(prepared, registry, allowed, _key=_KEY)
 
 
 def current_planning_authorization():
-    from tldw_chatbook.Chat.console_workflow_preparation import (
-        current_planning_preparation,
-    )
-
     prepared = current_planning_preparation()
     if prepared is None:
         return None

@@ -41,7 +41,6 @@ from typing import Any
 
 from loguru import logger
 
-from tldw_chatbook.Chat.console_activity_receipts import ConsoleActivityReceiptService
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
@@ -318,6 +317,9 @@ class ConsoleFleetAttentionConsumer:
         if not statuses:
             return
         if self._receipt_service is not None:
+            from tldw_chatbook.Chat.console_activity_receipts import (
+                ConsoleActivityReceiptService,
+            )
             from .console_runtime import _LazyConsoleActivityReceiptService
 
             with ExitStack() as storage:

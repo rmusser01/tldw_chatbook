@@ -118,10 +118,10 @@ class _CommandEvent:
             getattr(self.service, key, None)
             for key in ("_thread", "_loop", "_coordinator", "_admission", "fences")
         )
-        from tldw_chatbook.Chat.console_agent_sources import current_agent_sources
+        from ..run_context import current_agent_sources
 
         self.agent_sources = current_agent_sources(self.controller)
-        from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
+        from ..execution_capacity import current_ordinary_tree
 
         self.ordinary_tree = current_ordinary_tree(self.controller)
         self.sources = _guard.captured_sources(None)
@@ -170,8 +170,8 @@ class _CommandEvent:
             and parent.is_admitted
         ):
             self.origin = parent.origin
-        from tldw_chatbook.Chat.console_chat_models import ConsoleSubmissionOrigin
-        from tldw_chatbook.Chat.console_plugin_hook_preparation import _submission
+        from tldw_chatbook.Agents.agent_models import ConsoleSubmissionOrigin
+        from tldw_chatbook.Agents.run_hooks import native_hook_submission as _submission
 
         bound = _submission.get()
         try:

@@ -299,7 +299,22 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
         150,
         "Widgets/Library/library_file_notes_workspace.py",
     ),
+    (
+        "ConsoleWorkflowSetup > .workflow-dialog",
+        150,
+        "Widgets/Console/console_workflow_setup.py",
+    ),
+    (
+        "ConsoleWorkflowStatus > .workflow-dialog",
+        150,
+        "Widgets/Console/console_workflow_status.py",
+    ),
     # cap 120 -- base width <= 80
+    (
+        "ConsoleWorkflowHistory > .workflow-dialog",
+        120,
+        "Widgets/Console/console_workflow_status.py",
+    ),
     (
         "NoteCreationModal > Container",
         120,

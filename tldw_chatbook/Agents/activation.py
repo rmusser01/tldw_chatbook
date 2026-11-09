@@ -3,10 +3,11 @@
 import inspect
 import sys
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from functools import wraps
 from pathlib import Path
 from types import FunctionType, ModuleType
+from typing import Any
 
 from tldw_chatbook.Backup_Recovery import bootstrap, profile_paths
 from tldw_chatbook.Backup_Recovery.admission_runtime import RecoveryAdmissionGuard
@@ -53,13 +54,14 @@ def _sources(service):
     paths.append(("agents.history", sandbox or data / "tool_sandbox"))
     writer = getattr(service, "run_log_writer", None)
     log_dir = getattr(writer, "log_dir", None)
-    from tldw_chatbook.Chat.console_agent_sources import console_writer_source
+    if writer is not None:
+        from .native_source_storage import console_writer_source
 
-    source = console_writer_source(writer)
-    if source is not None:
-        paths.append(("agents.history", source.root))
-    elif log_dir is not None:
-        paths.append(("agents.history", log_dir))
+        source = console_writer_source(writer)
+        if source is not None:
+            paths.append(("agents.history", source.root))
+        elif log_dir is not None:
+            paths.append(("agents.history", log_dir))
     catalog = getattr(service, "registry", getattr(service, "_registry", None))
     for provider in getattr(catalog, "_providers", ()):
         paths.extend(_permission_sources(provider))
@@ -93,9 +95,76 @@ _guard = RecoveryAdmissionGuard(
 )
 
 
+@contextmanager
+def owned_goal_storage(service: Any) -> Iterator[None]:
+    """Borrow existing handles; retire fresh handles on their acquiring thread."""
+    from tldw_chatbook.DB.base_db import operation_owned_connection
+
+    persistence = service.persistence
+    registry = getattr(persistence, "workspace_registry", None)
+    databases = (
+        service.db,
+        getattr(persistence, "db", None),
+        getattr(registry, "db", None),
+    )
+    with ExitStack() as stack:
+        seen = set()
+        for database in databases:
+            if database is not None and id(database) not in seen:
+                seen.add(id(database))
+                stack.enter_context(operation_owned_connection(database))
+        yield
+
+
+def captured_sources(service: object) -> tuple:
+    """Observe agent recovery sources using the original task's admission."""
+    return _guard.captured_sources(service)
+
+
 def execution(service=None, *, sources=()):
     """Retain admission through final persistence in this native task/thread."""
     return _guard.execution(service, sources=sources)
+
+
+def selected_sources(service: object) -> tuple:
+    """Observe the current agent recovery paths directly."""
+    return _guard.sources(service)
+
+
+def raw_cli_storage_execution(source):
+    """Retain the exact source tuple already selected by the Raw CLI call."""
+    return _guard.execution(source, resolve=lambda _: source.sources)
+
+
+def capture_callable_source(function):
+    return (
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+    )
+
+
+def callable_source_current(record):
+    function, code, defaults, kwdefaults, entries, closure, cells = record
+    return (
+        type(function) is FunctionType
+        and function.__code__ is code
+        and function.__defaults__ is defaults
+        and function.__kwdefaults__ is kwdefaults
+        and (
+            kwdefaults is None
+            or len(kwdefaults) == len(entries)
+            and all(
+                key in kwdefaults and kwdefaults[key] is value for key, value in entries
+            )
+        )
+        and function.__closure__ is closure
+        and all(cell.cell_contents is value for cell, value in cells)
+    )
 
 
 def _explicit_writer_root(service):
@@ -193,7 +262,7 @@ def guarded(function):
             for source in _permission_sources(kwargs.get(name))
         )
         writer = kwargs.get("run_log_writer")
-        from tldw_chatbook.Chat.console_agent_sources import console_writer_source
+        from .native_source_storage import console_writer_source
 
         source = console_writer_source(writer)
         log_dir = getattr(writer, "log_dir", None)

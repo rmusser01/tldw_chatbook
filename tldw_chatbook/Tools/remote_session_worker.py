@@ -290,7 +290,7 @@ class RemoteSessionWorker:
         Raises:
             SessionStartError: With ``transport`` set per the failure class.
         """
-        from tldw_chatbook.Chat.console_ssh_custody import current_ssh_call
+        from tldw_chatbook.Tools.workspace_tool_executor import current_ssh_call
 
         native = current_ssh_call()
         if native is not None:
@@ -384,7 +384,7 @@ class RemoteSessionWorker:
             target=self._reader, name="ssh-session-reader", daemon=True
         )
         self._reader_thread.start()
-        from tldw_chatbook.Chat.console_ssh_custody import record_session_ready
+        from tldw_chatbook.Tools.workspace_tool_executor import record_session_ready
 
         record_session_ready(self, expected_bundle_stamp(artifact))
         logger.debug(
@@ -657,7 +657,7 @@ class RemoteSessionWorker:
                 any byte of the REQUEST was written (TASK-33401/33421); a
                 request that was written is never reported this way.
         """
-        from tldw_chatbook.Chat.console_ssh_custody import current_ssh_call
+        from tldw_chatbook.Tools.workspace_tool_executor import current_ssh_call
 
         native = current_ssh_call()
         request = native.request if native is not None else None

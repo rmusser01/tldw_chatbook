@@ -669,3 +669,8 @@ _NATIVE_ORDINARY_LIBRARY_FUNCTIONS = tuple(
         ),
     )
 )
+
+
+def is_native_library_provider(provider: object) -> bool:
+    """Recognize the original Library provider class."""
+    return type(provider) is _NATIVE_ORDINARY_LIBRARY_CLASS

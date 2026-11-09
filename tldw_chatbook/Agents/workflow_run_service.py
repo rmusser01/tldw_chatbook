@@ -25,6 +25,7 @@ from .workflow_models import (
     WorkflowSnapshot,
     WorkflowTaskResult,
     WorkflowVerifierEvidence,
+    workflow_root_identity as _workflow_root_identity,
 )
 
 if TYPE_CHECKING:
@@ -43,18 +44,6 @@ class _TaskInputResult:
     value: Any
     error: BaseException | None = field(default=None, repr=False)
     conclusive: bool = True
-
-
-def _workflow_root_identity(chain) -> str:
-    """Content-free captured directory identity for native plan provenance."""
-    return "directory-chain:" + digest(
-        json.dumps(
-            (
-                str(chain.canonical_root),
-                [(i.device, i.inode, i.mode, i.reparse) for i in chain.identities],
-            )
-        )
-    )
 
 
 def _manifest(root, paths, *, authorization=None, validate_path=None):
@@ -279,9 +268,9 @@ class _TaskEvidence:
     dependency_digest: str = ""
 
     def begin_shell(self, provider, request):
-        from tldw_chatbook.Chat.console_raw_cli import RawCliRuntime
         from tldw_chatbook.Tools.raw_cli_executor import (
             RequiredCliOutput,
+            is_native_raw_cli_runtime,
             resolve_shell_argv,
         )
         from tldw_chatbook.Tools.remote_root_types import local_root_path
@@ -291,10 +280,10 @@ class _TaskEvidence:
         resolved = authorization.registry.resolve_owner_for_name("shell_exec")
         if resolved is None or resolved[1] is not provider:
             raise ValueError("native_verifier_provider_changed")
-        if type(
-            provider._runtime
-        ) is not RawCliRuntime or provider._runtime is not getattr(
-            authorization.phase._controller.app, "raw_cli_runtime", None
+        if (
+            not is_native_raw_cli_runtime(provider._runtime)
+            or provider._runtime
+            is not getattr(authorization.phase._controller.app, "raw_cli_runtime", None)
         ):
             raise ValueError("native_verifier_runtime_required")
         spec = next(
@@ -1330,7 +1319,7 @@ class WorkflowRunService:
         """
         from tldw_chatbook.Chat.console_workflow_runs import WorkflowPhaseAuthorization
 
-        from .workflow_task_scope import _runtime
+        from .workflow_task_scope import require_workflow_runtime
 
         if (
             type(phase) is not WorkflowPhaseAuthorization
@@ -1342,12 +1331,12 @@ class WorkflowRunService:
         if _remaining_read is None:
             phase._check_owner()
         else:
-            from tldw_chatbook.Chat.console_workflow_runs import _check_remaining_unused
+            from tldw_chatbook.Chat.console_workflow_runs import require_remaining_unused
 
             if outcome != "cancelled":
                 raise ValueError("original_unused_cancellation_required")
-            _check_remaining_unused(_remaining_read, self, phase)
-        runtime = _runtime(phase)
+            require_remaining_unused(_remaining_read, self, phase)
+        runtime = require_workflow_runtime(phase)
         if (
             any(w.phase is phase for w in runtime._workflow_waves)
             or any(p.phase is phase for p in runtime._workflow_preparations)
@@ -2091,23 +2080,12 @@ class WorkflowRunService:
     ) -> WorkflowSnapshot:
         """Retry recovery recording from an actual physically returned planner."""
         from tldw_chatbook.Chat.console_workflow_preparation import (
-            _PreparedWorkflowReply,
+            require_returned_planning,
         )
 
         from .automatic_work_budget import AutomaticWorkRefused
 
-        if (
-            not isinstance(prepared, _PreparedWorkflowReply)
-            or prepared.service is not self
-            or prepared.runtime is not self._runtime
-            or prepared.phase is None
-            or prepared.phase.attempt.purpose != "planning"
-            or not isinstance(error, BaseException)
-        ):
-            raise ValueError("workflow_planning_return_required")
-        returned = prepared.planning_recovery_return()
-        if returned.error is not error:
-            raise ValueError("workflow_planning_return_required")
+        require_returned_planning(prepared, self, error)
         attempt = prepared.phase.attempt
         ledger = self.db.automatic_work
         with ledger.transaction() as conn:

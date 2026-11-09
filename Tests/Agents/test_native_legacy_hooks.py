@@ -38,7 +38,9 @@ def wait_until(predicate, seconds=5):
 def native_hooks(hook_file, tmp_path):
     store = ConsoleChatStore()
     session = store.create_session(ephemeral=True)
-    runtime = ConsoleRuntime(SimpleNamespace(app_config={}))
+    app = SimpleNamespace(app_config={})
+    runtime = ConsoleRuntime(app)
+    app.console_runtime = runtime
     runtime.set_chat_store(store)
     owner = runtime.ensure_hook_permissions()
     engine = runtime.ensure_run_hooks()
@@ -662,7 +664,9 @@ def test_real_non_chat_event_keeps_empty_metadata_without_creating_chat(
 
     h = native_hooks
     h.configure("pass")
-    runtime = ConsoleRuntime(None)
+    app = SimpleNamespace(app_config={})
+    runtime = ConsoleRuntime(app)
+    app.console_runtime = runtime
     engine = runtime.ensure_run_hooks()
     seen = []
     original = run_hooks._execute_hook

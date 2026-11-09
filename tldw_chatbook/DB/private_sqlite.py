@@ -1942,6 +1942,21 @@ def connect_private_sqlite(
     )
 
 
+def _connect_recovery_candidate(
+    candidate: Path, *, writable: bool
+) -> sqlite3.Connection:
+    return _connect_registered_sqlite(
+        "recovery.validation",
+        candidate,
+        read_only=not writable,
+        must_exist=True,
+        immutable=not writable,
+        isolation_level=None,
+        cached_statements=0,
+        timeout=0,
+    )
+
+
 @contextlib.contextmanager
 def open_recovery_validation(
     owner_id: str,
@@ -1965,18 +1980,8 @@ def open_recovery_validation(
     )
 
     _installed_owner(owner_id)
-    with contextlib.closing(
-        _connect_registered_sqlite(
-            "recovery.validation",
-            candidate,
-            read_only=not writable,
-            must_exist=True,
-            immutable=not writable,
-            isolation_level=None,
-            cached_statements=0,
-            timeout=0,
-        )
-    ) as connection:
+    connection = _connect_recovery_candidate(candidate, writable=writable)
+    with contextlib.closing(connection):
         restrictions = _restrict_connection(connection, cancel)
         with _recovery_restriction_scope(connection, restrictions):
             yield (connection, restrictions) if with_restrictions else connection
@@ -2723,6 +2728,7 @@ def _backup_pages(
     *,
     restore: bool,
     progress_guard: Callable[[], None] | None = None,
+    pages: int = 1,
 ) -> None:
     def abort_busy(status: int, _remaining: int, _total: int) -> None:
         if status in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
@@ -2737,7 +2743,7 @@ def _backup_pages(
 
     source.backup(
         destination,
-        pages=1,
+        pages=pages,
         progress=abort_busy,
         sleep=0.0,
     )

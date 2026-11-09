@@ -9,10 +9,37 @@ separately; an adapter may capture stronger platform identity at publication.
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Callable
 from typing import Protocol
 from uuid import uuid4
 
 from .models import HookEvent
+
+
+async def join_hook_worker[Result](
+    task: asyncio.Future[Result], cancel: Callable[[], None] | None = None
+) -> Result:
+    """Join the original worker before propagating caller cancellation."""
+    cancelled = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as error:
+            cancelled = error
+            if cancel is not None:
+                cancel()
+        except BaseException:  # noqa: BLE001 - consume the original task below.
+            break
+    try:
+        result = task.result()
+    except BaseException:
+        if cancelled is not None:
+            raise cancelled from None
+        raise
+    if cancelled is not None:
+        raise cancelled
+    return result
 
 
 class HookProcessOwner(Protocol):

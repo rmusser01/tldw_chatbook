@@ -610,7 +610,7 @@ def make_invoke_tool(
     from .workflow_task_scope import current_task_authorization
 
     task_authorization = current_task_authorization()
-    from ..Chat.console_workflow_preparation import current_planning_preparation
+    from .run_context import current_planning_preparation
 
     planning = current_planning_preparation()
 
@@ -635,12 +635,12 @@ def make_invoke_tool(
         if refusal is not None:
             return refusal
 
-        from ..Chat.console_ssh_custody import capture_model_ssh
+        from ..Tools.workspace_tool_executor import capture_model_ssh
 
         ssh_call = capture_model_ssh(self.registry, call.name)
         raw_cli_call = None
         if call.name == "shell_exec":
-            from ..Chat.console_raw_cli_custody import capture_model_raw_cli
+            from ..Tools.raw_cli_executor import capture_model_raw_cli
 
             raw_cli_call = capture_model_raw_cli(self.registry, call.name)
 
@@ -660,7 +660,7 @@ def make_invoke_tool(
                 if (task_authorization or planning is not None) and owner
                 else runtime.contextlib.nullcontext(),
             ):
-                from ..Chat.console_ordinary_tree import current_ordinary_tree
+                from .execution_capacity import current_ordinary_tree
 
                 ordinary = current_ordinary_tree()
                 if ordinary is not None and self.registry in ordinary.catalogs:

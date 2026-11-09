@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from ipaddress import ip_address
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse, urlunparse
 
 from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
     URL_BASED_PROVIDER_KEYS,
-    canonical_connection_identity,
-    canonical_endpoint_host,
+    normalize_generic_endpoint_for_compare as normalize_generic_endpoint_for_compare,
     read_schemeless_loopback,
     resolve_provider_endpoint,
+    safe_endpoint_display as safe_endpoint_display,
 )
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Agents.goal_models import GoalProviderRef
+    from .console_provider_gateway import ConsoleProviderResolution
 
 #: Chat settings' footer action that saves an unsaved endpoint.
 SAVE_ENDPOINT_ACTION_LABEL = "Save endpoint & use model"
@@ -47,7 +51,6 @@ _URL_PROVIDER_SETTING_KEYS = (
     "router_base_url",
     "huggingface_router_base_url",
 )
-_INVALID_ENDPOINT_DISPLAY = "invalid endpoint"
 _BUILTIN_PROVIDER_ENDPOINTS = {
     "anthropic": "https://api.anthropic.com/v1",
     "cohere": "https://api.cohere.com",
@@ -337,87 +340,6 @@ def unsaved_endpoint_copy(
     return f"{UNSAVED_ENDPOINT_COPY} Selected endpoint: {selected}. Saved endpoint: {configured}."
 
 
-def safe_endpoint_display(url: str | None) -> str:
-    """Return a credential-free endpoint label safe for user-visible UI.
-
-    Args:
-        url: Raw endpoint value from config or user input.
-
-    Returns:
-        A host/path endpoint label with user info, query strings, and fragments
-        removed. Malformed endpoints return ``"invalid endpoint"`` instead of
-        echoing raw input.
-    """
-    parsed_endpoint = _parse_http_endpoint(url)
-    if parsed_endpoint is None:
-        return "" if not str(url or "").strip() else _INVALID_ENDPOINT_DISPLAY
-    has_scheme, _scheme, hostname, port, _path = parsed_endpoint
-    if not (has_scheme or port is not None or _is_loopback_name(hostname)):
-        # TASK-39042: typed without a scheme or a port, a remote value may be
-        # a pasted key, such as ZAI's ``<32 hex>.<16>``.
-        return _INVALID_ENDPOINT_DISPLAY
-    resolution = _display_resolution(url)
-    if resolution.persisted_endpoint is not None:
-        return resolution.normalized_input
-    legacy_display = _format_endpoint(parsed_endpoint, drop_default_port=False)
-    legacy_resolution = _display_resolution(legacy_display)
-    if legacy_resolution.persisted_endpoint is not None:
-        return legacy_resolution.normalized_input if has_scheme else legacy_display
-
-    if not has_scheme:
-        explicit_legacy_resolution = _display_resolution(f"http://{legacy_display}")
-        if explicit_legacy_resolution.persisted_endpoint is not None:
-            return legacy_display
-    return _INVALID_ENDPOINT_DISPLAY
-
-
-def _is_loopback_name(hostname: str) -> bool:
-    if hostname == "localhost":
-        return True
-    try:
-        return ip_address(hostname).is_loopback
-    except ValueError:
-        return False
-
-
-def _display_resolution(value: str):
-    """Read an endpoint for display as the contract does.
-
-    An OpenAI-compatible reading first, then koboldcpp's, so its native
-    /api/v1/generate route displays as itself (TASK-38963: the adoption toast
-    and the unsaved-endpoint copy read "invalid endpoint" for it).
-    """
-    resolution = resolve_provider_endpoint("custom", value)
-    if resolution.persisted_endpoint is None:
-        resolution = resolve_provider_endpoint("koboldcpp", value)
-    return resolution
-
-
-def normalize_generic_endpoint_for_compare(url: str | None) -> str:
-    """Normalize a generic provider endpoint for stable comparison.
-
-    Args:
-        url: Raw endpoint value from config or user input.
-
-    Returns:
-        Normalized endpoint identity. Empty input returns an empty string, while
-        malformed input returns a non-secret invalid sentinel.
-    """
-    if not str(url or "").strip():
-        return ""
-    url = read_schemeless_loopback(str(url))  # TASK-39042: as the send reads it
-    # TASK-38963 review: the contract's identity comes before the display
-    # rule, so two different endpoints that display alike (``http://kobold``,
-    # ``http://other``) never compare as the one sentinel.
-    identity = canonical_connection_identity("custom", url)
-    if identity is not None:
-        return identity[1]
-    parsed_endpoint = _parse_http_endpoint(url)
-    if parsed_endpoint is None:
-        return _INVALID_ENDPOINT_DISPLAY
-    return _format_endpoint(parsed_endpoint, drop_default_port=True)
-
-
 def _effective_contract_endpoint(provider_key: str, endpoint: str) -> str:
     """Resolve endpoint forms only for adapters governed by the new contract.
 
@@ -432,84 +354,16 @@ def _effective_contract_endpoint(provider_key: str, endpoint: str) -> str:
     return resolution.persisted_endpoint or endpoint
 
 
-def _parse_http_endpoint(
-    url: str | None,
-) -> tuple[bool, str, str, int | None, str] | None:
-    raw_value = str(url or "")
-    raw_url = raw_value.strip()
-    if not raw_url:
-        return None
-    has_unsafe_character = any(
-        character.isspace() or ord(character) < 32 or ord(character) == 127
-        for character in raw_value
+def goal_provider_ref(resolution: ConsoleProviderResolution) -> GoalProviderRef:
+    """Pin resolved execution and credential identity without retaining credentials."""
+    from tldw_chatbook.Agents.goal_models import GoalProviderRef
+
+    return GoalProviderRef(
+        provider=resolution.provider,
+        model=resolution.model,
+        config_ref="api_settings."
+        + (resolution.readiness_key or resolution.execution_key or resolution.provider),
+        authority_ref=resolution.api_key_source or "unauthenticated",
+        endpoint_ref=normalize_generic_endpoint_for_compare(resolution.base_url)
+        or "provider-default",
     )
-    if has_unsafe_character:
-        return None
-    has_scheme = "://" in raw_url
-    candidate = raw_url if has_scheme else f"http://{raw_url}"
-    try:
-        parsed = urlparse(candidate)
-        scheme = parsed.scheme.lower()
-        hostname = parsed.hostname
-        port = parsed.port
-    except ValueError:
-        return None
-    if scheme not in {"http", "https"} or not hostname:
-        return None
-    hostname = hostname.lower()
-    path = parsed.path.rstrip("/")
-    if not _is_allowed_endpoint_host(
-        hostname, port=port, path=path if has_scheme else ""
-    ):
-        return None
-    return (has_scheme, scheme, hostname, port, path)
-
-
-def _is_allowed_endpoint_host(hostname: str, *, port: int | None, path: str) -> bool:
-    """The endpoint contract's host rule, plus a port or path for a single label.
-
-    TASK-38963: a host the contract accepts displays as itself. A single
-    label other than localhost also needs a port, or a path after a typed
-    scheme (review r10e-rev2: a key such as ``sk-abc/def`` has a "path"), so
-    a key pasted into the endpoint field is never echoed. TASK-39041: an IPv6
-    zone id, which the contract refuses, no longer compares as itself.
-
-    Args:
-        hostname: The lower-cased host.
-        port: The typed port, or None.
-        path: The typed path without its trailing "/"; "" when no scheme
-            was typed.
-    """
-    host = canonical_endpoint_host(hostname)
-    if host is None:
-        return False
-    try:
-        ip_address(host)
-        return True
-    except ValueError:
-        pass
-    return (
-        "." in host or host == "localhost" or port is not None or bool(path)
-    )
-
-
-def _format_endpoint(
-    endpoint: tuple[bool, str, str, int | None, str],
-    *,
-    drop_default_port: bool,
-) -> str:
-    has_scheme, scheme, hostname, port, path = endpoint
-    host = hostname
-    if ":" in host and not host.startswith("["):
-        host = f"[{host}]"
-    default_port = (scheme == "http" and port == 80) or (
-        scheme == "https" and port == 443
-    )
-    netloc = (
-        host
-        if port is None or (drop_default_port and default_port)
-        else f"{host}:{port}"
-    )
-    if has_scheme:
-        return urlunparse((scheme, netloc, path, "", "", "")).rstrip("/")
-    return f"{netloc}{path}".rstrip("/")

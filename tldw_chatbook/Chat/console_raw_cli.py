@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass
+import asyncio
 import math
 import threading
 import time
@@ -529,6 +530,79 @@ class _ActiveInvocation:
     done_event: threading.Event
 
 
+class NativeRawCliSource:
+    """App attachment; never grants authority from a session ID or caller label."""
+
+    def __init__(self, runtime):
+        self.runtime, self.app = runtime, runtime._app
+        self.raw = self.app.raw_cli_runtime
+        self.pending = set()
+
+    def capture(self, raw, session_id, invocation_id):
+        from tldw_chatbook.Agents.execution_capacity import CapacityRefused, WorkOrigin
+        from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
+
+        from .console_raw_cli_custody import _UserRawCliCall
+
+        with self.runtime._first_send_source_scope():
+            if raw is not self.raw:
+                raise RuntimeError("original RawCLI runtime changed")
+            call = _UserRawCliCall(self, session_id, invocation_id)
+            with call.activate():
+                call.check()
+                call.capacity = call.capacity or self.runtime.execution_capacity
+                call.activity = call.activity or self.runtime.worktree_activity
+                call.check()
+                with call.activity.prelaunch(
+                    footprint=WorktreeFootprint(opaque=True)
+                ) as claim:
+                    if claim is None:
+                        raise CapacityRefused("raw_cli_activity_busy")
+                    owner = call.capacity.begin_execution(
+                        origin=WorkOrigin.MANUAL,
+                        conversation_id=call.session.persisted_conversation_id or "",
+                    )
+                    try:
+                        operation = owner.reserve_tool()
+                    except BaseException:
+                        owner.finish_root()
+                        raise
+                    try:
+                        with self.runtime._execution_capacity_lock:
+                            call.check_memory()
+                            claim.bind_owner(owner)
+                            call.owner, call.operation, call.claim = (
+                                owner,
+                                operation,
+                                claim,
+                            )
+                            self.pending.add(call)
+                            # Overlap capture with this original pending lifetime.
+                            self.runtime._first_send_sources += 1
+                    except BaseException:
+                        operation.finish()
+                        owner.finish_root()
+                        raise
+            return call
+
+    async def drain(self):
+        pending = tuple(self.pending)
+        for call in pending:
+            call.cancel_unstarted()
+        if not pending:
+            return False
+        task = asyncio.create_task(
+            asyncio.to_thread(lambda: [c.retired.wait() for c in pending])
+        )
+        cancelled = False
+        while True:
+            try:
+                await asyncio.shield(task)
+                return cancelled
+            except asyncio.CancelledError:
+                cancelled = True
+
+
 class RawCliRuntime:
     """Own one launch-local arm bit and all active raw CLI invocations."""
 
@@ -669,7 +743,7 @@ class RawCliRuntime:
         Required output is accepted only by the actual native executor. It remains
         sanitized and obtains completeness only from native stream/cleanup proof.
         """
-        from .console_raw_cli_custody import current_raw_cli_call
+        from tldw_chatbook.Tools.raw_cli_executor import current_raw_cli_call
 
         try:
             custody = current_raw_cli_call(self, request)

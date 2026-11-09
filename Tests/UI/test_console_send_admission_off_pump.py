@@ -82,6 +82,28 @@ class HeldMcpRead:
         service.get_kill_switch = get_kill_switch
 
 
+class HeldNativeMcpRead:
+    """Hold an admitted permission read without replacing the MCP service source."""
+
+    def __init__(self, service, monkeypatch):
+        from tldw_chatbook.MCP.console_snapshot import _CapturedSources
+
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.timed_out = False
+        self.thread = None
+        original = _CapturedSources.read_permission_payload
+
+        def read(capture):
+            if capture.service is service and not self.entered.is_set():
+                self.thread = threading.current_thread().name
+                self.entered.set()
+                self.timed_out = not self.release.wait(timeout=HOLD_SECONDS)
+            return original(capture)
+
+        monkeypatch.setattr(_CapturedSources, "read_permission_payload", read)
+
+
 @pytest.mark.asyncio
 async def test_a_key_typed_while_admission_reads_mcp_is_handled_before_the_read_returns():
     """AC#2/#6: keys keep flowing while the send's admission reads its authority.

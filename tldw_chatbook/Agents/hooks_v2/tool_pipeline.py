@@ -464,7 +464,7 @@ class ToolHookRun:
             call, args=json.loads(prepared.final_arguments), raw_arguments=""
         )
         holds = {}
-        from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
+        from ..execution_capacity import current_ordinary_tree
 
         try:
             for name in (

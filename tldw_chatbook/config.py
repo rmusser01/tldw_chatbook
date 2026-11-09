@@ -8767,17 +8767,8 @@ _CONSOLE_PENDING_FACTS_IDENTITY_SOURCE = (
 )
 
 
-
-# Original callbacks eligible for finite deferred Collections setup only.
-from .config_source_records import (
-    record_config_sources as _record_collections_setup_source,
-)
-from .config_source_records import (
-    record_first_send_sources as _record_first_send_sources,
-)
-
-
-_COLLECTIONS_SETUP_SOURCE = _record_collections_setup_source(
+# Capture original config producers for deferred Collections and first Send.
+_COLLECTIONS_SETUP_SOURCE = _config_participants.record_config_sources(
     globals(),
     (
         (globals(), "current_config_identity"),
@@ -8787,8 +8778,10 @@ _COLLECTIONS_SETUP_SOURCE = _record_collections_setup_source(
         (globals(), "_get_effective_config_path"),
     )
 )
-_FIRST_SEND_PERSISTENCE_SOURCE = _record_first_send_sources(globals())
-del _record_collections_setup_source, _record_first_send_sources
+_FIRST_SEND_PERSISTENCE_SOURCE = _config_participants.record_first_send_sources(globals())
+
+
+first_send_persistence_source_current = _config_participants.first_send_persistence_source_current
 
 
 # --- Moved policy (TASK-36945.2): old import paths resolve lazily ----------

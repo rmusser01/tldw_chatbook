@@ -73,7 +73,6 @@ async def test_consent_revoked_after_a_worker_re_check_drops_the_landing(
     registry.add_folder_binding(_WORKSPACE, root)
     registry.set_change_review_enabled(_WORKSPACE, True)
     registry.set_active_workspace(_WORKSPACE)
-    monkeypatch.setattr(consent, "_initialize_root", lambda _path: None)
 
     main = threading.main_thread().ident
     ui_reads: list[str | None] = []

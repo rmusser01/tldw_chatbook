@@ -557,6 +557,8 @@ async def exercise():
         if sys.argv[1] in {"alias-handler", "alias-handler-after-permission"}:
             from dataclasses import replace
 
+            from tldw_chatbook.Agents import local_tool_dispatch
+
             provider = prepared[0].kwargs["local_provider"]
             aliases = provider._path_specs_by_alias[binding.binding_id]
             original = aliases["fs_read"]
@@ -572,7 +574,7 @@ async def exercise():
             permission_return = provider._verdict_for.__func__.__code__
             handler_dispatch = next(
                 code
-                for code in provider._invoke_detailed.__func__.__code__.co_consts
+                for code in local_tool_dispatch._invoke_detailed.__code__.co_consts
                 if getattr(code, "co_name", None) == "_invoke_allowed"
             )
             refused = []

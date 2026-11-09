@@ -789,11 +789,11 @@ async def test_unqualified_ordinary_command_keeps_original_execution(
     event_case, tmp_path, monkeypatch
 ):
     from tldw_chatbook.Agents.hooks_v2.lifecycle import lifecycle_event
-    from tldw_chatbook.Chat import console_workflow_runs
+    from tldw_chatbook.Utils import platform_files
 
     case = event_case
     monkeypatch.setattr(
-        console_workflow_runs, "native_workflow_qualified", lambda: False
+        platform_files, "supports_native_process_groups", lambda: False
     )
     marker = tmp_path / "ordinary"
     engine = case.runtime.ensure_hooks_v2(

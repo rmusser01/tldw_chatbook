@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import PurePosixPath
-from typing import Annotated, Literal, Self
+from typing import TYPE_CHECKING, Annotated, Literal, Self
 
 from pydantic import (
     BaseModel,
@@ -24,6 +24,9 @@ from .automatic_work_budget import (
     AutomaticWorkSnapshot,
 )
 from .goal_models import GoalBindingRef, GoalProviderRef, VerificationSpec
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Utils.filesystem_identity import DirectoryChain
 
 RECORD_BYTES = 128 * 1024
 WORKFLOW_BYTES = 4 * 1024 * 1024
@@ -58,6 +61,20 @@ WorkflowRuntimeStatus = Literal[
     "completed",
     "removed",
 ]
+
+
+def workflow_root_identity(chain: DirectoryChain) -> str:
+    """Content-free captured directory identity for native plan provenance."""
+    from .goal_iteration import digest
+
+    return "directory-chain:" + digest(
+        json.dumps(
+            (
+                str(chain.canonical_root),
+                [(i.device, i.inode, i.mode, i.reparse) for i in chain.identities],
+            )
+        )
+    )
 
 
 class WorkflowAlreadyExists(AutomaticWorkRefused):

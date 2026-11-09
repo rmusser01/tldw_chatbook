@@ -6731,7 +6731,7 @@ class ConsoleProviderGateway:
         ``fallback_retry``: this call IS that retry, traced on the
         stream-to-complete route the llama.cpp fallback uses.
         """
-        from .console_workflow_preparation import current_planning_preparation
+        from .console_preparation_reads import current_planning_preparation
 
         planning = current_planning_preparation()
         if planning is not None:
@@ -8331,34 +8331,5 @@ _CONTEXT_CAPACITY_DISPLAY_ORIGINALS = (
                 ConsoleProviderGateway._cached_context_window_from_display,
             ),
         )
-    ),
-)
-
-
-# Planning qualifies the same original loop-client cleanup consumer.
-_CONSOLE_PLANNING_LOOP_CLOSE_NATIVE = (
-    ConsoleProviderGateway.aclose_current_loop,
-    ConsoleProviderGateway.aclose_current_loop.__code__,
-    ConsoleProviderGateway.aclose_current_loop.__defaults__,
-    ConsoleProviderGateway.aclose_current_loop.__kwdefaults__,
-    tuple((ConsoleProviderGateway.aclose_current_loop.__kwdefaults__ or {}).items()),
-    ConsoleProviderGateway.aclose_current_loop.__closure__,
-    tuple(
-        (cell, cell.cell_contents)
-        for cell in ConsoleProviderGateway.aclose_current_loop.__closure__ or ()
-    ),
-)
-
-
-_CONSOLE_PLANNING_STREAM_NATIVE = (
-    ConsoleProviderGateway._stream_generic_chat,
-    ConsoleProviderGateway._stream_generic_chat.__code__,
-    ConsoleProviderGateway._stream_generic_chat.__defaults__,
-    ConsoleProviderGateway._stream_generic_chat.__kwdefaults__,
-    tuple((ConsoleProviderGateway._stream_generic_chat.__kwdefaults__ or {}).items()),
-    ConsoleProviderGateway._stream_generic_chat.__closure__,
-    tuple(
-        (cell, cell.cell_contents)
-        for cell in ConsoleProviderGateway._stream_generic_chat.__closure__ or ()
     ),
 )

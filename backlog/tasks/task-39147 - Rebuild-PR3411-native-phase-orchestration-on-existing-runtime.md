@@ -229,6 +229,24 @@ Current-dev attempt lifetime parity: real admitted file fixtures now pass initia
 The retained-requirement fixture's bare object deep-copies to a different identity, so the original maximum fence correctly refuses before plugin verification. Use an unissued immutable stand-in whose copy behavior matches the real opaque ceiling; keep the intended permission refusal and read-count assertions.
 Actual hook-read attribution: diagnostic-only thread profiling identifies the extra pre-commit read in console_ordinary_tree._capture_maximum -> v2_configuration, after the original Send read and before the fresh final admission. Share the existing owner/session/current-read projection with initial footprint classification; it can only choose a conservative worktree scope and never selects or grants a hook. Later footprint recapture stays fresh; native borrow still requires OPAQUE for hook effects and every actual launch/admission check remains fresh. Re-run unchanged read-count, foreign/stale, revocation and positive-target controls without diagnostics.
 Pinned runner relocation: dev moved the Python3.12.11 setup and artifact checks from the aggregate to preflight. The replay kept Ubuntu24.04 on the now-verdict-only aggregate while preflight still used ubuntu-latest. Move the existing supported-runner pin to the job actually installing that exact Python, and restore dev’s aggregate runner. Prove the existing pin regression targets preflight; every other YAML job, step, dependency, check, version and timeout stays identical to dev. Existing ADR124 applies.
+### PR #3480 follow-up for managed qualification, startup and Tool Recovery
+
+Trace each failure to the existing installed SQLite, startup or owned Console boundary. Keep the workflow schema catalogs byte-identical, retain private detached snapshot checks and check actual mounted Stop behavior with its original limits. Verify the original performance tests and leave outstanding failures visible.
+
+ADR required: no. ADR path: [125](../decisions/125-lock-safe-private-sqlite-validation.md), [256](../decisions/256-detached-portable-profile-import.md), [097](../decisions/097-boot-budget-ratchets.md) and [356](../decisions/356-native-phase-orchestration-runtime-ownership.md). These changes reuse the installed SQLite owner, existing startup budgets and the admitted native MCP capture boundary.
+
+Reproduce the two macOS managed-hook failures with the real Darwin boot identity. Replace the provisional initialization test's pre-custody Stop double with a consented legacy Stop hook and observe its real dispatch. Trace the separate post-compaction refusal before changing the production path. Retain approval timing, denial, terminal, audit and memory assertions. Existing ADR356 applies. No new ADR is required for fixture and integration fixes.
+
+Architecture review follow-up. Switch the two new private participant imports to the existing public name for the same operation, then verify the workflow launch and unused settlement paths. Classify the remaining Agents/Chat crossings and identity ratchet deltas against the exact dev base. Keep the existing guards, ownership and budgets. ADR356 applies. The alias migration requires no new ADR.
+
+Cold mounted receipt follow-up. Keep the configuration object and its deferred preparation witness intact through registration. Carry the already issued archive origin separately on the request and add it only to the existing execution copy. Retain the same exact proof acceptance and release operations and verify the original cold receipt, archive origin controls and refusal cases. ADR356 applies. This repairs the existing custody contract and requires no new ADR.
+
+Storage architecture follow-up. Scope legacy catalog assembly to the builder and compare every resulting catalog against the prior tree. Review the counted SQLite staging and bounded input reads against their actual installed boundaries. Keep the architecture checks and recovery behavior. Existing ADR126, ADR256 and ADR356 apply. No new ADR is required because catalog matching, ownership and staging contracts stay the same.
+
+Screen projection follow-up. Move direct turn Undo All planning and per-root outcome assembly into the existing review selection module. Keep the screen event, confirmation, native preparation and apply lifetime, and card publication in place. Keep workflow controller creation and command dispatch in existing Console wiring. Delegate the existing Undo apply sequence with explicit screen callbacks. Verify both original projection ceilings, mounted workflow command routing and Undo All controls. ADR required: no. Existing ADR path: [089](../decisions/089-console-per-turn-change-review-ownership.md) and [210](../decisions/210-console-region-ownership.md). The extraction leaves the same review, consent and revert authorities in place.
+
+Archive catalog follow-up. Project only the existing archive recovery names from the accepted user proof and original current received claim. Keep the existing admission and registry authentication, require the same issuer, turn and session when binding and dispatching, and verify the mounted result and restore cases with the original cleanup and refusal controls. ADR required: no. Existing ADR path: [166](../decisions/166-agent-assisted-archive-recovery.md) and [356](../decisions/356-native-phase-orchestration-runtime-ownership.md). This repairs the existing catalog projection and leaves recovery authorization and storage contracts in place.
+
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -678,7 +696,597 @@ Restored the original visible refusal when reference custody changes; the origin
 
 The Windows managed-plugin job stopped during checkout at a 262-character absolute QA receipt path. Both affected PR workflows now use the repository's existing Windows Git long-path setup before their initial checkout. The repair preserves the receipt and its content-addressed references. Windows qualification is pending on the repaired head.
 
+### PR #3480 qualification and startup follow-up
+
+On fd2872f9500b67d388566c77d20ff6dda4f790a0, [Eval recovery](https://github.com/rmusser01/tldw_chatbook/actions/runs/42539733203) completed successfully across all three runner platforms. [Managed plugin qualification](https://github.com/rmusser01/tldw_chatbook/actions/runs/42539733161), [Perf Guard](https://github.com/rmusser01/tldw_chatbook/actions/runs/42539733128) and [Tool Recovery](https://github.com/rmusser01/tldw_chatbook/actions/runs/42539733126) exposed separate failures. The follow-up routes workflow catalog replays and detached normalization through existing private SQLite validation, defers startup imports until their operations need them, scopes workflow button styling by class and records the resolved MCP capture mode after native admission. AC23 remains open. See the [QA evidence](../../Docs/superpowers/qa/2026-11-07-task-39147-end-to-end-uat.md) for qualification limits.
+
+The macOS provisional initialization fixture now observes one actual consented Stop after approved startup and zero Stops on the four refusal paths. Standalone post-compaction still reaches an unresolved MCP ceiling on the exact-head fixture. That failure and the warm UI-ready budget remain open.
+
+The exact PR-head project-chat lane exposed the same MCP state mismatch as Tool Recovery. The staged state transition passes all four mounted project-chat variants and retains the missing-README rejection. The character provenance fixture now installs its intended store on the runtime before screen wiring. All thirteen character cases pass locally. The held-Enter and P0 failures still require verification.
+
+The architecture lane reproduced six PR-specific failures. Workflow child launch and unused settlement now use the existing public name of the same counted storage operation. The participant guard and both targeted workflow paths pass locally. The Agents/Chat boundary and code-identity counts remain open.
+
+The mounted handoff now retains the original captured configuration through registration and carries the issued archive proof separately. It feeds that same proof into the existing execution copy and cleanup. Cold mounted acceptance, queue-before-publication and changed-trust controls passed locally. The existing stock proof cases and the two targeted Console P0 cases also passed locally. See QA for the remaining storage-source and CI limits.
+
+The storage architecture follow-up keeps catalog construction local to its builder and records the actual persistence census changes for detached SQLite staging and read-only workspace inputs. Both architecture modules and all 38 workflow migration cases passed locally, with identical current and legacy catalogs. ChatScreen projection limits and the other architecture-review checks remain open.
+
+The Console projection follow-up moves Undo All planning and apply coordination to the existing review selection module and lazy workflow construction and dispatch to Console wiring. ChatScreen retains confirmation, native currentness and result publication. The original architecture modules passed with 24520 lines and 741 direct methods. The real mounted native card reverted its original file and retired its worker locally. See QA for local fixture and CI limits.
+
+The mounted workflow fixture now selects its named workspace in the real registry before Console resume. Resume previously reconciled the fixture's active chat to Default, which correctly has no ready folder. The existing command, registry-refusal recovery, and Default passive-binding controls pass locally.
+
+The two mounted draft tests now hold the actual native MCP permission read and call through to its original implementation. The other fixtures retain their existing routes. Both original draft assertions passed on af48390f5b6aa062f1bb5098b4277fdd99a61635 in 22.75 seconds, covering the sent notice after a non-append edit and its absence after a hidden draft was replaced. The cross-tab Send refusal still needs a hold while its named UI hook gate owns the attempt.
+
+The cross-tab compatibility test holds the original launch callback while the UI hook gate still owns the spoken Send. The fixture calls through to real admission and keeps the original timeout, named refusal, single-send and preserved-draft assertions. The two Persona handoff cases use the existing in-memory recording store from screen construction onward. All three cases passed on 161fff615aa2d9ced165a10f5dd20b4fc1a613bf in 20.27 seconds. Both changed test modules passed pinned fatal Ruff checks. UI lane 19 also reported a held character render that never streamed and a mounted archive recovery case that refused an uninstalled MCP source. The latter still reproduces locally.
+
+Both failing Environment fixtures now retain the original Change Review root initializer installed by app wiring. Replacing it after the native issuer captured its owner prevented the folder from becoming ready. The two original mounted tests passed on f33d2607e826ab1272e86b66a4f4ad06fa0db922 in 130.57 seconds, covering real readiness, revocation, worker delivery and retired registry leases. Pinned fatal Ruff passed for both fixture modules. The production initializer, fences, assertions and deadlines are unchanged.
+
+Ordinary catalog capture now projects the two reserved archive recovery names only for the app's accepted user proof matching the current same-store received claim. Binding and dispatch require the original runtime issuer and a genuine provider for that same session and turn. The existing registry, resolved Library policy, confirmation and storage checks still run. The mounted archive fixture uses its isolated profile, original permission store and saved Library policy. Refresh and retired-database cleanup passed in 26.67 seconds and all four button and agent restore variants passed in 90.28 seconds on a043a3a3. The catalog binding and dispatch control, existing session close and foreign cursor controls passed in 12.76 seconds on e85bab25. Three separate native dispatch cases still refuse changed storage on the earlier archive scratch and its prior candidate. GitHub verification remains open.
+
+The Response Rules and Inspector layout fixtures now build their apps inside the active isolated profile. The original native MCP source checks accept the fixture's real bound store. All four original Response Rules variants, both held transport cleanup controls and the original collapsed Inspector case passed locally. The private candidate still needs exact-head CI. See the QA report for the baselines and scope.
+
+Native hook command and plugin preparation now share the original worker join in hook ownership. The join preserves actual worker retirement and cancellation propagation. Four native command custody cases passed and the broader native preparation module matched the unchanged baseline's eight failed node IDs. The two architecture guards report one fewer crossing each. Both still fail on other crossings. ADR230 and ADR356 apply to this mechanical ownership relocation.
+
+Two forecast preflight fixtures now await the original skill trust owner and use its real published service before calling the synchronous context capture. All 20 forecast tests and the isolated bound-skill case passed locally. Standalone cold capture and PostCompact remain separate. No new ADR is needed for fixture initialization.
+
+The Console workflow setup, status and history dialogs now have entries and rules in the existing modal wide tier. ADR150 and ADR161 apply. The base widths and live resize behavior were verified on the mounted dialogs. The original command cases, design and performance guards, generated CSS and exact PR selector preflight passed locally. The private candidate still needs exact-head CI.
+
+The citation edit readiness fixture records the original deferred sync callable and checks that stale or cancelled edits schedule nothing. The full 12-case citation readiness module passed locally. Existing citation and edit authority checks still apply. No new ADR is needed for this test-only worker contract correction.
+
+- Admission-sensitive lane 1 fixture checks now use the mounted destination defaults and await publication of the original skill trust before capture. All ten targeted controls passed locally on d1681aa7. Cold native-start custody and the required CI gate remain open.
+
+Four Temporary-chat quit and close cases now use the original profile-bound MCP source. All nine quit and close tests passed locally. Two more draft replay tests use the existing native permission read hold and passed alongside both earlier draft controls. These fixture-only changes leave production custody in place. The published required aggregate failed and AC23 remains open.
+
+The cold readiness fixture observes the real publication worker schedule while leaving its async callable in place. Both targeted readiness cases passed. The image-only Send fixture now observes the actual runtime custody task with the original launch callback installed. All six attachment readiness tests passed together.
+
+Both first-send import guards now reach the provider locally and expose additional cold loads. The existing idle warm-up payload has one module of headroom. Both MCP run-start scheduling failures also reproduce against passing dev controls. These gates remain open.
+
+
+The Tools chip now uses the actual run-start switch observation when it belongs to the app's live stock MCP source. Unobserved, failed and custom reads retain the original display path. ADR230 applies to the attempt-local observation. Both scheduling failures and the no-observation control passed locally. Direct composition now retains its own switch observation when publishing counts. The catalog fixture explicitly selects the full-tools profile it asserts against. All 14 catalog and scheduling cases passed together. First-send imports and the required CI gate remain open.
+
+Standalone owned PostCompact now resolves the pending MCP definition maximum under the original native hook reservation. It checks the original capture before and after preparation, uses the existing guarded permission publisher for a cold service, and passes a narrowed copy to the existing hook composer. The provider still intersects that maximum with its reviewed component selection. Seven local macOS controls passed, including first publication and refusal of copied configuration and changed service. ADR230, ADR345 and ADR356 apply to the existing ownership and permission boundaries. The required PR check, warm UI budget and architecture-review failures remain open.
+
+The mounted first-send path keeps custody execution, acceptance, persistence and hook initialization on its existing resident owners. Workflow and agent preparation use their original registrations. Reference readers and the writer validator load when those sources are present. Both original import guards passed locally, including Automatic's exact two Library cold loads. The boot and preimport budgets passed. The warm UI census and five architecture-review assertions still fail. ADR230, ADR345 and ADR356 cover the existing ownership boundaries. AC23 remains open.
+
+The existing provider endpoint module now owns the same goal reference constructor, with its result type loaded on use. Goal and workflow authorization compare the same provider, endpoint and credential references. The warm census shed the goal coordinator and script runner and measured 1063/1038. Exact Send import guards, both preimport payloads and five scoped goal controls passed locally. The warm budget, architecture review and AC23 remain open. Existing ADR097 and ADR356 apply.
+
+Console checks the same saved workflow display setting before loading the workflow line. The enabled command and navigation paths passed locally, and the default warm census shed the workflow presentation module at 1062/1038. Existing ADR097 and ADR356 apply. Runtime admission, recovery and the required PR gate remain separate from the view setting. AC23 remains open.
+
+Native plugin hook preparation imports its shared worker join when capturing or joining actual work. The same original issuer and join implementation retain cancellation and resource settlement. Twelve qualified local macOS cases passed, and the warm census shed five hook package modules at 1057/1038. Existing ADR097 and ADR345 apply. AC23 remains open.
+
+The shared provider contract now owns the unchanged endpoint comparison and redaction helpers. Native workflow child preparation imports the same comparison from that owner. Existing Console import paths still work. Scoped endpoint and native launch controls passed, and the upstream guard reports one fewer edge. Existing ADR343 applies. AC23 remains open.
+
+The shared Change Review module now defines the same Undo refusal type. Its original import path remains available. Native ownership can load at startup without loading the revert engine. Eleven engine and four native confirmation controls passed. Warm startup measured 1056/1038. Existing ADR089 applies. AC23 remains open.
+
+The workflow coordinator imports its existing wave module at the original execution and quiescence call sites. The checks and execution bodies are unchanged. Actual overlapping children and coordinator launch and settlement passed with Full agent tools enabled in isolated fixtures. Warm startup measured 1053/1038. The default-light workflow and required PR gate remain open. Existing ADR097 and ADR356 apply.
+
+The original RawCLI issuer now lives with its resident runtime, preserving the initial binding and loading command custody on capture. Five native launch, terminal, refusal and disposal controls passed with exact spawned sources. Two first-send RawCLI persistence cases still fail on both trees. Warm startup measured 1052/1038. Existing ADR094 and ADR356 apply. AC23 remains open.
+
+The native child imports its unchanged first-request plan from AgentService. Console re-exports the same class. Eight qualified native launch, authority replacement and refund cases passed, and the upstream guard removed only the original Console bridge edge. Five architecture assertions and AC23 remain open. Existing ADR356 applies.
+
+Fleet attention loads the existing receipt service at settlement. The same direct and lazy receipt classes and connection checks run for the original callback. Seven focused native controls and both Send and payload guards passed. Warm startup measured 1051/1038. Three mounted cases still hit the same source-selection refusal on both trees. ADR097 and ADR356 apply. AC23 remains open.
+
+The workflow coordinator loads the same automatic work context at its two existing uses. The original context, checks and accounting remain. Seventy-three targeted cases and both Send and payload guards passed. Warm startup measured 1050/1038. ADR097 and ADR356 apply. AC23 remains open.
+
+The raw executor owns the shared invocation context and the original model binding. The same source, tool selection, approval, operation and process cleanup checks remain. Six native controls and both Send and payload guards passed. The upstream scan removed one provider-to-Console import. ADR094 and ADR356 apply. AC23 remains open.
+
+Native commands and Console plugin preparation use the same submission context at its shared hook owner. The original scope, source checks and worker lifetimes remain. Twelve native tests and both Send and payload guards passed. Warm startup measured 1049/1038, and the upstream scan removed one prohibited import. Existing ADR097, ADR230, ADR345 and ADR356 apply. AC23 remains open.
+
+The original plugin hook issuer lives with the preparation lifetime owner. Runtime attaches the same issuer at startup, and the existing worker request loads at capture. Twelve native tests and both Send and payload guards passed. Warm startup measured 1048/1038. Existing ADR097, ADR230, ADR345 and ADR356 apply. AC23 remains open.
+
+Workflow preparation loads the original phase class at its existing exact-class check. The native Undo issuer lives with existing review ownership and attaches at the same Runtime site. Nineteen workflow and four Undo cases passed on the combined tree, including native worker return and actual mounted restore. Both Send and payload guards passed. Warm startup measured 1046/1038. Existing ADR084, ADR089, ADR097 and ADR356 apply. AC23 remains open.
+
+Change Review attaches the same native issuers from the tracking module and loads the original worker sources at capture. Native initialization, snapshot and Undo controls passed locally. One additional failure in the mixed run reproduced on both trees in isolation. Boot and Send payload limits passed and warm startup measured 1045/1038. Existing ADR084, ADR089, ADR097 and ADR356 apply. AC23 remains open.
+
+Workflow storage validation imports its original exact source class from the source owner at the existing check. All 19 native preparation cases and both Send and preimport payload guards passed. The paired warm trace shed console_agent_sources and measured 1044/1038. An untraced run also loaded the timing-sensitive character conversation search and measured 1045/1038. Existing ADR097 and ADR356 apply. AC23 remains open.
+
+The config owner again defines the recorders for its original deferred Collections and first-Send producers. The capture sites and callable records are identical. All 17 scoped native Collections and persistence controls, both Send guards and both preimport payloads passed. Boot measured 685/688, and warm startup shed config_source_records to reach 1043/1038. Existing ADR097 and ADR356 apply. AC23 remains open.
+
+Workflow task narrowing imports the same AutomaticWorkRefused class at its existing raise and catch sites. All 67 task-scope cases, both Send and preimport payload guards and the boot budget passed. Warm startup shed automatic_work_budget to reach 1042/1038. Existing ADR097 and ADR356 apply. AC23 remains open.
+
+Native hooks share the same submission origin enum with Console through the existing agent models owner. The original Console export still resolves to that enum. All 69 installed cases passed on the independent change and 12 passed again after integration. The architecture scan removed one upstream import and still has five open assertions. Existing ADR345 and ADR356 apply.
+
+Workflow and Goal share the original storage lifetime helper with its existing activation owner. Seven scoped native Goal and storage cases passed, including borrowed mounted dispatch, and all 19 native workflow preparation cases passed. The borrowed CLI case still times out in the same retained worker path on the changed and unchanged trees. Both Send and preimport payload guards passed. Boot measured 687/688 and warm startup measured 1041/1038. Existing ADR097, ADR134 and ADR356 apply. AC23 remains open.
+
+Four draft race cases now hold the native permission read and call the original. The committed-spoken-Send case also holds the real Enter dispatch because a busy Console can skip acknowledgement paint. All six targeted cases passed with the original draft, provider and notice assertions. Existing ADR356 applies. AC23 remains open.
+
+The held-Enter scenario waits for the original first-Send settings task to retire before issuing the spoken Send. The actual settings publication fence refused the earlier overlapping attempt. The targeted reruns verified the parked Enter and the original draft, provider and duplicate-send assertions. Existing ADR356 applies. AC23 remains open.
+
+Exact local loaders qualified four detached portable-cache cases and 32 project-chat report and workflow gate checks on the current candidate. The tests use the real cache getter, archive producer and receipt checker. See the QA report for loader scope and startup follow-up. AC23 remains open.
+
+The lane 8 round-trip fixtures hold the original native MCP permission read. The acknowledgement fixture observes actual received intake while leaving the original context builder installed. All seven targeted tests passed with the original paint, draft and provider assertions. Existing ADR356 applies. AC23 remains open.
+
+The workspace executor owns the shared SSH tool-call attachment and binder. Console uses the same attachment for original capture and retirement under ADR181 and ADR356. The focused SSH and import evidence is in QA. The architecture review, warm UI limit and AC23 remain open.
+
+The Console loads compaction hooks on actual compaction. Shared Library search state owns the original query validation, source normalization and result type, and the Console opens the original modal on demand. The existing warm UI census passes at 1038. Both first-Send checks and the payload and boot limits pass locally. Existing ADR097, ADR052 and ADR003 apply. Architecture review and AC23 remain open.
+
+The execution owner now holds the original ordinary tree binding used by native model and tool workers. Console keeps the existing admission, publication and retirement points. Eight Agents-to-Console imports moved to the existing owner. The scoped native, capacity and import checks are recorded in QA. ADR134 and ADR356 apply. Architecture review and AC23 remain open.
+
+Model Raw CLI capture now lives beside the original executor-owned invocation. It still qualifies the same Console runtime, provider and stock executor before taking custody. Native process, import closure and warm census evidence is in QA. ADR093 and ADR356 apply. AC23 remains open.
+
+Native Goal tool dispatch now closes its borrowed Goal storage scope before the admitted ordinary source proves physical return. The existing authorization stays bound across the worker and storage checks. QA records the real borrowed CLI and mounted results. ADR134 and ADR356 apply. AC23 remains open.
+
+The existing Agents run context owns the original workflow preparation binding and readers. Console keeps the exact native reply and registration checks, and its existing readers load the owner on use. QA records the passing native and import controls and the separate changed-receiver failures. ADR097 and ADR356 apply. AC23 remains open.
+
+The first request preserves bounded file reads already selected by the same live native planning catalog. Ordinary light-tool filtering and all invocation checks still apply to their original scopes. QA records actual file reads, plan settlement and remaining refusal cases. ADR285 Task 8F and ADR356 apply. AC23 remains open.
+
+The approved native workflow child keeps its existing fleet and original bounded local tools with the default light setting. The same live preparation and registry supply the tools, and the original task and permission checks govern dispatch. QA records two concurrent native edits under one Change Review window. ADR104, ADR285 Task 8D2 and ADR356 apply. AC23 remains open.
+
+The native wave replacement fixture observes the existing receiving closure in its dispatch module. Both replacement cases now reach their original refusal assertions and leave the outside path untouched. ADR285 and ADR356 govern the unchanged production checks. AC23 remains open.
+
+The shared run context owns the existing agent source issuance and reader used by both native hook families. Console still creates and checks the source at the original site. QA records the source lifetime controls and the remaining architecture failures. ADR356 applies. AC23 remains open.
+
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
+
+### Workflow root provenance
+
+The workflow models own the existing persisted directory-chain fingerprint. The workflow service and returned-planning recovery use the same encoder. The service keeps its existing alias for test callers. The bytes, captured filesystem metadata, approval, worktree protection and recovery rules are unchanged. ADR356 governs the existing behavior and requires no amendment.
+
+On 96628c11, 15 startup, historical protection and native planning cases and all six returned-planning recovery cases passed. The latter include journal failure, recording delivery, unreviewed shutdown and directory and symlink replacement. Both Send and payload guards passed. Boot measured 687 modules and warm UI measured 1038. The unchanged architecture scans remove one private crossing (44 to 43), with 14 upstream crossings and the same five failed assertions. The published required check still fails and AC23 remains open.
+
+### Shared Raw CLI runtime qualification
+
+The existing Raw CLI executor checks the same exact runtime class for model shell capture and workflow verifiers. The verifier still requires its original catalog provider and app-installed runtime. Model capture still checks the platform, provider and executor. Existing approval, process and verifier evidence requirements remain in effect under ADR093 and ADR356.
+
+On 61219ddf, all 15 scoped native Raw CLI and workflow verifier cases passed, including the original real spawned worker, model relay, replaced runtime refusal, bounded output and native checkpoints. Both Send and payload guards passed. Boot measured 687 modules and warm UI measured 1038. The unchanged architecture scan drops only the verifier service's direct Console import (14 to 13), with 43 private crossings and the same five failed assertions. The published required check still fails and AC23 remains open.
+
+### Agent recovery source observation
+
+Console obtains the existing agent recovery source observation through the activation owner. The owner uses the same guard and task identity, returning the existing accepted tuple or observing the original selectors afresh. The activation guard stays private to these callers and all execution and recovery admission behavior is unchanged. ADR285 and ADR356 govern the existing ownership.
+
+On 0f81aced, 54 storage, reference and recovery activation cases, 15 native hook cases, and six native planning, phase-wave and settlement cases passed. Both Send and payload guards passed. Boot measured 687 modules and warm UI measured 1038. The unchanged architecture scan drops six private imports (43 to 37), with 13 upstream crossings and the same five failed assertions. The published required check still fails and AC23 remains open.
+
+### Unused Textual callback record
+
+The combined tree bb8ba736 removes the unused Textual callback record and its sole import. It changes no dispatch behavior. The real two-child workflow overlap and both received and voice reference controls passed. Both Send, payload and boot guards passed, and warm UI measured 1038. The unchanged scan now counts 67 code references against 56, with the other counts, boundaries and five failing assertions intact.
+
+### Workflow runtime and hook preflight
+
+Workflow callers use the named runtime and idle-hook checks from their existing task-scope owner. The same validation runs at the original call sites. ADR285 and ADR356 govern the existing ownership.
+
+On 8839b56e, eight mounted controls passed, including the four hook custody cases, native two-task overlap, cancellation after baseline, duplicate approval and shutdown after initial commit. The original task scope, child launch and partial-attempt cohort had 99 passes and the same failed repair assertion on both the trial and unchanged ad32a04c. Both Send and payload guards passed. Boot measured 687 modules and warm UI measured 1038. The unchanged architecture scan removes four private crossings (37 to 33), with 13 upstream crossings and the same five failed assertions. The published required check still fails and AC23 remains open.
+
+### Catalog ownership of built-in source comparisons
+
+The catalog owner compares its original built-in provider type and retained pure planning inventory. Ordinary composition and workflow preparation use the same checks at their existing sites. ADR285 and ADR356 govern this boundary.
+
+On 2c658512, all four native planning controls passed, including actual bounded reads, refusal of direct writes and suppression of optional tools. Both trees returned 12 passes and the same three ordinary catalog assertion failures. Those cases remain open. Both Send and payload guards passed. Boot measured 687 modules and warm UI measured 1038. The unchanged architecture scan removes three private crossings (33 to 30), with 13 upstream crossings and the same five failed assertions. The published required check still fails and AC23 remains open.
+
+### Workflow operation and capacity checks
+
+The execution capacity owner validates the original operation and capacity objects. The existing launch, wait and close callers validate at their original points. ADR285 and ADR356 govern this boundary.
+
+On 8b284f2d, all 27 original child launch cases and six mounted overlap, refusal, cancellation, duplicate approval and shutdown cases passed. Both Send and payload guards passed. Boot measured 687 modules and warm UI measured 1038. The unchanged architecture scan removes one private crossing (30 to 29), with 13 upstream crossings and the same five failed assertions. The published required check still fails and AC23 remains open.
+
+### Typed workflow launch results
+
+The existing AgentService result types provide the wait and launch return consumed by Console. The previous private names remain aliases for original callers. The original admission and physical return checks still govern those results under ADR285 and ADR356.
+
+On fdd98e42, five native mounted cases passed, including real overlap, cancellation, failed creation return, duplicate approval and shutdown. The manual-gap child fails at the same assertion on both the trial and unchanged d1cbf5c2. The broader launch comparison matched 30 passes, one exclusion assertion failure and ten freshness setup or teardown errors. Those failures remain open. Both Send and payload guards passed. Boot measured 687 modules and warm UI measured 1038. The unchanged architecture scan removes three private crossings (29 to 26), with 13 upstream crossings and the same five failed assertions. The published required check still fails and AC23 remains open.
+
+### Catalog import of the native planning reader
+
+Built-in construction calls the existing native planning reader directly from its run-context owner. The active binding, exact class and runtime registration checks are the same under ADR285 and ADR356.
+
+On 65e9ba2e, four native planning cases and 71 task-scope and ordinary catalog cases passed. Both Send and payload guards passed. Boot measured 687 modules and warm UI measured 1037. The unchanged architecture scan removes the catalog's upward Console import (13 to 12), with 26 private crossings and the same five failed assertions. The published required check still fails and AC23 remains open.
+
+### Native wave resource checks
+
+The wave owner exposes the original resource validation to the native task binder. All live wave validations and their ordering are retained. Two calls with no wave had no effect and were removed. The original quiescence checks still verify physical return under ADR285 and ADR356.
+
+On d7dd4e7d, 67 task scope and six native wave and coordinator cases passed, including real two-child overlap, cancellation after baseline, shutdown, tool return, changed receiver refusal and coordinator retirement. Both Send and payload guards passed. Boot measured 687 modules and warm UI measured 1037. The original architecture scan reports one fewer private crossing, from 26 to 25. Twelve upstream crossings and the same five architecture failures remain. The published PR head still fails the required aggregate and AC23 remains open.
+
+### Unused Library and provider gateway records
+
+Removed two unused Conversation Library metadata records and two unused provider gateway planning records. The live class record, native Library construction registration, planning dispatch and provider loop cleanup remain in their existing owners under ADR356.
+
+The Conversation Library comparison matched 91 passes and seven existing ordinary construction failures. The exact combined tree passed mounted grounded Send. The zero-match reload passed in isolation on both trees, and both mixed runs reproduced the same intermittent stale line after the persisted record was removed. The gateway comparison matched 58 passes and one existing OpenAI Stop transport assertion. All four native planning controls passed on the combined tree, including bounded tools, optional provider suppression and direct-write refusal. The original two Send, two payload and boot guards passed, with 687 boot and 1037 warm UI modules. The original architecture scan reports 64/56 code, 32/27 defaults and 49/43 keyword defaults, with 12 upstream and 25 private crossings. Five architecture assertions and published CI remain red. AC23 stays open.
+
+### Unused Library policy coordinator record
+
+Removed one unused capture tuple from the coordinator. Its actual native validation records, saved policy reads and fail-closed paths remain in place under ADR356.
+
+The policy batch passed 22 cases on both trees. Its parent-only loader could not collect four private child nodes. With the exact child loader all four original project Library policy combinations passed on c896e5e4. Grounded Send and Send Once without Library also passed mounted. Both Send guards, both payload guards and boot passed, with 687 boot and 1037 warm UI modules. The original architecture scan reports 63/56 code, 32/27 defaults and 49/43 keyword defaults with 12 upstream and 25 private crossings. The same five architecture assertions and published CI remain red. AC23 stays open.
+
+### Native agent storage ownership
+
+The existing native agent source, writer validation and physical return checks now live together in the Agents storage owner. Console retains the original aliases. The original selected databases, same-tree check, exact handle return and uncertain cleanup custody remain under ADR285 and ADR356.
+
+On a16c0925, 15 original Goal, physical unwind and native MCP worker cases and six mounted workflow cases passed. Both Send guards, both payload guards and boot passed, with 687 boot and 1037 warm UI modules. The same-loader comparison on the original storage trial matched 84 passes and two reference failures, three passes and 28 ordinary failures, and 38 passes and four scoped hook failures. The stalled negative-drain case was excluded from the scoped comparison and remains open. The architecture scan removes three upstream crossings, from 12 to 9. The same five assertions and the published required check still fail. AC23 stays open.
+
+### Native legacy hook attachment
+
+The existing legacy hook owner names the same source class used by the runtime and workflow preflight. Both test fixtures install their runtime on the fixture app before invoking the normal attachment path. The non-chat case still verifies empty metadata and leaves the chat store and agent bridge unset. Native hook permission, source, process and host return checks remain under ADR345.
+
+On 8cbf1611, all 32 original legacy hook cases and four mounted workflow hook validations passed with real macOS qualification. Both original Send and payload guards and boot passed, with 687 boot and 1037 warm UI modules. The original architecture scan removes one private crossing, from 25 to 24, with nine upstream and the same five failed assertions. Published CI still fails and AC23 stays open.
+
+### Direct Raw CLI storage admission
+
+The existing activation owner exposes the fresh selected-path observation and the original retained Raw CLI storage scope. Console uses them at the existing admission and late receipt storage points. The same source tuple, task and thread admission, physical operation, SQLite handles and cleanup checks remain under ADR285 and ADR356.
+
+On 323a1eb4, ten original native Raw CLI cases passed on macOS with the exact spawned sources. These include cold receipt storage, a real SQLite terminal row, canonical readback, source loss, held admission, host disposal, model relay and worker containment. Both Send and payload guards and boot passed. Boot measured 687 modules and warm UI measured 1037. The original architecture scan removes one private crossing, from 24 to 23. Nine upstream crossings and the same five failed assertions remain. Published CI still fails and AC23 stays open.
+
+### First-Send configuration validation ownership
+
+The installed config owner checks the records it issues for first-Send persistence. Console keeps the captured original checker and its existing current module, runtime, controller, store, quiescence and mutation CAS checks. ADR356 applies to this ownership correction.
+
+On 2458dcdb, both trees completed the real post-Send configuration CAS on an isolated app profile. Replacing the captured checker kept the config bytes and identity intact without invoking the replacement. This directly qualifies publication. The separate survivor test still fails before reaching checker replacement, and the two mounted flag tests fail at the same configuration setup on both trees. All 41 Collections and atomic first-Send tests, both Send and payload guards, and boot passed. Boot measured 687 modules and warm UI measured 1037. The original architecture scan reports 62/56 code, 31/27 defaults and 48/43 keyword defaults, with nine upstream, 23 private crossings and five failed assertions. Published CI still fails and AC23 stays open.
+
+### MCP catalog entry ownership
+
+The MCP provider reads its original catalog table and entry at the existing ordinary bind. Console retains the collision view, definition ceiling and exact table and entry identity checks at dispatch. The unused Console storage alias is gone. The real storage return operation and its test-facing alias stay in place. ADR285 and ADR356 apply to this ownership correction.
+
+On fa847dff and unchanged 512cc575, the same two provider and mounted composition probes passed. They observed the exact table and entry after stock composition, refused an absent entry and refused an entry from a composed subclass. The five original provider tests passed. Both native batches returned seven passes and the same two failures at the killed-MCP replacement assertion and the deferred-permission worker observation. Those cases remain unqualified. Both Send and payload guards and boot passed. Boot measured 687 modules and warm UI measured 1037. The original architecture scan still has five failures, nine upstream imports and 21 private crossings. Published CI still fails and AC23 stays open.
+
+### Live dev reconciliation and local size checks
+
+The private reconciliation incorporates dev b498bc3a. It retains dev's approval
+observations, terminal status reporting, and workflow checks alongside native
+retirement and custody. The workflow and remote artifact selection passed
+287 cases and the approval selection passed 73 cases on the reconciled sources.
+
+On executable tree 4d19509e, the installed config lifetime owner holds the
+original recorders and first-Send validator. Config still publishes the
+records from its own namespace. The Personas dictionary statistics import
+still loads at use. The original config and Personas size limits pass at
+8,956/8,983 and 16,828/16,829 lines. All 216 selected size and boot tests
+passed, as did 41 Collections and atomic first-Send cases, both first-Send
+import guards, both preimport payload guards, and warm UI at 1,037/1,038.
+The exact diagnostic scanner reproduces the reconciled manifest byte for byte.
+
+The exact trial and unchanged reconciliation both completed the direct
+first-Send configuration CAS and refused a replaced checker before
+invocation. Both dictionary suites returned 18 passes and the same 70
+failures, including storage selection refusals in mounted fixtures. The
+five architecture-review failures remain open. This is local evidence
+against dev b498bc3a. AC23 awaits qualified PR-head CI and review.
+
+On c493f95d, all four original mounted project-chat UAT variants passed
+in 115.54 seconds with the real loopback provider and isolated profiles.
+The original checker accepted all four complete receipts.
+
+
+### Ordinary provider observations
+
+The Local and Library providers own their original class comparisons.
+Ordinary composition reads the original immutable Local effects and
+uses the existing catalog reader for the ordered built-in gate table.
+
+On 2c007c7f, all 201 size checks, 85 catalog cases, both mounted Library
+cases, and the six original Send, payload, boot, and warm checks passed.
+The original checker accepted complete receipts from all four mounted
+project-chat variants. Direct controls matched the original objects and
+refused subclasses. The diagnostic inventory reproduced byte for byte.
+The original native SSH selection returned four passes and the same
+three assertion failures on this tree and a0d1eb69. Four private boundary
+crossings were removed. Five architecture assertions remain open.
+
+
+### Native workflow preparation interface
+
+Console uses the named native child preparation type and the existing
+task preparation operation from their Agents owners. The storage check
+still captures the same class object. Task preparation retains its
+accepted phase, registry, scope, and lock checks.
+
+On 2cae33c5, all 94 task scope and child launch cases, four mounted wave
+cases, six finite native return cases, and six Send and startup checks
+passed. The size pins and diagnostic inventory pass. Two private
+crossings were removed. Five architecture assertions remain open.
+
+
+### Virtual CLI source interface
+
+The Virtual CLI provider owns the existing static callback observations.
+Console reads the same provider and parser registry classes by their named
+bindings. Native checks retain the original callback slots, catalog, parser,
+executor, and resource return.
+
+On 841d6455, all 127 provider, parser, and SSH composition cases and all
+six Send and startup checks passed. The actual macOS native comparison
+returned six passes on both trees, including physical SSH return and four
+remote source replacement refusals. The same two local Virtual CLI cases
+failed on both trees at the nonopaque maximum and callback invocation
+assertions. The size pins and diagnostic inventory pass. Four private
+crossings were removed. Five architecture assertions remain open.
+
+
+### Remote dispatch adapter ownership
+
+The remote executor owns the existing wire-to-text adapter and its original
+execute and ping records. Console loads the same adapter when it builds the
+remote executor and preserves the old import. The typed remote Git and URI
+refusals and direct preparation checks remain at their existing boundaries.
+
+The tightened tree b6e602c5 passed all 20 SSH composition cases and all 201
+size checks. The controller pin now records the measured 28,728 lines.
+Its identical production blobs passed all 12 native SSH cases and all six
+Send and startup checks. The combined loopback and composition run matched
+the unchanged tree at 59 passes and one read-count assertion failure.
+The diagnostic inventory passes. Five architecture assertions remain open.
+
+
+### Shared workspace SSH custody
+
+The workspace executor owns model SSH capture and the existing request,
+master, and session return checks beside their original context binding.
+Console retains direct preparation issuance and its original instruction and
+registry checks. Both paths share the same physical return operations.
+The existing activation owner provides the shared callable source checks.
+
+On 394f197a, all six Send and startup checks, 41 atomic first-Send and
+Collections cases, and 17 exact remote bundle cases passed. All four
+mounted project-chat cases passed and the receipt checker accepted them.
+The native SSH comparison matched 13 passes and the two existing local
+Virtual CLI failures. The three initial bare-child probe failures came
+from the local test loader inserting the application into those children.
+The exact isolated bundle run kept the original guard and used the original
+bundle bytes. The size checks and diagnostic inventory pass. Five
+architecture assertions remain open with eight upstream dependencies and
+six private crossings.
+
+
+### Workflow planning interfaces
+
+Console uses the existing planning issuer and asks the Raw Shell provider
+to compare its live schema with the original prospective schema. The
+same registry, bound read scope, policy, and metadata eligibility checks
+remain in their original order.
+
+On af246da0, all 99 task scope and Raw Shell provider cases, six native
+planning cases, and six Send and startup checks passed. The native
+comparison also passed all six cases on the unchanged tree. The size
+checks and diagnostic inventory pass. Three private crossings were
+removed. Five architecture assertions remain open.
+
+
+### Native return validation
+
+The prepared reply and ordinary tree owners perform their existing type
+and source checks before recovery recording and storage retention. The
+phase owner exposes the original unused-acceptance validator. The original
+read, error, owner, and physical return checks still run at the same
+points before recording or releasing resources.
+
+On fa258d00, six storage and settlement cases and ten planning recovery
+cases passed. All ten recovery cases also passed on the unchanged tree.
+The unchanged private import guard reports zero crossings, and size and
+diagnostic inventory checks pass. Four architecture assertions remain
+open. The first mixed import run observed a cold RAG profile read on the
+UI loop during manual Send. Both isolated manual controls passed, and all
+six original Send and startup checks passed on the repeated mixed run.
+
+
+### Workspace consent readers
+
+The Workspace consent owner checks the original registry methods at the
+existing native hook preparation boundary. Console retains its original
+controller, registry, project, and consent checks. The exact installed
+reader tuple and registry namespace remain in the check.
+
+On fbebacd9, all 69 installed hook cases, both mounted consent cases, and
+all six Send and startup checks passed. The direct source controls refused
+replaced methods, instance shadows, changed defaults, and a copied
+namespace. All size checks and the diagnostic inventory pass. Four
+architecture assertions remain open.
+
+
+### Native skill publication and hook source records
+
+The app skill owner records the candidate after the actual app slot
+assignment using the original marker, caller, thread, task, and slot
+checks. Console still checks the original winner and issues the receipt.
+The controller hook reader uses the existing callable source record
+while retaining its original class, descriptor, and namespace checks.
+
+On 83b39ed9, four native receipt cases passed. The stock trust and
+builder comparison matched eight passes and two failures on each tree.
+The original mounted Enter and button tests both failed before the
+configuration SQL observation and remain unqualified. On 9c9b5eb7,
+all 12 installed hook controls, both mounted consent cases, and all six
+Send and startup checks passed. All three identity caps, the private
+import guard, size, and diagnostic inventory pass. Eight upstream
+dependencies remain in the one failing architecture assertion.
+
+
+### Ordinary execution tree ownership
+
+Agents owns the original admitted execution tree, its exact source and
+member checks, and physical return validation. Console retains ordinary
+admission and publication. Workflow preparation reads the original local
+provider and Raw CLI sources from their owners. The old Console test
+import still resolves to the same receipt encoder.
+
+On 84f2ab1e, native two-child overlap, bounded planning reads, all eight
+Goal lifetime cases, and all six Send and startup checks passed. The
+warm census reached 1038 of 1038, and boot used 687 modules against the
+688 limit. The preceding caller update also passed 12 native receipt,
+return, and Goal controls. All three identity caps, private import and
+size checks passed, and the diagnostic inventory matched byte for byte.
+Seven upstream dependencies remain in the one failing architecture
+assertion. The earlier provider comparison had 133 passes and the same
+two failures on both trees. The Library reservation count and reserved
+skill dispatch cases remain unqualified.
+
+On retained tree 5ecb8581, the four mounted project-chat UAT variants
+passed, and the original checker accepted all four complete receipts.
+The missing-README control failed after the real file read as expected,
+and the negative receipt checker accepted the rejection. All seven
+native planning and shell checks passed, including primary planning,
+three prospective verifier cases and three original revocation cases.
+
+The shared runtime producer module now owns the original finite
+preparation read, worker binding, observers, and physical retirement.
+Console keeps the original imports for callers and fixtures. Workflow
+and the installed Collections initializer use the same read at its
+defining module. The original runtime producer class and the moved
+finite read body are unchanged.
+
+On executable 10e04ea6, 32 finite read and producer cases, four native
+workflow cases, both first-Send guards, both payload guards, and the
+boot and warm census passed. Boot measured 686 against the strict 688
+limit. Warm measured 1038 against 1038. All four mounted project-chat
+cases passed and the original checker accepted every complete receipt.
+The diagnostic inventory matched byte for byte. The architecture
+batch passed 222 cases, with the same seven upstream dependencies
+reported by its one failing assertion. The mixed Collections,
+first-Send, and attachment batch matched the unchanged reconciled
+tree with 66 passes and one image-only Send return assertion failure.
+The image-only case remains open. AC23 remains open.
+
+The image-only Send fixture awaits the original visible action from a
+Textual worker. The worker receives the native custody outcome, which
+the button pump hands off to the runtime. The original assertion,
+staged bytes, provider payload, and turn custody checks are preserved.
+
+On executable 5d32fb86 all 67 selected Collections, atomic first-Send,
+and attachment readiness cases passed. Both spoken review outcomes
+passed separately. Two observed isolated runs confirmed native
+custody acceptance and a successful worker result. The reconciled
+tree remains private with the upstream architecture assertion and
+AC23 open.
+
+On reconciled tree e1ea1597, all 99 selected architecture and SQLite
+inventory controls passed, including the original ownership, projection,
+participant naming, and raw connection census cases reported by CI.
+All three original lane 6 failures passed locally. Nine admission
+controls also passed, including manual Send racing a prepared native
+start, all six target revision variants, and two mount cleanup cases.
+
+The lane 15 cross-session Send still timed out at the second provider
+gate while the same case passed on dev b498bc3a. The two neighboring
+Send-start cases passed. Local observation saw two disjoint scratch
+paths, each with an opaque footprint for pending MCP capture. The first
+original lease yielded a claim while the second yielded none. The
+resource and permission checks remain in place. The upstream dependency
+assertion and AC23 remain open.
+
+On the reconciled sources, all eight Response Rules and Inspector
+layout cases and all four original Library outcome cases passed locally.
+The mounted slash Stop and native archive result refresh passed. All
+nine selected installed hook cases passed with the actual macOS boot
+identity, including approved provisional initialization, warm and cold
+PostCompact, and the changed-source and copied-capture refusals.
+The exact published Linux and macOS job results remain separate.
+AC23 remains open.
+
+
+On reconciled tree 6dea1ee1, all four previously failing Perf Guard cases
+passed locally, covering boot modules, warm UI modules, the CSS rule
+count, and preimport LOC. All nine selected UI lane 8 and 22 cases also
+passed, covering pending projection and failed-worker retirement, bound
+workspace consent and revocation, Send acknowledgement, and both tab
+round-trip draft cases. The published required check and the local
+upstream dependency check still fail. AC23 remains open.
+
+On reconciled tree 5cfc7f56, all 146 selected modal tier and citation
+readiness cases passed locally. They included the original reverse tier
+guard and the citation edit readiness failure reported by lanes 32 and
+31. All nine selected Stop, failed-commit discard, and spoken Send
+controls passed, including the original failures from lanes 7, 11,
+17 and 20 and the adjacent Temporary setup Stop control. The published
+required check still fails. Cross-session Send and the local upstream
+dependency assertion remain open, along with AC23.
+
+Ordinary Virtual CLI binding records the stock provider callback slots
+using the existing descriptor-free observation. The receiving check
+refuses a changed callback before review or invocation. The original
+local replacement test failed on 52d6a6d6 by invoking the substitute
+and passed on a8087cac. Eight native controls passed, including local
+held-worker retirement and real SSH stderr return. The original stock
+local nonopaque footprint case still failed on both trees. Both Send
+checks, both payload limits, boot and warm UI limits passed on the
+exact repeat. The first mixed run reproduced an intermittent RAG
+import during manual Send. Both isolated manual controls passed.
+The upstream dependency assertion, published required check and
+AC23 remain open.
+
+### Run-start projection replay fixture
+
+The local run-start coalescing test encountered a full-sync replay already
+queued by the original core-state path. Its test-driven tick deferred before
+projection even though no sync was running. This occurred after provider
+validation. The published lane 3 failure timed out at validation itself.
+
+The fixture uses the adjacent readiness predicate to wait for the real replay
+and pending display reads before each existing test-driven sync. It keeps
+the original deadlines, held provider, clock, manual ticks and assertions.
+The trace on c3ae8586 saw the original pending replay and verified both
+manual ticks and the freshness assertions. On 7a4b10a9 all ten targeted lane
+3, 4 and 5 tests passed in 95.95 seconds. No new ADR is required for this
+test-only change. The published required check and AC23 remain open.
+
+
+### Reconciled Stop, durable projection and Resend checks
+
+On private tree `d3d630af`, all nine selected published lane 31 tests
+passed in 115.60 seconds. They exercised four Stop geometries, three
+durable-commit projection cases, vision-block focus and warm layout.
+The original citation case was covered separately by the 146-case
+modal tier and citation run.
+
+All nine published lane 18 tests passed in 119.93 seconds with a scoped
+exception observer. The mounted Resend click completed in place, and the
+archive test exercised repeated restores and resource retirement. The
+observer saw no mix-in snapshot exception. An earlier mixed run did
+refuse the retry after the click, and that refusal remains unexplained.
+The 212-case retry, SQLite and Resend comparison returned 209 passes
+and the same three viewless attachment failures on the earlier private
+tree and live dev. Those cases remain unqualified.
+
+Twelve original Chat Start cases passed in 30.92 seconds. They cover
+literal request receipts, manual withdrawal, Stop and mount cleanup.
+Cold managed skill custody still needs verification. The published
+required check failed and AC23 remains open.
+
+Local evidence is in `/tmp/pr39147-live-dev-published-ui31-1506.txt`,
+`/tmp/pr39147-live-dev-ui18-nine-mixin-observe-exact-1501.txt`,
+`/tmp/pr39147-live-dev-mixin-retry-storage-controls-1449.txt`,
+`/tmp/pr39147-live-dev-mixin-retry-storage-dev-1455.txt` and
+`/tmp/pr39147-live-dev-chat-start-lifetime-controls-1506.txt`.
+
+### Cold native Chat Start custody
+
+A Chat Start with an original pending skill snapshot now uses the existing
+received turn and custody task. The original coordinator authorization,
+configuration and literal draft reach the same durable cutoff and receipts.
+The managed task retires through the existing runtime without opening a
+prompt chain. The direct warm path remains available under ADR219 and ADR285.
+
+On local tree `5d69fc90`, the cold completion and source Stop regressions
+and both warm mounted controls passed. The completion confirmed the
+conversation and ledger receipts, literal request, provider output, one
+generation charge and complete custody retirement. The source Stop control
+withdrew while the actual preparation was held, preserving the original
+draft with no durable turn or generation charge. On the same cold setup,
+unchanged production refused before acceptance. The observed positive
+confirmed the original conversation checkpoint and exact attempt before
+terminal settlement retired the row.
+
+The same production blobs passed 14 original Chat Start tests, six
+Send/payload/startup guards and the exact diagnostic inventory. The
+architecture check still reports the seven upstream dependencies. Published
+CI and review remain open under AC23.
+
+Local evidence is in
+`/tmp/pr39147-live-dev-cold-start-stop-1527.txt`,
+`/tmp/pr39147-live-dev-cold-start-stock-selector-baseline-1527.txt`,
+`/tmp/pr39147-live-dev-cold-start-stock-selector-observe-1527.txt` and
+`/tmp/pr39147-live-dev-cold-custody-budget-1516.txt`.
+
+### Project-chat receipts after cold Chat Start repair
+
+All four original mounted project-chat variants passed on private tree
+`ff075b09` in 118.08 seconds. Each ran in its own profile and used the real
+loopback provider. The original checker accepted all four complete receipts.
+See `/tmp/pr39147-live-dev-cold-start-uat-1533.txt`, the matching JUnit file,
+and `/tmp/pr39147-live-dev-cold-start-uat-check-1533.txt`.
+
+Two of the three previously failing Send-start tests passed on the same tree.
+They cover queued and received starts ending at their own provider request.
+The cross-session case still failed waiting for the second provider gate,
+consistent with the earlier opaque MCP footprint observation.
+See `/tmp/pr39147-live-dev-lane15-retained-1533.txt`. The published check and
+AC23 remain open.
 
 ## Final Summary
 

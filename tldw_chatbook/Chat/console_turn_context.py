@@ -614,6 +614,14 @@ class ConsoleTurnCustodyRequest:
     _pressed_inputs: Any | None = field(default=None, repr=False)
     _pressed_stash: Any | None = field(default=None, repr=False)
     _pressed_attachment_generation: int | None = field(default=None, repr=False)
+    _recovery_user_origin: object | None = field(default=None, repr=False, compare=False)
+
+    @property
+    def recovery_user_origin(self) -> object | None:
+        """Read the separate UI proof or the original configuration's proof."""
+        if self._recovery_user_origin is not None:
+            return self._recovery_user_origin
+        return self.configuration.recovery_user_origin
 
 
 def _detached_configuration(

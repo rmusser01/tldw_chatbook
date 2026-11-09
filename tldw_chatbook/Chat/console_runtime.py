@@ -1210,10 +1210,10 @@ class ConsoleRuntime:
         self._legacy_hooks_source = None
         self._hook_permissions: HookPermissions | None = None
         self._preparation_reads: set[Any] = set()
-        from .console_plugin_hook_preparation import NativePluginHookPreparation
-        from .console_workflow_runs import native_workflow_qualified
+        from .console_preparation_reads import NativePluginHookPreparation
+        from tldw_chatbook.Utils.platform_files import supports_native_process_groups
 
-        self._native_plugin_hook_preparation_required = native_workflow_qualified()
+        self._native_plugin_hook_preparation_required = supports_native_process_groups()
         self._native_plugin_hook_preparation = (
             NativePluginHookPreparation(self)
             if self._native_plugin_hook_preparation_required
@@ -1350,9 +1350,8 @@ class ConsoleRuntime:
     @property
     def raw_cli_source(self):
         """Attach qualified direct commands to this original app runtime."""
-        from .console_raw_cli import RawCliRuntime
-        from .console_raw_cli_custody import NativeRawCliSource
-        from .console_workflow_runs import native_workflow_qualified
+        from .console_raw_cli import NativeRawCliSource, RawCliRuntime
+        from tldw_chatbook.Utils.platform_files import supports_native_process_groups
 
         if type(getattr(self._app, "raw_cli_runtime", None)) is not RawCliRuntime:
             if self._raw_cli_source is not None:
@@ -1362,7 +1361,7 @@ class ConsoleRuntime:
             if (
                 self._raw_cli_source is None
                 and not self._disposed
-                and native_workflow_qualified()
+                and supports_native_process_groups()
             ):
                 self._raw_cli_source = NativeRawCliSource(self)
             return self._raw_cli_source
@@ -2106,7 +2105,7 @@ class ConsoleRuntime:
 
     def bind_change_review_consent_service(self, service: Any) -> None:
         """Attach the original non-Chat feature without loading native resources."""
-        from tldw_chatbook.Workspaces.change_review_ownership import (
+        from tldw_chatbook.Workspaces.change_tracking import (
             _NativeInitializationIssuer,
         )
 
@@ -2115,9 +2114,9 @@ class ConsoleRuntime:
                 "Change Review initialization owner already bound or closed"
             )
         self._change_review_consent_service = service
-        from .console_workflow_runs import native_workflow_qualified
+        from tldw_chatbook.Utils.platform_files import supports_native_process_groups
 
-        if native_workflow_qualified():
+        if supports_native_process_groups():
             service._native_expected = True
             service._native = _NativeInitializationIssuer(
                 self, service, service._registry
@@ -2999,7 +2998,7 @@ class ConsoleRuntime:
                 record.archive_conversation_id = None
             if self._archive_recovery is not None and record.request is not None:
                 self._archive_recovery.release_user_proof(
-                    record.request.configuration.recovery_user_origin
+                    record.request.recovery_user_origin
                 )
             record.request = None
             record.inputs.attachments = ()
@@ -3029,12 +3028,13 @@ class ConsoleRuntime:
         queue_authorization: Any | None = None,
         wake_authorization: Any | None = None,
         goal_authorization: Any | None = None,
+        chat_start_authorization: Any | None = None,
         terminal_callback: Callable[[bool], None] | None = None,
         recover_before_acceptance: bool = True,
     ) -> str:
-        from . import console_runtime_preparation
+        from . import console_received_dispatch
 
-        return console_runtime_preparation.accept_turn(
+        return console_received_dispatch.accept_turn(
             self,
             request,
             origin=origin,
@@ -3042,6 +3042,7 @@ class ConsoleRuntime:
             queue_authorization=queue_authorization,
             wake_authorization=wake_authorization,
             goal_authorization=goal_authorization,
+            chat_start_authorization=chat_start_authorization,
             terminal_callback=terminal_callback,
             recover_before_acceptance=recover_before_acceptance,
         )
@@ -3167,13 +3168,14 @@ class ConsoleRuntime:
         queue_authorization: Any | None,
         wake_authorization: Any | None,
         goal_authorization: Any | None,
+        chat_start_authorization: Any | None = None,
         raise_on_refusal: bool,
         hook_read: Any = None,
         first_send_source: tuple,
     ) -> Any:
-        from . import console_runtime_preparation
+        from . import console_received_dispatch
 
-        return await console_runtime_preparation._run_custodied_turn(
+        return await console_received_dispatch._run_custodied_turn(
             self,
             record,
             origin=origin,
@@ -3181,6 +3183,7 @@ class ConsoleRuntime:
             queue_authorization=queue_authorization,
             wake_authorization=wake_authorization,
             goal_authorization=goal_authorization,
+            chat_start_authorization=chat_start_authorization,
             raise_on_refusal=raise_on_refusal,
             hook_read=hook_read,
             first_send_source=first_send_source,
@@ -3257,9 +3260,9 @@ class ConsoleRuntime:
     async def _persist_first_send_when_quiescent(
         self, config, identity, app_config, controller, store
     ) -> None:
-        from . import console_runtime_preparation
+        from . import console_received_dispatch
 
-        return await console_runtime_preparation._persist_first_send_when_quiescent(
+        return await console_received_dispatch._persist_first_send_when_quiescent(
             self,
             config,
             identity,
@@ -3955,9 +3958,9 @@ class ConsoleRuntime:
                     budget,
                     **owner_options,
                 )
-                from .console_workflow_runs import native_workflow_qualified
+                from tldw_chatbook.Utils.platform_files import supports_native_process_groups
 
-                if native_workflow_qualified():
+                if supports_native_process_groups():
                     from tldw_chatbook.Agents.hooks_v2.native_commands import (
                         NativeCommandEvents,
                     )
@@ -4094,10 +4097,11 @@ class ConsoleRuntime:
         configuration=None,
         _hook_read=None,
         test_only=False,
+        _standalone_compaction=False,
     ):
-        from . import console_runtime_preparation
+        from . import console_hook_preparation
 
-        return await console_runtime_preparation.prepare_hooks_v2(
+        return await console_hook_preparation.prepare_hooks_v2(
             self,
             session_id,
             reason=reason,
@@ -4105,6 +4109,7 @@ class ConsoleRuntime:
             configuration=configuration,
             _hook_read=_hook_read,
             test_only=test_only,
+            _standalone_compaction=_standalone_compaction,
         )
 
     def get_hooks_v2(self, session_id: str) -> Any:
@@ -4675,8 +4680,8 @@ class ConsoleRuntime:
         if self.ensure_activity_receipt_service() is None or self._disposed:
             return None
         from tldw_chatbook.Agents.plain_chat_tool_surface import (
+            AppToolKillSwitch,
             light_surface_configured,
-            tool_kill_switch_engaged,
         )
         from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 
@@ -4693,18 +4698,15 @@ class ConsoleRuntime:
             from tldw_chatbook.Workspaces.change_review_finalization import (
                 ChangeReviewFinalizationCoordinator,
             )
-            from tldw_chatbook.Workspaces.change_review_ownership import (
+            from tldw_chatbook.Workspaces.change_tracking import (
+                NativeUndoIssuer,
                 _NativeSnapshotIssuer,
             )
 
-            from .console_workflow_runs import native_workflow_qualified
+            from tldw_chatbook.Utils.platform_files import supports_native_process_groups
 
-            if native_workflow_qualified():
+            if supports_native_process_groups():
                 change_native = _NativeSnapshotIssuer(self)
-                from tldw_chatbook.Workspaces.change_revert_ownership import (
-                    NativeUndoIssuer,
-                )
-
                 self._change_revert_native = NativeUndoIssuer(self)
 
             def _publish_change_review(item: Any) -> None:
@@ -4759,7 +4761,7 @@ class ConsoleRuntime:
             # turned on Full agent tools; read per send, so a switch flipped
             # in setup or the MCP hub applies on the next send.
             light_tool_surface=light_surface_configured,
-            tool_kill_switch=functools.partial(tool_kill_switch_engaged, self._app),
+            tool_kill_switch=AppToolKillSwitch(self._app),
             storage_provider=lambda: self._app.services.storage,  # ADR-250 s6
         )
         # PR3a-2 Task 4: the survivor-completion attention consumer (durable
@@ -5252,10 +5254,10 @@ class ConsoleRuntime:
                 and getattr(self._app, "console_runtime", None) is self
             ):
                 from tldw_chatbook.Agents.legacy_hook_ownership import (
-                    _NativeLegacyHookSource,
+                    NativeLegacyHookSource,
                 )
 
-                self._legacy_hooks_source = _NativeLegacyHookSource(
+                self._legacy_hooks_source = NativeLegacyHookSource(
                     self, self._run_hooks_engine, owner
                 )
                 self._run_hooks_engine._native_source = self._legacy_hooks_source

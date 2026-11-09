@@ -1430,9 +1430,7 @@ class BuiltinToolProvider:
         # [tools] gates that already govern them, which default to DISABLED:
         # this changes reachability, not the default posture. TASK-545 P2 adds
         # the mutating tools on the same terms.
-        from tldw_chatbook.Chat.console_workflow_preparation import (
-            current_planning_preparation,
-        )
+        from .run_context import current_planning_preparation
 
         for entry in (
             () if current_planning_preparation() is not None else _GATEABLE_BUILTINS
@@ -2643,7 +2641,7 @@ class ToolCatalogRegistry:
             and not self._authenticated_review_provider(provider)
         ):
             return ToolResult.blocked("Review authority is unavailable.")
-        from ..Chat.console_ordinary_tree import current_ordinary_tree
+        from .execution_capacity import current_ordinary_tree
 
         ordinary = current_ordinary_tree()
         if ordinary is not None and self in ordinary.catalogs:
@@ -2924,6 +2922,19 @@ _NATIVE_ORDINARY_BUILTIN_IMPLEMENTATIONS = tuple(
     )
     if isinstance(function, type(lambda: None))
 )
+
+
+def is_native_builtin_provider(provider: object) -> bool:
+    """Recognize the catalog's original built-in provider class."""
+    return type(provider) is _NATIVE_ORDINARY_BUILTIN_PROVIDER
+
+
+def planning_builtin_selection_changed(provider: BuiltinToolProvider, tools: tuple) -> bool:
+    """Check the retained planning inventory and its original pure tool types."""
+    return tuple(provider._tools.items()) != tools or any(
+        type(tool) not in _NATIVE_ORDINARY_ALWAYS_ON_CLASSES
+        for tool in provider._tools.values()
+    )
 
 
 # Planning qualifies only these original always-on implementations; no optional

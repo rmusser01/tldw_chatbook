@@ -12,6 +12,8 @@ from textual.widgets import Button
 from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
 from tldw_chatbook.Workspaces.registry_service import WorkspaceRegistryServiceError
 
+from .wiring import workflows_enabled as workflows_enabled
+
 WORKFLOW_VIEW_ERRORS = (
     ValueError,
     RuntimeError,
@@ -153,13 +155,6 @@ def workflow_view_error(context: str, error: BaseException) -> str:
     return f"{operation} unavailable · {reason}"
 
 
-def workflows_enabled() -> bool:
-    from tldw_chatbook.Agents.run_log import _setting
-    from tldw_chatbook.config import coerce_bool_setting
-
-    return coerce_bool_setting(_setting("workflow_runs_enabled", False), False)
-
-
 class WorkflowViewReads:
     """Join finite presentation reads before the host retires its database owners."""
 
@@ -274,9 +269,9 @@ class ConsoleWorkflowsController:
             )
 
     def open_setup(self, conversation_id=None):
-        from tldw_chatbook.Chat.console_workflow_runs import native_workflow_qualified
+        from tldw_chatbook.Utils.platform_files import supports_native_process_groups
 
-        if not native_workflow_qualified():
+        if not supports_native_process_groups():
             self.screen.notify(
                 "Native workflows are unavailable on this platform.", severity="warning"
             )

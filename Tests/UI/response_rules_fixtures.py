@@ -16,7 +16,9 @@ from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBa
 
 @asynccontextmanager
 async def mounted_rules_console(tmp_path, size=(80, 24)):
-    app = _build_test_app()
+    from tldw_chatbook.config import get_user_data_dir
+
+    app = _build_test_app(user_data_dir=get_user_data_dir())
     app.chachanotes_db = CharactersRAGDB(tmp_path / "console-rules.sqlite", "rules-ui")
     from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 

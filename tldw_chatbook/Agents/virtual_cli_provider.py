@@ -510,7 +510,7 @@ class VirtualCliProvider:
         name = tool_id.split(":", 1)[-1]
         if name != VIRTUAL_CLI_TOOL_NAME:
             return ToolResult(ok=False, error=f"Unknown virtual CLI tool: {name}")
-        from ..Chat.console_ordinary_tree import current_ordinary_tree
+        from .execution_capacity import current_ordinary_tree
 
         ordinary = current_ordinary_tree()
         if ordinary is not None:
@@ -589,7 +589,7 @@ class VirtualCliProvider:
                     if authority is None
                     else self._registries_by_alias[authority.alias]
                 )
-                from ..Chat.console_ssh_custody import bind_model_ssh
+                from ..Tools.workspace_tool_executor import bind_model_ssh
 
                 bind_model_ssh(self, authority, registry)
                 content = registry.execute(command, argv)
@@ -827,7 +827,7 @@ class VirtualCliProvider:
 
 
 # Original provider/parser bindings, read without invoking replacement descriptors.
-_NATIVE_VIRTUAL_CLASS = VirtualCliProvider
+NATIVE_VIRTUAL_CLASS = VirtualCliProvider
 _NATIVE_VIRTUAL_METHODS = tuple(
     (name, value)
     for name, value in vars(VirtualCliProvider).items()
@@ -876,3 +876,13 @@ _NATIVE_VIRTUAL_CALLBACK_FIELDS = (
     "_root_guard",
     "_authority_scope",
 )
+
+
+def observe_virtual_callbacks(provider: VirtualCliProvider) -> tuple[tuple[str, object], ...]:
+    """Read the original callback slots without invoking their descriptors."""
+    from inspect import getattr_static
+
+    return tuple(
+        (name, getattr_static(provider, name, None))
+        for name in _NATIVE_VIRTUAL_CALLBACK_FIELDS
+    )

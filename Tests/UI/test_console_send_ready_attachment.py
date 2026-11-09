@@ -258,15 +258,16 @@ async def test_a_ready_send_with_only_an_image_staged_sends_the_image(monkeypatc
         send = composer.query_one("#console-send-message", Button)
         store = console._ensure_console_chat_store()
         session_id = store.ensure_session().id
-        turn_ids: list[str] = []
-        original_launch = console._prompt_queue._launch_chain
+        turn_tasks: list[asyncio.Task] = []
+        runtime = console._console_runtime()
+        original_create = runtime._create_custody_task
 
-        def record_launch(draft: str, target_session_id: str) -> str:
-            turn_id = original_launch(draft, target_session_id)
-            turn_ids.append(turn_id)
-            return turn_id
+        def record_custody(coroutine):
+            task = original_create(coroutine)
+            turn_tasks.append(task)
+            return task
 
-        monkeypatch.setattr(console._prompt_queue, "_launch_chain", record_launch)
+        monkeypatch.setattr(runtime, "_create_custody_task", record_custody)
         composer.load_draft("")
         image = _attachment("photo.png", _STAGED_KINDS[0][1])
         assert store.add_pending_attachment(session_id, image)
@@ -274,9 +275,13 @@ async def test_a_ready_send_with_only_an_image_staged_sends_the_image(monkeypatc
         composer._sync_current_action_state()
         assert _send_state(send) == (False, False)
 
-        assert await console._send_console_message_from_visible_action() is True
-        assert turn_ids
-        await console._console_runtime().wait_for_turn(turn_ids[0])
+        # The worker route waits for the result of the runtime-owned Send.
+        async def send_from_worker():
+            assert await console._send_console_message_from_visible_action() is True
+
+        await console.run_worker(send_from_worker(), exit_on_error=False).wait()
+        (turn_task,) = turn_tasks
+        await turn_task
 
         assert store.pending_attachments(session_id) == []
         users = [m for m in store.messages_for_session(session_id) if m.role == "user"]
@@ -440,7 +445,7 @@ async def test_a_cold_refresh_that_returns_early_still_converges_the_controls(
         real_settings = store.session_settings
         real_handoff = console._session._maybe_refresh_stale_default_console_settings
         real_set_timer = console.set_timer
-        real_publish = console._sync_native_console_chat_ui
+        real_run_worker = console.run_worker
 
         def settings(target):
             if fire("setup_raises", after_read=False):
@@ -459,10 +464,10 @@ async def test_a_cold_refresh_that_returns_early_still_converges_the_controls(
                 requests.append(("retry", state["disposed"]))
             return real_set_timer(*args, **kwargs)
 
-        def publish(*args, **kwargs):
-            if sys._getframe(1).f_code.co_name == "_refresh":
+        def run_worker(*args, **kwargs):
+            if kwargs.get("group") == "console-readiness-publication":
                 requests.append(("publish", state["disposed"]))
-            return real_publish(*args, **kwargs)
+            return real_run_worker(*args, **kwargs)
 
         monkeypatch.setattr(reads, "run_preparation_read", read)
         monkeypatch.setattr(spend, "_readiness_runtime", runtime)
@@ -477,7 +482,7 @@ async def test_a_cold_refresh_that_returns_early_still_converges_the_controls(
             console._session, "_maybe_refresh_stale_default_console_settings", handoff
         )
         monkeypatch.setattr(console, "set_timer", set_timer)
-        monkeypatch.setattr(console, "_sync_native_console_chat_ui", publish)
+        monkeypatch.setattr(console, "run_worker", run_worker)
 
         composer.load_draft("describe this")
         image = _attachment("photo.png", _STAGED_KINDS[0][1])

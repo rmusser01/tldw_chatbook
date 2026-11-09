@@ -32,12 +32,9 @@ from loguru import logger
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Workspaces.change_tracking import (
     ChangeTrackingError,
+    RevertRefusedError as RevertRefusedError,
     ShadowRepoService,
 )
-
-
-class RevertRefusedError(ChangeTrackingError):
-    """The revert was refused before touching anything (active run)."""
 
 
 @dataclass(frozen=True)

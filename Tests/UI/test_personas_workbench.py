@@ -12399,18 +12399,16 @@ class TestPersonaHumanIdentityRemoval:
                 resolve_character_authority_id=resolve_authority_for_capture,
             ),
         )
-        screen = ChatScreen(runtime_app)
+        from tldw_chatbook.Chat.console_runtime import ensure_console_runtime
+
         store = _CapturingStore()
+        ensure_console_runtime(runtime_app).set_chat_store(store)
+        screen = ChatScreen(runtime_app)
         baseline = ConsoleSessionSettings(
             provider="anthropic",
             model="claude-3-haiku",
         )
 
-        monkeypatch.setattr(
-            ChatScreen,
-            "_ensure_console_chat_store",
-            lambda self: store,
-        )
         monkeypatch.setattr(
             ConsoleSessionController,
             "_default_console_session_settings",

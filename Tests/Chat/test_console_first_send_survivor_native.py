@@ -169,7 +169,7 @@ async def exercise():
         os._exit(0)
     producer_invoked = []
     if sys.argv[2] == 'producer_replaced':
-        from tldw_chatbook.Chat import console_first_send_persistence as persistence
+        from tldw_chatbook.Chat import console_received_dispatch as persistence
         persistence._native_config_current = lambda: producer_invoked.append(True)
     child_release.set()
     if engine is not None:

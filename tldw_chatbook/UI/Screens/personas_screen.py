@@ -107,7 +107,6 @@ from ...Character_Chat.expression_generation import (
     compose_expression_prompt,
     compose_visual_identity_prompt,
 )
-from ...Character_Chat.local_chat_dictionary_service import statistics_from_record
 from ...Character_Chat.persona_list_paging import page_persona_profiles
 from ...Character_Chat.persona_visual_identity import (
     LocalPersonaVisualIdentityAuthority,
@@ -5527,6 +5526,8 @@ class PersonasScreen(BaseAppScreen):
         unavailable", exactly as a failed ``get_statistics`` call did.
         """
         try:
+            from ...Character_Chat.local_chat_dictionary_service import statistics_from_record
+
             return statistics_from_record(record, dictionary_id=int(entity_id))
         except Exception:
             logger.warning("Could not derive dictionary statistics")

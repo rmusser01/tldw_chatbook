@@ -56,7 +56,9 @@ def _quit_dialogs(app) -> list[ConfirmationDialog]:
 
 
 def _app_with_quit_recorder(monkeypatch, events: list[str]):
-    app = _build_test_app(configured_default="chat")
+    from tldw_chatbook.config import get_user_data_dir
+
+    app = _build_test_app(configured_default="chat", user_data_dir=get_user_data_dir())
     _configure_native_ready_console(app)
 
     async def _record_quit() -> None:

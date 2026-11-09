@@ -92,8 +92,6 @@ async def test_a_bound_workspace_lands_through_the_real_consent_service(
     registry.add_folder_binding(_WORKSPACE, root)
     registry.set_change_review_enabled(_WORKSPACE, True)
     registry.set_active_workspace(_WORKSPACE)
-    # Root preparation (the shadow history repo) is not what this checks.
-    monkeypatch.setattr(consent, "_initialize_root", lambda _path: None)
 
     main = threading.main_thread().ident
     reads: list[tuple[str, tuple]] = []

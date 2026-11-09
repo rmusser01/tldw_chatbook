@@ -11,6 +11,7 @@ import pytest
 from textual.widgets import Button, Static
 
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+from tldw_chatbook.UI.Console_Modules import review_selection
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_narrow_layout import _compositor_text
 from Tests.UI.test_destination_shells import _wait_for_selector
@@ -99,13 +100,13 @@ def _row(row_id: int, root: Path, **overrides) -> dict:
 
 
 def _prepare(provider: _Provider):
-    prepare = getattr(chat_screen_module, "_prepare_console_turn_undo", None)
+    prepare = getattr(review_selection, "prepare_console_turn_undo", None)
     assert callable(prepare), "turn-level Undo All planner is missing"
     return prepare(provider, "run-1")
 
 
 def _apply(provider: _Provider, plan):
-    apply_plan = getattr(chat_screen_module, "_apply_console_turn_undo", None)
+    apply_plan = getattr(review_selection, "apply_console_turn_undo", None)
     assert callable(apply_plan), "turn-level Undo All executor is missing"
     return apply_plan(provider, plan)
 
@@ -163,7 +164,7 @@ def test_prepare_refuses_duplicate_root_windows_before_any_diff_or_preflight(tmp
             2: [ChangedFile(path="second.txt", status="A", adds=1, dels=0)],
         },
     )
-    ambiguous = getattr(chat_screen_module, "_ConsoleTurnUndoAmbiguousError", None)
+    ambiguous = getattr(review_selection, "ConsoleTurnUndoAmbiguousError", None)
     assert ambiguous is not None, "ambiguous-window refusal type is missing"
 
     with pytest.raises(ambiguous, match="multiple change windows"):
@@ -176,7 +177,7 @@ def test_prepare_refuses_duplicate_root_windows_before_any_diff_or_preflight(tmp
 
 def test_prepare_refuses_tracking_error_and_active_run_without_mutation(tmp_path):
     root = tmp_path / "workspace"
-    unavailable = getattr(chat_screen_module, "_ConsoleTurnUndoUnavailableError", None)
+    unavailable = getattr(review_selection, "ConsoleTurnUndoUnavailableError", None)
     assert unavailable is not None, "safe Undo All refusal type is missing"
 
     errored = _Provider(
@@ -209,7 +210,7 @@ def test_prepare_refuses_a_background_run_targeting_any_turn_root(tmp_path):
         },
     )
     provider.active_roots.add(str(root_b))
-    unavailable = chat_screen_module._ConsoleTurnUndoUnavailableError
+    unavailable = review_selection.ConsoleTurnUndoUnavailableError
 
     with pytest.raises(unavailable, match="finish or stop"):
         _prepare(provider)
@@ -228,7 +229,7 @@ def test_apply_rechecks_preflight_and_refuses_new_edits_before_any_revert(tmp_pa
     )
     plan = _prepare(provider)
     provider.preflight_by_row = {1: ["a.txt"]}
-    stale = getattr(chat_screen_module, "_ConsoleTurnUndoStalePreflightError", None)
+    stale = getattr(review_selection, "ConsoleTurnUndoStalePreflightError", None)
     assert stale is not None, "stale-confirmation refusal type is missing"
 
     with pytest.raises(stale, match="changed while the confirmation was open"):
@@ -248,7 +249,7 @@ def test_apply_refuses_when_an_already_warned_file_changes_again(tmp_path):
     provider.disk_state_by_row = {1: {"a.txt": "sha256:first"}}
     plan = _prepare(provider)
     provider.disk_state_by_row = {1: {"a.txt": "sha256:second"}}
-    stale = chat_screen_module._ConsoleTurnUndoStalePreflightError
+    stale = review_selection.ConsoleTurnUndoStalePreflightError
 
     with pytest.raises(stale, match="changed while the confirmation was open"):
         _apply(provider, plan)

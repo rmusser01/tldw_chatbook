@@ -142,7 +142,7 @@ def _prepare_native_reply(
     on_tool_surface_selected: native_host.Callable[[int], None] | None = None,
     _workflow_preparation: native_host.Any | None = None,
 ):
-    from .console_workflow_preparation import current_planning_preparation
+    from .console_preparation_reads import current_planning_preparation
 
     planning = current_planning_preparation()
     if planning is not None and planning is not _workflow_preparation:
@@ -1258,6 +1258,7 @@ def _prepare_native_reply(
                     activity_round_ordinal=planning.activity_round_ordinal,
                 )
         tool_activity.observe(step, planning_deriver.active_round_ordinal)
+        self._observe_approval_step(session_id, run_id, step)
 
     def on_resolved_target(run_id: str, provider: str, model: str) -> None:
         for index, summary in enumerate(subagents):
@@ -1277,6 +1278,7 @@ def _prepare_native_reply(
             break
 
     def on_step(step: native_host.AgentStep, agent_kind: str, run_id: str) -> None:
+        self._observe_approval_step(session_id, run_id, step)
         if agent_kind == native_host.AGENT_KIND_PRIMARY and run_id:
             self._live_primary_runs[conversation_id] = run_id
         # PR 2a (task-3): AgentService now attributes every step to its
@@ -1836,7 +1838,7 @@ def _prepare_native_reply(
     if scratch_root is not None and scratch_lease is not None:
         from tldw_chatbook.Agents.run_log import RunLogWriter, resolve_log_root
 
-        from .console_agent_sources import current_agent_sources
+        from .console_preparation_reads import current_agent_sources
 
         run_log_root: native_host.Path | None = None
         original_sources = current_agent_sources()
@@ -1974,9 +1976,8 @@ def _prepare_native_reply(
             progress_owner_id=progress_owner_id,
             message_inbox=message_inbox,
         )
-    if light_surface:
-        # No fleet and no progress inbox: either would add fleet or
-        # read_agent_messages tools the light surface does not offer.
+    # The approved workflow child uses the fleet for custody, with no nested spawn.
+    if light_surface and (_workflow_preparation is None or planning is not None):
         fleet_coordinator = message_inbox = None
     plugin_root_id = ""
     plugin_producer_pin = None
@@ -2195,7 +2196,14 @@ def _prepare_native_reply(
         on_tool_terminal=on_tool_terminal,
         on_tool_result_terminal=on_tool_result_terminal,
         on_run_terminal=lambda run_id: self._on_live_run_terminal(
-            run_id, plugin_run_terminal if plugin_entries else on_run_terminal
+            run_id,
+            plugin_run_terminal if plugin_entries else on_run_terminal,
+            observation_owners=(
+                mcp_provider,
+                local_provider,
+                virtual_cli_provider,
+                raw_shell_provider,
+            ),
         ),
         run_model_scope=native_host.functools.partial(
             self._live_usage_run_scope,
@@ -2466,18 +2474,18 @@ def _prepare_native_reply(
         run_cancelled = (
             outcome is not None and outcome.status == native_host.RUN_CANCELLED
         )
-        self._clear_raw_shell_progress(
-            raw_shell_progress_run_ids, cancelled=run_cancelled
+        from .console_tool_activity import finish_approval_activity
+
+        finish_approval_activity(
+            self,
+            session_id,
+            tool_activity,
+            tool_activity_run_ids,
+            raw_shell_progress_run_ids,
+            run_cancelled,
+            (mcp_provider, local_provider, virtual_cli_provider, raw_shell_provider),
+            log=native_host.logger,
         )
-        try:
-            tool_activity.finish(run_cancelled)
-        except Exception as exc:  # noqa: BLE001 — display cannot prevent run teardown
-            native_host.logger.warning(
-                "Console tool activity display could not be settled ({})",
-                type(exc).__name__,
-            )
-        for activity_run_id in tool_activity_run_ids:
-            self._tool_activity_runs.pop(activity_run_id, None)
         if self._buddy_sink is not None:
             for buddy_run_id in primary_buddy_run_ids:
                 self._buddy_sink.release_run(buddy_run_id)

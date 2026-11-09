@@ -139,6 +139,12 @@ from ..Console_Modules.agent import (
 )
 from ..Console_Modules.prompt_queue import ConsolePromptQueueRegion
 from ..Console_Modules.realtime import CONSOLE_REALTIME_CHIP_MESSAGES
+from ..Console_Modules.review_selection import (
+    ConsoleTurnUndoAmbiguousError,
+    ConsoleTurnUndoUnavailableError,
+    run_console_turn_undo,
+    prepare_console_turn_undo,
+)
 from ..Console_Modules.dispatch_recovery import ConsoleDispatchRecoveryRegion
 from ..Console_Modules.left_rail import (
     CONSOLE_DISCARD_DEFAULT_RETRY_ID,
@@ -621,7 +627,7 @@ from ...Widgets.Console.console_citation_sources_modal import (
 )
 from ...Widgets.Console.console_generation_card import generation_card_signature
 from ...Widgets.Console.console_video_card import video_card_signature
-from ...Widgets.Console.console_library_search_modal import (
+from ...Library.library_rag_state import (
     CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
     normalize_console_rag_source_types,
 )
@@ -976,180 +982,6 @@ def _spawn_os_notification_thread(notify: Callable[[], object]) -> None:
     except RuntimeError:
         # Optional desktop delivery must not suppress the bridge's in-app toast.
         logger.debug("OS notification skipped: thread_start_failed (RuntimeError)")
-
-
-class _ConsoleTurnUndoUnavailableError(RuntimeError):
-    """A card-level Undo All cannot proceed without touching disk."""
-
-
-class _ConsoleTurnUndoAmbiguousError(_ConsoleTurnUndoUnavailableError):
-    """One run has multiple snapshot windows for the same canonical root."""
-
-
-class _ConsoleTurnUndoStalePreflightError(_ConsoleTurnUndoUnavailableError):
-    """New edited-since files appeared after the user saw the confirmation."""
-
-
-@dataclass(frozen=True, slots=True)
-class _ConsoleTurnUndoPlan:
-    """Exact rows, paths, and warnings behind one card confirmation."""
-
-    rows_paths: tuple[tuple[dict, tuple[str, ...]], ...]
-    root_labels: tuple[str, ...]
-    edited_since: tuple[str, ...]
-    edited_keys: frozenset[tuple[str, str]]
-    disk_state: tuple[tuple[str, str, str], ...]
-    total_files: int
-
-
-def _console_turn_undo_run_active(provider: Any, roots: tuple[str, ...]) -> bool:
-    """Read the provider's root-aware run probe with legacy fallback."""
-    root_probe = getattr(provider, "run_active_for_root", None)
-    if callable(root_probe):
-        return any(bool(root_probe(root)) for root in roots)
-    probe = getattr(provider, "run_active", None)
-    return bool(probe()) if callable(probe) else False
-
-
-def _prepare_console_turn_undo(provider: Any, run_id: str) -> _ConsoleTurnUndoPlan:
-    """Build one safe whole-turn revert plan.
-
-    This synchronous function performs provider/git reads and is therefore
-    called only through ``asyncio.to_thread`` by the mounted screen.
-    Duplicate-root windows are refused before any diff or preflight read: the
-    compact card does not expose enough baseline ordering to consent safely.
-    """
-    turn = provider.turn_for_run(run_id)
-    if turn is None or not turn.rows:
-        raise _ConsoleTurnUndoUnavailableError(
-            "Undo All is unavailable because this turn has no change snapshots."
-        )
-
-    seen_roots: set[str] = set()
-    for row in turn.rows:
-        root = str(row.get("root") or "")
-        if not root:
-            raise _ConsoleTurnUndoUnavailableError(
-                "Undo All is unavailable because a change snapshot has no workspace."
-            )
-        canonical = os.path.normcase(os.path.normpath(root))
-        if canonical in seen_roots:
-            raise _ConsoleTurnUndoAmbiguousError(
-                "This turn has multiple change windows for the same workspace."
-            )
-        seen_roots.add(canonical)
-    roots = tuple(str(row["root"]) for row in turn.rows)
-    if _console_turn_undo_run_active(provider, roots):
-        raise _ConsoleTurnUndoUnavailableError(
-            "A run is active on this workspace — finish or stop the run first."
-        )
-
-    rows_paths: list[tuple[dict, tuple[str, ...]]] = []
-    for row in turn.rows:
-        tracking_error = str(row.get("tracking_error") or "").strip()
-        if tracking_error:
-            raise _ConsoleTurnUndoUnavailableError(
-                f"Undo All is unavailable: {tracking_error}"
-            )
-        changes = provider.changed_files(row)
-        paths = tuple(dict.fromkeys(str(change.path) for change in changes))
-        if paths:
-            rows_paths.append((row, paths))
-    if not rows_paths:
-        raise _ConsoleTurnUndoUnavailableError(
-            "Undo All is unavailable because no changed files can be restored."
-        )
-
-    multi_root = len(rows_paths) > 1
-    leaf_labels = [
-        Path(str(row["root"])).name or str(row["root"]) for row, _ in rows_paths
-    ]
-    root_labels = tuple(
-        str(row["root"]) if leaf_labels.count(label) > 1 else label
-        for (row, _paths), label in zip(rows_paths, leaf_labels)
-    )
-    edited_keys: set[tuple[str, str]] = set()
-    edited_labels: list[str] = []
-    disk_state: list[tuple[str, str, str]] = []
-    for (row, paths), root_label in zip(rows_paths, root_labels):
-        root = str(row["root"])
-        preflight = provider.preflight_revert(row, list(paths))
-        disk_state.extend(
-            (root, str(path), str(fingerprint))
-            for path, fingerprint in preflight.disk_state.items()
-        )
-        for path in preflight.edited_since:
-            key = (root, str(path))
-            if key in edited_keys:
-                continue
-            edited_keys.add(key)
-            edited_labels.append(f"{root_label}/{path}" if multi_root else str(path))
-    return _ConsoleTurnUndoPlan(
-        rows_paths=tuple(rows_paths),
-        root_labels=root_labels,
-        edited_since=tuple(edited_labels),
-        edited_keys=frozenset(edited_keys),
-        disk_state=tuple(disk_state),
-        total_files=sum(len(paths) for _row, paths in rows_paths),
-    )
-
-
-def _apply_console_turn_undo(provider: Any, plan: _ConsoleTurnUndoPlan) -> list:
-    """Revalidate a confirmed plan, then invoke the existing revert engine."""
-    from tldw_chatbook.Workspaces.change_revert import RevertOutcome
-
-    roots = tuple(str(row["root"]) for row, _paths in plan.rows_paths)
-    if _console_turn_undo_run_active(provider, roots):
-        raise _ConsoleTurnUndoUnavailableError(
-            "A run is active on this workspace — finish or stop the run first."
-        )
-
-    current_edited: set[tuple[str, str]] = set()
-    current_disk_state: list[tuple[str, str, str]] = []
-    for row, paths in plan.rows_paths:
-        root = str(row["root"])
-        preflight = provider.preflight_revert(row, list(paths))
-        current_edited.update((root, str(path)) for path in preflight.edited_since)
-        current_disk_state.extend(
-            (root, str(path), str(fingerprint))
-            for path, fingerprint in preflight.disk_state.items()
-        )
-    if (
-        current_edited - plan.edited_keys
-        or tuple(current_disk_state) != plan.disk_state
-    ):
-        raise _ConsoleTurnUndoStalePreflightError(
-            "Files changed while the confirmation was open. Open Review and try again."
-        )
-
-    outcomes: list = []
-    multi_root = len(plan.rows_paths) > 1
-    for index, ((row, paths), root_label) in enumerate(
-        zip(plan.rows_paths, plan.root_labels)
-    ):
-        try:
-            row_outcomes = provider.revert(row, list(paths))
-        except Exception as exc:  # noqa: BLE001 - retain earlier disk outcomes
-            error = f"not processed: {str(exc)[:240]}"
-            for (_pending_row, pending_paths), pending_label in zip(
-                plan.rows_paths[index:], plan.root_labels[index:]
-            ):
-                outcomes.extend(
-                    RevertOutcome(
-                        path=(f"{pending_label}/{path}" if multi_root else str(path)),
-                        ok=False,
-                        error=error,
-                    )
-                    for path in pending_paths
-                )
-            break
-        outcomes.extend(
-            replace(outcome, path=f"{root_label}/{outcome.path}")
-            if multi_root
-            else outcome
-            for outcome in row_outcomes
-        )
-    return outcomes
 
 
 def _consume_console_roleplay_writer_completion(
@@ -15229,12 +15061,9 @@ class ChatScreen(BaseAppScreen):
             status_chips_position = resolve_status_chips_position(
                 getattr(self.app_instance, "app_config", {}) or {}
             )
-            from ..Console_Modules.workflows import (
-                ConsoleWorkflowLine,
-                workflows_enabled,
-            )
+            if wiring.workflows_enabled():
+                from ..Console_Modules.workflows import ConsoleWorkflowLine
 
-            if workflows_enabled():
                 yield ConsoleWorkflowLine()
             temporary, temporary_capture_on = temporary_segment_state(self)
             status_chips = ConsoleStatusChips(
@@ -18665,7 +18494,7 @@ class ChatScreen(BaseAppScreen):
             STOP_COMMAND_HANDLER_ID: partial(run_controls.stop_command, self),
             RESEARCH_COMMAND_HANDLER_ID: self._console_command_research,
             GOAL_COMMAND_HANDLER_ID: self._console_command_goal,
-            WORKFLOW_COMMAND_HANDLER_ID: self._console_command_workflow,
+            WORKFLOW_COMMAND_HANDLER_ID: partial(wiring.dispatch_console_workflow, self),
             HELP_COMMAND_HANDLER_ID: self._console_command_help,
             DOCTOR_COMMAND_HANDLER_ID: self._console_command_doctor,
             CONSOLE_ACTION_COMMAND_HANDLER_ID: self._console_command_run_action,
@@ -18968,16 +18797,7 @@ class ChatScreen(BaseAppScreen):
             )
         return
 
-    @property
-    def _workflows(self):
-        from ..Console_Modules.workflows import ConsoleWorkflowsController
-
-        if "_workflow_ui" not in self.__dict__:
-            self._workflow_ui = ConsoleWorkflowsController(self)
-        return self._workflow_ui
-
-    async def _console_command_workflow(self, parse: CommandParse) -> None:
-        self._workflows.command(parse.args)
+    _workflows = property(wiring.console_workflows_for_screen)
 
     @property
     def _goals(self):
@@ -20091,7 +19911,7 @@ class ChatScreen(BaseAppScreen):
             undo = capture_undo(provider)
             plan = (
                 await undo.prepare(
-                    lambda: _prepare_console_turn_undo(provider, event.run_id),
+                    lambda: prepare_console_turn_undo(provider, event.run_id),
                     marshal=self.app.call_from_thread,
                     current=lambda: (
                         self in self.app.screen_stack
@@ -20100,17 +19920,17 @@ class ChatScreen(BaseAppScreen):
                 )
                 if undo is not None
                 else await asyncio.to_thread(
-                    _prepare_console_turn_undo, provider, event.run_id
+                    prepare_console_turn_undo, provider, event.run_id
                 )
             )
-        except _ConsoleTurnUndoAmbiguousError as exc:
+        except ConsoleTurnUndoAmbiguousError as exc:
             self._finish_console_turn_undo(token, card, success=False)
             self.app_instance.notify(
                 f"{exc} Opening Review to undo safely.", severity="warning"
             )
             self._open_change_review(event.run_id)
             return
-        except _ConsoleTurnUndoUnavailableError as exc:
+        except ConsoleTurnUndoUnavailableError as exc:
             self._finish_console_turn_undo(token, card, success=False)
             self.app_instance.notify(str(exc), severity="warning")
             return
@@ -20143,7 +19963,17 @@ class ChatScreen(BaseAppScreen):
                 self.app_instance.notify(str(exc), severity="warning")
                 return
             self.run_worker(
-                self._run_console_turn_undo(token, card, provider, plan, undo),
+                run_console_turn_undo(
+                    provider,
+                    plan,
+                    undo,
+                    marshal=self.app.call_from_thread,
+                    current=lambda: (
+                        self in self.app.screen_stack
+                        and self._console_turn_undo_token is token
+                    ),
+                    publish=partial(self._publish_console_turn_undo, token, card, plan),
+                ),
                 group="console-turn-undo-all",
                 exit_on_error=False,
             )
@@ -20156,43 +19986,12 @@ class ChatScreen(BaseAppScreen):
             callback=_confirmed,
         )
 
-    async def _run_console_turn_undo(
-        self,
-        token: object,
-        card: ConsoleTurnFileCard,
-        provider: Any,
-        plan: _ConsoleTurnUndoPlan,
-        undo: Any = None,
-    ) -> None:
-        """Apply off-thread and accept the original result before native retirement."""
-        publish = lambda outcomes, error: self._publish_console_turn_undo(
-            token, card, plan, outcomes, error
-        )
-        try:
-            if undo is not None:
-                await undo.apply(
-                    lambda: _apply_console_turn_undo(provider, plan),
-                    marshal=self.app.call_from_thread,
-                    current=lambda: (
-                        self in self.app.screen_stack
-                        and self._console_turn_undo_token is token
-                    ),
-                    publish=publish,
-                )
-            else:
-                outcomes = await asyncio.to_thread(
-                    _apply_console_turn_undo, provider, plan
-                )
-                publish(outcomes, None)
-        except Exception as exc:  # noqa: BLE001 -- original feature outcome must reach its host
-            publish(None, exc)
-
     def _publish_console_turn_undo(self, token, card, plan, outcomes, error):
         if error is not None:
             from tldw_chatbook.Workspaces.change_revert import RevertRefusedError
 
             if isinstance(
-                error, (_ConsoleTurnUndoUnavailableError, RevertRefusedError)
+                error, (ConsoleTurnUndoUnavailableError, RevertRefusedError)
             ):
                 self.app_instance.notify(str(error), severity="warning", markup=False)
             else:

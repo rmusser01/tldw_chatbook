@@ -7,13 +7,14 @@ import hashlib
 import sqlite3
 from dataclasses import dataclass, field
 from typing import Any
+from uuid import uuid4
 
 from loguru import logger
 
 from tldw_chatbook.DB.base_db import operation_owned_connection, run_owned_db_call
 
 from .console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
-from .console_turn_context import ConsoleTurnConfigurationSnapshot
+from .console_turn_context import ConsoleTurnConfigurationSnapshot, ConsoleTurnCustodyRequest
 from .message_metadata import (
     AgentHandoffLaunchStatus,
     HANDOFF_LAUNCH_NOT_STARTED,
@@ -453,15 +454,33 @@ class ConsoleChatStartCoordinator:
                 return
             # TASK-36610: this automatic submission is a send with a start,
             # which its own provider request (or its end) closes.
-            with item.context.scope(), submission_send_start(controller.store):
-                await controller.submit_draft(
-                    request.opening_prompt,
-                    session_id=request.session_id,
-                    origin=ConsoleSubmissionOrigin.AGENT_CHAT_START,
-                    chat_start_authorization=item,
-                    configuration=request.configuration,
-                    accepted_attachments=(),
-                )
+            with item.context.scope():
+                if request.configuration.skill_capture_pending:
+                    runtime = controller._hooks_v2_runtime
+                    if runtime is None or runtime is not controller.app.console_runtime:
+                        raise RuntimeError("Chat Start custody is unavailable.")
+                    turn_id = runtime.accept_turn(
+                        ConsoleTurnCustodyRequest(
+                            turn_id=str(uuid4()),
+                            session_id=request.session_id,
+                            draft=request.opening_prompt,
+                            configuration=request.configuration,
+                        ),
+                        origin=ConsoleSubmissionOrigin.AGENT_CHAT_START,
+                        chat_start_authorization=item,
+                        recover_before_acceptance=False,
+                    )
+                    await runtime.wait_for_turn(turn_id)
+                else:
+                    with submission_send_start(controller.store):
+                        await controller.submit_draft(
+                            request.opening_prompt,
+                            session_id=request.session_id,
+                            origin=ConsoleSubmissionOrigin.AGENT_CHAT_START,
+                            chat_start_authorization=item,
+                            configuration=request.configuration,
+                            accepted_attachments=(),
+                        )
             if item.accepted and not item.receipted:
                 status, reason = HANDOFF_LAUNCH_REVIEW_REQUIRED, "receipt_unconfirmed"
         except AutomaticWorkRefused:

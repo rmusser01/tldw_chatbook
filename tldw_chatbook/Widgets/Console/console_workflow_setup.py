@@ -109,8 +109,13 @@ class ConsoleWorkflowSetup(SafeModalDismissMixin, ModalScreen):
                         )
             yield Static("", id="workflow-notice", markup=False)
             with Horizontal(classes="workflow-actions"):
-                yield Button("Close", id="workflow-close")
-                yield Button("Prepare plan", id="workflow-plan", variant="primary")
+                yield Button("Close", id="workflow-close", classes="workflow-action")
+                yield Button(
+                    "Prepare plan",
+                    id="workflow-plan",
+                    variant="primary",
+                    classes="workflow-action",
+                )
 
     def on_mount(self):
         self._show_choices()

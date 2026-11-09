@@ -4489,6 +4489,20 @@ App.-wide-viewport ConsoleGoalStatus > .goal-dialog-panel {
   max-width: $ds-size-150;
 }
 
+App.-wide-viewport ConsoleWorkflowSetup > .workflow-dialog {
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
+}
+App.-wide-viewport ConsoleWorkflowStatus > .workflow-dialog {
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
+}
+
+
+App.-wide-viewport ConsoleWorkflowHistory > .workflow-dialog {
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
+}
 
 
 App.-wide-viewport #buddy-management {
@@ -10744,7 +10758,7 @@ ConsoleWorkflowHistory > .workflow-dialog { width: $ds-size-76; height: $ds-heig
 #workflow-accounting, #workflow-capture, #workflow-evidence { margin-bottom: $ds-space-stack; }
 .workflow-editor { height: $ds-textarea-min-height; }
 .workflow-actions { height: $ds-control-height; }
-.workflow-actions Button { width: $ds-width-fill; min-width: $ds-size-9; }
+.workflow-actions Button.workflow-action { width: $ds-width-fill; min-width: $ds-size-9; }
 #console-workflow-line { height: $ds-control-height-compact; width: $ds-width-full; border: none; text-align: left; }
 
 /* ===== MODULE: features/_console_prompts.tcss ===== */

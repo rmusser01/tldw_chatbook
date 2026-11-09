@@ -1299,7 +1299,7 @@ class RemoteWorkspaceToolExecutor:
         (shared across bindings on one host); the transport never
         retries — recovery is the status cache and the probe's job.
         """
-        from tldw_chatbook.Chat.console_ssh_custody import current_ssh_call
+        from tldw_chatbook.Tools.workspace_tool_executor import current_ssh_call
 
         native = current_ssh_call()
         if native is not None:
@@ -1583,6 +1583,7 @@ def _require_ping_payload(payload: object) -> None:
 
 __all__ = [
     "RESPONSE_MAGIC",
+    "RemoteExecutorDispatchAdapter",
     "RemoteWorkspaceExecutionError",
     "RemoteWorkspaceLoopbackError",
     "RemoteWorkspaceToolExecutor",
@@ -1593,6 +1594,79 @@ __all__ = [
     "run_session_loopback",
     "split_fs_read_result",
 ]
+
+#: Parity-matrix v1 wording (spec: "Run composition & tool parity"):
+#: git_* stays advertised for local aliases on mixed runs, but a remote
+#: alias refuses at CALL time with this typed message.
+_REMOTE_GIT_UNSUPPORTED_MESSAGE = "git tools not yet supported on SSH bindings"
+
+#: URI-in-path teaching copy (spec: "Model-facing surface"): the note
+#: shows alias -> URI mappings, so the refusal a URI path earns must
+#: teach the correct convention instead of a bare invalid-path error.
+_REMOTE_URI_PATH_MESSAGE = (
+    "remote roots take a path RELATIVE to the root, not a URI: use "
+    'root_alias "{alias}" with a relative path'
+)
+
+
+class RemoteExecutorDispatchAdapter:
+    """Wire-dict-to-str adapter at the run-composition seam (Task 18).
+
+    ``LocalToolSpec`` handlers return the bounded result TEXT (the local
+    ``WorkspaceToolExecutor.execute`` contract) and the CAS/ledger sites
+    above them consume either seam via ``_response_result_text`` — but
+    every handler-facing slot expects a STR. The remote transport
+    executor returns the final wire-frame dict. Wrapping ONCE here (the
+    adapter Task 17 shipped test-only, now real) keeps every spec
+    handler transport-agnostic and gives the two call-time policies one
+    owner:
+
+    - git_* on a remote alias refuses with the parity-matrix typed error
+      (local aliases keep git tools — they hold different executors);
+    - a URI in a ``path``/``pattern`` argument refuses with the message
+      that teaches the ``root_alias`` + relative-path convention.
+
+    Raises whatever the inner executor raises (typed transport errors
+    included); the provider's protocol boundary renders them.
+    """
+
+    def __init__(self, inner: Any, *, alias: str) -> None:
+        self._inner = inner
+        self._alias = str(alias)
+
+    def execute(self, tool: str, args: dict[str, Any], *, intent: str) -> str:
+        if tool.startswith("git_"):
+            raise RemoteWorkspaceExecutionError(
+                "git_unsupported_on_remote",
+                _REMOTE_GIT_UNSUPPORTED_MESSAGE,
+                admitted=False,
+            )
+        for key in ("path", "pattern"):
+            value = args.get(key) if isinstance(args, dict) else None
+            if isinstance(value, str) and "://" in value:
+                raise RemoteWorkspaceExecutionError(
+                    "uri_path_rejected",
+                    _REMOTE_URI_PATH_MESSAGE.format(alias=self._alias),
+                    admitted=False,
+                )
+        wire = self._inner.execute(tool, args, intent=intent)
+        result = wire.get("result") if isinstance(wire, dict) else wire
+        if not isinstance(result, str):
+            # Contract violation (a success frame without result text):
+            # refuse loudly rather than stringifying a wire dict.
+            raise RemoteWorkspaceExecutionError("protocol_failure", admitted=True)
+        return result
+
+    def ping(self) -> Any:
+        return self._inner.ping()
+
+    def maybe_schedule_recovery_probe(self) -> None:
+        self._inner.maybe_schedule_recovery_probe()
+
+
+_NATIVE_SSH_ADAPTER_METHODS = {
+    name: getattr(RemoteExecutorDispatchAdapter, name) for name in ("execute", "ping")
+}
 
 _NATIVE_SSH_METHODS = {
     name: getattr(RemoteWorkspaceToolExecutor, name)

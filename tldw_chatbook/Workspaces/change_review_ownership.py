@@ -8,10 +8,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Event, Lock
 
-from tldw_chatbook.Agents.activation import _guard, execution
+from tldw_chatbook.Agents.activation import execution
 from tldw_chatbook.Agents.execution_capacity import CapacityRefused, WorkOrigin
 from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+from tldw_chatbook.Workspaces.change_tracking import (
+    NativeUndoIssuer as NativeUndoIssuer,
+    _NativeInitializationIssuer as _NativeInitializationIssuer,
+    _NativeSnapshotIssuer as _NativeSnapshotIssuer,
+)
 from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
 
 _current_snapshot: ContextVar[_SnapshotSource | _InitializationSource | None] = (
@@ -31,110 +36,6 @@ def native_snapshot_ticket() -> _SnapshotTicket | None:
 def native_snapshot_source() -> _SnapshotSource | _InitializationSource | None:
     """Return only the original source active on this physical callback thread."""
     return _current_snapshot.get()
-
-
-class _NativeReviewResources:
-    """Pin the original runtime resources without invoking cold getters."""
-
-    def __init__(self, runtime):
-        self.runtime = runtime
-        self._capacity = runtime._execution_capacity
-        self._activity = runtime._worktree_activity
-
-    @property
-    def capacity(self):
-        if self._capacity is None:
-            self._capacity = self.runtime.execution_capacity
-        elif self.runtime._execution_capacity is not self._capacity:
-            raise ValueError("native change-review capacity changed")
-        return self._capacity
-
-    @property
-    def activity(self):
-        if self._activity is None:
-            self._activity = self.runtime.worktree_activity
-        elif self.runtime._worktree_activity is not self._activity:
-            raise ValueError("native change-review activity changed")
-        return self._activity
-
-
-class _NativeSnapshotIssuer(_NativeReviewResources):
-    """One runtime's issuer; execution stays in the existing coordinator."""
-
-    def __init__(self, runtime):
-        super().__init__(runtime)
-        self.coordinator = None
-
-    def capture(
-        self,
-        bridge,
-        *,
-        session_id,
-        conversation_id,
-        origin,
-        roots,
-        owner=None,
-        claim=None,
-        workflow_wave=None,
-    ):
-        if (
-            self.runtime._agent_bridge is not bridge
-            or self.runtime._change_review_coordinator is not self.coordinator
-            or bridge._change_finalization_coordinator is not self.coordinator
-            or self.runtime._disposed
-            or not isinstance(origin, WorkOrigin)
-            or (owner is None) != (claim is None)
-        ):
-            raise ValueError("native change-review source unavailable")
-        # Observe resources created since issuer construction without loading them.
-        if self._capacity is None:
-            self._capacity = self.runtime._execution_capacity
-        if self._activity is None:
-            self._activity = self.runtime._worktree_activity
-        session = next(
-            (s for s in bridge._store.sessions() if s.id == session_id), None
-        )
-        if session is None:
-            raise ValueError("native change-review session unavailable")
-        chains = tuple(capture_directory_chain(Path(root)) for root in roots)
-        if tuple(str(c.canonical_root) for c in chains) != tuple(map(str, roots)):
-            raise ValueError("native change-review root changed")
-        persistence = getattr(bridge._store, "persistence", None)
-        registry = getattr(persistence, "workspace_registry", None)
-        databases = tuple(
-            db
-            for db in (
-                bridge._db,
-                getattr(persistence, "db", None),
-                getattr(registry, "db", None),
-            )
-            if db is not None
-        )
-        from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
-
-        tree = current_ordinary_tree()
-        if tree is not None:
-            owner, claim = tree.borrow(self.runtime), tree.claim
-        source = _SnapshotSource(
-            self,
-            bridge,
-            self.runtime._chat_controller,
-            bridge._store,
-            session,
-            conversation_id,
-            origin,
-            chains,
-            _guard.captured_sources(bridge),
-            databases,
-            owner,
-            claim,
-            tree,
-            workflow_wave=workflow_wave,
-        )
-        if tree is not None:
-            source.prepare_ordinary()
-            tree.snapshot_sources.append(source)
-        return source
 
 
 @dataclass(frozen=True)
@@ -389,77 +290,6 @@ class _SnapshotTicket:
         if self._workflow_completion is not None:
             public, kind = self._workflow_completion
             self.source.workflow_wave.snapshot_returned(public, kind, self)
-
-
-class _NativeInitializationIssuer(_NativeReviewResources):
-    """Original consent feature source; never impersonates a Chat or bridge."""
-
-    def __init__(self, runtime, service, registry):
-        super().__init__(runtime)
-        self.app, self.service, self.registry = runtime._app, service, registry
-        self.database = registry.db
-        self.database_path = Path(registry.db.db_path)
-        self.initializer = service._initialize_root
-        self.capability_reader = service._capability_reader
-
-    def identity_current(self) -> bool:
-        """Compare only original object references, safe under the consent lock."""
-        return (
-            self.runtime._app is self.app
-            and self.app.console_runtime is self.runtime
-            and self.runtime._change_review_consent_service is self.service
-            and self.app.change_review_consent_service is self.service
-            and self.app.workspace_registry_service is self.registry
-            and self.registry.db is self.database
-            and self.registry._change_review_binding_owner is self.service
-            and self.service._registry is self.registry
-            and self.service._native is self
-            and self.service._initialize_root is self.initializer
-            and self.service._capability_reader is self.capability_reader
-        )
-
-    def check(self):
-        if (
-            not self.identity_current()
-            or Path(self.database.db_path) != self.database_path
-        ):
-            raise ValueError("native initialization source changed")
-
-    def capture(self, work):
-        from tldw_chatbook.Backup_Recovery import bootstrap, profile_paths
-        from tldw_chatbook.Backup_Recovery.activation import execution_scope
-        from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
-        from tldw_chatbook.config import load_settings
-        from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
-
-        self.check()
-        if self.runtime._disposed:
-            raise ValueError("native initialization is closed")
-        if self._capacity is None:
-            self._capacity = self.runtime._execution_capacity
-        if self._activity is None:
-            self._activity = self.runtime._worktree_activity
-        selector = bootstrap.effective_config_path()
-        with execution_scope(("config",), selector) as allowed:
-            if not allowed:
-                raise ValueError("native initialization source unavailable")
-            data = profile_paths.user_data_dir(load_settings())
-        # Explicit metadata selection avoids get_user_data_dir's mkdir/hardening.
-        shadow = ShadowRepoService(data_dir=data / "change_review")
-        chain = capture_directory_chain(Path(work.root))
-        if str(chain.canonical_root) != work.root:
-            raise ValueError("native initialization root changed")
-        return _InitializationSource(
-            self,
-            work,
-            selector,
-            data,
-            shadow,
-            chain,
-            self.initializer,
-            shadow._git,
-            current_ordinary_tree(),
-        )
 
 
 @dataclass(frozen=True)

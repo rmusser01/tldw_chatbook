@@ -83,7 +83,19 @@ async def _compose_mcp_provider(
         if local_kill_switch is not None and local_kill_switch._current is not None:
             local_kill_switch._current()
         if publish_counts:
-            self._publish_mcp_inspector_counts(tool_count, not_connected, session_id)
+            composed_switch = (
+                (service, local_kill_switch.value)
+                if (
+                    local_kill_switch is not None
+                    and local_kill_switch.read
+                    and local_kill_switch.error is None
+                    and (local_kill_switch._include_mcp or local_kill_switch._need_local)
+                )
+                else None
+            )
+            self._publish_mcp_inspector_counts(
+                tool_count, not_connected, session_id, composed_switch=composed_switch
+            )
 
     service = getattr(self.app, "unified_mcp_service", None)
     if service is None:
@@ -123,11 +135,13 @@ async def _compose_mcp_provider(
     # TASK-33620.15.1: composed here, on the loop, or reused while nothing
     # it read has changed; ``None`` = switched off or a read failed.
     from .console_ordinary_tree import bind_ordinary_tree, current_ordinary_tree
-    from .console_run_start_tools import compose_run_mcp_provider
+    from .console_run_start_tools import LocalKillSwitchRead, compose_run_mcp_provider
 
+    if publish_counts and local_kill_switch is None:
+        local_kill_switch = LocalKillSwitchRead()
     ordinary = current_ordinary_tree(self)
     if ordinary is None:
-        from .console_workflow_preparation import current_workflow_preparation
+        from .console_preparation_reads import current_workflow_preparation
 
         preparation = current_workflow_preparation(self)
         if preparation is None:
@@ -533,7 +547,7 @@ def _compose_local_provider(
     else:
         root = project_root
         authority_scope = None
-    from .console_workflow_preparation import current_planning_preparation
+    from .console_preparation_reads import current_planning_preparation
 
     planning = current_planning_preparation(self)
     watchlists_service = watchlists_command_service = None
@@ -623,7 +637,10 @@ def _compose_local_provider(
             state = service.gate_tool_test_for_profile(hub, profile_id)
         return persona_floor_state(state, persona_policy, hub.name)
 
+    from tldw_chatbook.Chat.approval_presentation import profile_authority
+
     provider = LocalToolProvider(
+        presentation_authority=profile_authority("local", profile_id, str(root), "call"),
         workspace_root=root,
         allow_write=allow_write,
         authority_scope=authority_scope,
@@ -785,7 +802,10 @@ def _compose_virtual_cli_provider(
 
     from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
 
+    from tldw_chatbook.Chat.approval_presentation import profile_authority
+
     provider = VirtualCliProvider(
+        presentation_authority=profile_authority("virtual_cli", profile_id, str(root), "call"),
         workspace_root=root,
         resolve_state=resolve_state,
         local_tools_enabled=lambda: native_host.coerce_bool_setting(

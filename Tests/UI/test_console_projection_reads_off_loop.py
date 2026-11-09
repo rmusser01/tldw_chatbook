@@ -384,7 +384,7 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
     clock stands still unless the test moves it. Projections are counted in
     the test's own task only.
     """
-    from Tests.UI.test_console_config_sync_cadence import _held_run
+    from Tests.UI.test_console_config_sync_cadence import _held_run, _replay_pending
 
     clock = _install_clock(monkeypatch)
     host, gateway, _timeline = build()
@@ -408,12 +408,18 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
                 console, "_sync_console_rail_and_controls", counting_project
             )
 
+            def sync_settled() -> bool:
+                return (
+                    not console._console_sync_in_progress
+                    and not _replay_pending(console)
+                )
+
             async def settled_sync() -> None:
-                await until(lambda: not console._console_sync_in_progress, timeout=30)
+                await until(sync_settled, timeout=30)
                 await console._sync_native_console_chat_ui()
 
             async def tick() -> None:
-                await until(lambda: not console._console_sync_in_progress, timeout=30)
+                await until(sync_settled, timeout=30)
                 await timer._callback()
 
             try:

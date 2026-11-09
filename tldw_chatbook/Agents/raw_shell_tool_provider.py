@@ -25,6 +25,7 @@ from tldw_chatbook.Tools.raw_cli_executor import (
     RawCliRequest,
     RawCliResult,
     RawCliStreamEvent,
+    bind_model_raw_cli,
     failure_hint,
     validate_raw_cli_request,
 )
@@ -604,8 +605,6 @@ class RawShellToolProvider:
                 observation = authorization._required_evidence[0].begin_shell(
                     self, request
                 )
-            from ..Chat.console_raw_cli_custody import bind_model_raw_cli
-
             bind_model_raw_cli(self, request)
             result = self._runtime.execute(
                 request,
@@ -717,3 +716,8 @@ _PLANNING_SHELL_DESCRIPTOR = (
     raw_shell_schema.__closure__,
     tuple((c, c.cell_contents) for c in raw_shell_schema.__closure__ or ()),
 )
+
+
+def planning_shell_schema_changed() -> bool:
+    """Compare the live descriptor schema with its original planning snapshot."""
+    return _MODEL_SCHEMA != _PLANNING_SHELL_SCHEMA

@@ -82,10 +82,17 @@ class AutomaticWorkContext:
     )
 
     @contextmanager
-    def scope(self) -> Iterator[AutomaticWorkContext]:
-        """Bind this authority for helper calls and restore the caller's scope."""
+    def _bound_scope(self) -> Iterator[AutomaticWorkContext]:
         token = _CURRENT.set(self)
         try:
+            yield self
+        finally:
+            _CURRENT.reset(token)
+
+    @contextmanager
+    def scope(self) -> Iterator[AutomaticWorkContext]:
+        """Bind this authority for helper calls and restore the caller's scope."""
+        with self._bound_scope():
             if self.goal is None:
                 yield self
             else:
@@ -93,8 +100,6 @@ class AutomaticWorkContext:
 
                 with owned_goal_storage(self.goal._coordinator.service):
                     yield self
-        finally:
-            _CURRENT.reset(token)
 
     def _read_attempt(self):
         readers = {

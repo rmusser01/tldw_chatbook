@@ -94,7 +94,9 @@ def _console_host(tmp_path):
         ConsoleHarness,
     )
 
-    app = _build_test_app()
+    from tldw_chatbook.config import get_user_data_dir
+
+    app = _build_test_app(user_data_dir=get_user_data_dir())
     # A file-backed DB with its conversation services: a second turn reads
     # the persisted conversation (world books, dictionaries) off the UI
     # thread, where a ``:memory:`` DB would be a different, empty database.
