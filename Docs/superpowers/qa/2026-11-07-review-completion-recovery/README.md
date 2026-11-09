@@ -803,3 +803,41 @@ repair. Application source, workflows, live qualification and prior evidence
 are unchanged. No new ADR under ADR-281/063/131, no manual CI rerun, and zero
 additional live requests or product children; cumulative recovery remains
 250 requests / 19 children, with no qualification allowance remaining.
+
+## Model-switch focus fixture readiness — 2026-11-09
+
+Normal Derived Artifacts run `42549626048` on `af5185ab` failed UI31 job
+`128963921517` in `test_a_switch_that_clears_the_block_leaves_the_keyboard_in_the_draft`:
+the immediate control-bar sync returned False before the focus assertions.
+The other 31 UI shards passed, including the prior UI3 and UI19 repairs.
+The hosted log does not identify which readiness refusal caused this return.
+The unchanged isolated focus test passed (1 / 5.60 s).
+
+A local control paused the test for 1.1 s before its switch sequence, allowing
+the real checked display to expire without replacing its reader or sync.
+The original test then failed the same immediate-sync assertion (1 failure /
+7.24 s; display age 1.236 s against its native 1 s lifetime). This demonstrates
+a permitted refusal the fixture did not prepare for, not the exact hosted cause.
+
+Three added lines import and call the existing bounded
+`_sync_console_control_bar_now` helper before the original focus assertion and
+model-capability change. The helper warms the native display and confirms a
+render while the block is still visible. The original dismissal and immediate
+sync remain adjacent in one tick, with every original statement, assertion,
+deadline and cleanup retained byte-for-byte. No await was inserted into that
+ordering-sensitive pair. The same expiry control passes (1 / 7.62 s), with
+fresh display ages of 0.00053 s at preparation and 0.00317 s at the original sync.
+
+A call-through negative control that re-enables the row only when it hides
+still fails the original composer-focus assertion (1 failure / 5.71 s), with
+focus on a hidden attachment action. An earlier version of that control read
+an uninitialized field during mount and failed setup with a worker error;
+that result is retained as invalid evidence, not the qualified negative.
+All 11 cases in the affected file pass (49.97 s). Whole-file Ruff, formatting
+and whitespace checks pass. Private source/log
+evidence is retained under `recovered-final60-20261108/focus-readiness-20261109/`.
+Independent delta review and fresh normal CI are required before admission;
+the failed `af5185ab` run must not be admitted. Earlier Done/`69bdd` verification
+remains historical. No production/workflow change, new ADR under ADR-281/063/131,
+manual CI rerun or qualification. Additional live requests and product children
+remain zero; cumulative recovery is 250/19 with no allowance remaining.

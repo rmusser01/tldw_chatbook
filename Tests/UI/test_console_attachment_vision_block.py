@@ -23,6 +23,7 @@ from textual.widgets import Button, Input, Static
 
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
+from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
@@ -265,6 +266,8 @@ async def test_a_switch_that_clears_the_block_leaves_the_keyboard_in_the_draft(
         switch = console.query_one("#console-attachment-block-switch-model", Button)
         switch.focus()
         await pilot.pause()
+        # Warm readiness before the dismissal/sync pair must run in one tick.
+        await _sync_console_control_bar_now(console)
         assert host.focused is switch
 
         capable["on"] = True  # the picked model reads images
