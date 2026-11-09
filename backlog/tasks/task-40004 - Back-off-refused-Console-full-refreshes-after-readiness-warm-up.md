@@ -12,7 +12,7 @@ references:
 - Tests/UI/test_console_projection_reads_off_loop.py
 - tldw_chatbook/UI/Console_Modules/config_sync.py
 - tldw_chatbook/UI/Screens/chat_screen.py
-updated_date: 2026-11-09 08:01
+updated_date: 2026-11-09 08:07
 ---
 
 ## Description
@@ -50,6 +50,8 @@ UI3 logged six whole refreshes in the unchanged cold-config assertion window. Lo
 The retry scope accepts only the live issuing task and thread. A nested refusal remains owed if the full render raises. The original exception stays primary. Connected qualification initially found an existing cadence fixture opening its writable AgentRuns store without a lease. The same real lease helper as its sibling test now supplies the owner, and all six original assertions and the explicit close remain.
 
 The original idle assertion, focused controls, corrected cadence fixture, 34 boot checks and 24 compiled-source controls passed. The initial focused projection case inherited a prior mount retry and showed the advancing backoff. Both corrected controls then passed after waiting for an actual completed full render, with production unchanged. Fresh browser UAT passed all 15 cases, and mounted UAT passed its parent and three children with ordinary reopen, teardown and empty guards. The hosted gates and exact committed review are still due. No ADR is needed for the existing retry contract.
+
+Independent review found that a long same-owner refusal streak overflowed before applying the existing five-second cap. The delay now saturates before multiplication. The focused four cases passed, and an executable comparison verified identical prior delays for counts through 1024 in both maintenance states. The fresh original UAT results carry through that equivalence. Hosted qualification remains pending.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
