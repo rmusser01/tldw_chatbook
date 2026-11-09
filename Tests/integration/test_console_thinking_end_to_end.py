@@ -314,6 +314,7 @@ def _disclosure(transcript: ConsoleTranscript, assistant) -> ConsoleActivityDisc
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_actual_turn_expands_collapses_once_and_restarts_collapsed(
     tmp_path,
@@ -530,6 +531,7 @@ def test_required_overlay_cannot_be_saved_or_downgraded() -> None:
     assert resolved.groups == ()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("disposition", ["displayable", "proprietary"])
 async def test_unsupported_persistent_backend_refuses_before_provider_and_recovers(
@@ -673,8 +675,8 @@ async def test_resumed_preparation_thinking_refusal_preserves_exact_owner(
 @pytest.mark.parametrize(
     ("persistent", "disposition", "round_trip_version"),
     [
-        (True, "displayable", 1),
-        (True, "ignored", 0),
+        pytest.param(True, "displayable", 1, marks=pytest.mark.bootstrap_profile),
+        pytest.param(True, "ignored", 0, marks=pytest.mark.bootstrap_profile),
         (False, "proprietary", 0),
     ],
     ids=["v1-compatible", "ignored-disposition", "ephemeral"],
@@ -713,6 +715,7 @@ async def test_persistence_preflight_controls_dispatch(
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_local_structured_capability_refuses_v0_backend_before_dispatch(
     tmp_path,
@@ -775,6 +778,7 @@ async def test_local_structured_capability_refuses_v0_backend_before_dispatch(
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unsupported_preflight_preserves_existing_conversation_exactly(
     tmp_path,
@@ -889,6 +893,7 @@ async def test_stop_and_failure_preserve_only_received_displayable_evidence(
         failed_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_proprietary_and_capable_no_evidence_turns_are_honest(tmp_path) -> None:
     proprietary_db = CharactersRAGDB(
@@ -969,6 +974,7 @@ async def test_proprietary_and_capable_no_evidence_turns_are_honest(tmp_path) ->
         no_evidence_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 def test_selected_json_import_hydrates_thinking_and_policy_in_second_db(
     tmp_path,
 ) -> None:
@@ -1009,6 +1015,7 @@ def test_selected_json_import_hydrates_thinking_and_policy_in_second_db(
         target.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 def test_chatbook_v2_import_hydrates_thinking_and_policy_in_second_db(
     tmp_path,
 ) -> None:
@@ -1061,6 +1068,7 @@ def test_chatbook_v2_import_hydrates_thinking_and_policy_in_second_db(
         target.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 def test_sync_v2_applies_one_complete_generation_then_hydrates(tmp_path) -> None:
     source = CharactersRAGDB(tmp_path / "sync-source.sqlite", "sync-source")
     target = CharactersRAGDB(tmp_path / "sync-target.sqlite", "sync-target")

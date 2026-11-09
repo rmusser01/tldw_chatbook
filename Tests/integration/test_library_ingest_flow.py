@@ -74,6 +74,7 @@ async def library_screen(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ingest_button_opens_canvas(library_screen):
     """Click top ingest button, verify canvas switches to ingest view."""
@@ -91,6 +92,7 @@ async def test_ingest_button_opens_canvas(library_screen):
     assert screen.query_one("#library-ingest-path") is not None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_preflight_detects_pdf(library_screen, tmp_path, monkeypatch):
     """Select a PDF file and verify the pre-flight summary shows it."""
@@ -159,6 +161,7 @@ async def test_inline_consent_gates_start_when_pdf_deps_missing(
     assert [job.source_path for job in jobs] == [str(pdf)]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_screen_to_app_folder_member_change_rearms_without_queueing(
     library_screen, tmp_path
@@ -445,6 +448,7 @@ async def test_unsupported_file_not_retryable(library_screen, tmp_path):
 # --- task-14820: the forecast must match the receipt ------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_forecast_counts_equal_the_real_receipt_for_a_mixed_folder(
     tmp_path, monkeypatch
@@ -564,6 +568,7 @@ async def test_forecast_counts_equal_the_real_receipt_for_a_mixed_folder(
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_empty_folder_creates_no_job_at_all(library_screen, tmp_path):
     """(task-14823 AC#3) Pressing Start on an empty folder used to leave a
@@ -701,6 +706,7 @@ class _RecordingIngestTransport:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_forecast_counts_equal_the_real_receipt_for_a_server_submission(
     tmp_path, monkeypatch
@@ -863,6 +869,7 @@ async def test_forecast_counts_equal_the_real_receipt_for_a_server_submission(
 # --- task-14911: the gate must ask the backend the run is aimed at ----------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_server_mode_start_creates_no_job_for_a_selection_the_server_refuses(
     library_screen, tmp_path
@@ -926,6 +933,7 @@ async def test_server_mode_start_creates_no_job_for_a_selection_the_server_refus
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_same_folder_still_imports_on_this_machine(
     library_screen, tmp_path, monkeypatch

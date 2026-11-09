@@ -54,6 +54,7 @@ def test_character_chat_without_optional_deps():
     assert isinstance(errors, list)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.integration
 def test_chunking_without_optional_deps(tmp_path):
     """Test chunking functionality works without optional language-specific deps."""
