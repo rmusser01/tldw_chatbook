@@ -1591,7 +1591,7 @@
     },
     {
       "call_count": 7,
-      "diagnostic_digest": "d9afa3aca3db95bcdf33",
+      "diagnostic_digest": "bc527435b5a43084672b",
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/qwencloud.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
