@@ -36,8 +36,9 @@ pytestmark = pytest.mark.unit
 
 
 async def _run_check(service: LocalWatchlistsService, source_id: int) -> dict:
-    """One full check the way every real entrant does it: launch + execute."""
+    """Run the durable winning claim for a distinct or first entrant."""
     launched = await service.launch_run(source_id=source_id)
+    assert launched["_claim_acquired"] is True
     return await service.execute_run(launched["run_id"])
 
 
@@ -63,6 +64,7 @@ def _gate_feed_checks(monkeypatch, gate: asyncio.Event, started: asyncio.Event):
     return calls
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_overlapping_feed_checks_run_the_check_once(tmp_path, monkeypatch):
     """The headline: a scheduler tick and a Check Now must not both fetch."""
@@ -77,19 +79,20 @@ async def test_overlapping_feed_checks_run_the_check_once(tmp_path, monkeypatch)
     started = asyncio.Event()
     calls = _gate_feed_checks(monkeypatch, gate, started)
 
-    scheduled = asyncio.create_task(_run_check(scheduler_service, source_id))
-    await asyncio.wait_for(started.wait(), timeout=10)
-
-    # The manual entrant arrives while the scheduled fetch is still gated.
-    manual = asyncio.create_task(_run_check(ui_service, source_id))
-    # The scheduled entrant is blocked on `gate` and CANNOT progress, so this
-    # wait is deterministic, not a race: it only gives the manual entrant loop
-    # time to get through launch_run's DB work and reach the guard.
-    await asyncio.sleep(0.25)
-    gate.set()
-
-    scheduled_result = await asyncio.wait_for(scheduled, timeout=10)
-    manual_result = await asyncio.wait_for(manual, timeout=10)
+    subscription = db.get_subscription(source_id)
+    scheduled = asyncio.create_task(
+        scheduler_service._default_run_executor(subscription, db)
+    )
+    try:
+        await asyncio.wait_for(started.wait(), timeout=10)
+        # The durable caller now resolves duplicate claims before execution.
+        # Exercise the existing executor guard with the first fetch still held.
+        manual_result = await asyncio.wait_for(
+            ui_service._default_run_executor(subscription, db), timeout=10
+        )
+    finally:
+        gate.set()
+        scheduled_result = await asyncio.wait_for(scheduled, timeout=10)
 
     assert len(calls) == 1, (
         f"the feed was fetched {len(calls)} times for one overlap; the "
@@ -97,7 +100,7 @@ async def test_overlapping_feed_checks_run_the_check_once(tmp_path, monkeypatch)
     )
 
     dispositions = [
-        (result["stats"] or {}).get("dispositions")
+        (result.get("stats") or {}).get("dispositions")
         for result in (scheduled_result, manual_result)
     ]
     skipped_counts = [int((d or {}).get("skipped", 0) or 0) for d in dispositions]
@@ -106,6 +109,7 @@ async def test_overlapping_feed_checks_run_the_check_once(tmp_path, monkeypatch)
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skipped_feed_check_does_not_count_as_a_successful_check(
     tmp_path, monkeypatch
@@ -126,26 +130,30 @@ async def test_skipped_feed_check_does_not_count_as_a_successful_check(
     started = asyncio.Event()
     _gate_feed_checks(monkeypatch, gate, started)
 
-    scheduled = asyncio.create_task(_run_check(scheduler_service, source_id))
-    await asyncio.wait_for(started.wait(), timeout=10)
-    manual = asyncio.create_task(_run_check(ui_service, source_id))
-    await asyncio.sleep(0.25)  # deterministic: the first is gate-blocked
-    gate.set()
-    results = [
-        await asyncio.wait_for(scheduled, timeout=10),
-        await asyncio.wait_for(manual, timeout=10),
-    ]
-
-    skipped_runs = [
-        r
-        for r in results
-        if _entirely_skipped_dispositions((r["stats"] or {}).get("dispositions"))
-    ]
-    assert len(skipped_runs) == 1, (
-        "the turned-away run must match _entirely_skipped_dispositions, or "
-        "execute_run will run the SUCCESS health path for a check that never "
-        "contacted the source"
+    db.record_check_error(source_id, "previous failure")
+    subscription = db.get_subscription(source_id)
+    before_stats = _stats_row(db, source_id)
+    scheduled = asyncio.create_task(
+        scheduler_service._default_run_executor(subscription, db)
     )
+    try:
+        await asyncio.wait_for(started.wait(), timeout=10)
+        # There is one durable row. The lower-level executor holds the
+        # in-process check so the admitted run takes the real skipped path.
+        launched = await ui_service.launch_run(source_id=source_id)
+        assert launched["_claim_acquired"] is True
+        skipped = await asyncio.wait_for(
+            ui_service.execute_run(launched["run_id"]), timeout=10
+        )
+        assert skipped["run_id"] == launched["run_id"]
+        assert _entirely_skipped_dispositions(skipped["stats"]["dispositions"])
+        after = db.get_subscription(source_id)
+        for key in ("last_error", "error_count", "last_successful_check", "last_checked"):
+            assert after[key] == subscription[key]
+        assert _stats_row(db, source_id) == before_stats
+    finally:
+        gate.set()
+        await asyncio.wait_for(scheduled, timeout=10)
 
 
 @pytest.mark.bootstrap_profile
@@ -239,6 +247,7 @@ def _stats_row(db: SubscriptionsDB, source_id: int) -> dict:
     return dict(row) if row is not None else {}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_overlapping_feed_check_alerts_once_and_counts_statistics_once(
     tmp_path, monkeypatch
@@ -280,12 +289,16 @@ async def test_overlapping_feed_check_alerts_once_and_counts_statistics_once(
     _gate_feed_checks(monkeypatch, gate, started)
 
     scheduled = asyncio.create_task(_run_check(scheduler_service, source_id))
-    await asyncio.wait_for(started.wait(), timeout=10)
-    manual = asyncio.create_task(_run_check(ui_service, source_id))
-    await asyncio.sleep(0.25)  # deterministic: the first is gate-blocked
-    gate.set()
-    await asyncio.wait_for(scheduled, timeout=10)
-    await asyncio.wait_for(manual, timeout=10)
+    try:
+        await asyncio.wait_for(started.wait(), timeout=10)
+        manual = await ui_service.launch_run(source_id=source_id)
+        assert manual["_claim_acquired"] is False
+    finally:
+        gate.set()
+        scheduled_result = await asyncio.wait_for(scheduled, timeout=10)
+    manual_result = await ui_service.wait_for_terminal_run(manual["run_id"])
+    assert manual_result["run_id"] == scheduled_result["run_id"]
+    assert manual_result["status"] == scheduled_result["status"] == "completed"
 
     assert len(dispatcher.calls) == 1, (
         f"the alert notification fired {len(dispatcher.calls)} times for one "
