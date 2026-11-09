@@ -285,18 +285,29 @@ def test_reference_loader_rejects_path_swap_after_descriptor_open(
     original_open = os.open
     swapped = False
 
-    def swap_after_open(path: object, flags: int, *args: object) -> int:
+    def swap_after_open(
+        path: str | os.PathLike[str],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
         nonlocal swapped
-        descriptor = original_open(path, flags, *args)  # type: ignore[arg-type]
-        if Path(path) == copied_asset and not swapped:  # type: ignore[arg-type]
-            os.replace(replacement, copied_asset)
+        descriptor = original_open(path, flags, mode, dir_fd=dir_fd)
+        if Path(path) == copied_asset and not swapped:
+            try:
+                os.replace(replacement, copied_asset)
+            except OSError:
+                os.close(descriptor)
+                raise
             swapped = True
         return descriptor
 
-    monkeypatch.setattr(physical_voice_runner.os, "open", swap_after_open)
-
-    with pytest.raises(PhysicalVoiceRunnerError, match="reference"):
-        load_physical_reference(copied_asset, copied_manifest)
+    with monkeypatch.context() as scoped:
+        runner_os = SimpleNamespace(**(vars(os) | {"open": swap_after_open}))
+        scoped.setattr(physical_voice_runner, "os", runner_os)
+        with pytest.raises(PhysicalVoiceRunnerError, match="reference"):
+            load_physical_reference(copied_asset, copied_manifest)
     assert swapped is True
 
 
