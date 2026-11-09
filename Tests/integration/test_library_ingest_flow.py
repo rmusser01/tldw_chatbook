@@ -1,11 +1,15 @@
 """Integration tests for the Library ingest flow."""
 
+import json
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
+from textual.widgets import Input
 
+from tldw_chatbook.Library import ingest_capabilities
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_INGEST_MEDIA
 from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
 from tldw_chatbook.Library.ingest_capabilities import get_capabilities
@@ -19,7 +23,9 @@ from Tests.UI.test_library_shell import (
     LibraryHarness,
     _seed_conversations,
     _two_conversations,
+    _wait_for_condition,
     _wait_for_library_shell,
+    _wait_for_selector,
     wire_bypass_ingest_controller,
 )
 from Tests.UI.app_factory import _build_test_app
@@ -41,8 +47,6 @@ def _preflight_result(**overrides):
 
 def _force_missing_required_features(monkeypatch, *groups: str) -> None:
     """Make capability-sensitive integration cases independent of installed extras."""
-    from tldw_chatbook.Library import ingest_capabilities
-
     missing = {
         feature
         for group in groups
@@ -72,6 +76,16 @@ async def library_screen(tmp_path):
         await _wait_for_library_shell(host.screen, pilot)
         yield host.screen, pilot
         db.close()
+
+
+@pytest.fixture
+def local_ingest_screen(library_screen, monkeypatch):
+    """Enable local queue admission while leaving parse dispatch idle."""
+    screen, pilot = library_screen
+    app = screen.app_instance
+    monkeypatch.setattr(app, "media_db", SimpleNamespace())
+    monkeypatch.setattr(app, "_top_up_ingest_parse_pool", lambda: None)
+    return screen, pilot
 
 
 @pytest.mark.bootstrap_profile
@@ -112,31 +126,27 @@ async def test_preflight_detects_pdf(library_screen, tmp_path, monkeypatch):
     assert form.preflight.type_groups["pdf"] == [str(pdf)]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_inline_consent_gates_start_when_pdf_deps_missing(
-    library_screen, tmp_path, monkeypatch
+    local_ingest_screen, tmp_path, monkeypatch
 ):
     """(task-3314) Select PDF with deps mocked missing: the FIRST Start
     press arms the inline confirm (no modal on any Start path), the SECOND
     press submits and the job lands in the real registry."""
-    screen, pilot = library_screen
+    screen, pilot = local_ingest_screen
+    _force_missing_required_features(monkeypatch, "pdf")
     pdf = tmp_path / "doc.pdf"
     pdf.write_text("%PDF-1.4 dummy")
 
-    warning = {
-        "feature": "pdf_processing",
-        "label": "PDF processing",
-        "hint": "Install pdf support",
-        "command": "pip install pdfplumber",
-    }
-
     form = screen._ingest_state.form
     form.path = str(pdf)
-    form.preflight_path = str(pdf)  # (TASK-34000.20) a staged verdict names the path it describes
-    form.preflight = _preflight_result(
-        type_groups={"pdf": [str(pdf)]},
-        warnings=[warning],
-    )
+    screen._trigger_preflight(form.path)
+    await screen.app.workers.wait_for_complete()
+    gate = screen._build_library_ingest_state()
+    assert gate.start_enabled is True
+    assert gate.forecast is not None
+    assert gate.forecast.will_fail_tooling == 1
 
     screen._submit_library_ingest_form()
     await pilot.pause()
@@ -149,14 +159,18 @@ async def test_inline_consent_gates_start_when_pdf_deps_missing(
     assert consent is not None
     assert consent.owed is True
     assert consent.active_job_ids == ()
-    assert consent.tooling_affected_count > 0
+    assert consent.tooling_affected_count == 1
+    assert screen._build_library_ingest_state().start_confirm_armed is True
 
     # Second press (a decision, not a double-click) submits for real.
     screen._ingest_state.start_confirm_armed_at -= 1.0
     screen._submit_library_ingest_form()
-    await pilot.pause()
-    await pilot.pause()
+    readiness = screen._library_external_submit_worker
+    assert readiness is not None
+    await readiness.wait()
+    await screen.app.workers.wait_for_complete()
 
+    assert screen.app.screen_stack[-1] is screen
     jobs = screen.app_instance.library_ingest_jobs.jobs()
     assert [job.source_path for job in jobs] == [str(pdf)]
 
@@ -377,52 +391,82 @@ def test_snapshot_coerces_display_string_chunk_numbers(monkeypatch):
     assert isinstance(generic["chunk_overlap"], int)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_job_persists_to_db(library_screen, tmp_path):
+async def test_job_persists_to_db(local_ingest_screen, tmp_path, monkeypatch):
     """Start ingest, verify row in Library_Ingest_Jobs_DB has ingest_options."""
-    screen, pilot = library_screen
+    screen, _ = local_ingest_screen
+    monkeypatch.setattr(ingest_capabilities, "_is_installed", lambda _feature: True)
     pdf = tmp_path / "doc.pdf"
     pdf.write_text("%PDF-1.4 dummy")
 
     form = screen._ingest_state.form
     form.path = str(pdf)
     form.type_options = {"pdf": {"pdf_engine": "pymupdf"}}
-    form.preflight_path = str(pdf)
-    form.preflight = _preflight_result(type_groups={"pdf": [str(pdf)]})
+    screen._trigger_preflight(form.path)
+    await screen.app.workers.wait_for_complete()
 
     screen._submit_library_ingest_form()
-    await pilot.pause()
-    await pilot.pause()
+    readiness = screen._library_external_submit_worker
+    assert readiness is not None
+    await readiness.wait()
+    await screen.app.workers.wait_for_complete()
 
-    db = LibraryIngestJobsDB(tmp_path / "ingest_jobs.db")
-    rows = db.all_jobs()
+    with closing(LibraryIngestJobsDB(tmp_path / "ingest_jobs.db")) as db:
+        rows = db.all_jobs()
     assert len(rows) == 1
     assert rows[0]["source_path"] == str(pdf)
-    assert '"pdf": {"pdf_engine": "pymupdf"}' in rows[0]["ingest_options"]
-    db.close()
+    assert json.loads(rows[0]["ingest_options"])["pdf"] == {"pdf_engine": "pymupdf"}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_unsupported_file_not_retryable(library_screen, tmp_path):
-    """Ingest unsupported file, verify no Retry button."""
-    screen, pilot = library_screen
+async def test_unsupported_file_not_retryable(
+    local_ingest_screen, tmp_path, monkeypatch
+):
+    """Refuse a lone unsupported source and keep legacy receipts non-retryable."""
+    screen, pilot = local_ingest_screen
     unsupported = tmp_path / "file.xyz"
     unsupported.write_text("dummy")
 
+    await screen._select_library_rail_row(LIBRARY_ROW_INGEST_MEDIA)
+    await _wait_for_selector(screen, pilot, "#library-ingest-path")
+    path_input = screen.query_one("#library-ingest-path", Input)
+    path_input.focus()
+    path_input.value = str(unsupported)
     form = screen._ingest_state.form
-    form.path = str(unsupported)
-    form.preflight_path = str(unsupported)
-    form.preflight = _preflight_result(type_groups={"generic": [str(unsupported)]})
+    await _wait_for_condition(
+        pilot,
+        lambda: form.path == str(unsupported),
+        message="Path did not reach the form",
+    )
+    screen._trigger_preflight(form.path)
+    await screen.app.workers.wait_for_complete()
 
-    screen._submit_library_ingest_form()
-    await pilot.pause()
-    await pilot.pause()
+    gate = screen._build_library_ingest_state()
+    assert gate.unavailable_line == ""
+    assert gate.selection_has_nothing_importable is True
+    assert gate.start_enabled is False
+    assert "1 unsupported file" in gate.start_quiet_line
 
-    # Manually mark the job failed as unsupported (as the parse worker would).
-    registry = screen.app_instance.library_ingest_jobs
-    job = registry.jobs()[0]
-    registry.mark_failed(
-        job.job_id,
+    app = screen.app_instance
+    notices = []
+    monkeypatch.setattr(
+        app, "notify", lambda message, *_args, **_kwargs: notices.append(message)
+    )
+    await pilot.press("enter")
+    await _wait_for_condition(
+        pilot,
+        lambda: gate.start_quiet_line in notices,
+        message="Enter did not return the unsupported-selection reason",
+    )
+    registry = app.library_ingest_jobs
+    assert registry.jobs() == ()
+
+    # Exercise the legacy FAILED receipt even though today's pre-check refuses it.
+    submitted = registry.submit(source_path=str(unsupported))
+    job = registry.mark_failed(
+        submitted.job_id,
         error="Unsupported file type",
         permanent=False,
         error_detail={
@@ -430,19 +474,16 @@ async def test_unsupported_file_not_retryable(library_screen, tmp_path):
             "message": "Unsupported file type",
         },
     )
-    job = registry.get_job(job.job_id)
+    assert job is not None
+    assert job.permanent is False
+    assert job.error_detail is not None
+    assert job.error_detail.get("category") == "unsupported_file_type"
 
-    # Verify the state layer suppresses retry for unsupported-file-type failures.
     state = screen._build_library_ingest_state()
     row = next((r for r in state.queue_rows if r.job_id == job.job_id), None)
     assert row is not None
     assert row.can_retry is False
-
-    # The state layer already suppresses retry for unsupported-file-type failures.
-    # The UI-level rendering is covered by Tests/UI/test_library_ingest_canvas.py.
-    # Here we just verify the registry-level flag that drives the UI.
-    assert job.error_detail is not None
-    assert job.error_detail.get("category") == "unsupported_file_type"
+    assert app.retry_library_ingest_job(job.job_id) is None
 
 
 # --- task-14820: the forecast must match the receipt ------------------------
