@@ -328,6 +328,7 @@ def receive_console_visible_intent(
     from collections.abc import Mapping
     from tldw_chatbook import config
     from tldw_chatbook.Chat.console_chat_controller import (
+        CAPTURE_PURGE_RETRY_COPY,
         build_console_provider_selection_from_settings,
         coerce_bool_setting,
         coerce_int_setting,
@@ -474,6 +475,9 @@ def receive_console_visible_intent(
     )
     if not isinstance(raw, Mapping):
         return None
+    if store.capture_quiescent(session_id):
+        screen.app_instance.notify(CAPTURE_PURGE_RETRY_COPY, severity="warning")
+        return ""
     preparation = capture_console_received_configuration_preparation(
         screen.app_instance, store, controller, session_id=session_id
     )
@@ -599,31 +603,35 @@ def receive_console_visible_intent(
     launch, revision, _notice = runtime.snapshot_console_staged_evidence(session_id)
     if config.current_config_identity() != config_identity:
         raise RuntimeError("Console configuration changed; Send again.")
-    intent = ConsoleReceivedTurnIntent(
-        str(uuid4()),
-        session_id,
-        inputs,
-        selection,
-        launch,
-        revision,
-        screen._console_runtime_attachment_generation or 0,
-        queue_revision,
-        _pressed_inputs=_captured_inputs,
-        _pressed_stash=stash if _captured_inputs is not None else None,
-        recovery_user_origin=runtime.ensure_archive_recovery().issue_user_proof(
-            session_id
-        ),
-    )
-    if config.current_config_identity() != config_identity:
-        raise RuntimeError("Console configuration changed; Send again.")
-    send_ack = getattr(screen, "_console_send_ack", None)
-    callbacks = (
-        {"terminal_callback": send_ack.custody_callback(session_id)}
-        if send_ack is not None else {}
-    )
-    turn_id = runtime.accept_received_intent(
-        intent, _configuration_preparation=preparation, **callbacks
-    )
+    archive = runtime.ensure_archive_recovery()
+    proof = archive.issue_user_proof(session_id)
+    try:
+        intent = ConsoleReceivedTurnIntent(
+            str(uuid4()),
+            session_id,
+            inputs,
+            selection,
+            launch,
+            revision,
+            screen._console_runtime_attachment_generation or 0,
+            queue_revision,
+            _pressed_inputs=_captured_inputs,
+            _pressed_stash=stash if _captured_inputs is not None else None,
+            recovery_user_origin=proof,
+        )
+        if config.current_config_identity() != config_identity:
+            raise RuntimeError("Console configuration changed; Send again.")
+        send_ack = getattr(screen, "_console_send_ack", None)
+        callbacks = (
+            {"terminal_callback": send_ack.custody_callback(session_id)}
+            if send_ack is not None else {}
+        )
+        turn_id = runtime.accept_received_intent(
+            intent, _configuration_preparation=preparation, **callbacks
+        )
+    except BaseException:
+        archive.release_user_proof(proof)
+        raise
     if send_ack is not None:
         send_ack.mark_admitted(session_id)
     return turn_id

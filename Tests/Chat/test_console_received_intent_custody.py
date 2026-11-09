@@ -154,3 +154,58 @@ async def test_received_scheduling_failure_releases_claim_and_keeps_staging(
     assert store.pending_attachments(session.id) == [attachment]
     assert store.pending_attachments(session.id)[0] is attachment
     assert store.session_one_shot_prefill_snapshot(session.id) == before_prefill
+
+
+@pytest.mark.parametrize("queued", [False, True], ids=["ordinary", "queued"])
+async def test_purge_lease_refuses_received_intent_before_preparation(
+    intent_case, monkeypatch, queued
+):
+    from tldw_chatbook.Chat import console_received_dispatch
+
+    runtime, store, session, request = intent_case
+    attachment = _attachment("capture-purge-kept-attachment")
+    assert store.add_pending_attachment(session.id, attachment)
+    queue = runtime._chat_controller.prompt_queue_registry
+    if queued:
+        assert queue.begin_chain(
+            session.id,
+            context_epoch=store.conversation_context_epoch(session.id),
+            expected_revision=queue.snapshot(session.id).revision,
+        ).applied
+    before_queue = queue.snapshot(session.id)
+    before_prefill = store.session_one_shot_prefill_snapshot(session.id)
+    before_capture = store.capture_revision(session.id)
+    intent = _intent(
+        intent_case, queue_revision=before_queue.revision if queued else None
+    )
+    source_calls = []
+    original_source = console_received_dispatch.received_preparation_source
+
+    def observe_source(*args, **kwargs):
+        source_calls.append(True)
+        return original_source(*args, **kwargs)
+
+    monkeypatch.setattr(
+        console_received_dispatch, "received_preparation_source", observe_source
+    )
+    assert store.begin_capture_quiescence(session.id)
+    try:
+        with pytest.raises(RuntimeError, match="retry"):
+            runtime.accept_received_intent(intent)
+
+        assert not source_calls
+        assert store.received_turn_for_session(session.id) is None
+        assert not runtime.has_custodied_turns(session.id)
+        assert store.session_draft(session.id) == request.draft
+        assert store.pending_attachments(session.id) == [attachment]
+        assert store.pending_attachments(session.id)[0] is attachment
+        assert store.session_one_shot_prefill_snapshot(session.id) == before_prefill
+        assert queue.snapshot(session.id) == before_queue
+        assert store.capture_revision(session.id) == before_capture
+    finally:
+        store.end_capture_quiescence(session.id)
+        record = runtime._turn_custody.get(intent.turn_id)
+        if record is not None and record.task is not None:
+            task = record.task
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)

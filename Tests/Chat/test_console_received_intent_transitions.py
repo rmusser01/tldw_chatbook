@@ -505,6 +505,85 @@ async def test_mixin_change_during_original_configuration_worker_refuses_draft(
     assert not case.store.messages_for_session(case.session.id)
 
 
+@pytest.mark.parametrize("queued", [False, True], ids=["ordinary", "queued"])
+async def test_held_received_native_preparation_blocks_capture_purge_until_retirement(
+    received_workspace, queued
+):
+    from tldw_chatbook.Chat.console_chat_controller import CapturePurgeStatus
+    from tldw_chatbook.Chat.console_preparation_reads import preparation_reads_for
+
+    case = received_workspace
+    runtime, store, session, controller = (
+        case.runtime,
+        case.store,
+        case.session,
+        case.controller,
+    )
+    draft = "keep this draft while configuration is read"
+    store.set_session_draft(session.id, draft)
+    other = store.create_session(ephemeral=True)
+    store.switch_session(session.id)
+    queue = controller.prompt_queue_registry
+    if queued:
+        assert queue.begin_chain(
+            session.id,
+            context_epoch=store.conversation_context_epoch(session.id),
+            expected_revision=queue.snapshot(session.id).revision,
+        ).applied
+    before_queue = queue.snapshot(session.id)
+    revision = store.capture_revision(session.id)
+    intent = _stock_intent(
+        case, queue_revision=before_queue.revision if queued else None
+    )
+    probe = worker_controls._OriginalConfigurationWorkspaceRead(case.registry)
+
+    with probe.installed():
+        runtime.accept_received_intent(intent)
+        record = runtime._turn_custody[intent.turn_id]
+        task = record.task
+        try:
+            await worker_controls._wait_for_original_reader(probe, task)
+            assert record.request is None
+            assert task not in controller._active_submit_tasks
+            assert store.preparation_for_session(session.id) is None
+            claim = store.received_turn_for_session(session.id)
+            assert claim is record.received_claim
+            assert (claim is None) == queued
+            assert controller.capture_purge_availability(other.id).can_purge
+            (read,) = preparation_reads_for(runtime._preparation_reads, session.id)
+            assert read.task is task
+            results = [await controller.purge_full_captures(session.id, revision)]
+            for _ in range(2):
+                task.cancel()
+                await asyncio.sleep(0)
+                assert not task.done()
+                assert not read.retired.done()
+                assert not probe.retired()
+                results.append(await controller.purge_full_captures(session.id, revision))
+        finally:
+            probe.release.set()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await asyncio.sleep(0)
+
+    assert task.cancelled()
+    assert probe.retired() and not probe.release_timed_out
+    assert read.retired.done() and not read.retired.cancelled()
+    assert preparation_reads_for(runtime._preparation_reads, session.id) == ()
+    assert not runtime.has_custodied_turns(session.id)
+    assert store.received_turn_for_session(session.id) is None
+    assert all(result.status is CapturePurgeStatus.BLOCKED for result in results), (
+        results
+    )
+    assert all(result.reason_code == "preparation_active" for result in results)
+    assert store.capture_revision(session.id) == revision
+    assert store.session_draft(session.id) == draft
+    assert queue.snapshot(session.id) == before_queue
+    assert not store.messages_for_session(session.id)
+    assert controller.capture_purge_availability(session.id).can_purge
+
+
 async def test_received_mixin_capture_holds_chat_a_while_b_choices_change(
     received_workspace, monkeypatch,
 ):

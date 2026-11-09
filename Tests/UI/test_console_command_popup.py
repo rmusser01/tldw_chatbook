@@ -5,20 +5,26 @@ from unittest.mock import AsyncMock
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.widgets import Static
+
+import tldw_chatbook
+from Tests.UI.app_factory import attach_chachanotes_db
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Button, Static
-
-import tldw_chatbook
-from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.test_console_composer_run_controls import _wait_for
+from Tests.UI.test_console_native_chat_flow import (
+    CapturingGateway,
+    _configure_native_ready_console,
+)
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_command_grammar import default_console_registry
 from tldw_chatbook.Chat.console_command_suggestions import CommandSuggestion
+from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
 from tldw_chatbook.Chat.console_skill_resolver import SkillCommandCandidate
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_command_popup import ConsoleCommandPopup
@@ -198,7 +204,8 @@ async def test_skill_entries_and_skills_arg_mode():
             SkillCommandCandidate(name="web-search", description="Search the web"),
         )
 
-        await pilot.press("/", "w")
+        # /w also matches /workspace. /web isolates the skill's command entry.
+        await pilot.press("/", "w", "e", "b")
         await pilot.pause()
         # Bare `/skill-name` is not dispatchable on dev (fallback resolver
         # removed), so the entry completes to the `/skills <name> ` form.
@@ -215,14 +222,6 @@ async def test_skill_entries_and_skills_arg_mode():
         await pilot.press("enter")
         await pilot.pause()
         assert composer.draft_text() == "/skills web-search "
-
-
-async def _spy_submit_draft(console) -> AsyncMock:
-    """Wrap the active controller's ``submit_draft`` so real sends still work."""
-    controller = console._ensure_console_chat_controller()
-    spy = AsyncMock(wraps=controller.submit_draft)
-    controller.submit_draft = spy
-    return spy
 
 
 class _StyledConsoleHarness(ConsoleHarness):
@@ -309,24 +308,51 @@ async def test_popup_anchors_above_composer_with_real_css():
 @pytest.mark.bootstrap_profile
 async def test_enter_with_popup_closed_sends_normally():
     """Popup-hidden Enter must reach the normal send path (spec contract)."""
+    draft = "hello"
+    reply = "keyboard send reply"
+    gateway = CapturingGateway(chunks=(reply,))
     app = _build_test_app()
     _configure_native_ready_console(app)
-    host = ConsoleHarness(app)
+    app.console_provider_gateway_factory = lambda: gateway
+    database = attach_chachanotes_db(app)
+    try:
+        host = ConsoleHarness(app)
+        async with host.run_test(size=(160, 48)) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-native-composer")
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+            popup = console.query_one("#console-command-popup", ConsoleCommandPopup)
+            store = console._ensure_console_chat_store()
+            session_id = store.active_session_id
+            composer.load_draft(draft)
+            composer.focus()
+            await pilot.pause()
+            assert host.focused is composer
+            assert not popup.is_open
+            assert not gateway.sent_messages
 
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
-        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        popup = console.query_one("#console-command-popup", ConsoleCommandPopup)
-        composer.load_draft("hello")
-        await pilot.pause()
-        assert not popup.is_open
-        submit_spy = await _spy_submit_draft(console)
+            await pilot.press("enter")
+            await _wait_for(
+                pilot,
+                lambda: any(
+                    message.role.value == "assistant"
+                    and message.content == reply
+                    and message.status == "complete"
+                    for message in store.messages_for_session(session_id)
+                ),
+                "Keyboard Send did not complete the assistant reply",
+            )
 
-        console.query_one("#console-send-message", Button).press()
-        await pilot.app.workers.wait_for_complete()
-        await pilot.pause()
-        submit_spy.assert_awaited()
+            assert len(gateway.sent_messages) == 1
+            sent_message = gateway.sent_messages[0][-1]
+            assert (sent_message["role"], sent_message["content"]) == ("user", draft)
+            assert composer.draft_text() == ""
+    finally:
+        await dispose_console_runtime(app)
+        assert getattr(app, "console_runtime", None) is None
+        with database.quiesce_connections(timeout_seconds=5):
+            pass
+        assert database.registered_connection_count() == 0
 
 
 @pytest.mark.asyncio

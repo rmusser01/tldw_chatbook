@@ -3154,6 +3154,7 @@ class CapturePurgeStatus(str, Enum):
 
 
 _MISSING_CAPTURE_REVISION = -1
+CAPTURE_PURGE_RETRY_COPY = "Stored captures are being updated; retry shortly."
 _UNFROZEN_TRACE_PRIVACY_REVISION = -1
 _UNFROZEN_PII_RULESET_REVISION = object()
 
@@ -5135,6 +5136,12 @@ class ConsoleChatController:
                 return "preparation_active"
         if self.store.preparation_for_session(session_id) is not None:
             return "preparation_active"
+        runtime = getattr(self, "_hooks_v2_runtime", None)
+        if runtime is not None:
+            from .console_received_dispatch import received_capture_preparation_active
+
+            if received_capture_preparation_active(runtime, self.store, session_id):
+                return "preparation_active"
         checker = getattr(self._agent_bridge, "has_unsettled_children", None)
         if callable(checker):
             try:
@@ -9399,7 +9406,7 @@ class ConsoleChatController:
                 return ConsoleSubmitResult(
                     False,
                     False,
-                    "Stored captures are being updated; retry shortly.",
+                    CAPTURE_PURGE_RETRY_COPY,
                     session_id=owner_key,
                     origin=origin,
                     queue_entry_id=queue_entry_id,

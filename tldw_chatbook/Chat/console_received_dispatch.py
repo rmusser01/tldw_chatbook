@@ -438,19 +438,66 @@ async def _run_received_intent_bound(runtime, record, source):
     )
 
 
+def received_capture_preparation_active(runtime, store, session_id: str) -> bool:
+    """Observe exact received custody, including publication and retirement."""
+    records = getattr(runtime, "_turn_custody", {}).copy()
+    return any(
+        record.store is store
+        and record.session_id == session_id
+        and record.received_intent is not None
+        for record in records.values()
+    )
+
+
+def _require_received_registration_current(runtime, record, source) -> None:
+    runtime._raise_if_disposed_or_session_fenced(record.session_id)
+    if (
+        runtime._turn_custody.get(record.turn_id) is not record
+        or record.store is not source.store
+        or runtime._chat_store is not source.store
+        or runtime._chat_controller is not source.controller
+    ):
+        raise RecoveryRequired("console_snapshot_owner_changed")
+
+
+def finish_custody_registration(runtime, record, *, received_source=None) -> None:
+    """Apply the existing effects after publishing the custody record."""
+    if received_source is not None:
+        _require_received_registration_current(runtime, record, received_source)
+    runtime._clear_staged_evidence_receipt(record.session_id)
+    if received_source is not None:
+        _require_received_registration_current(runtime, record, received_source)
+    app, store = runtime._app, runtime._chat_store
+    if app is None or store is None:
+        return
+    session = next(
+        (item for item in store.sessions() if item.id == record.session_id), None
+    )
+    if session is not None and session.persisted_conversation_id:
+        conversation_id = session.persisted_conversation_id
+        reservations = getattr(app, "_conversation_send_inflight", None)
+        if reservations is None:
+            reservations = app._conversation_send_inflight = {}
+        reservations[conversation_id] = reservations.get(conversation_id, 0) + 1
+        record.archive_conversation_id = conversation_id
+
+
 def accept_received_intent(
     self, intent: ConsoleReceivedTurnIntent, *, _configuration_preparation=None,
     terminal_callback=None,
 ) -> str:
     """Reserve bounded authored input before any hook or configuration read."""
+    from .console_chat_controller import CAPTURE_PURGE_RETRY_COPY
     from .console_received_intent import ConsoleReceivedTurnIntent
 
     if type(intent) is not ConsoleReceivedTurnIntent:
         raise TypeError("intent must be ConsoleReceivedTurnIntent")
     self._raise_if_disposed_or_session_fenced(intent.session_id)
-    store = self._chat_store
-    if store is None or self._chat_controller is None:
+    store, controller = self._chat_store, self._chat_controller
+    if store is None or controller is None:
         raise RuntimeError("Console chat owner is unavailable.")
+    if store.capture_quiescent(intent.session_id):
+        raise RuntimeError(CAPTURE_PURGE_RETRY_COPY)
     if not store.session_inputs_are_current(intent.inputs, include_draft=intent._pressed_inputs is None):
         raise RuntimeError("Console input changed; Send again.")
     if _configuration_preparation is not None:
@@ -462,7 +509,7 @@ def accept_received_intent(
             _configuration_preparation,
             self._app,
             store,
-            self._chat_controller,
+            controller,
             session_id=intent.session_id,
         )
     source = received_preparation_source(
@@ -478,28 +525,36 @@ def accept_received_intent(
         except Exception:  # noqa: BLE001 - source uncertainty refuses admission.
             from .console_prompt_mixins import MixinSnapshotUnavailableError
             raise MixinSnapshotUnavailableError("mixin_source_unavailable") from None
-    claim = None
-    if intent.queue_revision is None:
-        claim = store.claim_received_turn(
-            intent.session_id,
-            intent.turn_id,
-            draft_revision=intent.inputs.draft_revision,
-            _allow_draft_change=intent._pressed_inputs is not None,
-        )
-        if claim is None:
-            raise RuntimeError(
-                "Console session already has a received or prepared turn."
-            )
-    record = coroutine = None
+    claim = record = coroutine = None
     try:
+        # The purge arms this same store lease before its second owner check.
+        with store._capture_quiescence_lock:
+            if store.capture_quiescent(intent.session_id):
+                raise RuntimeError(CAPTURE_PURGE_RETRY_COPY)
+            if (
+                self._chat_store is not store
+                or source.store is not store
+                or self._chat_controller is not controller
+                or source.controller is not controller
+            ):
+                raise RecoveryRequired("console_snapshot_owner_changed")
+            if intent.queue_revision is None:
+                claim = store.claim_received_turn(
+                    intent.session_id,
+                    intent.turn_id,
+                    draft_revision=intent.inputs.draft_revision,
+                    _allow_draft_change=intent._pressed_inputs is not None,
+                )
+                if claim is None:
+                    raise RuntimeError(
+                        "Console session already has a received or prepared turn."
+                    )
+            record = self._reserve_custody(
+                None, store=store, received_claim=claim, received_intent=intent,
+            )
         if claim is not None and self._response_rules is not None:
             self._response_rules.invalidate(intent.session_id, "user_input")
-        record = self._register_custody(
-            None,
-            store=store,
-            received_claim=claim,
-            received_intent=intent,
-        )
+        finish_custody_registration(self, record, received_source=source)
         coroutine = run_received_intent(self, record, source)
         record.task = self._create_custody_task(coroutine)
         record.task.add_done_callback(
@@ -512,8 +567,11 @@ def accept_received_intent(
         )
     except BaseException:
         if coroutine is not None:
-            coroutine.close()
-        if record is not None:
+            if record.task is None:
+                coroutine.close()
+            else:
+                record.task.cancel()
+        if record is not None and self._turn_custody.get(record.turn_id) is record:
             self._release_custody(record.turn_id)
         elif claim is not None:
             store.release_received_turn(claim)

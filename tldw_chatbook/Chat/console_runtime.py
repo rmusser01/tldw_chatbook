@@ -2835,6 +2835,26 @@ class ConsoleRuntime:
         received_intent: Any = None,
     ) -> _ConsoleTurnCustodyRecord:
         """Retain one request before its task may begin running."""
+        from .console_received_dispatch import finish_custody_registration
+
+        record = self._reserve_custody(
+            request, attachments, staged_evidence_revision, store=store,
+            received_claim=received_claim, received_intent=received_intent,
+        )
+        finish_custody_registration(self, record)
+        return record
+
+    def _reserve_custody(
+        self,
+        request: ConsoleTurnCustodyRequest | None,
+        attachments: tuple[Any, ...] = (),
+        staged_evidence_revision: int | None = None,
+        *,
+        store: Any = None,
+        received_claim: Any = None,
+        received_intent: Any = None,
+    ) -> _ConsoleTurnCustodyRecord:
+        """Publish one exact record without invoking admission callbacks."""
         identity = request if request is not None else received_intent
         if identity.turn_id in self._turn_custody:
             raise RuntimeError("Console turn is already in runtime custody.")
@@ -2851,26 +2871,6 @@ class ConsoleRuntime:
             ),
         )
         self._turn_custody[record.turn_id] = record
-        self._clear_staged_evidence_receipt(record.session_id)
-        if self._app is not None and self._chat_store is not None:
-            session = next(
-                (
-                    item
-                    for item in self._chat_store.sessions()
-                    if item.id == identity.session_id
-                ),
-                None,
-            )
-            record.archive_conversation_id = (
-                session.persisted_conversation_id if session is not None else None
-            )
-            if record.archive_conversation_id:
-                reservations = getattr(self._app, "_conversation_send_inflight", None)
-                if reservations is None:
-                    reservations = self._app._conversation_send_inflight = {}
-                reservations[record.archive_conversation_id] = (
-                    reservations.get(record.archive_conversation_id, 0) + 1
-                )
         return record
 
     def has_custodied_turns(self, session_id: str | None = None) -> bool:
