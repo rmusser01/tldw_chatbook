@@ -109,8 +109,11 @@ async def test_slash_opens_popup_and_typing_filters():
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
 async def test_enter_accepts_and_inserts_without_sending():
+    from Tests.UI.test_console_skill_commands import FakeSkillsScopeService
+
     app = _build_test_app()
     _configure_native_ready_console(app)
+    app.skills_scope_service = FakeSkillsScopeService()
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -118,6 +121,8 @@ async def test_enter_accepts_and_inserts_without_sending():
         await _wait_for_selector(console, pilot, "#console-native-composer")
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         popup = console.query_one("#console-command-popup", ConsoleCommandPopup)
+        send_spy = AsyncMock(wraps=console._send_console_message_from_visible_action)
+        console._send_console_message_from_visible_action = send_spy
 
         await pilot.press("/", "s", "k")
         await pilot.pause()
@@ -126,6 +131,7 @@ async def test_enter_accepts_and_inserts_without_sending():
         assert composer.draft_text() == "/skills "
         # No skill candidates configured -> arg-mode list is empty -> hidden.
         assert not popup.is_open
+        send_spy.assert_not_called()
 
 
 @pytest.mark.asyncio
