@@ -210,6 +210,8 @@ The focused mounted tests passed all four pointer cases and all four mixed-shell
 
 The optional Windows headless first-open file finished with four passes and two failures. The exact pre-review commit 88200953ae reproduced both failures at the same navigation and launch mount assertions. Both fixtures reported a claimable round and the active session with title-only paint before any approval input. The first-open cause remains open.
 
+Hosted preflight for b71fe527e3 flagged the diagnostic inventory. The statement-level review found one new fixed warning for over-depth approval inputs. It uses the existing logger with no input interpolation. The prescribed generator updated only the console_interrupt_rounds.py owner count and digest.
+
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Renumbering provenance
 
