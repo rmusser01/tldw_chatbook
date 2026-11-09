@@ -1661,7 +1661,9 @@ class ConsolePromptQueueCoordinator:
             QueueMutationStatus.UNCHANGED,
         }
 
-    def retain_durable_acceptance(self, session_id: str) -> None:
+    def retain_durable_acceptance(
+        self, session_id: str, *, entry_id: str | None = None
+    ) -> None:
         """Fence a committed queued claim from returning to pending.
 
         Task 14 uses this only after SQLite has committed the durable owner and
@@ -1670,7 +1672,7 @@ class ConsolePromptQueueCoordinator:
         """
 
         chain = self._chains.get(session_id)
-        if chain is None:
+        if chain is None or (entry_id is not None and chain.current_entry_id != entry_id):
             return
         chain.accepted_live_turn = True
         self._changed(session_id)

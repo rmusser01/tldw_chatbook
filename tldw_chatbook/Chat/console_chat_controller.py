@@ -13138,7 +13138,14 @@ class ConsoleChatController:
                         native_owner, commit
                     )
                 native_owner.caller_cancelled |= isinstance(exc, asyncio.CancelledError)
-                self.store.publish_durable_recovery_owner(session_id, commit)
+                if commit.checkpoint.queue_entry_id is not None:
+                    self.prompt_queue_coordinator.retain_durable_acceptance(
+                        session_id, entry_id=commit.checkpoint.queue_entry_id
+                    )
+                if (registered := self.store.dispatch_recovery_for_session(session_id)) is None or (
+                    registered.assistant_message_id, registered.conversation_id
+                ) != (commit.assistant_message_id, commit.checkpoint.conversation_id):
+                    self.store.publish_durable_recovery_owner(session_id, commit)
                 self._restore_dispatch_recovery_after_settlement_failure(
                     session_id, commit.assistant_message_id
                 )
