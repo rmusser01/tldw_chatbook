@@ -391,27 +391,70 @@ def test_unreadable_directory_has_incomplete_receipt(tmp_path):
 
 
 def test_deep_directory_capture_has_no_python_recursion(tmp_path):
-    current = tmp_path
+    import os
+    from contextlib import suppress
+
     depth = 1050
-    try:
-        for _ in range(depth):
-            current = current / "d"
-            current.mkdir()
-        (current / "leaf.txt").write_text("deep")
-        relative = "/".join(["d"] * depth)
+    relative = "/".join(["d"] * depth)
+
+    def assert_capture():
         scanner, result, pages = scan(tmp_path, frontier=[relative])
         assert result.status == "complete"
         assert [c.text for p in pages for c in p.captures] == ["deep"]
         assert scanner.retired
+
+    if os.name == "nt":
+        current = tmp_path
+        try:
+            for _ in range(depth):
+                current = current / "d"
+                current.mkdir()
+            (current / "leaf.txt").write_text("deep")
+            assert_capture()
+        finally:
+            (current / "leaf.txt").unlink(missing_ok=True)
+            while current != tmp_path:
+                if current.exists():
+                    current.rmdir()
+                current = current.parent
+        return
+
+    # Keep the actual depth without crossing the POSIX absolute path limit.
+    flags = os.O_RDONLY | os.O_DIRECTORY
+    directory = os.open(tmp_path, flags)
+    created = 0
+    try:
+        for _ in range(depth):
+            os.mkdir("d", dir_fd=directory)
+            try:
+                child = os.open("d", flags, dir_fd=directory)
+            except OSError:
+                os.rmdir("d", dir_fd=directory)
+                raise
+            os.close(directory)
+            directory = child
+            created += 1
+        with os.fdopen(
+            os.open(
+                "leaf.txt", os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600,
+                dir_fd=directory,
+            ),
+            "w",
+            encoding="utf-8",
+        ) as leaf:
+            leaf.write("deep")
+        assert_capture()
     finally:
-        # Iterative fixture cleanup must not be the source of RecursionError.
-        if (current / "leaf.txt").exists():
-            (current / "leaf.txt").unlink()
-        while current != tmp_path:
-            parent = current.parent
-            if current.exists():
-                current.rmdir()
-            current = parent
+        try:
+            with suppress(FileNotFoundError):
+                os.unlink("leaf.txt", dir_fd=directory)
+            for _ in range(created):
+                parent = os.open("..", flags, dir_fd=directory)
+                os.close(directory)
+                directory = parent
+                os.rmdir("d", dir_fd=directory)
+        finally:
+            os.close(directory)
 
 
 def test_megabyte_captures_apply_backpressure_before_next_read(tmp_path):

@@ -875,6 +875,7 @@ class TestChangeReviewGating:
         registry.add_folder_binding("ws-1", root)
         return root
 
+    @pytest.mark.bootstrap_profile
     def test_global_kill_knob_empties_the_root_list(self, tmp_path, monkeypatch):
         import tldw_chatbook.Tools.workspace_file_roots as wfr
 
@@ -889,6 +890,7 @@ class TestChangeReviewGating:
             "the global knob must stop tracking on the NEXT read"
         )
 
+    @pytest.mark.bootstrap_profile
     def test_workspace_toggle_gates_only_that_workspace(self, tmp_path, monkeypatch):
         import tldw_chatbook.Tools.workspace_file_roots as wfr
 
@@ -908,6 +910,7 @@ class TestChangeReviewGating:
         assert wfr.folder_binding_roots("ws-1") == ()
         assert wfr.folder_binding_roots("ws-2") == (other_root.resolve(),)
 
+    @pytest.mark.bootstrap_profile
     def test_reenabling_restores_tracking_without_restart(self, tmp_path, monkeypatch):
         import tldw_chatbook.Tools.workspace_file_roots as wfr
 

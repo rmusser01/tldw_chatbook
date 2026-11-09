@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -634,15 +635,34 @@ def test_root_descriptor_is_closed_when_fstat_fails(
     inspector, _registry_service, _root, scope = _scope(tmp_path)
     descriptor = 987_654
     closed: list[int] = []
-    monkeypatch.setattr(file_inspector.os, "open", lambda *_args, **_kwargs: descriptor)
-    monkeypatch.setattr(
-        file_inspector.os,
-        "fstat",
-        lambda _descriptor: (_ for _ in ()).throw(OSError("fstat failed")),
+    real_open, real_fstat, real_close = (
+        file_inspector.os.open,
+        file_inspector.os.fstat,
+        file_inspector.os.close,
     )
-    monkeypatch.setattr(file_inspector.os, "close", closed.append)
 
-    result = inspector.list_directory(scope)
+    def open_root(path, *args, **kwargs):
+        if path == scope.canonical_root and kwargs.get("dir_fd") is None:
+            return descriptor
+        return real_open(path, *args, **kwargs)
+
+    def fail_root_fstat(fd):
+        if fd == descriptor:
+            raise OSError("fstat failed")
+        return real_fstat(fd)
+
+    def close_root(fd):
+        if fd == descriptor:
+            closed.append(fd)
+        else:
+            real_close(fd)
+
+    with monkeypatch.context() as fault:
+        fault.setattr(file_inspector, "os", SimpleNamespace(**vars(os)))
+        fault.setattr(file_inspector.os, "open", open_root)
+        fault.setattr(file_inspector.os, "fstat", fail_root_fstat)
+        fault.setattr(file_inspector.os, "close", close_root)
+        result = inspector.list_directory(scope)
 
     assert result.error_code == "binding_changed"
     assert closed == [descriptor]
@@ -654,13 +674,15 @@ def test_path_validation_rejects_nul_without_calling_os_open(
     """NUL is invalid path input, not an uncaught ``os.open`` ValueError."""
     inspector, _registry_service, _root, scope = _scope(tmp_path)
     calls: list[object] = []
-    monkeypatch.setattr(
-        file_inspector.os,
-        "open",
-        lambda *args, **kwargs: calls.append((args, kwargs)),
-    )
+    with monkeypatch.context() as fault:
+        fault.setattr(file_inspector, "os", SimpleNamespace(**vars(os)))
+        fault.setattr(
+            file_inspector.os,
+            "open",
+            lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
 
-    result = inspector.read_file(scope, ("bad\0name.txt",))
+        result = inspector.read_file(scope, ("bad\0name.txt",))
 
     assert result.kind is FileReadKind.FAILED
     assert result.error_code == "invalid_path"
@@ -685,15 +707,17 @@ def test_empty_filter_returns_without_traversing_the_binding(
 ) -> None:
     """An empty query is an empty result, never an accidental full-tree walk."""
     inspector, _registry_service, _root, scope = _scope(tmp_path)
-    monkeypatch.setattr(
-        file_inspector.os,
-        "scandir",
-        lambda _descriptor: (_ for _ in ()).throw(
-            AssertionError("empty query traversed the workspace")
-        ),
-    )
+    with monkeypatch.context() as fault:
+        fault.setattr(file_inspector, "os", SimpleNamespace(**vars(os)))
+        fault.setattr(
+            file_inspector.os,
+            "scandir",
+            lambda _descriptor: (_ for _ in ()).throw(
+                AssertionError("empty query traversed the workspace")
+            ),
+        )
 
-    result = inspector.filter_paths(scope, "")
+        result = inspector.filter_paths(scope, "")
 
     assert result.status is FilterStatus.EMPTY
     assert result.matches == ()
