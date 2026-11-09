@@ -26,7 +26,7 @@
     "approval_fixture_workload_v7.py": "ef0b030865070035a0e32258c72adfc5f471646ef76feebe393e4d68e707067b",
     "common_activity_observer.py": "511d1fcc8150dc8492ab1d7da752769f7f6ccb7a2cdf9dc20b2aea27e2563bba",
     "native_bootstrap.py": "fba33556c87bd321c138d6d50bb037ed90d7bb0c4ace59440a74f1689e87ca08",
-    "native_product_child.py": "21f74b0f3c8a198529a849e2b3134e3b3ca3db8284dc9513c9edc878a4c4de64",
+    "native_product_child.py": "a0344107c4934688da7d05756e582eac557ac71bdbf80fb5e6e37ac2ec00689b",
     "native_product_observer.py": "3743a69a1dd619fdafdbc68d7ed6c5a3a2d607cb281487dd024cb8cac59663ce",
     "native_rehearsal_observation.py": "b59490d5be3a33bfc89b9e80c272f1fa96d91574fc3a66e2e2b4f83be76c14b2",
     "native_series_method.py": "58d89714d85a146ed1f4365b3e6defaf89f5b3621def35d1653e14717e2fcba3",
@@ -82,6 +82,7 @@
       "reference_hashes_match": true,
       "no_original_home_worktree_private_run_literal": true
     },
+    "terminal_input_startup": 6,
     "received_intent_delegation_refusal_source_contracts": 28,
     "final_existing_control_returncodes": [
       {
@@ -262,7 +263,7 @@
   "profile_source_security": "Original-home guard before redirect/products, selected main/Core source first in no-pip venv and -I workers; real admission/gateway/catalog/load/permissions/rootpin/executor, exact owned endpoints, no model/external network",
   "original_V19_checkpoint_SHA256": "8c192125ab1dbc89d724d903b5cf383c1c5b0192c4d766054ae315e61532cdbd",
   "source_export_notes": "New public copy formatted LF/Ruff; unused imports/locals removed, exact-type and essential E402 exceptions documented. Original V18/V19 code/receipts untouched. Guard semantic change only per-command safe.directory.as_posix; stricter qualification-freeze gate explicitly RED/GREEN reviewed.",
-  "readme_SHA256": "34c2d6fb0f483bd8a74d6f251651697e59a155519cd5484a374e2d4d3368163d",
+  "readme_SHA256": "4533e145f53043d0972d5a080478ce22c520c48a384d0462ea9bb8c90d14bf9c",
   "qualified": false,
   "product_samples": 0,
   "GUI_launched": false,

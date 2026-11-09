@@ -183,6 +183,17 @@ ADR required: no new decision. ADR path: backlog/decisions/235-console-approval-
 
 ADR required: no new ADR. ADR paths are backlog/decisions/235-console-approval-interaction-and-feedback.md, backlog/decisions/098-visible-bounded-console-prompt-queue.md and backlog/decisions/231-console-polling-and-full-state-reconciliation.md. The repair preserves the established permission, queue and timing boundaries.
 
+### Recover native mouse transport and long Edge capture on dev
+
+1. Compare the successful physical native validation with the invalid fixed-series cold round on 3a6498ae14. Keep the eleven prequeue Key events, zero MouseDown/MouseUp events, and the open unsubmitted card as the original failure. Use the owned Windows input path and original Textual parser to isolate where the expected synthetic mouse packet is lost. Record only event shape, counts and timestamps. Establish a focused refusal or race control before changing the harness. Preserve the original physical gesture, earliest app MouseDown boundary, ownership and generation checks, bounded cleanup, and fixed denominator without replacement.
+2. Inspect the exact failed Edge trace and measure both capacities independently. Use the same verified Edge executable and existing protected synthetic presentation probe to test a long capture at the actual viewport. Require both clock anchors, early and late actual presentation joins, readable complete nonce and enabled control, and unchanged loss refusal. Choose a bounded capture configuration from measured traffic and readable frames. Keep one continuous pre-intent trace, strict source and sequence joins, the same clock math, and no product delay. Do not qualify a diagnostic or a censored trace.
+3. Independently review the selected sources and controls. Rebind and rerun on merged dev with fresh private profiles, first validating the changes and then attempting each fixed 41-round series. Keep cold, warm, baseline, each scenario and each transport separate. Finish only when the original qualification and evidence gates are met.
+4. Use the retained send-intent, loopback POST, response-start and complete-request timestamps to locate the slow portion of Send. After capture recovery, use the original-body bounded attribution under TASK-34601 and ADR-230 to partition the pre-provider interval on current dev. Compare fresh and warm runs in the same scope. The existing synthetic cold intervals localize the delay but do not identify its internal owner.
+
+ADR required: no new ADR for diagnostic or test-only repairs within the existing contracts.
+ADR paths: backlog/decisions/235-console-approval-interaction-and-feedback.md and backlog/decisions/230-console-send-preparation-and-io-ownership.md.
+Reason: evidence-only recovery and Send attribution preserve stock permission, queue, input, dispatch, and clock boundaries. Recheck ADR scope if a proposed method changes any established contract.
+
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -249,6 +260,8 @@ On dev b498bc3aec, the native approval accepted the isolated read and completed 
 The foreground Edge trace on the same dev revision recorded data loss and zero screenshots across the actionable segment. The trace now asks only for benchmark, user-timing, and screenshot events. Earlier same-executable replay preserved four screenshots, two valid presentation joins, two rejected frames, and 40 clock marks. The failed trace still refuses on its original loss flag. Five browser controls passed. Source review cleared both repairs and pinned Ruff reported the same three findings as exact dev. The existing timing caps and sample rules still apply.
 
 These repairs and offline checks add zero qualified samples. Fresh single-call validation on merged dev, the remaining shape and geometry coverage, and comparable baseline distributions are still required.
+
+Merged dev 3a6498ae14 passed the native single-call settlement validation. The fixed-41 native run then stopped with eleven prequeue Key events and zero mouse events. The card remained open with no approval verdict. The QA child had skipped the stock terminal image warm-up. It now delegates to that helper before Textual owns stdin. The six startup-order controls and ten original native packet controls passed. No fresh physical result is claimed by this source change. Edge still reports loss after narrowing, with one retained clock mark of 21 and no screenshot near the final presentation. Both series still have zero qualified samples.
 
 <!-- SECTION:NOTES:END -->
 

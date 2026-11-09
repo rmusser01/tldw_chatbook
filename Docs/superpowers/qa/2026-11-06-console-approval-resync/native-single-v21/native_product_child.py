@@ -281,6 +281,12 @@ def main():
     from tldw_chatbook.app import TldwCli
 
     startup_phase("app_import_after")
+    # Match the shipped native entry before WindowsDriver owns console input.
+    from tldw_chatbook.Utils.terminal_utils import warm_up_image_protocol
+
+    startup_phase("image_protocol_warmup_before")
+    warm_up_image_protocol()
+    startup_phase("image_protocol_warmup_after")
     startup_phase("app_constructor_before")
     app = TldwCli()
     startup_phase("app_constructor_after")
