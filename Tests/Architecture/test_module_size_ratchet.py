@@ -892,7 +892,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-06, TASK-39118 (owner size waiver): 9453 -> 9475 (+22) -- media
     # cursors and execute_query hold a registry use, so the quit's idle close
     # skips a bare read in flight.
-    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9534,
+    # 2026-11-09, round-12 restack onto dev 3a6498ae14 (owner size waiver):
+    # dev's 9,534 plus TASK-39118's +22.
+    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9556,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
     # 2026-10-29, TASK-33622.6 (owner decision: raise with a dated comment):
     # 8747 -> 8763 (+16). The flat Conversations lane filters its rows and
@@ -972,7 +974,9 @@ _BUDGETS: dict[str, int] = {
     # the agent bridge gets the services bundle's storage (+1).
     # 2026-11-07, TASK-39117 (owner size waiver): 7069 -> 7072 (+3) -- the
     # runtime's dispose closes every thread's idle AgentRunsDB handle.
-    "tldw_chatbook/Chat/console_runtime.py": 7072,
+    # 2026-11-09, round-12 restack onto dev 3a6498ae14 (owner size waiver):
+    # dev's 7,046 plus TASK-39117's +3.
+    "tldw_chatbook/Chat/console_runtime.py": 7049,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-337 amendment 2026-10-27). The proof itself lives in
