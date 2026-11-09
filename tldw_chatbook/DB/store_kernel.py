@@ -137,14 +137,18 @@ class SQLiteStoreKernel:
         )
         register_core_connection(self, conn)
         try:
+            core_access(self)
             if operation_deadline is None:
-                return self._configure_connection(conn)
-            return self._configure_connection(
-                conn, operation_deadline=operation_deadline
-            )
+                configured = self._configure_connection(conn)
+            else:
+                configured = self._configure_connection(
+                    conn, operation_deadline=operation_deadline
+                )
+            core_access(self)
         except BaseException:
             conn.close()
             raise
+        return configured
 
     def _configure_connection(
         self, conn: sqlite3.Connection, *, operation_deadline: float | None = None

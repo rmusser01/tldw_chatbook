@@ -575,10 +575,10 @@ def test_previous_raw_allocation_rechecks_participant_before_return(
     owner = owner_type(tmp_path / "previous.sqlite", "phase5-race")
     owner.close()
     participant = repository_participant(owner)
+    # Event State opens through its own module since TASK-21131.
     target, name = (
         (BaseDB, "_get_connection")
-        if owner_type
-        in (LibraryCollectionsDB, EventStateRepository, SyncStateRepository)
+        if owner_type in (LibraryCollectionsDB, SyncStateRepository)
         else (importlib.import_module(owner_type.__module__), "connect_private_sqlite")
     )
     original = getattr(target, name)
