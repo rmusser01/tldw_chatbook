@@ -200,7 +200,7 @@ to the linked source module and the cohorts above; unresolved mappings remain bl
 ## Exact persistence producer symbols
 
 A row is a reviewed **source candidate**, not a claim its entire module is durable.
-The census contains 1607 rows (TASK-39053 reconciliation). Its qualified symbol is the locator-consumer
+The census contains 1609 rows (TASK-39053 reconciliation). Its qualified symbol is the locator-consumer
 evidence; where canonical root selection is not yet extracted, the cohort table explicitly records that resolver
 blocker. New calls in an existing symbol also change the expected count and fail.
 
@@ -384,6 +384,9 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_run_json | open | 1 | external_input | evals |
 | tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_run_markdown | open | 1 | external_input | evals |
 | tldw_chatbook/Evals/exporters.py | EvaluationExporter._export_run_markdown | write | 1 | external_input | evals |
+| tldw_chatbook/Evals/source_reader/experiment.py | _new_directory | mkdir | 1 | external_input | evals (explicit SourceReader fixture output) |
+| tldw_chatbook/Evals/source_reader/experiment.py | _write | write_text | 1 | external_input | evals (explicit SourceReader fixture output) |
+| tldw_chatbook/Evals/source_reader/experiment.py | run_experiment | open | 1 | external_input | evals (caller-selected local retrieval input) |
 | tldw_chatbook/Evals/specialized_runners.py | CodeExecutionRunner._execute_code | write_text | 1 | process_artifact | evals |
 | tldw_chatbook/Evals/task_loader.py | TaskLoader._detect_file_format | open | 1 | external_input | evals |
 | tldw_chatbook/Evals/task_loader.py | TaskLoader._detect_format | open | 1 | external_input | evals |
