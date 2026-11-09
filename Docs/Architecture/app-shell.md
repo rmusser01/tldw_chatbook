@@ -25,7 +25,7 @@ This document describes the `TldwCli` Textual application: startup phases, the s
 
 On Windows, `ThreadWorkerContextGuard.on_load` installs dev's short/coarse
 `textual.timer.sleep` policy before checking for an already-installed executor
-(ADR-354, amended on dev integration). Waits of at least 0.25 seconds use
+(ADR-358, amended on dev integration). Waits of at least 0.25 seconds use
 `asyncio.sleep`; shorter precision waits use the existing fixed 32-worker timer
 pool and Textual's original timing allowances. Waits and cancellation do not use
 the default executor. A cancelled short wait returns immediately while its
