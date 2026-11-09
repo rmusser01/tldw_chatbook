@@ -226,6 +226,7 @@ async def test_cancelled_caller_keeps_owned_provider_task():
     assert "PRIVATE PROVIDER ERROR" not in repr(session.late_outcome)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.loopback_network
 async def test_worker_only_text_never_reaches_main_request_over_real_http():
