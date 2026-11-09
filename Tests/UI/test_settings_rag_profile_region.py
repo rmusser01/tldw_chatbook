@@ -283,6 +283,10 @@ def test_confirm_modal_save_from_a_preview_clears_preview_and_the_save_actually_
     leak forever, ready to fire an unrelated later save's profile switch.
     This exercises the REAL `action_settings_save_category` (not
     monkeypatched) to prove the save actually reaches dispatch."""
+    from tldw_chatbook.UI.Screens.settings_rag_definition_actions import (
+        QueuedDefinitionAction,
+    )
+
     screen, callback, other_id = _dirty_screen_with_switch_pushed(
         monkeypatch, tmp_path, fake_app
     )
@@ -291,9 +295,11 @@ def test_confirm_modal_save_from_a_preview_clears_preview_and_the_save_actually_
     # clicked.
     screen._rag_preview_profile_id = other_id
     dispatched: list[tuple] = []
-    screen._confirm_reindex_then_save = lambda values, pending: dispatched.append(
-        (values, pending)
-    )
+
+    def record_reindex_gate(values, pending, *, _definition_action):
+        dispatched.append((values, pending, _definition_action))
+
+    screen._confirm_reindex_then_save = record_reindex_gate
 
     callback("save")
 
@@ -301,8 +307,9 @@ def test_confirm_modal_save_from_a_preview_clears_preview_and_the_save_actually_
     # The save must have actually reached the reindex-confirm gate with the
     # correct pending-activate target -- not been silently blocked.
     assert len(dispatched) == 1
-    _values, pending = dispatched[0]
+    _values, pending, action = dispatched[0]
     assert pending == other_id
+    assert isinstance(action, QueuedDefinitionAction)
     # And the pending id must NOT be left armed for a later, unrelated save
     # to pick up (the leak the reviewer flagged).
     assert screen._rag_profile_pending_activate is None
