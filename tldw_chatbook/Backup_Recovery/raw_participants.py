@@ -653,6 +653,32 @@ def _selection(source, route, template, user_template, selected_read):
     return lexical_path(emoji_picker._recent_emojis_path()), True, False
 
 
+def _related_member_acquirer():
+    """Use only the original acquisition callback for installed member batches."""
+    binding = storage._RAW_MEMBER_ACQUIRE_BINDING
+    acquire, code, defining, defaults, keywords, items = binding
+    if (
+        storage.acquire_storage is not acquire
+        or acquire.__code__ is not code
+        or acquire.__globals__ is not defining
+        or defining is not vars(storage)
+        or acquire.__defaults__ is not defaults
+        or acquire.__kwdefaults__ is not keywords
+        or (
+            keywords is not None
+            and (
+                len(keywords) != len(items)
+                or any(
+                    key not in keywords or keywords[key] is not value
+                    for key, value in items
+                )
+            )
+        )
+    ):
+        return None
+    return acquire
+
+
 def _pin_parent(state, anchor):
     """Reuse a complete parent proof; each operation still owns its fresh FD."""
     from tldw_chatbook.Utils import private_paths
@@ -790,6 +816,23 @@ def scope(
                 raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
     previous = getattr(_local, "operation", None)
     if previous is not None:
+        if route == mcp_sources.ROUTE and selected_read is None:
+            with storage._lock:
+                nested = live_state(previous, None, False)
+                same_permission_owner = (
+                    nested.source is source
+                    and nested.route == route
+                    and nested.pinned
+                    and nested.participant is not None
+                    and participant_identity(nested.participant).owner == "mcp.permissions"
+                )
+            if same_permission_owner:
+                # Metadata qualifies reuse; the original full check still
+                # validates the current source and path before the nested read.
+                selected = mcp_sources.selection(source)[0]
+                check(previous, selected, writing=writing)
+                yield previous
+                return
         previous_state = check(previous)
         if previous_state.source is source and route in {
             "service",
@@ -1068,6 +1111,23 @@ def scope(
                 admission_paths[0], related_paths=admission_paths[1:]
             ))
             state.holds.append(storage._holds.get(state.leases[-1]._key))
+            attempt.check()
+        elif (
+            gate is not None
+            and (
+                route == "hook_permissions" and gate.owner == "hooks.permissions"
+                or route == mcp_sources.ROUTE
+                and gate.owner in {"mcp.local", "mcp.permissions"}
+            )
+            and (acquire_members := _related_member_acquirer()) is not None
+        ):
+            attempt.check()
+            state.leases.append(
+                acquire_members(admission_paths[0], related_paths=admission_paths[1:])
+            )
+            state.holds.append(storage._holds.get(state.leases[-1]._key))
+            if _related_member_acquirer() is not acquire_members:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
             attempt.check()
         else:
             for path in admission_paths:
