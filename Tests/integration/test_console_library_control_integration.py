@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -251,6 +252,7 @@ async def test_automatic_preparation_uses_fixed_categories_and_scripted_outcomes
     assert "PRIVATE LIBRARY BODY" not in repr(recorder.activity_events)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_recording_provider_covers_stream_tool_continuation_and_redacts_bodies() -> (
     None
@@ -261,7 +263,7 @@ async def test_recording_provider_covers_stream_tool_continuation_and_redacts_bo
         model_scripts=[tool_batch],
     )
     resolution = await recorder.resolve_for_send(
-        ConsoleProviderSelection("llama_cpp", "qualification-model")
+        ConsoleProviderSelection("deepseek", "qualification-model")
     )
     store = ConsoleChatStore()
     session = store.ensure_session()
@@ -312,7 +314,10 @@ async def test_recording_provider_covers_stream_tool_continuation_and_redacts_bo
 
     native_calls = first["choices"][0]["message"]["tool_calls"]
     assert native_calls[0]["function"]["name"] == "search_library_rag"
-    assert first.provider_continuation == tool_batch.continuation
+    assert tool_batch.continuation is not None
+    assert first.provider_continuation == replace(
+        tool_batch.continuation, schema_version=3, selected_provider="deepseek"
+    )
     assert second["choices"][0]["message"]["content"] == "hello"
     assert store.get_message(assistant.id).content == "hello"
     assert [call.metadata["tool_names"] for call in recorder.calls_of("stream")] == [
