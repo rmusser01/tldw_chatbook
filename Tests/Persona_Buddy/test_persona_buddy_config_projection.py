@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -10,6 +9,7 @@ from pathlib import Path
 import pytest
 
 import tldw_chatbook.config as app_config
+from Tests.Backup_Recovery.config_test_support import select_config_source
 from tldw_chatbook.Persona_Buddy import (
     PersonaBuddyController,
     PersonaBuddyGeometry,
@@ -37,38 +37,12 @@ token = "must-not-project"
 
 @contextmanager
 def _scratch_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str):
-    cache_state = {
-        "config_cache": app_config._CONFIG_CACHE,
-        "config_cache_source": app_config._CONFIG_CACHE_SOURCE,
-        "settings_cache": app_config._SETTINGS_CACHE,
-        "settings_cache_source": app_config._SETTINGS_CACHE_SOURCE,
-        "settings": app_config.settings,
-        "config_generation": app_config._CONFIG_GENERATION,
-        "last_failure": app_config._LAST_CONFIG_LOAD_FAILURE,
-    }
     config_path = tmp_path / "config.toml"
     config_path.write_text(text, encoding="utf-8")
-    original_path = os.environ.get("TLDW_CONFIG_PATH")
-    try:
-        monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-        app_config._CONFIG_CACHE = None
-        app_config._CONFIG_CACHE_SOURCE = None
-        app_config._SETTINGS_CACHE = None
-        app_config._SETTINGS_CACHE_SOURCE = None
-        app_config._LAST_CONFIG_LOAD_FAILURE = None
+    config_path.chmod(0o600)
+    with monkeypatch.context() as selected:
+        select_config_source(selected, config_path, globals())
         yield config_path
-    finally:
-        if original_path is None:
-            monkeypatch.delenv("TLDW_CONFIG_PATH", raising=False)
-        else:
-            monkeypatch.setenv("TLDW_CONFIG_PATH", original_path)
-        app_config._CONFIG_CACHE = cache_state["config_cache"]
-        app_config._CONFIG_CACHE_SOURCE = cache_state["config_cache_source"]
-        app_config._SETTINGS_CACHE = cache_state["settings_cache"]
-        app_config._SETTINGS_CACHE_SOURCE = cache_state["settings_cache_source"]
-        app_config.settings = cache_state["settings"]
-        app_config._CONFIG_GENERATION = cache_state["config_generation"]
-        app_config._LAST_CONFIG_LOAD_FAILURE = cache_state["last_failure"]
 
 
 def _load_preferences() -> PersonaBuddyPreferences:
