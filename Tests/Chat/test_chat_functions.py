@@ -609,6 +609,7 @@ class TestChatFunction:
 
 @pytest.mark.unit
 class TestProviderRequestPayloads:
+    @pytest.mark.bootstrap_profile
     def test_deepseek_uses_refreshed_handler_fallback_model(self, monkeypatch):
         captured = {}
         monkeypatch.setattr(
@@ -1009,6 +1010,7 @@ class TestProviderRequestPayloads:
             "total_tokens": 11,
         }
 
+    @pytest.mark.bootstrap_profile
     def test_openai_reasoning_stream_normalizes_responses_events(self, monkeypatch):
         from tldw_chatbook.LLM_Calls import LLM_API_Calls
 
@@ -1939,6 +1941,7 @@ key2: |
         assert parsed["key2"] == "This is a\n  multiline value."
         assert parsed["/key3/i"] == "value3"
 
+    @pytest.mark.bootstrap_profile
     @patch("tldw_chatbook.Character_Chat.Chat_Dictionary_Lib.validate_path")
     def test_parse_user_dict_markdown_file_preserves_explicit_base_directory(
         self, mock_validate_path, tmp_path

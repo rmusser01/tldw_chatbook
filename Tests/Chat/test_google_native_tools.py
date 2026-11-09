@@ -145,6 +145,7 @@ def test_blank_name_openai_tool_dropped_locally(mock_post):
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_strict_todo_schemas_use_full_json_schema_field_without_aliasing():
     tools = [_todo_tool("todo_create"), _todo_tool("todo_update")]
     original = deepcopy(tools)

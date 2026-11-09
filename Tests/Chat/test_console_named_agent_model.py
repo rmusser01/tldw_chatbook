@@ -3,6 +3,8 @@
 import asyncio
 import threading
 
+import pytest
+
 import tldw_chatbook.Chat.console_agent_bridge as bridge_module
 from tldw_chatbook.Agents.agent_service import SUBAGENT_SYSTEM_PROMPT
 from tldw_chatbook.Chat.console_agent_bridge import _StreamingModelAdapter
@@ -164,6 +166,7 @@ def test_concurrent_worker_override_is_call_local_and_keeps_parent_continuation(
     assert responses["child"]["usage"]["total_tokens"] == 3
 
 
+@pytest.mark.bootstrap_profile
 def test_capture_on_worker_uses_its_model_and_keeps_parent_private_history(monkeypatch):
     async def exercise():
         resolution = ConsoleProviderResolution(

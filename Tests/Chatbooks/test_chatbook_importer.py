@@ -151,6 +151,7 @@ class TestChatbookImporter:
         assert importer.temp_dir == imports_dir
         assert importer.temp_dir.stat().st_mode & 0o777 == 0o700
 
+    @pytest.mark.bootstrap_profile
     @pytest.mark.skipif(os.name != "posix", reason="POSIX extraction contract")
     def test_preview_extracts_privately_and_always_cleans_up(
         self,
@@ -199,6 +200,7 @@ class TestChatbookImporter:
         }
         assert list(chatbook_importer.temp_dir.iterdir()) == []
 
+    @pytest.mark.bootstrap_profile
     @pytest.mark.parametrize(
         ("members", "limits"),
         [
@@ -238,6 +240,7 @@ class TestChatbookImporter:
         )
         assert list(chatbook_importer.temp_dir.iterdir()) == []
 
+    @pytest.mark.bootstrap_profile
     def test_extraction_counts_actual_member_bytes_and_cleans_up(
         self,
         chatbook_importer,
@@ -279,6 +282,7 @@ class TestChatbookImporter:
         )
         assert list(chatbook_importer.temp_dir.iterdir()) == []
 
+    @pytest.mark.bootstrap_profile
     def test_archive_limit_import_fails_before_database_writes(
         self,
         chatbook_importer,
@@ -417,12 +421,14 @@ Keywords: test, sample"""
 
         return chatbook_path
 
+    @pytest.mark.bootstrap_profile
     def test_importer_initialization(self, chatbook_importer, temp_db_paths):
         """Test ChatbookImporter initialization."""
         assert chatbook_importer.db_paths == temp_db_paths
         assert chatbook_importer.temp_dir.exists()
         assert chatbook_importer.conflict_resolver is not None
 
+    @pytest.mark.bootstrap_profile
     def test_temp_dir_derives_from_get_user_data_dir(
         self, chatbook_importer, temp_db_paths
     ):
@@ -436,6 +442,7 @@ Keywords: test, sample"""
 
         assert chatbook_importer.temp_dir == get_user_data_dir() / "temp" / "imports"
 
+    @pytest.mark.bootstrap_profile
     def test_temp_dir_shares_a_parent_with_the_chatbook_creators_temp_root(
         self, chatbook_importer
     ):
@@ -449,6 +456,7 @@ Keywords: test, sample"""
         assert chatbook_importer.temp_dir.parent == creator.temp_dir.parent
         assert chatbook_importer.temp_dir.parent.name == "temp"
 
+    @pytest.mark.bootstrap_profile
     def test_preview_chatbook_valid(self, chatbook_importer, sample_chatbook_path):
         """Test previewing a valid chatbook."""
         manifest, error = chatbook_importer.preview_chatbook(sample_chatbook_path)
@@ -469,6 +477,7 @@ Keywords: test, sample"""
         with zipfile.ZipFile(path, "w") as archive:
             archive.writestr("manifest.json", json.dumps(manifest.to_dict()))
 
+    @pytest.mark.bootstrap_profile
     @pytest.mark.parametrize("operation", ["preview", "import"])
     def test_archive_source_rejects_lexical_danger_before_open_without_disclosure(
         self,
@@ -503,6 +512,7 @@ Keywords: test, sample"""
         assert opened is False
         assert canary not in repr(observed_logger.method_calls)
 
+    @pytest.mark.bootstrap_profile
     @pytest.mark.parametrize("operation", ["preview", "import"])
     def test_archive_source_consumes_shared_validator_returned_path(
         self,
@@ -544,6 +554,7 @@ Keywords: test, sample"""
 
         assert calls == [(selected_path, False, False)]
 
+    @pytest.mark.bootstrap_profile
     def test_real_archive_source_outside_workspace_remains_accepted(
         self,
         chatbook_importer,
@@ -564,6 +575,7 @@ Keywords: test, sample"""
         assert success is True
         assert message == "No items to import"
 
+    @pytest.mark.bootstrap_profile
     def test_preview_chatbook_invalid_zip(self, chatbook_importer, tmp_path):
         """Test previewing an invalid ZIP file."""
         invalid_path = tmp_path / "invalid.zip"
@@ -575,6 +587,7 @@ Keywords: test, sample"""
         assert error is not None
         assert "zip" in error.lower()
 
+    @pytest.mark.bootstrap_profile
     def test_preview_chatbook_missing_manifest(self, chatbook_importer, tmp_path):
         """Test previewing a chatbook without manifest."""
         invalid_path = tmp_path / "no_manifest.zip"
@@ -588,6 +601,7 @@ Keywords: test, sample"""
         assert error is not None
         assert "manifest.json" in error
 
+    @pytest.mark.bootstrap_profile
     @pytest.mark.parametrize("missing_manifest", [False, True])
     def test_import_chatbook_early_failure_returns_message_string(
         self,
@@ -615,6 +629,7 @@ Keywords: test, sample"""
         assert isinstance(message, str)
         assert status.errors == [message]
 
+    @pytest.mark.bootstrap_profile
     @patch("tldw_chatbook.Chatbooks.chatbook_importer.CharactersRAGDB")
     def test_import_chatbook_no_conflicts(
         self, mock_chacha_db, chatbook_importer, sample_chatbook_path
@@ -646,6 +661,7 @@ Keywords: test, sample"""
         assert imported_conversation["character_id"] == 1
         assert imported_conversation["assistant_authority_id"] is None
 
+    @pytest.mark.bootstrap_profile
     @patch("tldw_chatbook.Chatbooks.chatbook_importer.CharactersRAGDB")
     def test_import_chatbook_with_conflicts(
         self, mock_chacha_db, chatbook_importer, sample_chatbook_path, temp_db_paths
@@ -676,6 +692,7 @@ Keywords: test, sample"""
         # we just verify that the import succeeded
         assert status.processed_items > 0
 
+    @pytest.mark.bootstrap_profile
     @patch("tldw_chatbook.Chatbooks.chatbook_importer.CharactersRAGDB")
     def test_import_chatbook_rename_conflicts(
         self, mock_chacha_db, chatbook_importer, sample_chatbook_path, temp_db_paths
@@ -721,6 +738,7 @@ Keywords: test, sample"""
             for call in mock_db_instance.get_conversation_by_name.call_args_list
         )
 
+    @pytest.mark.bootstrap_profile
     @patch("tldw_chatbook.Chatbooks.chatbook_importer.CharactersRAGDB")
     def test_import_status_tracking(
         self, mock_chacha_db, chatbook_importer, sample_chatbook_path
@@ -756,6 +774,7 @@ Keywords: test, sample"""
         assert "errors" in status_dict
         assert "warnings" in status_dict
 
+    @pytest.mark.bootstrap_profile
     @patch("tldw_chatbook.Chatbooks.chatbook_importer.CharactersRAGDB")
     def test_import_error_handling(self, mock_chacha_db, chatbook_importer, tmp_path):
         """Test error handling during import."""
@@ -798,6 +817,7 @@ Keywords: test, sample"""
         assert status.failed_items > 0
         assert len(status.warnings) > 0  # File not found generates warnings
 
+    @pytest.mark.bootstrap_profile
     def test_import_with_media_settings(self, chatbook_importer, tmp_path):
         """Test importing chatbook with media settings."""
         chatbook_path = tmp_path / "media_chatbook.zip"
@@ -838,6 +858,7 @@ Keywords: test, sample"""
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_chatbook_importer_key_lookups_match_get_chatbook_database_paths():
     """The importer's actual `self.db_paths.get("...")` lookups (scanned via
     AST, not a hardcoded duplicate list and not a source-text/comment match)
@@ -1002,6 +1023,7 @@ class TestChatbookImporterKeyCasingMismatch:
             )
         return chatbook_path
 
+    @pytest.mark.bootstrap_profile
     @patch("tldw_chatbook.Chatbooks.chatbook_importer.CharactersRAGDB")
     def test_correctly_cased_keys_import_successfully(
         self, mock_chacha_db, sample_chatbook_path
@@ -1029,6 +1051,7 @@ class TestChatbookImporterKeyCasingMismatch:
         assert status.successful_items == 1
         assert status.errors == []
 
+    @pytest.mark.bootstrap_profile
     @patch("tldw_chatbook.Chatbooks.chatbook_importer.CharactersRAGDB")
     def test_mismatched_lowercase_keys_fail_cleanly_not_silently_not_crashing(
         self, mock_chacha_db, sample_chatbook_path
@@ -1071,6 +1094,7 @@ class TestChatbookImporterKeyCasingMismatch:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_import_media_skip_conflict_leaves_trashed_row_untouched(tmp_path):
     target_path = tmp_path / "target.sqlite"
     target = MediaDatabase(target_path, client_id="target")

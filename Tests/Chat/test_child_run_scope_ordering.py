@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import threading
 
+import pytest
+
 from Tests.Chat.test_console_agent_bridge import (
     _FleetTwoChildGateway,
     _fence,
@@ -95,6 +97,7 @@ def _install_consumer_recorder(bridge, db, conversation_id):
     return calls
 
 
+@pytest.mark.bootstrap_profile
 def test_last_child_scope_exit_fires_the_consumer_exactly_once_on_the_childs_thread(
     tmp_path,
 ):
@@ -134,6 +137,7 @@ def test_last_child_scope_exit_fires_the_consumer_exactly_once_on_the_childs_thr
     assert bridge._live_child_counts == {}
 
 
+@pytest.mark.bootstrap_profile
 def test_child_db_row_is_terminal_before_scope_exit_on_the_happy_path(tmp_path):
     """At the instant the consumer fires, the child's `agent_runs` row is
     already terminal (`_persist` sits inside the scope, at the end of
@@ -169,6 +173,7 @@ def test_child_db_row_is_terminal_before_scope_exit_on_the_happy_path(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_raise_path_row_not_terminal_at_scope_exit_settles_via_run_child_finally(
     tmp_path, monkeypatch
 ):

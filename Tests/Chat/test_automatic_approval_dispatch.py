@@ -170,6 +170,7 @@ def bridge_run(db, context, scope, tool_name, args, **kwargs):
     return outcome, gateway
 
 
+@pytest.mark.bootstrap_profile
 def test_install_skill_late_confirmation_cannot_fetch_or_install(db, monkeypatch):
     from tldw_chatbook.Skills_Interop import skill_remote_fetch
 
@@ -200,6 +201,7 @@ def test_install_skill_late_confirmation_cannot_fetch_or_install(db, monkeypatch
     assert gateway.calls == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("standing_grant", [False, True])
 def test_skill_script_rechecks_authority_after_confirmation_or_describe(
     db, standing_grant

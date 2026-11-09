@@ -135,6 +135,7 @@ def top_level_commit_counter(monkeypatch):
     return counts
 
 
+@pytest.mark.bootstrap_profile
 def test_import_collapses_per_message_commits_into_per_conversation_commits(
     tmp_path, top_level_commit_counter
 ):
@@ -172,6 +173,7 @@ def test_import_collapses_per_message_commits_into_per_conversation_commits(
     assert top_level_commit_counter["n"] < 10
 
 
+@pytest.mark.bootstrap_profile
 def test_import_still_persists_all_conversations_and_messages(tmp_path):
     """Functional check alongside the commit-count assertion: wrapping the
     writes in a transaction must not change what actually gets imported."""
@@ -204,6 +206,7 @@ def test_import_still_persists_all_conversations_and_messages(tmp_path):
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 def test_success_not_counted_when_commit_fails(tmp_path, monkeypatch):
     """PR #651 review: successful_items must not increment before the outer
     transaction commits — a failing commit previously double-counted the

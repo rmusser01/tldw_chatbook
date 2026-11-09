@@ -647,6 +647,7 @@ async def test_second_store_blocked_commit_defeats_stale_allowed_at_submitted_ag
         first_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_missing_policy_coordinator_fails_closed_instead_of_using_holder():
     store = ConsoleChatStore()
@@ -773,6 +774,7 @@ async def test_running_turn_freezes_selector_scope_provider_and_destination():
     assert context.resolved_destination == _destination("openai")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("auto_retrieve", "assistant_access"),

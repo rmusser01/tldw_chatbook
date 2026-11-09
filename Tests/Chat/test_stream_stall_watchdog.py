@@ -396,6 +396,7 @@ def test_env_override_takes_precedence(monkeypatch):
     assert bridge_mod._stall_timeout_seconds() == 12.5
 
 
+@pytest.mark.bootstrap_profile
 def test_non_finite_config_falls_back_to_default(monkeypatch):
     """Qodo #2: inf/nan never reach asyncio.wait_for."""
     from tldw_chatbook.Chat import console_agent_bridge as bridge_mod

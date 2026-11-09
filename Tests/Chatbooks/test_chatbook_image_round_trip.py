@@ -92,6 +92,7 @@ def _create_chatbook(db_paths, conv_id, tmp_path) -> Path:
     return output
 
 
+@pytest.mark.bootstrap_profile
 def test_export_writes_attachment_files_and_manifest_entries(source_env, tmp_path):
     db_paths, conv_id = source_env
     output = _create_chatbook(db_paths, conv_id, tmp_path)
@@ -116,6 +117,7 @@ def test_export_writes_attachment_files_and_manifest_entries(source_env, tmp_pat
         assert zf.read(by_position[2]["file"]) == PNG_POS2
 
 
+@pytest.mark.bootstrap_profile
 def test_import_restores_both_storage_tiers(source_env, tmp_path):
     db_paths, conv_id = source_env
     output = _create_chatbook(db_paths, conv_id, tmp_path)
@@ -166,6 +168,7 @@ def test_import_restores_both_storage_tiers(source_env, tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_import_skips_traversal_attachment_paths(source_env, tmp_path):
     """A malicious chatbook naming a file outside the extraction root must be
     skipped (with the message still imported), never read."""
@@ -215,6 +218,7 @@ def test_import_skips_traversal_attachment_paths(source_env, tmp_path):
     assert imported_messages[0]["image_data"] == PNG_LEGACY
 
 
+@pytest.mark.bootstrap_profile
 def test_chatbook_without_attachments_key_imports_unchanged(source_env, tmp_path):
     """Backward compatibility: pre-TASK-221 chatbooks have no attachments key."""
     db_paths, conv_id = source_env

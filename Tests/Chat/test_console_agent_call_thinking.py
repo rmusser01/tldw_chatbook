@@ -180,6 +180,7 @@ def test_agent_budget_counts_exact_model_projected_reasoning():
     assert included > excluded + 100
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "conversation_policy,expected",
     [("auto", None), ("include", "first tool"), ("exclude", None)],
@@ -251,6 +252,7 @@ def test_local_live_native_payload_respects_conversation_override(
         asyncio.run(real_gateway.aclose())
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("child_model", ["test-model", "child-model"])
 def test_child_inherits_policy_and_only_replays_its_own_calls(
     tmp_path, monkeypatch, child_model
@@ -344,6 +346,7 @@ def test_child_inherits_policy_and_only_replays_its_own_calls(
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 def test_active_local_call_thinking_keeps_trace_owner_through_real_admission(
     tmp_path,
 ):

@@ -76,6 +76,7 @@ def _bridge(tmp_path, *, fail_fast=False, db_class=AgentRunsDB):
     return gateway, db, store, session, assistant_id, bridge
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("failure", [None, "provider", "result_write"])
 def test_individual_event_has_terminal_row_before_slow_sibling_drains(
     tmp_path, failure
@@ -157,6 +158,7 @@ def test_individual_event_has_terminal_row_before_slow_sibling_drains(
     assert not bridge.has_unsettled_children("conversation")
 
 
+@pytest.mark.bootstrap_profile
 def test_replacing_and_raising_consumers_preserve_siblings_and_final_drain(tmp_path):
     """Duplicate registration or uncontained failures must not multiply/drop events."""
     gateway, _db, store, session, assistant_id, bridge = _bridge(tmp_path)
@@ -201,6 +203,7 @@ def test_replacing_and_raising_consumers_preserve_siblings_and_final_drain(tmp_p
     assert len(calls) == 6
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("failure", ["create", "terminal_write", "terminal_read"])
 def test_unavailable_durable_row_suppresses_individual_event_but_preserves_drain(
     tmp_path, failure
@@ -265,6 +268,7 @@ def test_unavailable_durable_row_suppresses_individual_event_but_preserves_drain
         assert [row["status"] for row in rows] == ["done", "done"]
 
 
+@pytest.mark.bootstrap_profile
 def test_registration_survives_turns_and_keeps_within_turn_classification(tmp_path):
     """Rebuilding the consumer list or reclassifying at drain loses turn identity."""
     gateway, _db, store, session, assistant_id, bridge = _bridge(tmp_path)
@@ -307,6 +311,7 @@ def test_registration_survives_turns_and_keeps_within_turn_classification(tmp_pa
     assert events[0].child.run_id != events[1].child.run_id
 
 
+@pytest.mark.bootstrap_profile
 def test_individual_status_respects_earlier_durable_cancellation(tmp_path):
     """A late successful provider reply must not undo first-writer cancellation."""
     gateway, db, store, session, assistant_id, bridge = _bridge(tmp_path)

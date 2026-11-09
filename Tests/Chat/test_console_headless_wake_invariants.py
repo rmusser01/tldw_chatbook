@@ -584,6 +584,7 @@ async def test_the_kill_switch_is_read_fresh_at_the_headless_fire_point(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_global_cap_defers_a_headless_wake_like_any_other_send(tmp_path):
     """`max_parallel_runs` applies with no Console mounted."""

@@ -401,6 +401,7 @@ async def test_saved_progress_preview_is_noncreating_and_matches_later_reader(
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 def test_delayed_run_setup_cannot_bind_reused_native_id(tmp_path, monkeypatch):
     from Tests.Chat.test_console_agent_bridge import _bridge, _run
     from tldw_chatbook.Agents.fleet_messages import MessageError

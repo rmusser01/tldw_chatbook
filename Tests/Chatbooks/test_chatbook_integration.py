@@ -151,6 +151,7 @@ class TestChatbookIntegration:
             "prompt_id": prompt_result[0] if prompt_result else None,
         }
 
+    @pytest.mark.bootstrap_profile
     def test_full_export_import_cycle(self, setup_test_databases, tmp_path):
         """Test complete export and import cycle with real databases."""
         db_paths = setup_test_databases["db_paths"]
@@ -276,6 +277,7 @@ class TestChatbookIntegration:
         assert imported_char is not None
         assert imported_char["name"] == "AI Assistant"
 
+    @pytest.mark.bootstrap_profile
     def test_selective_export_import(self, setup_test_databases, tmp_path):
         """Test exporting and importing only selected content."""
         db_paths = setup_test_databases["db_paths"]
@@ -310,6 +312,7 @@ class TestChatbookIntegration:
             assert manifest_data["statistics"]["total_conversations"] == 1
             assert manifest_data["statistics"]["total_notes"] == 1
 
+    @pytest.mark.bootstrap_profile
     def test_conflict_resolution_scenarios(self, tmp_path):
         """Test different conflict resolution strategies."""
         # Setup database with existing content
@@ -424,6 +427,7 @@ New content from import""".format(
         renamed_count = sum(1 for title in titles if "Existing Note (" in title)
         assert renamed_count == 1
 
+    @pytest.mark.bootstrap_profile
     def test_large_chatbook_performance(self, tmp_path):
         """Test performance with larger chatbooks."""
         import time
@@ -560,6 +564,7 @@ New content from import""".format(
         assert import_time < 20.0  # Should import in < 20s
         assert size_mb < 20.0  # Should be < 20MB
 
+    @pytest.mark.bootstrap_profile
     def test_chatbook_with_relationships(self, tmp_path):
         """Test exporting and importing relationships between content."""
         # Setup database

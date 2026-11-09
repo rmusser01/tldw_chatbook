@@ -1,5 +1,6 @@
 from io import BytesIO
 
+import pytest
 from PIL import Image as PILImage
 
 from tldw_chatbook.Chat import console_paste_attach as cpa
@@ -70,12 +71,14 @@ def test_empty_and_whitespace_are_not_drops():
 # --- looks_attachable ---
 
 
+@pytest.mark.bootstrap_profile
 def test_looks_attachable_true_for_supported_existing_in_root(tmp_path):
     target = tmp_path / "photo.png"
     target.write_bytes(b"x")
     assert looks_attachable(str(target), allowed_root=str(tmp_path)) is True
 
 
+@pytest.mark.bootstrap_profile
 def test_looks_attachable_false_for_missing_out_of_root_unsupported(tmp_path):
     missing = tmp_path / "nope.png"
     assert looks_attachable(str(missing), allowed_root=str(tmp_path)) is False
@@ -147,6 +150,7 @@ def test_grab_maps_unencodable_image_to_unavailable(monkeypatch):
 # --- looks_attachable is case-insensitive on extension (PR #628 review) ---
 
 
+@pytest.mark.bootstrap_profile
 def test_looks_attachable_true_for_uppercase_extension(tmp_path):
     target = tmp_path / "PHOTO.PNG"
     target.write_bytes(b"x")

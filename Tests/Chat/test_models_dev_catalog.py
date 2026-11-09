@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from tldw_chatbook.LLM_Provider_Catalog.models_dev_catalog import (
     ModelsDevCache,
     fetch_models_dev,
@@ -128,6 +130,7 @@ def _seed_cache(tmp_path, monkeypatch, *, enabled=True):
     return mdc
 
 
+@pytest.mark.bootstrap_profile
 def test_pricing_gap_fill_uses_models_dev_when_enabled(tmp_path, monkeypatch):
     _seed_cache(tmp_path, monkeypatch, enabled=True)
     from tldw_chatbook.LLM_Calls.pricing_catalog import PricingCatalog
@@ -140,6 +143,7 @@ def test_pricing_gap_fill_uses_models_dev_when_enabled(tmp_path, monkeypatch):
     assert pricing.as_of == "models.dev", "origin must be inspectable (AC#5)"
 
 
+@pytest.mark.bootstrap_profile
 def test_pricing_gap_fill_is_off_by_default(tmp_path, monkeypatch):
     _seed_cache(tmp_path, monkeypatch, enabled=False)
     from tldw_chatbook.LLM_Calls.pricing_catalog import PricingCatalog
@@ -149,6 +153,7 @@ def test_pricing_gap_fill_is_off_by_default(tmp_path, monkeypatch):
     assert catalog.get_pricing("fictprov", "fict-model-xyz9") is None
 
 
+@pytest.mark.bootstrap_profile
 def test_hand_maintained_pricing_always_wins(tmp_path, monkeypatch):
     _seed_cache(tmp_path, monkeypatch, enabled=True)
     from tldw_chatbook.LLM_Calls.pricing_catalog import PricingCatalog
@@ -163,6 +168,7 @@ def test_hand_maintained_pricing_always_wins(tmp_path, monkeypatch):
     assert seeded.input_per_mtok != 0.8, "must not use the models.dev rate"
 
 
+@pytest.mark.bootstrap_profile
 def test_capability_gap_fill_context_window(tmp_path, monkeypatch):
     _seed_cache(tmp_path, monkeypatch, enabled=True)
     from tldw_chatbook.model_capabilities import ModelCapabilities
@@ -175,6 +181,7 @@ def test_capability_gap_fill_context_window(tmp_path, monkeypatch):
     assert info["source"] == "models.dev"
 
 
+@pytest.mark.bootstrap_profile
 def test_capability_gap_fill_off_by_default(tmp_path, monkeypatch):
     _seed_cache(tmp_path, monkeypatch, enabled=False)
     from tldw_chatbook.model_capabilities import ModelCapabilities
@@ -183,6 +190,7 @@ def test_capability_gap_fill_off_by_default(tmp_path, monkeypatch):
     assert caps.get_context_window("fictprov", "fict-model-xyz9") is None
 
 
+@pytest.mark.bootstrap_profile
 def test_gap_fill_price_requires_both_input_and_output(tmp_path, monkeypatch):
     """Review minor 3: a models.dev entry missing output price must not
     produce a half-price ($0 output); it stays honestly unpriced."""

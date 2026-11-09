@@ -18,6 +18,8 @@ Built via the same unmounted-``ChatScreen(app)`` pattern as
 mount is required.
 """
 
+import pytest
+
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -56,6 +58,7 @@ def _build_two_user_siblings():
 # --- Assertion 1: store.siblings_at reports two USER children -------------
 
 
+@pytest.mark.bootstrap_profile
 def test_siblings_at_reports_two_user_siblings():
     _app, _screen, store, _session, u1, _a1, u2 = _build_two_user_siblings()
 
@@ -77,6 +80,7 @@ def test_siblings_at_reports_two_user_siblings():
 # --- USER message snapshot with sibling_count == 2, not gated on role ----
 
 
+@pytest.mark.bootstrap_profile
 def test_available_actions_offers_variant_nav_for_user_message_with_siblings():
     _app, _screen, store, session, u1, _a1, u2 = _build_two_user_siblings()
 
@@ -113,6 +117,7 @@ def test_available_actions_offers_variant_nav_for_user_message_with_siblings():
     assert store.session_id_for_message(u2.id) == session.id
 
 
+@pytest.mark.bootstrap_profile
 def test_available_actions_also_offers_variant_nav_for_off_path_user_sibling():
     """The FIRST user sibling (off the active path after the fork) still
     reports sibling_count == 2 via ``siblings_at`` -- ``available_actions``
@@ -167,6 +172,7 @@ def test_transcript_counter_renders_for_user_row_with_siblings():
     assert "(2/2)" in rendered.plain
 
 
+@pytest.mark.bootstrap_profile
 def test_transcript_counter_renders_for_live_user_sibling_snapshot():
     """Same assertion, but sourced from the real store (not a hand-built
     snapshot) -- end-to-end from ``create_sibling`` through to the
@@ -183,6 +189,7 @@ def test_transcript_counter_renders_for_live_user_sibling_snapshot():
 # --- across USER siblings -------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_select_console_message_variant_moves_active_leaf_between_user_siblings():
     _app, screen, store, session, u1, _a1, u2 = _build_two_user_siblings()
     assert store.active_leaf(session.id) == u2.id
@@ -205,6 +212,7 @@ def _a1_id(store, u1):
     return store._leaf_under(u1.id)
 
 
+@pytest.mark.bootstrap_profile
 def test_select_console_message_variant_noop_at_either_end_for_user_siblings():
     _app, screen, store, session, u1, _a1, u2 = _build_two_user_siblings()
 

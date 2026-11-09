@@ -144,6 +144,7 @@ def test_launch_sqlite_owner_allows_only_existing_private_readonly_files(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_runtime_recovers_once_and_remount_does_not_invalidate_live_owner(
     native, monkeypatch
@@ -182,6 +183,7 @@ async def test_runtime_recovers_once_and_remount_does_not_invalidate_live_owner(
         await runtime.dispose()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_launch_waits_for_recovery_before_hydrating_unmarked_claim(
     native, monkeypatch
@@ -231,6 +233,7 @@ async def test_launch_waits_for_recovery_before_hydrating_unmarked_claim(
         await runtime.dispose()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_recovery_prevents_hydration(native, monkeypatch):
     app, db = native
@@ -300,6 +303,7 @@ def test_remount_rearms_each_concurrent_delivery():
     assert seen == ["first", "second"]
 
 
+@pytest.mark.bootstrap_profile
 def test_synchronous_native_construction_defers_one_audit_until_loop_capture(native):
     app, db = native
     chain_id = chain(db)
@@ -317,6 +321,7 @@ def test_synchronous_native_construction_defers_one_audit_until_loop_capture(nat
     asyncio.run(start_loop())
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_recovery_waits_for_first_interactive_frame(native, monkeypatch):
     app, db = native
@@ -339,6 +344,7 @@ async def test_recovery_waits_for_first_interactive_frame(native, monkeypatch):
         await runtime.dispose()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dispose_before_first_frame_never_audits(native, monkeypatch):
     app, db = native
@@ -392,6 +398,7 @@ def test_legacy_launch_discovery_preserves_old_schema_and_empty_fast_path(
     assert not hasattr(app, "_console_runtime")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_launch_upgrades_legacy_survivor_and_preserves_manual_review(
     tmp_path, monkeypatch
