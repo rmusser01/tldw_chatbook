@@ -670,6 +670,10 @@ Moved existing implementation bodies into smaller helpers behind the original en
 
 Local targeted evidence and its limits are in the QA notes. The previous standalone green run is historical; the rebased PR's actual pull_request CI and current-head Qodo/thread requirements still need verification. AC23 remains open and the task remains In Progress.
 
+### PR #3480 follow-up: reference refusal and lint ratchet
+
+Restored the original visible refusal when reference custody changes; the original body remains discarded. The current dev Ruff ratchet applies to the incoming code: made the 18 new zip length contracts explicit and renamed the internal native Git timeout parameter at its two callers without changing any deadline. Partial submission and receipt-prefix loops still consume only the available prefix. All existing assertions, permissions, retirement checks, timeouts and lint baselines are unchanged. See ADR-355 and the QA receipt; AC23 remains open pending actual PR CI and review.
+
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

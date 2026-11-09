@@ -409,7 +409,7 @@ async def _prepare_native_references(
             executed_draft_text = clean_draft
             reference_records = tuple(
                 ReferenceRecord(
-                    candidate.raw, "refused", False, "reference expansion unavailable"
+                    candidate.raw, "refused", False, "reference source unavailable"
                 )
                 for candidate in _native_reference_candidates(clean_draft)
                 if native_kind != "rule" or (candidate.start, candidate.raw) != excluded

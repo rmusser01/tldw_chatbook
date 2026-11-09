@@ -82,7 +82,7 @@ class _WorkflowWave:
             {id(item) for item in members}
         ) != len(members):
             raise PermissionError("distinct original wave members required")
-        for item, member in zip(self.prepared, members):
+        for item, member in zip(self.prepared, members, strict=True):
             if (
                 item.phase is not self.phase
                 or item.runtime is not self.runtime
@@ -881,7 +881,7 @@ def _workflow_wave_release_return(wave, prepared):
     if (
         type(returned) is not tuple
         or len(returned) != 12
-        or any(a is not b for a, b in zip(returned[:9], current))
+        or any(a is not b for a, b in zip(returned[:9], current, strict=True))
         or not wave.closed
         or wave in wave.runtime._workflow_waves
         or wave.driver is None
@@ -891,7 +891,7 @@ def _workflow_wave_release_return(wave, prepared):
         or any(
             type(saved) is not tuple
             or len(saved) != len(actual)
-            or any(a is not b for a, b in zip(saved, actual))
+            or any(a is not b for a, b in zip(saved, actual, strict=True))
             for saved, actual in (
                 (returned[9], wave._snapshot_returns),
                 (returned[10], wave.receipts),
@@ -913,7 +913,7 @@ def _workflow_wave_release_return(wave, prepared):
             or len(saved) != 2
             or saved[0] is not item
             or saved[1] is not item._terminal_configuration_return
-            for saved, item in zip(returned[11], members)
+            for saved, item in zip(returned[11], members, strict=True)
         )
     ):
         raise RuntimeError("original workflow released members changed")
@@ -940,10 +940,14 @@ def _workflow_wave_return(wave, saved=None):
     if saved is not None and (
         type(saved) is not tuple
         or len(saved) != len(current)
-        or any(first is not second for first, second in zip(saved[:6], current[:6]))
         or any(
-            len(first) != len(second) or any(a is not b for a, b in zip(first, second))
-            for first, second in zip(saved[6:], current[6:])
+            first is not second
+            for first, second in zip(saved[:6], current[:6], strict=True)
+        )
+        or any(
+            len(first) != len(second)
+            or any(a is not b for a, b in zip(first, second, strict=True))
+            for first, second in zip(saved[6:], current[6:], strict=True)
         )
     ):
         raise RuntimeError("original workflow wave return changed")

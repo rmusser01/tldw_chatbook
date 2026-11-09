@@ -1412,8 +1412,10 @@ class WorkflowRunService:
         if any(
             len(auth._native_launch) != len(launch)
             or len(auth._native_dispatch) != len(dispatch)
-            or any(a is not b for a, b in zip(auth._native_launch, launch))
-            or any(a is not b for a, b in zip(auth._native_dispatch, dispatch))
+            or any(a is not b for a, b in zip(auth._native_launch, launch, strict=True))
+            or any(
+                a is not b for a, b in zip(auth._native_dispatch, dispatch, strict=True)
+            )
             for auth, launch, dispatch in markers
         ):
             raise ValueError("native_retirement_unproven")

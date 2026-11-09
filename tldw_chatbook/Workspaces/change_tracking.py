@@ -381,7 +381,7 @@ class ShadowRepo:
                     env,
                     payload,
                     cwd=os.getcwd(),
-                    timeout=_GIT_TIMEOUT_SECONDS,
+                    timeout_seconds=_GIT_TIMEOUT_SECONDS,
                 )
             )
         if not binary:

@@ -450,7 +450,7 @@ def run_git_reference(
                     env,
                     None,
                     cwd=str(cwd),
-                    timeout=timeout,
+                    timeout_seconds=timeout,
                 )
             )
         producer.check()

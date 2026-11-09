@@ -468,7 +468,7 @@ def _validate_workflow_windows(conn):
         ).fetchone():
             return ("invalid_workflow_window_bound",)
         for values in rows:
-            window = dict(zip(columns, values))
+            window = dict(zip(columns, values, strict=True))
             phase = conn.execute(
                 "SELECT workflow_id,plan_revision,phase_id FROM workflow_phase_attempts WHERE id=?",
                 (window["phase_attempt_id"],),

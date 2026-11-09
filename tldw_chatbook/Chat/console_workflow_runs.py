@@ -1178,9 +1178,12 @@ def _quiescence_source(cell):
         or run.control_unknown
         or run.status == "recovery_required"
         or len(run.preparation_returns) != len(cell.preparations)
-        or any(a is not b for a, b in zip(run.preparation_returns, cell.preparations))
+        or any(
+            a is not b
+            for a, b in zip(run.preparation_returns, cell.preparations, strict=True)
+        )
         or len(run.waves) != len(cell.waves)
-        or any(a is not b for a, b in zip(run.waves, cell.waves))
+        or any(a is not b for a, b in zip(run.waves, cell.waves, strict=True))
     ):
         raise AutomaticWorkRefused("workflow_quiescence_source_changed")
     _native_fence_sources(phase, phase._ledger)

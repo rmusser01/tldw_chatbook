@@ -206,7 +206,9 @@ class _Preparation:
             or any(
                 getattr(self.coordinator, name, None) is not original
                 for name, original in zip(
-                    ("owner", "registry", "authority"), self.infrastructure
+                    ("owner", "registry", "authority"),
+                    self.infrastructure,
+                    strict=True,
                 )
             )
             or self.configuration.skill_context_maximum is not self.maximum

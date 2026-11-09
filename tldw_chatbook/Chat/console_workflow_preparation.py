@@ -632,7 +632,7 @@ class _PreparedWorkflowReply:
             or observation is not self._configured_source_observation
             or type(prefix) is not tuple
             or len(self._finite_reads) <= len(prefix)
-            or any(a is not b for a, b in zip(prefix, self._finite_reads))
+            or any(a is not b for a, b in zip(prefix, self._finite_reads, strict=False))
             or self._finite_reads[len(prefix)] is not record
             or record.prepared is not self
             or record.issuing is not issuer
@@ -674,7 +674,7 @@ class _PreparedWorkflowReply:
             or type(records) is not tuple
             or not records
             or len(records) != len(self._finite_reads)
-            or any(a is not b for a, b in zip(records, self._finite_reads))
+            or any(a is not b for a, b in zip(records, self._finite_reads, strict=True))
             or records[-1] is not closing_read
             or not closing_read.positive
             or closing_read.wrapper_error is not None
@@ -1051,7 +1051,10 @@ class _PreparedWorkflowReply:
         if (
             type(actual) is not tuple
             or len(actual) != len(expected)
-            or any(first is not second for first, second in zip(actual, expected))
+            or any(
+                first is not second
+                for first, second in zip(actual, expected, strict=True)
+            )
             or not record.scopes_returned
         ):
             raise RuntimeError("original workflow finite result changed")

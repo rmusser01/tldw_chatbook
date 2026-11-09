@@ -1194,7 +1194,7 @@ class RunHooksEngine:
                 return self._reduce(self._results_from_futures(futures))
         finally:
             if custody is not None:
-                for future, target in zip(futures, custody.targets):
+                for future, target in zip(futures, custody.targets, strict=False):
                     future.add_done_callback(
                         lambda done, target=target: (
                             target.cancel_before_start() if done.cancelled() else None

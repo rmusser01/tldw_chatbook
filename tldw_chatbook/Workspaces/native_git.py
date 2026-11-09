@@ -8,7 +8,7 @@ import re
 import subprocess
 
 
-async def run_native_git(producer, cmd, env, payload, *, cwd, timeout):
+async def run_native_git(producer, cmd, env, payload, *, cwd, timeout_seconds):
     """Join the original worker's streams and managed tree before it may return."""
     from tldw_chatbook.Notes.git_process_containment import (
         ProcessTreeAdmissionError,
@@ -29,17 +29,17 @@ async def run_native_git(producer, cmd, env, payload, *, cwd, timeout):
             tree = error.tree
             raise
         communication = asyncio.create_task(tree.process.communicate(payload))
-        deadline = asyncio.get_running_loop().time() + timeout
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
         try:
             stdout, stderr = await asyncio.wait_for(
-                asyncio.shield(communication), timeout
+                asyncio.shield(communication), timeout_seconds
             )
         except TimeoutError:
-            raise subprocess.TimeoutExpired(cmd, timeout) from None
+            raise subprocess.TimeoutExpired(cmd, timeout_seconds) from None
         if not await controller.wait(
             tree, timeout=max(0, deadline - asyncio.get_running_loop().time())
         ):
-            raise subprocess.TimeoutExpired(cmd, timeout)
+            raise subprocess.TimeoutExpired(cmd, timeout_seconds)
         controller.close(tree)
         return tree.process.returncode, stdout, stderr
     except BaseException:

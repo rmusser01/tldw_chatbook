@@ -512,7 +512,7 @@ class _CommandEvent:
                         return
                     custody = _CommandCustody(self, claim, owner, operations)
                     self.custody = custody
-                    by_operation = dict(zip(operations, custody.targets))
+                    by_operation = dict(zip(operations, custody.targets, strict=True))
                     for plan in self.all_plans:
                         plan.target = by_operation[plan.operation]
                     self.targets = {
