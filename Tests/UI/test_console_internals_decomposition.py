@@ -21,6 +21,10 @@ from Tests.UI.test_destination_shells import (
     _wait_for_selector,
     _wait_for_visible_text,
 )
+from Tests.UI.test_console_composer_run_controls import _wait_for
+from Tests.UI.test_console_native_chat_flow import (
+    _configure_native_ready_console as _configure_persisted_llamacpp_console,
+)
 from Tests.UI.test_console_native_chat_flow import (
     ConsoleNavigationHarness,
     _sync_console_control_bar_now,
@@ -35,16 +39,21 @@ from Tests.Agents.test_mcp_tool_provider import (
     _tool_dict,
 )
 from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
+    ACTION_ATTACH_CONTEXT,
     ACTION_SAVE_CHATBOOK,
+    ConsoleComposerMenuModal,
 )
 from tldw_chatbook.Chat.console_display_state import (
-    ConsoleBlockedReason,
     ConsoleControlState,
     ConsoleInspectorState,
     ConsoleStagedContextState,
     build_console_evidence_display_state,
 )
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleMessageRole,
+    ConsoleRunState,
+    ConsoleRunStatus,
+)
 from tldw_chatbook.Chat.console_glyphs import GLYPH_CLOSE
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
@@ -68,6 +77,7 @@ from tldw_chatbook.Widgets.Console.console_library_search_modal import (
     ConsoleLibrarySearchModal,
 )
 from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
+from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -453,35 +463,51 @@ def test_console_mode_bar_treats_assistant_label_as_literal_text():
     assert getattr(rendered, "plain", str(rendered)) == summary
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_gate15_keeps_existing_chat_send_control_reachable():
     app = _build_test_app()
+    _configure_persisted_llamacpp_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _sync_console_control_bar_now(console)
 
-        text = _visible_text(console)
-        assert "Send" in text
-        assert "Stop" in text
-        assert "Attach" in text
-        # "Save" left the always-visible chrome entirely (user request
-        # 2026-08-01): Save Chatbook's surviving surfaces are the composer's
-        # ☰ menu and the Inspector's Artifacts row, both asserted below.
-        send_controls = [
-            button
-            for button in console.query(Button)
-            if (button.id or "").startswith("send-stop-chat")
-            or button.has_class("console-send-button")
-        ]
-        assert send_controls
-        assert console.query_one("#console-stop-generation", Button)
-        # Attach and Save Chatbook now live in the composer's ☰ menu,
-        # not this width-bounded row -- see test_console_composer_menu.py.
-        assert console.query_one("#console-composer-menu", Button)
+        send_button = console.query_one("#console-send-message", Button)
+        stop_button = console.query_one("#console-stop-generation", Button)
+        assert send_button.display
+        assert str(send_button.label) == "Send"
+        assert str(stop_button.label) == "Stop"
         assert console.query_one("#console-inspector-save-chatbook", Button)
         assert not list(console.query("#console-control-save-chatbook"))
+
+        await _wait_for_enabled_button(console, pilot, "#console-composer-menu")
+        assert await pilot.click("#console-composer-menu")
+        await _wait_for(
+            pilot,
+            lambda: isinstance(host.screen, ConsoleComposerMenuModal),
+            "Composer Menu did not open",
+        )
+        menu = host.screen
+        attach_selector = f"#console-composer-menu-{ACTION_ATTACH_CONTEXT}"
+        attach = await _wait_for_enabled_button(menu, pilot, attach_selector)
+        assert str(attach.label) == "Attach file"
+        assert str(
+            menu.query_one(f"#console-composer-menu-{ACTION_SAVE_CHATBOOK}", Button).label
+        ) == "Save as Chatbook"
+
+        assert await pilot.click(attach_selector)
+        await _wait_for(
+            pilot,
+            lambda: isinstance(host.screen, EnhancedFileOpen)
+            and bool(host.screen.query("#filename-input")),
+            "Attach file did not open the file picker",
+        )
+        assert host.screen.context == "chat_images"
+        await pilot.press("escape")
+        await _wait_for(pilot, lambda: host.screen is console, "file picker did not close")
 
 
 @pytest.mark.bootstrap_profile
@@ -820,9 +846,11 @@ async def test_console_composer_send_is_primary_only_with_draft():
         assert send_button.has_class("console-send-inactive")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_ranks_actions_by_current_availability():
     app = _build_test_app()
+    _configure_persisted_llamacpp_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -834,21 +862,19 @@ async def test_console_composer_ranks_actions_by_current_availability():
         stop_button = composer.query_one("#console-stop-generation", Button)
         mic_button = composer.query_one("#console-dictation", Button)
 
-        # TASK-2154.6 (FR-04): Send starts genuinely disabled -- a fresh
-        # composer has an empty draft, so there is nothing sendable yet.
-        # Stop/Mic are not part of the new flag's contract.
+        await _sync_console_control_bar_now(console)
         assert send_button.disabled is True
+        assert send_button.tooltip == "Type a message to send."
         assert stop_button.disabled is False
         assert mic_button.disabled is False
 
-        composer.sync_action_state(
-            has_draft=True,
-            run_active=False,
-            can_save_chatbook=True,
-        )
-        await pilot.pause(0.1)
+        composer.load_draft("ready to send")
+        await _sync_console_control_bar_now(console)
 
+        assert composer.draft_text() == "ready to send"
+        assert send_button.disabled is False
         assert send_button.has_class("console-action-primary")
+        assert send_button.has_class("console-send-ready")
 
 
 @pytest.mark.bootstrap_profile
@@ -876,9 +902,11 @@ async def test_console_composer_save_chatbook_left_this_row_for_the_menu():
         assert composer.query_one("#console-composer-menu", Button)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_empty_setup_blocked_state_shows_reason():
     app = _build_test_app()
+    _configure_persisted_llamacpp_console(app, model="")
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -891,17 +919,7 @@ async def test_console_composer_empty_setup_blocked_state_shows_reason():
         disabled_reason = composer.query_one("#console-send-disabled-reason", Static)
         send_button = composer.query_one("#console-send-message", Button)
 
-        composer.sync_action_state(
-            has_draft=False,
-            run_active=False,
-            can_save_chatbook=False,
-            send_blocked=True,
-            setup_blocked_reason=ConsoleBlockedReason(  # TASK-33621.11: coded
-                "Choose a model in Chat settings before sending.",
-                code="model_missing",
-            ),
-        )
-        await pilot.pause(0.1)
+        await _sync_console_control_bar_now(console)
 
         assert (
             _without_trailing_cursor(visible_draft.renderable.plain)
@@ -920,7 +938,7 @@ async def test_console_composer_empty_setup_blocked_state_shows_reason():
         assert send_button.tooltip == "Choose a model in Chat settings before sending."
 
         composer.load_draft("draft despite missing setup")
-        await pilot.pause(0.1)
+        await _sync_console_control_bar_now(console)
 
         assert (
             _without_trailing_cursor(visible_draft.renderable.plain)
@@ -932,9 +950,11 @@ async def test_console_composer_empty_setup_blocked_state_shows_reason():
         assert send_button.tooltip == "Choose a model in Chat settings before sending."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_active_run_blocker_keeps_generic_placeholder():
     app = _build_test_app()
+    _configure_persisted_llamacpp_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -945,24 +965,22 @@ async def test_console_composer_active_run_blocker_keeps_generic_placeholder():
         visible_draft = composer.query_one("#console-command-visible-text", Static)
         send_button = composer.query_one("#console-send-message", Button)
 
-        composer.sync_action_state(
-            has_draft=False,
-            run_active=True,
-            can_save_chatbook=False,
-            send_blocked=True,
-            setup_blocked_reason="",
-        )
-        await pilot.pause(0.1)
+        controller = console._ensure_console_chat_controller()
+        controller._set_run_state(ConsoleRunState(ConsoleRunStatus.STREAMING))
+        await _sync_console_control_bar_now(console)
 
+        assert console.query_one("#console-stop-generation", Button).display
         assert "Setup required" not in visible_draft.renderable.plain
         assert (
             _without_trailing_cursor(visible_draft.renderable.plain)
             == ConsoleComposerBar.DRAFT_PLACEHOLDER
         )
-        assert (
-            send_button.tooltip
-            == "Wait for the active Console run to finish before sending."
-        )
+        assert send_button.disabled is True
+        assert send_button.has_class("console-send-blocked")
+        assert send_button.tooltip == "Wait for the current run to finish"
+        reason = composer.query_one("#console-send-disabled-reason", Static)
+        assert reason.styles.display == "block"
+        assert reason.renderable.plain == "Wait for the current run to finish"
 
 
 @pytest.mark.bootstrap_profile
@@ -2773,6 +2791,7 @@ async def test_console_inline_guidance_disappears_after_user_starts_typing():
         assert title_copy.startswith("Conversation")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_header_sits_at_top_of_center_panel():
     app = _build_test_app()
@@ -2785,23 +2804,22 @@ async def test_console_transcript_header_sits_at_top_of_center_panel():
 
         transcript_region = console.query_one("#console-transcript-region")
         transcript_title = console.query_one("#console-transcript-title", Static)
-        tab_strip = console.query_one("#console-native-tab-strip")
+        tab_row = console.query_one(".console-session-tab-strip")
         transcript = console.query_one("#console-native-transcript")
 
         assert not list(console.query("#console-start-here"))
         assert transcript_region.styles.border.top[0] in {"", "none"}
         assert transcript_title.region.y == transcript_region.region.y
         assert (
-            tab_strip.region.y
+            tab_row.region.y
             == transcript_title.region.y + transcript_title.region.height
         )
         assert transcript.region.y == (
-            tab_strip.region.y
-            + tab_strip.region.height
-            + tab_strip.styles.margin.bottom
+            tab_row.region.bottom + tab_row.styles.margin.bottom
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_header_and_tabs_have_distinct_visual_roles():
     app = _build_test_app()
@@ -2823,22 +2841,25 @@ async def test_console_transcript_header_and_tabs_have_distinct_visual_roles():
         await _wait_for_selector(console, pilot, ".console-session-tab-active")
 
         transcript_title = console.query_one("#console-transcript-title", Static)
-        tab_strip = console.query_one("#console-native-tab-strip")
+        tab_row = console.query_one(".console-session-tab-strip")
+        tab_strip = tab_row.query_one("#console-native-tab-strip")
         active_tab = console.query_one(".console-session-tab-active", Button)
         transcript = console.query_one("#console-native-transcript")
 
         assert transcript_title.has_class("console-transcript-title")
-        assert tab_strip.has_class("console-session-tab-strip")
+        assert tab_strip.parent is tab_row
         assert transcript_title.region.height == 1
-        assert tab_strip.region.height == 1
+        assert tab_row.region.height == tab_strip.region.height == 1
         assert transcript_title.styles.height.value == 1
-        assert tab_strip.styles.height.value == 1
-        assert tab_strip.region.y == transcript_title.region.y + 1
+        assert tab_row.styles.height.value == tab_strip.styles.height.value == 1
+        assert tab_row.region.y == transcript_title.region.y + 1
+        assert tab_strip.region.y == tab_row.region.y
+        assert tab_strip.styles.margin.bottom == 0
         assert transcript.region.y == (
-            tab_strip.region.y + 1 + tab_strip.styles.margin.bottom
+            tab_row.region.bottom + tab_row.styles.margin.bottom
         )
         assert transcript_title.styles.color != active_tab.styles.color
-        assert active_tab.styles.background != tab_strip.styles.background
+        assert active_tab.styles.background != tab_row.styles.background
         assert active_tab.has_class("console-session-tab-active")
 
 
@@ -2867,17 +2888,22 @@ async def test_console_native_transcript_is_visible_transcript_surface():
         assert "No messages yet. Send a prompt or attach context." not in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_empty_transcript_uses_compact_ready_state():
+    from Tests.UI.test_console_native_chat_flow import (
+        _configure_native_ready_console as configure_persisted_console,
+    )
+
     app = _build_test_app()
-    _configure_native_ready_console(app)
+    configure_persisted_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
 
-        tab_strip = console.query_one("#console-native-tab-strip")
+        tab_row = console.query_one(".console-session-tab-strip")
         transcript = console.query_one("#console-native-transcript")
         empty_rows = list(transcript.query("#console-transcript-empty-state"))
 
@@ -2896,9 +2922,7 @@ async def test_console_empty_transcript_uses_compact_ready_state():
             empty_panel
         )
         assert empty_panel.region.y == (
-            tab_strip.region.y
-            + tab_strip.region.height
-            + tab_strip.styles.margin.bottom
+            tab_row.region.bottom + tab_row.styles.margin.bottom
         )
 
 
@@ -3381,21 +3405,29 @@ async def test_console_workbench_panes_have_visible_terminal_frames():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_empty_staged_context_shows_guidance_and_count():
+    from Tests.UI.test_console_native_chat_flow import (
+        _configure_native_ready_console as configure_persisted_console,
+    )
+
     app = _build_test_app()
+    configure_persisted_console(app)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(212, 64)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-staged-context-empty")
+        await _open_console_inspector(console, pilot)
 
         count = console.query_one("#console-staged-context-count", Static)
         guidance = console.query_one("#console-staged-context-empty", Static)
         guidance_plain = str(guidance.renderable)
 
-        assert str(count.renderable) == "0"
-        assert "Stage sources from Library" in guidance_plain
+        assert str(count.renderable) == "none"
+        assert guidance.display and guidance.region.width > 0
+        assert guidance_plain == "No sources attached. Stage sources from Library."
 
 
 @pytest.mark.bootstrap_profile
@@ -3435,9 +3467,16 @@ async def test_console_staged_context_empty_state_renders_summary_when_provided(
         assert not list(app.screen.query("#console-staged-context-attach"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_non_empty_staged_context_keeps_room_for_source_details():
+    from Tests.UI.test_console_composer_run_controls import _wait_for
+    from Tests.UI.test_console_native_chat_flow import (
+        _configure_native_ready_console as configure_persisted_console,
+    )
+
     app = _build_test_app()
+    configure_persisted_console(app)
     app.pending_handoffs.stage(
         HandoffChannel.CONSOLE_LIVE_WORK,
         {
@@ -3458,7 +3497,13 @@ async def test_console_non_empty_staged_context_keeps_room_for_source_details():
         await _wait_for_selector(console, pilot, "#console-staged-context-row-0")
         assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
+        await _open_console_inspector(console, pilot)
         staged_context = console.query_one("#console-staged-context-tray")
+        await _wait_for(
+            pilot,
+            lambda: staged_context.display and staged_context.region.height > 0,
+            "staged context tray did not become visible",
+        )
         max_height = getattr(
             staged_context.styles.max_height,
             "value",
@@ -3876,10 +3921,21 @@ async def test_console_run_inspector_shows_blocked_provider_and_missing_rag_sour
         assert not list(console.query("#console-inspector-review-tool-call-reason"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artifact_actions():
+    from Tests.UI.test_console_composer_run_controls import _wait_for
+    from Tests.UI.test_console_headless_approval import _arm, _risk_row
+    from Tests.UI.test_console_native_chat_flow import (
+        _configure_native_ready_console as configure_persisted_console,
+    )
+    from Tests.UI.test_console_pending_interrupt_projection import (
+        _finish_worker,
+        _stop_workers,
+    )
+
     app = _build_test_app()
-    app.console_pending_approval_count = 1
+    configure_persisted_console(app)
     app.console_tool_count = 1
     app.pending_handoffs.stage(
         HandoffChannel.CONSOLE_LIVE_WORK,
@@ -3901,43 +3957,78 @@ async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artif
         await _wait_for_selector(console, pilot, "#console-inspector-review-approval")
         assert not app.pending_handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK)
 
-        assert "Approvals: 1 pending" in str(
-            console.query_one("#console-inspector-approvals", Static).renderable
+        await _wait_for(
+            pilot,
+            console._console_runtime().has_answerable_view,
+            "Console never became answerable for the approval round",
         )
-        assert "Artifacts: Chatbook artifact available" in str(
-            console.query_one("#console-inspector-artifacts", Static).renderable
-        )
-        assert (
-            console.query_one("#console-inspector-review-approval", Button).disabled
-            is False
-        )
-        # TASK-1843: removed; see the note above.
-        assert not list(console.query("#console-inspector-review-tool-call"))
-        assert (
-            console.query_one("#console-inspector-save-chatbook", Button).disabled
-            is False
-        )
-        assert (
-            console.query_one("#console-inspector-source-readiness-heading").region.y
-            < console.query_one("#console-inspector-tools-heading").region.y
-        )
-        assert (
-            console.query_one("#console-inspector-tools-heading").region.y
-            < console.query_one("#console-inspector-tools").region.y
-            < console.query_one("#console-inspector-approvals-heading").region.y
-        )
-        assert (
-            console.query_one("#console-inspector-approvals-heading").region.y
-            < console.query_one("#console-inspector-approvals").region.y
-            < console.query_one("#console-inspector-review-approval").region.y
-            < console.query_one("#console-inspector-artifacts-heading").region.y
-            < console.query_one("#console-inspector-artifacts").region.y
-            < console.query_one("#console-inspector-save-chatbook").region.y
-        )
-        assert (
-            console.query_one("#console-live-work-primary-action", Button).disabled
-            is False
-        )
+        controller = console._ensure_console_chat_controller()
+        session_id = controller.store.active_session_id
+        assert session_id is not None
+        call = _risk_row()
+        worker, result = _arm(controller, session_id, call=call)
+        try:
+            card = console.query_one("#chat-approval-card")
+            await _wait_for(
+                pilot,
+                lambda: card.display and bool(card._batch_round_id),
+                "the active session's approval round did not mount",
+            )
+            round_id = card._batch_round_id
+            assert round_id in controller._pending_approval_rounds
+            assert controller.pending_round_count(session_id) == 1
+            await _sync_console_control_bar_now(console)
+            await _wait_for_enabled_button(
+                console, pilot, "#console-inspector-review-approval"
+            )
+
+            assert "Approvals: 1 pending" in str(
+                console.query_one("#console-inspector-approvals", Static).renderable
+            )
+            assert "Artifacts: Chatbook artifact available" in str(
+                console.query_one("#console-inspector-artifacts", Static).renderable
+            )
+            assert (
+                console.query_one("#console-inspector-review-approval", Button).disabled
+                is False
+            )
+            # TASK-1843: removed; see the note above.
+            assert not list(console.query("#console-inspector-review-tool-call"))
+            assert (
+                console.query_one("#console-inspector-save-chatbook", Button).disabled
+                is False
+            )
+            assert (
+                console.query_one("#console-inspector-source-readiness-heading").region.y
+                < console.query_one("#console-inspector-tools-heading").region.y
+            )
+            assert (
+                console.query_one("#console-inspector-tools-heading").region.y
+                < console.query_one("#console-inspector-tools").region.y
+                < console.query_one("#console-inspector-approvals-heading").region.y
+            )
+            assert (
+                console.query_one("#console-inspector-approvals-heading").region.y
+                < console.query_one("#console-inspector-approvals").region.y
+                < console.query_one("#console-inspector-review-approval").region.y
+                < console.query_one("#console-inspector-artifacts-heading").region.y
+                < console.query_one("#console-inspector-artifacts").region.y
+                < console.query_one("#console-inspector-save-chatbook").region.y
+            )
+            assert (
+                console.query_one("#console-live-work-primary-action", Button).disabled
+                is False
+            )
+
+            controller.resolve_pending_approval(
+                {call.llm_name: "deny"}, round_id=round_id
+            )
+            await _finish_worker(pilot, worker)
+            assert result["decisions"] == {call.llm_name: "deny"}
+            assert controller.pending_round_count(session_id) == 0
+        finally:
+            if worker.is_alive():
+                await _stop_workers(controller, [worker], pilot)
 
 
 @pytest.mark.bootstrap_profile

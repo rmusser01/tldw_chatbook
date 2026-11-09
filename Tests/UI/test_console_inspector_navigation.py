@@ -40,6 +40,10 @@ STAGED_ONE_ROW_TEST_CSS = """
     height: 19;
     min-height: 19;
     max-height: 19;
+    padding: 0 1;
+}
+#console-staged-context-tray {
+    margin: 0;
 }
 #console-inspector-rail-body {
     height: 1fr;
@@ -345,6 +349,7 @@ async def test_outer_hint_slot_stays_but_copy_blanks_at_scroll_end():
         assert hint.region.height == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_staged_owner_sync_drives_ten_eleven_ten_cue_and_clamp():
     async with make_console_pilot(size=(160, 80), css=STAGED_ONE_ROW_TEST_CSS) as pilot:
@@ -1995,10 +2000,29 @@ async def test_run_sync_preserves_in_place_offsets_then_structural_shrink_clamps
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_responsive_hide_and_reveal_hands_off_focus_without_losing_offset():
-    async with make_console_pilot(size=(128, 40)) as pilot:
-        rail = await _open_inspector(pilot)
+    async with make_console_pilot(size=(129, 40)) as pilot:
+        screen = pilot.app.screen
+        context = screen.query_one("#console-left-rail")
+        rail = screen.query_one("#console-right-rail")
+        if context.display:
+            await pilot.press("alt+c")
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: not context.display and not rail.display,
+            description="closed Context and Inspector outside the auto-open band",
+        )
+        # Open responsively. The reveal button stores an explicit open
+        # preference that would keep the rail visible at 129.
+        await pilot.resize_terminal(128, 40)
+        await _wait_for_right_rail_condition(
+            pilot,
+            lambda: rail.display,
+            description="automatic Inspector opening with Context closed",
+        )
+        screen._stop_console_transcript_sync_timer()
         section = rail.query_one(
             "#console-bounded-section-sources", ConsoleBoundedSection
         )
