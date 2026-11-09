@@ -123,10 +123,11 @@ async def test_a_durable_commit_runs_its_first_sync_then_holds_until_the_next_ti
             try:
                 await tick()
                 assert syncs.count == 1, "the poll's tick ran no sync"
-                await _quiet(console)
+                # Retire pending publication before opening the test's window.
+                await settled()
                 with _commit_window(console._console_chat_store):
                     # The commit's first sync runs (the base painted it too).
-                    await tick()
+                    await timer._callback()
                     assert syncs.count == 2, "the commit's first tick was held"
 
                     # Until the poll's next tick, an explicit sync waits.

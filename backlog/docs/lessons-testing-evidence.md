@@ -905,6 +905,17 @@ Assert what the user sees: hit-test each counted row with
 owner by type, not by id prefix. Before trusting a green, instrument the
 callback you added once and check that it actually runs.
 
+**Follow-up incident, PR #3345 (2026-11-09 UTC).** UI19 reported one
+match with its row clipped. A controlled native fit separately showed a
+laid-out filter and an absent or mounted-but-unlaid replacement list. The
+old fit pinned the tray to 10 rows from a 13-row layout. The first fix waited
+only for a mounted, zero-height list, so it still pinned during removal.
+When composition expects a list, defer the fit until the owning screen
+measures that list. Test the two states in separate fresh Consoles so the
+first wait cannot mask the second. Verify that the native layout signal
+lets the tray grow to contain the replacement. The hosted callback order
+was unobserved.
+
 **The same kept row broke a focus guard too (review round).**
 `RecomposeCaptureGuard` predicts where Textual's focus reset will land "as
 if every child is removed", and restores a rebuilt row's focus only when

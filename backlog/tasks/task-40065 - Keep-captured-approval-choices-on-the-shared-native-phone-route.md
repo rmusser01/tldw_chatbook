@@ -14,7 +14,7 @@ references:
 - backlog/decisions/236-served-desktop-approval-relay.md
 - tldw_chatbook/Chat/console_remote_rounds.py
 - tldw_chatbook/Web_Server/static/mobile/app.js
-updated_date: 2026-11-09 14:23
+updated_date: 2026-11-09 16:05
 ---
 
 ## Description
@@ -52,6 +52,8 @@ Reason: Compose the existing captured presentation and feedback with the already
 13. Retain the exact hosted Perf Guard timeout annotation and all seven passing step logs. Run the original five count-based keystroke census cases on two isolated pytest workers with worker restarts disabled. Keep the job at 15 minutes, every case at its original limit, and the actual latency and compact-setup probes serial. Verify exact commands, same cases and private-profile teardown before independent review and fresh hosted qualification.
 14. Preserve the hosted pending-layout picker failure and reproduce its zero-region assertion by recomposing the real Notes canvas after the real click opens the picker. Read the same armed button’s shifted geometry at dispatch before the background widget can retire. Keep the single click, ten-second readiness deadline, modal focus, folder, filter and durable mutation assertions. Verify the same forced recompose and all three picker journeys. ADR required: no, because this changes only when the existing fixture observes geometry.
 15. Reproduce the review finding by replacing the Move button during Pilot’s first yield. Observe the first dispatch of the actual native Button.Pressed through Textual’s existing test message hook. Compare the originating button and its then-current shifted geometry, deduplicate delivery of the same event, and preserve the original one-click helper and deadline. Require the replacement control to fail and the post-click recompose and all original cases to pass.
+16. Reproduce UI31 with a real pending context worker and a competing native FULL sync. Move the existing stricter settle before the synthetic durable-commit window and immediately invoke the same manual timer callback inside it. Preserve every original hold, replay, provider, and timing assertion and the native product policy. Verify the same competitor and the original whole test file.
+17. Trace UI19’s actual counted row, compositor clip, tray height and bounded owner. Preserve the original filter and hit-test assertions. Exercise the real legacy action mount after a native fit without that control and change only the measured owner when the causal control identifies it.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -72,6 +74,12 @@ GitHub cancelled the cf70156 Perf Guard at its existing 15-minute limit after al
 On 98596fe, Perf Guard passed all seven original steps in 9 minutes 17 seconds with the original limits. UI16 separately opened the Notes picker but later read a zero region from its old Move button. A native post-click recompose reproduced the same assertion after a successful click. The test now records the exact hit-tested button and its shifted geometry at dispatch, keeping one click and the ten-second readiness deadline. The same forced recompose passed, and all three original picker journeys passed. The next exact head still needs its own hosted gates.
 
 Independent review found a second test race during Pilot’s first yield. The retained control replaced the shifted Move button, and the unshifted replacement emitted the actual press and opened the picker. The prior local observation missed that replacement. The final test uses Textual’s existing message hook to record the actual originating Button.Pressed and its first region, once per message, before the modal changes the background. It rejects the replacement control and passes both the real post-click recompose and all three original picker cases. The original click helper, selectors and limits remain as before. The existing testing-evidence lesson records the distinction.
+
+On 1c3c7d0, UI19 reported one match but its row was clipped. A native control measured the partial fit pinning the tray to 10 rows from a 13-row layout. Waiting only for an unlaid mounted list still failed during removal. The tray now uses its owning screen’s layout signal whenever the expected list is absent or unlaid. Independent bounded-Console controls verify both states and the eventual refit. The original filter and paint assertions are preserved.
+
+UI31’s fixture could yield to a real context-owned full sync after opening its synthetic durable-commit window. The existing strict settle now finishes before that window, and the fixture invokes the same manual timer immediately inside it. The same competing-sync control and all four original cases passed with the original assertions and waits. The hosted callback ordering in both failures remains unobserved.
+
+The scoped rail and size run passed 210 cases. An optional Character rail fixture refused profile selection before it reached the UI, and that test is outside the PR gate roster. Diagnostic inventory and all 34 boot ratchets passed. Fresh original software UAT passed all 15 browser cases and the mounted parent and three children with matching retained artifacts, ordinary reopen, and clean guard records. Hosted qualification remains pending on the new source head.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
