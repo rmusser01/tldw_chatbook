@@ -27,6 +27,7 @@ from tldw_chatbook.Character_Chat.character_conversation_navigation import (
     UnavailableCharacterReason,
     UnresolvedConversationKey,
 )
+from tldw_chatbook.Utils.fts5_match_forms import quote_fts5_phrase
 
 if TYPE_CHECKING:
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -498,7 +499,7 @@ class CharacterConversationSearchRepository:
         offset: int = 0,
         limit: int = 50,
     ) -> CharacterConversationPage:
-        match_query = '"' + query.strip().replace('"', '""') + '"'
+        match_query = quote_fts5_phrase(query.strip())
         with self._database.transaction() as connection:
             revision = self._revision(connection)
             generation = connection.execute(

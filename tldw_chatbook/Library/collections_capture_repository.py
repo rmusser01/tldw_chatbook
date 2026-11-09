@@ -14,6 +14,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 from tldw_chatbook.Subscriptions.html_text import readable_body_text
+from tldw_chatbook.Utils.fts5_match_forms import quote_fts5_prefix
 
 from .collections_capture_models import (
     CAPTURE_ANNOTATION_PAGE_SIZE,
@@ -199,7 +200,7 @@ def _fts_query(search: str) -> str | None:
     tokens = tuple(dict.fromkeys(re.findall(r"\w+", search, flags=re.UNICODE)))
     if not tokens:
         return None
-    return " AND ".join(f'"{token}"*' for token in tokens)
+    return " AND ".join(quote_fts5_prefix(token) for token in tokens)
 
 
 def _inclusive_date_to(value: str) -> tuple[str, str]:

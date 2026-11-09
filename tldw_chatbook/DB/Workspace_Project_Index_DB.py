@@ -13,6 +13,7 @@ import sqlite3
 from uuid import uuid4
 
 from tldw_chatbook.DB.store_kernel import SQLiteStoreKernel
+from tldw_chatbook.Utils.fts5_match_forms import quote_fts5_token
 from tldw_chatbook.Utils.path_validation import fold_path_part
 from tldw_chatbook.Utils.timestamps import utc_now_iso
 from tldw_chatbook.Workspaces.project_index.models import (
@@ -1033,7 +1034,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
         terms = re.findall(r"\w+", query, flags=re.UNICODE)
         if not terms:
             return ()
-        match = " AND ".join('"' + term + '"' for term in terms)
+        match = " AND ".join(quote_fts5_token(term) for term in terms)
         with self.transaction() as conn:
             row = self._current(conn, authority.scope)
             if row is None or not row["enabled"]:

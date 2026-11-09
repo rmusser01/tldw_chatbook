@@ -2294,8 +2294,8 @@ class LLMManagementWindow(Container):
         try:
             await self._mount_deferred_views(view_name)
         except Exception:
-            safe_view = view_name if view_name in self.view_mapping else "unknown"
-            logger.error("Lazy LLM view mount failed: view={}", safe_view)
+            view_label = view_name if view_name in self.view_mapping else "unknown"
+            logger.error("Lazy LLM view mount failed: view={}", view_label)
             return
         finally:
             self._populating_views.discard(view_name)

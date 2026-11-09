@@ -246,7 +246,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "Image generation batch raised": ("type(exc).__name__",),
     },
     "tldw_chatbook/UI/LLM_Management_Window.py": {
-        "Lazy LLM view mount failed: view={}": ("safe_view",),
+        "Lazy LLM view mount failed: view={}": ("view_label",),
         "Managed GGUF inventory load failed": (),
     },
     "tldw_chatbook/UI/Screens/llm_screen.py": {
@@ -3499,7 +3499,7 @@ def test_inventory_excludes_nested_virtualenv_but_keeps_application_sources(
 def test_buddy_uat_lifecycle_diagnostics_do_not_capture_private_errors(monkeypatch):
     owners = {
         "tldw_chatbook/UI/LLM_Management_Window.py": {
-            "Lazy LLM view mount failed: view={}": ("safe_view",)
+            "Lazy LLM view mount failed: view={}": ("view_label",)
         },
         "tldw_chatbook/UI/Screens/library_screen.py": {
             "Pending Library lifecycle write failed during unmount.": ()

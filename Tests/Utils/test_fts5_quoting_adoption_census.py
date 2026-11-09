@@ -16,13 +16,10 @@ These two censuses are that outcome.
 
 **Census 1 (re-spelling).** Doubling a `"` into `""` has exactly one purpose
 in this codebase's data layer: escaping a double quote inside a quoted
-string literal. So `<expr>.replace('"', '""')` anywhere outside the two
-modules that own an escape IS a hand-rolled re-spelling, and this census
-fails on it. There is one genuine non-FTS5 owner, `DB/sql_validation.py`'s
-`escape_identifier`, which escapes a SQL *identifier* (`"table name"` in
-DDL) -- a different language layer with the same doubling rule -- and it is
-allowlisted by exact (module, function) name rather than by module, so a
-second, FTS5-shaped helper cannot be smuggled into that file.
+string literal. This census checks `<expr>.replace('"', '""')` outside the
+shared primitive. SQL identifier quoting (`"table name"` in DDL) uses the
+same doubling rule. Its exceptions are keyed by module and qualified
+function name so a second helper cannot inherit the exemption.
 
 **Census 2 (dead store).** A local whose name marks it as the sanitized form
 of user input (`safe_*`, `quoted_*`, `escaped_*`) and whose every READ is
@@ -41,10 +38,9 @@ and docstrings produce no `Call`/`Name` nodes, so both bypasses are
 structurally closed here; both directions are proven below.
 
 **Census 3 (the module-level net).** A module that binds a value to a
-`... MATCH ?` query must import from `Utils/fts5_match_forms`. Seven modules
-do so today and all seven import it. This is the only one of the three that
-can catch the *broken* spelling in a new file -- see the limits below for why
-that matters more than it sounds.
+`... MATCH ?` query must import from `Utils/fts5_match_forms`. This is the only
+one of the three that can catch the *broken* spelling in a new file. See the
+limits below for why that matters.
 
 **What these cannot express, stated rather than left to be rediscovered.**
 
@@ -59,8 +55,8 @@ rejected on measurement: it is indistinguishable from SQL identifier quoting
 (`f'Imported "{skill_name}" ...'`), producing four false positives and zero
 true ones on the current tree. Census 3 is the structural answer available:
 a NEW module that hand-rolls either spelling reds because it binds `MATCH ?`
-without importing the primitive. A new seam added *inside* one of the seven
-modules that already import it is NOT covered -- for those, the behavioural
+without importing the primitive. A new seam added inside a module that
+already imports it is NOT covered -- for those, the behavioural
 sweep in `Tests/DB/test_fts5_quoting_search_seams.py` is the net, and it only
 covers seams enumerated in it.
 
@@ -96,7 +92,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 #: The ONE module allowed to implement the FTS5 string-literal escape.
 FTS5_PRIMITIVE = "tldw_chatbook/Utils/fts5_match_forms.py"
 
-#: (module, function) pairs allowed to double a `"` for a NON-FTS5 reason.
+#: (module, qualified function) pairs allowed to double a `"` for SQL identifiers.
 #: Keyed on the function too, so an FTS5 helper cannot be parked in the same
 #: module and inherit the exemption.
 QUOTE_DOUBLING_EXEMPTIONS = frozenset(
@@ -104,7 +100,9 @@ QUOTE_DOUBLING_EXEMPTIONS = frozenset(
         # SQL identifier quoting: `"my table"` in DDL/DML. Same doubling
         # rule, different language layer, and it is not interchangeable with
         # the FTS5 escape (its output is an identifier, not a MATCH term).
-        ("tldw_chatbook/DB/sql_validation.py", "escape_identifier"),
+        ("tldw_chatbook/DB/sql_identifier_core.py", "escape_identifier"),
+        ("tldw_chatbook/Backup_Recovery/credentials.py", "_rewrite_database.quote"),
+        ("tldw_chatbook/Backup_Recovery/sqlite_validation.py", "_metadata.quote"),
     }
 )
 
@@ -139,26 +137,32 @@ def _is_quote_doubling_call(node: ast.AST) -> bool:
     )
 
 
-def _enclosing_function_name(tree: ast.AST, target: ast.AST) -> str:
-    """Innermost def containing `target`, or "<module>"."""
-    best = "<module>"
-    best_lineno = -1
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        end = getattr(node, "end_lineno", None) or node.lineno
-        if node.lineno <= target.lineno <= end and node.lineno > best_lineno:
-            best, best_lineno = node.name, node.lineno
-    return best
+def _enclosing_function_name(parents: dict[ast.AST, ast.AST], target: ast.AST) -> str:
+    """Qualify the enclosing bodies, excluding decorators and defaults."""
+    names = []
+    while target in parents:
+        parent = parents[target]
+        if (
+            isinstance(parent, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+            and target in parent.body
+        ):
+            names.append(parent.name)
+        target = parent
+    return ".".join(reversed(names)) or "<module>"
 
 
 def quote_doubling_sites(source: str, relative_path: str) -> list[tuple[str, str, int]]:
     """Every `.replace('"', '""')` in `source`, as (path, function, line)."""
     tree = ast.parse(source)
+    calls = [node for node in ast.walk(tree) if _is_quote_doubling_call(node)]
+    if not calls:
+        return []
+    parents = {
+        child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+    }
     return [
-        (relative_path, _enclosing_function_name(tree, node), node.lineno)
-        for node in ast.walk(tree)
-        if _is_quote_doubling_call(node)
+        (relative_path, _enclosing_function_name(parents, node), node.lineno)
+        for node in calls
     ]
 
 
@@ -291,8 +295,8 @@ def test_a_comment_or_docstring_mentioning_the_escape_is_not_flagged() -> None:
 def test_the_sql_identifier_exemption_is_scoped_to_its_own_function() -> None:
     """False-green direction: the exemption does not cover its whole module.
 
-    An FTS5 helper parked inside `sql_validation.py` would be a new
-    spelling, so the allowlist is keyed on (module, function).
+    An FTS5 helper in an identifier owner's module is still a new spelling,
+    even if it shares the innermost name of an exempt nested function.
     """
     smuggled = (
         "def escape_identifier(identifier):\n"
@@ -301,11 +305,26 @@ def test_the_sql_identifier_exemption_is_scoped_to_its_own_function() -> None:
         "def quote_fts_term(term):\n"
         "    return '\"' + term.replace('\"', '\"\"') + '\"'\n"
     )
-    sites = quote_doubling_sites(smuggled, "tldw_chatbook/DB/sql_validation.py")
+    identifier_core = "tldw_chatbook/DB/sql_identifier_core.py"
+    sites = quote_doubling_sites(smuggled, identifier_core)
     unexempt = [
         site for site in sites if (site[0], site[1]) not in QUOTE_DOUBLING_EXEMPTIONS
     ]
-    assert unexempt == [("tldw_chatbook/DB/sql_validation.py", "quote_fts_term", 5)]
+    nested = (
+        "def _metadata():\n"
+        "    def quote(name):\n"
+        "        return name.replace('\"', '\"\"')\n"
+        "def search():\n"
+        "    def quote(term):\n"
+        "        return term.replace('\"', '\"\"')\n"
+    )
+    path = "tldw_chatbook/Backup_Recovery/sqlite_validation.py"
+    sites = quote_doubling_sites(nested, path)
+    assert sites == [(path, "_metadata.quote", 3), (path, "search.quote", 6)]
+    assert [site for site in sites if site[:2] not in QUOTE_DOUBLING_EXEMPTIONS] == [
+        (path, "search.quote", 6)
+    ]
+    assert unexempt == [(identifier_core, "quote_fts_term", 5)]
 
 
 # ---------------------------------------------------------------------------
