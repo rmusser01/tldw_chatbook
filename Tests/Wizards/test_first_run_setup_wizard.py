@@ -10683,6 +10683,8 @@ async def test_summary_footer_shows_the_effective_config_path(monkeypatch, tmp_p
         config=WizardStepConfig(id="summary", title="Summary", step_number=9),
         load_config=lambda: {},
         rag_deps_installed=lambda: False,
+        speech_installed=lambda: False,
+        speech_runtime_installed=lambda: False,
     )
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
