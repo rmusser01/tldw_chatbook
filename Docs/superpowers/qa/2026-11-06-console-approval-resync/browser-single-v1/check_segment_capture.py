@@ -46,9 +46,12 @@ async def controls(output):
  assert page.marks==page.http==40
  assert default['intervals']['before']['trace_page']['samples']==20
  config=cdp.calls[0][1]
- assert config['screenshotMaxCount']==50 and config['traceConfig']['traceBufferSizeInKb']==8192
+ assert config['screenshotMaxCount']==50 and config['screenshotMaxSize']==1500
+ assert config['traceConfig']['traceBufferSizeInKb']==8192
  assert config['transferMode']=='ReportEvents' and config['traceConfig']['recordMode']=='recordContinuously'
- assert config['traceConfig']['includedCategories']==['benchmark','cc','viz','blink.user_timing','devtools.timeline','disabled-by-default-devtools.timeline.frame','disabled-by-default-devtools.screenshot']
+ assert config['traceConfig']['includedCategories']==[
+  'benchmark','blink.user_timing','disabled-by-default-devtools.screenshot',
+ ], 'Trace_must_only_enable_presentation_screenshot_and_clock_categories'
  print('ACTUAL_OPTIONAL_API_CALL_NEXT',flush=True)
  page=Page();cdp=CDP(page);capture=BrowserTraceCapture(page,cdp)
  await capture.start(calibration_samples=1);single=await capture.stop(output/'single.json',calibration_samples=1)
