@@ -2158,7 +2158,7 @@ def test_manual_interruption_fallback_stays_latched_if_path_reopens() -> None:
 
 
 def test_interruption_prompt_retries_once_then_latches_manual_protocol() -> None:
-    harness = _LiveHarness(aec=_UnavailableAec())
+    harness = _LiveHarness(aec=_HealthyAec())
     runner = _runner(harness)
 
     async def flap_protocol_during_prompt(message: str) -> None:
