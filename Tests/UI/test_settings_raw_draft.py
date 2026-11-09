@@ -363,11 +363,15 @@ async def test_missing_committed_snapshot_requires_explicit_reload_after_navigat
         assert raw_profile.read_text() == external
         assert screen.query_one(TextArea).text == (newer if newer_edit else submitted)
 
-        await pilot.click("#settings-advanced-revert-config")
-        if isinstance(host.screen, ConfirmationDialog):
-            await pilot.click("#confirm-button")
+        revert = screen.query_one("#settings-advanced-revert-config")
+        assert not revert.disabled, model.status
+        assert await pilot.click(revert), "Revert click did not land on the control"
+        assert isinstance(host.screen, ConfirmationDialog) is newer_edit
+        if newer_edit:
+            assert await pilot.click("#confirm-button"), "Confirmation click missed"
         await host.workers.wait_for_complete()
         await pilot.pause()
+        assert model.state.snapshot is not None, model.status
         assert model.state.snapshot.serialized == external
         assert screen.query_one(TextArea).text == external
         await model.validate()

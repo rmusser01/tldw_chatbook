@@ -226,6 +226,7 @@ async def test_survivor_spend_folds_into_the_message_row_when_the_last_child_set
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_fold_lands_durably_when_the_child_settles_after_console_teardown(
     tmp_path,
