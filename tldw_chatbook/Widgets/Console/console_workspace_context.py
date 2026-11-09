@@ -1657,6 +1657,10 @@ class ConsoleWorkspaceContextTray(
             self._fit_after_screen_layout()
             return
 
+        browser_unlaid = (
+            self.content in {"all", "conversations"}
+            and self._state.conversation_browser is not None
+        )
         content_top = 0
         content_bottom = 1
         for child in self.children:
@@ -1665,12 +1669,15 @@ class ConsoleWorkspaceContextTray(
             child_virtual = getattr(child, "virtual_region", None)
             if child_virtual is None or child_virtual.height <= 0:
                 continue
+            if child.id == "console-workspace-conversations":
+                browser_unlaid = False
             content_bottom = max(
                 content_bottom,
                 child_virtual.y + child_virtual.height,
             )
 
-        if content_bottom == 1 and len(self.children) > 1:
+        if browser_unlaid or (content_bottom == 1 and len(self.children) > 1):
+            self._fit_waits_for_layout = browser_unlaid
             self._fit_after_screen_layout()
             return
 
