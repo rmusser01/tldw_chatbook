@@ -11,6 +11,7 @@ import asyncio
 import errno
 import inspect
 import threading
+from contextlib import ExitStack
 from copy import deepcopy
 from dataclasses import replace
 from types import SimpleNamespace
@@ -201,14 +202,15 @@ async def _wait(pilot, predicate, tries: int = 100) -> None:
     pytest.fail("never happened")
 
 
-async def _fresh_readiness_display(console, pilot) -> None:
+async def _fresh_readiness_display(console, pilot, ready=None) -> None:
     """Warm the checked readiness display the poll paints through (TASK-38958).
 
     The display lasts a second. Under load a test's setup outlived it, so the
     poll's control bar refused the expired display and left the header to its
     0.2 s replay, after the test's one pause. With a fresh display the poll
     paints the header itself, before it returns. Call it before changing the
-    state the poll should paint: its awaits let other syncs run.
+    state the poll should paint: its awaits let other syncs run. A ready
+    callback may check admission and poll synchronously while the proof is fresh.
     """
     from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
         ConsoleReadinessConfigProjection,
@@ -216,7 +218,7 @@ async def _fresh_readiness_display(console, pilot) -> None:
 
     projection = ConsoleReadinessConfigProjection.for_screen(console)
     for _ in range(100):
-        if await projection.warm():
+        if await projection.warm() and (ready is None or ready()):
             return
         await pilot.pause(0.02)
     pytest.fail("the Console's readiness display never warmed")
@@ -1130,7 +1132,11 @@ async def test_the_inspector_setup_row_and_send_hint_read_the_readiness_word(
         _persisted_console_app,
     )
     from Tests.UI.test_destination_shells import _wait_for_selector
+    from tldw_chatbook import config
     from tldw_chatbook.Chat.console_session_settings import readiness_words
+    from tldw_chatbook.UI.Console_Modules.config_sync import (
+        run_console_presentation_sync,
+    )
 
     harness = _ConsoleFlowHarness(_persisted_console_app())
     async with harness.run_test(size=(211, 44)) as pilot:
@@ -1153,14 +1159,39 @@ async def test_the_inspector_setup_row_and_send_hint_read_the_readiness_word(
             settings, app_config=console._provider_readiness_app_config()
         )
         store = ProviderTestEvidenceStore(lambda: harness)
-        # Warm before the settle, so no await sits between the settle and the
-        # poll: a sync during the warm-up could paint the settled word itself
-        # (TASK-38958 review). The display's key excludes evidence.
-        await _fresh_readiness_display(console, pilot)
+        evidence_version = status = None
+
+        def settle_and_poll():
+            nonlocal evidence_version
+            store.settle(
+                store.begin(identity), ProviderProbeResult("unreachable", (), category)
+            )
+            evidence_version = shared_connection_evidence(lambda: harness).version
+            console._poll_console_credential_readiness()
+
+        def try_first_poll():
+            nonlocal status
+            with ExitStack() as acquired:
+                for lock in (
+                    config._settings_rebuild_lock(),
+                    config._config_file_lock(),
+                ):
+                    if not lock.acquire(blocking=False):
+                        return False
+                    acquired.callback(lock.release)
+                if not run_console_presentation_sync(console, lambda: None):
+                    return False
+                # A queued repaint cannot see the new evidence before this poll.
+                settle_and_poll()
+                status = _rail_text(console, "#workbench-header-status")
+                snapshot = console._console_credential_snapshot
+                assert snapshot is not None and snapshot[2] == evidence_version
+                return True
+
         held, release = threading.Event(), threading.Event()
         holder = None
         if poll_phase == "config-lock-held":
-            from tldw_chatbook import config
+            await _fresh_readiness_display(console, pilot)
 
             def hold_config_lock():
                 with config._settings_rebuild_lock():
@@ -1169,19 +1200,12 @@ async def test_the_inspector_setup_row_and_send_hint_read_the_readiness_word(
 
             holder = threading.Thread(target=hold_config_lock)
             holder.start()
-        status = None
         try:
-            if holder is not None:
-                assert await asyncio.to_thread(held.wait, 5)
-            store.settle(
-                store.begin(identity), ProviderProbeResult("unreachable", (), category)
-            )
-            evidence_version = shared_connection_evidence(lambda: harness).version
-            console._poll_console_credential_readiness()
             if holder is None:
-                # Keep the first poll's header before any queued repaint.
-                status = _rail_text(console, "#workbench-header-status")
-            if holder is not None:
+                await _fresh_readiness_display(console, pilot, try_first_poll)
+            else:
+                assert await asyncio.to_thread(held.wait, 5)
+                settle_and_poll()
                 snapshot = console._console_credential_snapshot
                 assert snapshot is None or snapshot[2] != evidence_version
             await pilot.pause()
