@@ -174,6 +174,7 @@ def _dirty_screen_with_switch_pushed(monkeypatch, tmp_path, fake_app):
     return screen, callback, other.id
 
 
+@pytest.mark.bootstrap_profile
 def test_set_active_with_dirty_draft_pushes_confirm_modal(
     monkeypatch, tmp_path, fake_app
 ):
@@ -186,6 +187,7 @@ def test_set_active_with_dirty_draft_pushes_confirm_modal(
     assert screen._rag_profile_pending_activate is None
 
 
+@pytest.mark.bootstrap_profile
 def test_confirm_modal_cancel_makes_no_dispatch_and_leaves_pending_clear(
     monkeypatch, tmp_path, fake_app
 ):
@@ -203,6 +205,7 @@ def test_confirm_modal_cancel_makes_no_dispatch_and_leaves_pending_clear(
     assert SettingsCategoryId.LIBRARY_RAG in screen._settings_drafts
 
 
+@pytest.mark.bootstrap_profile
 def test_confirm_modal_discard_pops_draft_before_dispatching_set_active(
     monkeypatch, tmp_path, fake_app
 ):
@@ -228,6 +231,7 @@ def test_confirm_modal_discard_pops_draft_before_dispatching_set_active(
     assert SettingsCategoryId.LIBRARY_RAG not in screen._settings_drafts
 
 
+@pytest.mark.bootstrap_profile
 def test_confirm_modal_discard_from_a_preview_clears_the_preview_first(
     monkeypatch, tmp_path, fake_app
 ):
@@ -248,6 +252,7 @@ def test_confirm_modal_discard_from_a_preview_clears_the_preview_first(
     assert screen._rag_preview_profile_id is None
 
 
+@pytest.mark.bootstrap_profile
 def test_confirm_modal_save_arms_pending_activate_and_routes_through_save_action(
     monkeypatch, tmp_path, fake_app
 ):
@@ -263,6 +268,7 @@ def test_confirm_modal_save_arms_pending_activate_and_routes_through_save_action
     assert save_calls == [{"allow_text_entry_focus": True}]
 
 
+@pytest.mark.bootstrap_profile
 def test_confirm_modal_save_from_a_preview_clears_preview_and_the_save_actually_dispatches(
     monkeypatch, tmp_path, fake_app
 ):
@@ -1836,6 +1842,7 @@ def _dirty_screen_ready_for_reindex_gate(
     return screen, worker_calls
 
 
+@pytest.mark.bootstrap_profile
 def test_save_with_built_index_pushes_confirm_modal_with_count_and_backfill(
     monkeypatch, tmp_path, fake_app
 ):
@@ -1860,6 +1867,7 @@ def test_save_with_built_index_pushes_confirm_modal_with_count_and_backfill(
     assert "Backfill" in modal.message
 
 
+@pytest.mark.bootstrap_profile
 def test_reindex_confirm_cancel_does_not_save_and_clears_pending_activate(
     monkeypatch, tmp_path, fake_app
 ):
@@ -1882,6 +1890,7 @@ def test_reindex_confirm_cancel_does_not_save_and_clears_pending_activate(
     assert SettingsCategoryId.LIBRARY_RAG in screen._settings_drafts
 
 
+@pytest.mark.bootstrap_profile
 def test_reindex_confirm_confirm_dispatches_save_and_rearms_pending_activate(
     monkeypatch, tmp_path, fake_app
 ):
@@ -1907,6 +1916,7 @@ def test_reindex_confirm_confirm_dispatches_save_and_rearms_pending_activate(
     assert screen._rag_profile_pending_activate == "target-profile-id"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("state", ["absent", "empty"])
 def test_save_with_index_change_but_nothing_built_skips_modal_and_saves_directly(
     monkeypatch, tmp_path, fake_app, state
@@ -1927,6 +1937,7 @@ def test_save_with_index_change_but_nothing_built_skips_modal_and_saves_directly
     assert sections["console"]["direct_library_tools"] is True
 
 
+@pytest.mark.bootstrap_profile
 def test_save_then_switch_reindex_confirm_survives_a_confirm(
     monkeypatch, tmp_path, fake_app
 ):
@@ -1961,6 +1972,7 @@ def test_save_then_switch_reindex_confirm_survives_a_confirm(
     assert screen._rag_profile_pending_activate == other_id
 
 
+@pytest.mark.bootstrap_profile
 def test_save_then_switch_reindex_confirm_survives_a_cancel(
     monkeypatch, tmp_path, fake_app
 ):
@@ -2095,6 +2107,7 @@ def test_save_with_no_cached_status_fetches_then_saves_directly_when_absent(
 # never happens). ---
 
 
+@pytest.mark.bootstrap_profile
 def test_double_save_click_during_no_cache_fetch_does_not_drop_pending_activate(
     monkeypatch, tmp_path, fake_app
 ):
@@ -2307,6 +2320,7 @@ def test_reentering_library_rag_after_leaving_still_fetches_fresh_status(
     assert refreshed == [True]
 
 
+@pytest.mark.bootstrap_profile
 def test_reindex_confirm_in_flight_cleared_on_cancel(monkeypatch, tmp_path, fake_app):
     """The in-flight guard must clear on the Cancel branch too (defensive
     -- by the time the modal resolves it's normally already cleared by the
@@ -2647,6 +2661,7 @@ def _wire_library_rag_with_other_profile(monkeypatch, tmp_path):
     return mgr, profile, other, host
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_browsing_to_a_non_active_profile_previews_it_read_only_without_staging(
     monkeypatch, tmp_path
@@ -2689,6 +2704,7 @@ async def test_browsing_to_a_non_active_profile_previews_it_read_only_without_st
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_field_changed_events_during_preview_never_stage_a_draft(
     monkeypatch, tmp_path
@@ -2716,6 +2732,7 @@ async def test_field_changed_events_during_preview_never_stage_a_draft(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_returning_to_active_profile_restores_a_staged_draft_after_preview(
     monkeypatch, tmp_path
@@ -2756,6 +2773,7 @@ async def test_returning_to_active_profile_restores_a_staged_draft_after_preview
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_set_active_from_preview_exits_preview_on_success(monkeypatch, tmp_path):
     mgr, profile, other, host = _wire_library_rag_with_other_profile(
@@ -2904,6 +2922,7 @@ def test_library_rag_save_enabled_is_false_while_previewing_even_with_a_dirty_dr
     assert screen._library_rag_save_enabled() is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_profiles_and_editor_render_inside_their_own_titled_containers(
     monkeypatch, tmp_path
@@ -3010,6 +3029,7 @@ async def test_cloning_leaves_the_select_on_the_clone_without_auto_entering_prev
         assert editor_card.border_title == "Editing: Hybrid Basic"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_genuine_profile_browse_right_after_a_resync_still_enters_preview(
     monkeypatch, tmp_path
@@ -3812,6 +3832,7 @@ def test_select_value_text_still_renders_real_values_unchanged():
     assert SettingsScreen._select_value_text(None) == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_rag_selected_profile_id_returns_none_for_select_null(
     monkeypatch, tmp_path
@@ -3836,6 +3857,7 @@ async def test_library_rag_selected_profile_id_returns_none_for_select_null(
         assert screen._library_rag_selected_profile_id() is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_set_active_with_blank_selection_shows_friendly_notice_not_adapter_error(
     monkeypatch, tmp_path
@@ -4383,6 +4405,7 @@ async def test_an_unrecognised_stored_provider_is_repairable_from_the_picker(
         assert draft.values["reranker_provider"] == "openai"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_previewing_a_profile_discloses_that_profiles_reranking_cost(
     monkeypatch, tmp_path
