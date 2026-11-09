@@ -46,6 +46,21 @@ def _default_character_db() -> Any:
     return get_chachanotes_db_lazy()
 
 
+async def _read_character_list(database, operation, /, *args, **kwargs):
+    """Retire any newly opened file-backed handle on the worker that read it."""
+
+    def read():
+        from ...DB.base_db import operation_owned_connection
+        from ...DB.ChaChaNotes_DB import CharactersRAGDB
+
+        if type(database) is CharactersRAGDB and not database.is_memory_db:
+            with operation_owned_connection(database):
+                return operation(*args, **kwargs)
+        return operation(*args, **kwargs)
+
+    return await asyncio.to_thread(read)
+
+
 def _normalize_character_payload(data: Dict[str, Any]) -> Dict[str, Any]:
     """Map widget field aliases into the local character-card schema."""
     payload = dict(data)

@@ -20,6 +20,7 @@ Note: the "schema v37" figure that circulates in older docs is stale — read `_
 
 - **Private connections** (`connect_private_sqlite`) harden the SQLite build for user-data files.
 - **Finite Workspace reads**: registry `get_workspace`, `list_workspaces` and `get_runtime_binding` use `operation_owned_connection` to retire newly acquired exact file-backed handles on their producer thread. The binding read includes Default-binding repair; borrowed handles/transactions and custom/in-memory owners keep their lifetimes. Awaiter cancellation does not retire a running callback (ADR-353).
+- **Finite Roleplay character list reads**: local counts and pages use `operation_owned_connection` inside the read worker for an exact file-backed `CharactersRAGDB`. Borrowed handles, in-memory databases and custom readers keep their existing ownership.
 - **Quiescence registry**: an exclusive maintenance barrier per canonical file identity. Cursors hold use reservations until result exhaustion; `quiesce_connections()` drains and closes same-file handles so maintenance (vacuum, migration) can run without "database is locked" races.
 - **Semantic-mutation guards**: `register_semantic_mutation_guard` registers SQLite functions plus a trace callback and an authorizer that **denies COMMIT/ROLLBACK escape mid-scope** — fail-closed guards consumed by DB triggers protecting console trace/semantic state.
 

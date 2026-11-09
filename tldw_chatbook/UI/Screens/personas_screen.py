@@ -395,7 +395,7 @@ from ...Widgets.workbench_focus import (
     focus_relative_workbench_pane,
 )
 from ..CCP_Modules import ccp_character_handler
-from ..CCP_Modules.ccp_character_handler import CCPCharacterHandler
+from ..CCP_Modules.ccp_character_handler import CCPCharacterHandler, _read_character_list
 from ..CCP_Modules.ccp_enhanced_handlers import setup_ccp_enhancements
 from ..CCP_Modules.ccp_messages import CharacterMessage
 from ..CCP_Modules.ccp_persona_handler import CCPPersonaHandler
@@ -3524,8 +3524,8 @@ class PersonasScreen(BaseAppScreen):
             db = self._character_db()
             if db is None:
                 raise RuntimeError("No character database.")
-            count = await asyncio.to_thread(
-                db.count_character_cards, search_term=quote_fts5_prefix(query)
+            count = await _read_character_list(
+                db, db.count_character_cards, search_term=quote_fts5_prefix(query)
             )
             return count, False
         if kind == "persona":
@@ -3593,20 +3593,21 @@ class PersonasScreen(BaseAppScreen):
         records: list[dict] = []
         try:
             if request.replace and self._count_cache_key != cache_key:
-                total = await asyncio.to_thread(
-                    count_character_page, db, search_term=search, tag=fence.tag
+                total = await _read_character_list(
+                    db, count_character_page, db, search_term=search, tag=fence.tag
                 )
             else:
                 total = self._character_total
             if (search or fence.tag) and self._character_unfiltered_total is None:
                 # The title's "of M" (spec 1.5.1); counted once, then cached
                 # until a write or a source change.
-                self._character_unfiltered_total = await asyncio.to_thread(
-                    count_character_page, db
+                self._character_unfiltered_total = await _read_character_list(
+                    db, count_character_page, db
                 )
             offset = request.offset
             while True:
-                window = await asyncio.to_thread(
+                window = await _read_character_list(
+                    db,
                     get_character_page_for_ui,
                     db,
                     limit=PERSONAS_LIBRARY_PAGE_SIZE,
