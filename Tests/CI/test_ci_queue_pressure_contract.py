@@ -1361,9 +1361,13 @@ def test_recovered_suites_lane_is_one_serial_guarded_minimal_python_312_job() ->
     for target in RECOVERED_SUITES_TARGETS:
         assert (PROJECT_ROOT / target.split("::", 1)[0]).is_file()
     # A whole file here runs in no other step; a node id here is not listed
-    # by another step, nor is its file listed there whole.
+    # by another step, nor is its file listed there whole. Node ids compare
+    # without a parametrize suffix, so one case listed elsewhere is caught.
+    def test_id(target: str) -> str:
+        return target.split("[", 1)[0]
+
     files = {target for target in RECOVERED_SUITES_TARGETS if "::" not in target}
-    nodes = set(RECOVERED_SUITES_TARGETS) - files
+    nodes = {test_id(target) for target in RECOVERED_SUITES_TARGETS if "::" in target}
     node_files = {node.split("::", 1)[0] for node in nodes}
     others = [
         f"{key}: {candidate['name']}"
@@ -1372,7 +1376,7 @@ def test_recovered_suites_lane_is_one_serial_guarded_minimal_python_312_job() ->
         for candidate in other.get("steps", ())
         for targets in [set(_pytest_targets(str(candidate.get("run", ""))))]
         if files & {target.split("::", 1)[0] for target in targets}
-        or nodes & targets
+        or nodes & {test_id(target) for target in targets}
         or node_files & targets
     ]
     assert others == []

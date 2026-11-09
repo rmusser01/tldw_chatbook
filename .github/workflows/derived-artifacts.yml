@@ -1373,8 +1373,8 @@ jobs:
       # (Persona_Buddy/library.py, migrate_legacy_selection). TASK-39119's
       # wake and goal-iteration reply pins follow, by node: the three fleet-wake
       # nodes are private-profile tests (each body runs in its own child
-      # process), the goal-dispatch file is bootstrap_profile, and the file's
-      # other nodes in pr-fast-lane stay there. Last, the goal recovery file
+      # process) and the goal-dispatch file is bootstrap_profile; the four
+      # other fleet-wake nodes stay in pr-fast-lane. Last, the goal recovery file
       # (bootstrap_profile, 4 tests), which runs on no other lane.
       - name: Run the recovered suites
         run: |
