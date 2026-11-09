@@ -1793,8 +1793,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 284,
-      "diagnostic_digest": "28552320cc26e548150e",
+      "call_count": 283,
+      "diagnostic_digest": "fe36ecc55e4838d4117f",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Local_Ingestion/transcription_service.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3306,7 +3306,7 @@
     },
     {
       "call_count": 8,
-      "diagnostic_digest": "a16224656c9d45fd6385",
+      "diagnostic_digest": "8c075a9763a450d3a22c",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Library_Modules/library_export_controller.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -10389,7 +10389,7 @@
           "status": "legacy_unreviewed"
         },
         {
-          "call_digest": "09b684f3bdc82193",
+          "call_digest": "a681fe8e3d43c47b",
           "method": "warning",
           "path_expressions": [
             "output_path"

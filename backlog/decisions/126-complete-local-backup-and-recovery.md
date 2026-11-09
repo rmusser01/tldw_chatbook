@@ -1713,3 +1713,20 @@ This replaces repeated root-to-parent traversals, whose native opens grow
 quadratically with path depth. Reject skipping ancestor intent checks, caching a
 settled verdict, or bypassing admission when a process already owns a live lease:
 surviving creation intent and changed path/security evidence must still refuse.
+
+### Accepted Library export admission delegation (2026-11-05)
+
+The Library Screen admits the selected registry and destination before forwarding
+to the existing Export Controller. Recovery refusal at that boundary still
+raises to the Screen caller. The Controller requires the caller's live local
+content operation and the exact retained paths before invoking the export
+service. Direct internal calls without that custody receive the existing
+structured export-failure result with a bounded recovery reason.
+
+The Controller borrows the accepted operation through the existing child-loop
+bridge for the export and the later registry write. The worker retains ownership
+of its source database handles. Archive facts still come from the written
+manifest, cancellation still suppresses the registry write, and a failed
+registry write leaves a successful archive result intact. TASK-39402.29
+implements the approved boundary and verifies refusal, admitted success and
+the existing ownership checks.

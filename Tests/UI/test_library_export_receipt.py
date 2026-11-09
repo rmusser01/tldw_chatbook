@@ -554,11 +554,18 @@ def test_choosing_an_unwritable_destination_refuses_it_with_a_reason(tmp_path):
     ``.../Library export 2026-09-10.zip/private/tmp/.../notes-bundle.zip``
     and the form showed it as the chosen destination.
     """
+    from unittest.mock import Mock
+
     form: dict[str, object] = {}
-    refreshed: list[bool] = []
+    canvas = SimpleNamespace(sync_state=Mock())
+    screen = SimpleNamespace(
+        query_one=Mock(return_value=canvas),
+        _build_library_export_state=lambda: _state(**form),
+        is_running=False,
+    )
     fake = SimpleNamespace(
         _library_export_form=form,
-        refresh=lambda **kwargs: refreshed.append(True),
+        _screen=screen,
     )
     fake._refuse_library_export_destination = lambda reason: (
         LibraryExportController._refuse_library_export_destination(fake, reason)
@@ -573,17 +580,32 @@ def test_choosing_an_unwritable_destination_refuses_it_with_a_reason(tmp_path):
     assert form["destination_exists"] is False
     assert str(form["destination_error"]).startswith("Can't save there:")
     assert "does not exist" in str(form["destination_error"])
-    assert refreshed
+    screen.query_one.assert_called_once_with(
+        "#library-export-canvas", LibraryExportCanvas
+    )
+    canvas.sync_state.assert_called_once_with(_state(**form))
 
 
 def test_choosing_a_writable_destination_clears_any_previous_reason(tmp_path):
+    from unittest.mock import Mock
+
     form: dict[str, object] = {"destination_error": "Can't save there: stale."}
+    canvas = SimpleNamespace(sync_state=Mock())
+    screen = SimpleNamespace(
+        query_one=Mock(return_value=canvas),
+        _build_library_export_state=lambda: _state(**form),
+        is_running=False,
+    )
     fake = SimpleNamespace(
         _library_export_form=form,
-        refresh=lambda **kwargs: None,
+        _screen=screen,
     )
 
     LibraryExportController._apply_library_export_destination(fake, tmp_path / "bundle")
 
     assert form["destination"] == str(tmp_path / "bundle.zip")
     assert form["destination_error"] == ""
+    screen.query_one.assert_called_once_with(
+        "#library-export-canvas", LibraryExportCanvas
+    )
+    canvas.sync_state.assert_called_once_with(_state(**form))

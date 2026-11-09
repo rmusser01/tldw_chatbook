@@ -20797,15 +20797,10 @@ class LibraryScreen(BaseAppScreen):
         calling (UI) thread first, exactly like the counts worker's own
         inline fallback, and the resolved ids are handed to the worker.
 
-        Unlike the counts worker, the ``@work(thread=True)`` dispatch below
-        is never skipped: ``asyncio.run(service.export_chatbook(...))``
-        would raise ("cannot be called from a running event loop") if
-        invoked directly on the UI thread, which already owns Textual's
-        own running event loop. A file-backed deployment defers
-        ``resolve_export_selections`` into that same real thread instead
-        (``preresolved_selections=None``), avoiding a synchronous full-
-        library scan on the UI thread for the common (real, file-backed)
-        case.
+        The threaded export uses its admitted child event loop. Resolve
+        file-backed selections there to keep library scans off the UI
+        thread. Memory-backed IDs arrive through
+        ``preresolved_selections``.
         """
         media_db = getattr(self.app_instance, "media_db", None)
         chachanotes_db = self._resolve_library_export_chachanotes_db()
@@ -20872,14 +20867,18 @@ class LibraryScreen(BaseAppScreen):
         progress_callback=None,
         cancel_check=None,
     ) -> dict[str, Any]:
-        return LibraryExportController._run_library_export_via_service(
-            service,
-            payload,
-            name=name,
-            description=description,
-            progress_callback=progress_callback,
-            cancel_check=cancel_check,
-        )
+        from tldw_chatbook.Backup_Recovery.local_content_lifetime import operation
+
+        paths = (getattr(service, "registry_path", None), payload.get("output_path"))
+        with operation(paths):
+            return LibraryExportController._run_library_export_via_service(
+                service,
+                payload,
+                name=name,
+                description=description,
+                progress_callback=progress_callback,
+                cancel_check=cancel_check,
+            )
 
     @work(thread=True, exclusive=True, group="library_export")
     def _run_library_export_worker(

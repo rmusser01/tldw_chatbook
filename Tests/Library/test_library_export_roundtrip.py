@@ -131,6 +131,7 @@ def _seed_source_dbs(tmp_path: Path) -> dict:
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_library_export_roundtrip_everything_scope_through_real_service_and_importer(
     tmp_path,
 ):
@@ -317,6 +318,7 @@ def test_library_export_roundtrip_everything_scope_through_real_service_and_impo
     assert imported_prompt["system_prompt"] == _PROMPT_SYSTEM
 
 
+@pytest.mark.bootstrap_profile
 def test_library_export_roundtrip_conversations_only_scope_excludes_media_and_notes(
     tmp_path,
 ):
@@ -370,6 +372,7 @@ def test_library_export_roundtrip_conversations_only_scope_excludes_media_and_no
         assert not any(name.startswith("content/prompts/") for name in zf.namelist())
 
 
+@pytest.mark.bootstrap_profile
 def test_library_export_roundtrip_media_ids_scope_exports_exactly_the_selected_items(
     tmp_path,
 ):
@@ -493,6 +496,7 @@ def test_library_export_roundtrip_unwritable_destination_fails_with_no_registry_
     assert listed == []
 
 
+@pytest.mark.bootstrap_profile
 def test_library_export_success_records_a_durable_receipt_with_the_real_path(
     tmp_path,
 ):
@@ -605,6 +609,7 @@ def _seed_two_selectable_media(seeded: dict) -> tuple[int, int]:
     return selected_a_id, selected_b_id
 
 
+@pytest.mark.bootstrap_profile
 def test_library_export_roundtrip_selected_media_uses_canonical_display_ids(
     tmp_path,
 ):
@@ -665,6 +670,7 @@ def test_library_export_roundtrip_selected_media_uses_canonical_display_ids(
         assert media_texts == {"CANONICAL A TRANSCRIPT", "CANONICAL B TRANSCRIPT"}
 
 
+@pytest.mark.bootstrap_profile
 def test_library_export_selected_media_collecting_nothing_reports_failure(
     tmp_path,
 ):
@@ -705,6 +711,7 @@ def test_library_export_selected_media_collecting_nothing_reports_failure(
     assert asyncio.run(service.list_chatbooks()) == []
 
 
+@pytest.mark.bootstrap_profile
 def test_library_export_receipt_counts_come_from_the_written_manifest(
     tmp_path,
 ):
