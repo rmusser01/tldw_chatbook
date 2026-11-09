@@ -197,6 +197,7 @@ _SIMPLE_CASES = [
 ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("db_method_name", "call"), _SIMPLE_CASES)
 async def test_simple_db_calls_run_off_the_event_loop_thread(
@@ -242,6 +243,7 @@ async def test_create_source_both_db_calls_run_off_the_event_loop_thread(tmp_pat
     assert get_threads and all(t != loop_thread for t in get_threads)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_update_source_both_db_calls_run_off_the_event_loop_thread(tmp_path):
     """`update_source` does an UPDATE then a re-read; both must hop."""
@@ -257,6 +259,7 @@ async def test_update_source_both_db_calls_run_off_the_event_loop_thread(tmp_pat
     assert get_threads and all(t != loop_thread for t in get_threads)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_resume_source_both_db_calls_run_off_the_event_loop_thread(tmp_path):
     """`resume_source`'s reset-then-read pair must both hop, in order."""
@@ -292,6 +295,7 @@ async def test_cancel_run_transaction_block_runs_off_the_event_loop_thread(tmp_p
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_create_alert_rule_transaction_block_runs_off_the_event_loop_thread(
     tmp_path,
@@ -313,6 +317,7 @@ async def test_create_alert_rule_transaction_block_runs_off_the_event_loop_threa
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_update_alert_rule_transaction_block_runs_off_the_event_loop_thread(
     tmp_path,
@@ -335,6 +340,7 @@ async def test_update_alert_rule_transaction_block_runs_off_the_event_loop_threa
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delete_alert_rule_transaction_block_runs_off_the_event_loop_thread(
     tmp_path,
@@ -357,6 +363,7 @@ async def test_delete_alert_rule_transaction_block_runs_off_the_event_loop_threa
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_get_alert_rule_reads_off_the_event_loop_thread(tmp_path):
     """`get_alert_rule` was added to the offload sweep (not on the original
@@ -390,6 +397,7 @@ async def test_get_alert_rule_reads_off_the_event_loop_thread(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_list_runs_reads_off_the_event_loop_thread(tmp_path):
     """`list_runs` also reads via a bare `db.conn.cursor()` -- the trace probe."""
@@ -409,6 +417,7 @@ async def test_list_runs_reads_off_the_event_loop_thread(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_list_alert_rules_reads_off_the_event_loop_thread(tmp_path):
     """`list_alert_rules` also reads via a bare `db.conn.cursor()` -- the trace probe."""

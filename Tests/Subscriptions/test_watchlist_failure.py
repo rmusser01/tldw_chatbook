@@ -375,6 +375,7 @@ def test_classifier_redaction_is_anti_vacuous() -> None:
         assert canary not in rendered
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("error_factory", "category", "retryable", "status", "retry_after"),
@@ -496,6 +497,7 @@ async def test_service_persists_each_classification_without_raw_failure_data(
     assert "DURABLE-CANARY" not in durable_and_public
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_manual_and_accepted_checks_share_the_same_failure_projection(
     tmp_path,
@@ -534,6 +536,7 @@ async def test_manual_and_accepted_checks_share_the_same_failure_projection(
     assert "PARITY-CANARY" not in json.dumps(accepted_result, default=str)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_executor_payload_is_sanitized_before_source_and_run_writes(
     tmp_path,
@@ -590,6 +593,7 @@ async def test_failed_executor_payload_is_sanitized_before_source_and_run_writes
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_legacy_and_tampered_failure_rows_normalize_to_fixed_safe_copy(
     tmp_path,
@@ -727,6 +731,7 @@ def _allow_mock_hosts(monkeypatch) -> None:
     monkeypatch.setattr(egress, "get_cli_setting", lambda _s, _k=None, d=None: d)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mock_transport_429_persists_bounded_retry_after_and_no_request_data(
     tmp_path, monkeypatch
@@ -774,6 +779,7 @@ async def test_mock_transport_429_persists_bounded_retry_after_and_no_request_da
         assert canary not in public
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mock_transport_401_retains_status_without_request_or_response_data(
     tmp_path, monkeypatch
@@ -828,6 +834,7 @@ async def test_mock_transport_401_retains_status_without_request_or_response_dat
         assert canary not in public
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("source_type", "content_type", "body"),
@@ -870,6 +877,7 @@ async def test_malformed_and_nonfeed_payloads_are_invalid_feed_failures(
     assert completed["retryable"] is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "payload",
@@ -989,6 +997,7 @@ def test_item_parser_logs_do_not_include_raw_exception_text(
     assert exception_canary not in "".join(captured)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failure_bookkeeping_log_does_not_include_resolution_exception(
     tmp_path, monkeypatch
@@ -1091,6 +1100,7 @@ async def test_all_fetch_paths_send_the_exact_product_user_agent(
     }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("source_type", ["rss", "url", "url_list", "sitemap", "api"])
 async def test_guarded_fetch_container_errors_are_safe_connection_failures(
@@ -1169,6 +1179,7 @@ async def test_feed_user_agent_override_survives_cross_origin_redirect(
     assert final_requests[0].headers["User-Agent"] == custom_user_agent
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_all_error_url_list_run_keeps_a_safe_classified_recovery(
     tmp_path, monkeypatch
@@ -1216,6 +1227,7 @@ async def test_all_error_url_list_run_keeps_a_safe_classified_recovery(
     assert canary not in str(stored_source["last_error"])
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("statuses", "retry_delays", "expected_status", "expected_retry"),
@@ -1279,6 +1291,7 @@ async def test_uniform_url_list_category_carries_only_unanimous_per_url_metadata
         assert "UNIFORM-" not in json.dumps(completed, default=str)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_url_list_recovery_aggregates_failures_without_treating_skips_as_errors(
     tmp_path, monkeypatch
@@ -1327,6 +1340,7 @@ async def test_url_list_recovery_aggregates_failures_without_treating_skips_as_e
     assert "ERROR-WITH-SKIP-CANARY" not in json.dumps(completed, default=str)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mixed_category_url_list_failure_is_generic_and_order_independent(
     tmp_path, monkeypatch

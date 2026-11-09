@@ -148,6 +148,7 @@ async def test_skipped_feed_check_does_not_count_as_a_successful_check(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_distinct_feed_sources_still_check_concurrently(tmp_path, monkeypatch):
     """The guard is per-source: two different feeds must not block each other."""
@@ -179,6 +180,7 @@ async def test_distinct_feed_sources_still_check_concurrently(tmp_path, monkeypa
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_failed_feed_check_releases_the_guard(tmp_path, monkeypatch):
     """A raise must not strand the source as permanently in flight."""

@@ -246,6 +246,7 @@ def test_a_skipped_selector_is_logged_by_name():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_bad_selector_line_does_not_abort_the_whole_check(monkeypatch):
     """F1 end-to-end: the run still completes and still reports the change.
@@ -703,6 +704,7 @@ def _long_page(tail: str) -> str:
     return f"<html><body>{body}<p>{tail}</p></body></html>"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_small_edit_to_a_long_page_fires_under_the_default(monkeypatch):
     """AC#1/#3: one sentence changed on a long page -> an item.
@@ -765,6 +767,7 @@ def _noisy_page(views: int) -> str:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_change_entirely_inside_ignored_noise_is_unchanged(monkeypatch):
     """A view-counter tick must produce `unchanged`, not an item.
@@ -813,6 +816,7 @@ _PROMO_PAGE = (
 )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_editing_selectors_rebaselines_instead_of_phantom_item(monkeypatch):
     """Spec §3: a settings edit re-baselines, and does so BEFORE hashing.
@@ -889,6 +893,7 @@ async def test_editing_selectors_rebaselines_instead_of_phantom_item(monkeypatch
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_rebaseline_records_why_it_happened(monkeypatch):
     """The `reason` field, which the aggregated counts cannot carry.
@@ -938,6 +943,7 @@ def _migrated_page(price: str) -> str:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_migrated_null_fingerprint_rebaselines_then_behaves_normally(
     monkeypatch,
@@ -1096,6 +1102,7 @@ def _priced_page(price: str) -> str:
     return f"<html><body>{body}<p>{price}</p></body></html>"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_withheld_carries_the_scaled_percentage(monkeypatch):
     """A raised threshold withholds visibly, and the number is display-scaled.
@@ -1174,6 +1181,7 @@ async def test_withheld_carries_the_scaled_percentage(monkeypatch):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_engines_own_fallback_threshold_is_zero(monkeypatch):
     """The `monitoring_engine` fallback, pinned independently of the column.
@@ -1219,6 +1227,7 @@ async def test_the_engines_own_fallback_threshold_is_zero(monkeypatch):
     assert item is not None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_null_threshold_does_not_typeerror(monkeypatch):
     """An explicit NULL column value must behave as 0.0, not raise.
@@ -1261,6 +1270,7 @@ async def test_null_threshold_does_not_typeerror(monkeypatch):
     assert len(_stored_items(db, source_id)) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_url_list_aggregates_disposition_counts(monkeypatch):
     """Two URLs on one source, one changed and one unchanged.
@@ -1310,6 +1320,7 @@ async def test_url_list_aggregates_disposition_counts(monkeypatch):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_feed_runs_record_no_dispositions(monkeypatch):
     """Spec §4: dispositions are URL-only.
@@ -1339,6 +1350,7 @@ async def test_feed_runs_record_no_dispositions(monkeypatch):
     assert result["stats"]["items_found"] == 1, "the feed arm still works"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_run_row_surfaces_dispositions_for_the_runs_pane(monkeypatch):
     """TASK-1362 Task 7: the run row the SERVICE returns carries top-level

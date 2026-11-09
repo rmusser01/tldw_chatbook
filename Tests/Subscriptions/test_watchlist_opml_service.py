@@ -168,6 +168,7 @@ def test_parse_malformed_xml_still_raises():
 # --- TASK-3604 plan task 3: import against a real DB ----------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_import_assigns_membership_and_reimport_is_a_structural_noop(tmp_path):
     """ADR-307 end to end at the service layer: folders become watchlists,
@@ -223,6 +224,7 @@ async def test_import_assigns_membership_and_reimport_is_a_structural_noop(tmp_p
     assert total_sources == 3, "no duplicate sources"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_import_counts_a_create_race_resolution_as_existing(tmp_path):
     """A stale preflight lookup must not turn an existing source into a
@@ -256,6 +258,7 @@ async def test_import_counts_a_create_race_resolution_as_existing(tmp_path):
     assert db.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_import_memoizes_unicode_casefold_equivalent_folders(tmp_path):
     from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
@@ -297,6 +300,7 @@ async def test_import_memoizes_unicode_casefold_equivalent_folders(tmp_path):
     assert result["assignments"] == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_import_reuses_existing_unicode_casefold_equivalent_folder(tmp_path):
     from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
@@ -461,6 +465,7 @@ def test_export_with_no_watchlists_is_flat():
 # --- TASK-3604 plan task 5: the round-trip pin ---------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_import_counts_a_repeated_url_once_and_reports_unassigned_sources(
     tmp_path,
@@ -522,6 +527,7 @@ async def test_import_counts_a_repeated_url_once_and_reports_unassigned_sources(
     assert db.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_export_then_import_round_trips_the_structure(tmp_path):
     """The phase's done-when, machine-checked (ADR-307): exporting a

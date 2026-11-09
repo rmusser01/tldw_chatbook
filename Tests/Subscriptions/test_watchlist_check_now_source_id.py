@@ -41,6 +41,7 @@ def services(tmp_path):
     return local, WatchlistScopeService(local_service=local, server_service=None)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_check_now_accepts_the_namespaced_source_id(services):
     """The id the screen holds is the namespaced one; it must work."""
@@ -67,6 +68,7 @@ async def test_check_now_accepts_the_namespaced_source_id(services):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_check_now_still_accepts_a_plain_integer_id(services):
     """Callers holding the integer keep working."""
