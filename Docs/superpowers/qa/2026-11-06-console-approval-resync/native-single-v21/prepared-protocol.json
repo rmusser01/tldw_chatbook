@@ -32,7 +32,7 @@
     "native_series_method.py": "58d89714d85a146ed1f4365b3e6defaf89f5b3621def35d1653e14717e2fcba3",
     "native_window_api.py": "194ef1d9f31b5983e7a50424cfea539ba7a15da5dfdcf47216fd0eb5f1783ee4",
     "owned_roi_capture.py": "161718b7fcca0e2851a01c3f9694bda83ac90f0f6d8b15fd81fe3e357963fe7d",
-    "prepare_native_run.py": "38bdeb7f6881b8fbf12461e0d958b44ad35c9502ee4c7deb6a0478125d6801a7",
+    "prepare_native_run.py": "185194d13a8a132986f3870ab743dc6727c4b5d0fcbea0fdb5644dc8a314ce08",
     "qa_process_guard.py": "5929c9d89253645b205a90a37215a2fa131c20deb8bdfba0e39fc6876f590251"
   },
   "reference_files_SHA256": {
@@ -50,7 +50,7 @@
     "reference-fixtures/header-v14.png": "68fa8c1b120b4fe513686a1d245c02401a0e0724002da4135aee9947ca88b64c",
     "reference-fixtures/provenance.json": "293078f1a58f766b9e835b4b27a34c9c7c6acda03ca308f2fce9ed435a5332ef",
     "reference-fixtures/root-feedback-review-export.json": "15fdf4b369a62c82831238de161ee4a4ac7be6bef870381e9c26feef21eaaaaa",
-    "exact-pixel-refs.json": "8fd0d99a7810fe07ec5b4e130471dfd3125272c22191d4c8c76073f5ae91d187"
+    "exact-pixel-refs.json": "398df27c80ae36ef73e1c232edbeb628944f74597e6011a42458de6e746b90f2"
   },
   "controls": {
     "watchdog": 7,
@@ -406,5 +406,15 @@
     "source_controls": "Both extracted predecessors crossed setup with an active matching writer. Both successors completed matching workers before readiness/reply, excluded unrelated workers, propagated wait errors, and allowed an empty snapshot.",
     "scope": "QA setup only, before sampling. No product guard, setup or sampling deadline, capture, authority, or qualification change.",
     "qualification": "Pending fresh actual validation; headless comparison was startup-censored. Zero qualified samples."
+  },
+  "stylesheet_pin_preflight": {
+    "previous_method_revision": "a3d8d2d9024916e487a23ed48578770195797ee7",
+    "historical_stylesheet_revision": "99de8b0e1afb14833e857b94d6c28faf7dafaca5",
+    "incoming_cleanup": "dc456a948e",
+    "historical_stylesheet_raw_sha256": "5e9b13c45635cf59e5204347d491f6153a53654cbba01eeb9951ef82fde312c7",
+    "current_stylesheet_raw_sha256": "94697ab2411f9189919dc27a07e4f500d4e0df57fbd73ef9c6ff8f479957d77e",
+    "diff": "Only 27 dead Activity Log or orphan widget CSS rules and blank lines were removed. The four other pinned UI source files, retained reference PNGs, and reference provenance match their original hashes.",
+    "preflight": "Require all five UI pins to match the already verified source freeze before creating output. The observer still checks actual working-tree bytes before opening a window.",
+    "scope": "Native validation setup. Physical qualification and live review remain pending."
   }
 }

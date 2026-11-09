@@ -113,7 +113,7 @@
     "tldw_chatbook/Widgets/Console/console_composer_bar.py": "2109c778ba4689096a7eadaadac4f4b1a5cfee2498f5d44a730e3b7beb9263e9",
     "tldw_chatbook/Widgets/Console/console_status_chips.py": "2b479f27d3f3ba7047ed15293191b8b20fc5bdb517b539ca1c5059165d070bb8",
     "tldw_chatbook/Widgets/Console/console_session_surface.py": "9f5f0b5280333f96973c1bc0f6e56dab057b33952439973d9dfab5497dd549eb",
-    "tldw_chatbook/css/tldw_cli_modular.tcss": "5e9b13c45635cf59e5204347d491f6153a53654cbba01eeb9951ef82fde312c7"
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "94697ab2411f9189919dc27a07e4f500d4e0df57fbd73ef9c6ff8f479957d77e"
   },
   "reference_scope": "Current-feature single120x40/Inspectclosed/textual-dark only; original/export hashes in reference-fixtures/provenance.json."
 }

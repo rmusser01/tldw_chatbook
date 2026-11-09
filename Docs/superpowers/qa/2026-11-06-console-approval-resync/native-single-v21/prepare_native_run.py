@@ -79,6 +79,14 @@ def main():
             target.is_relative_to(source)
             and hashlib.sha256(target.read_bytes()).hexdigest() == expected.lower()
         ), relative
+    references = json.loads(
+        (here / "exact-pixel-refs.json").read_text(encoding="utf-8")
+    )
+    for relative, expected in references["ui_source_pins"].items():
+        if value["sha256"].get(relative, "").lower() != expected:
+            raise RuntimeError(
+                f"Pinned current-feature UI/reference owner changed: {relative}"
+            )
     output = args.output_root.resolve()
     if not output.is_relative_to(source / ".superpowers"):
         raise RuntimeError("QA outputs must stay inside selectedsource/.superpowers")
@@ -103,9 +111,6 @@ def main():
         "owned_roi_capture.py",
         "native_window_api.py",
         "native_product_observer.py",
-    )
-    references = json.loads(
-        (here / "exact-pixel-refs.json").read_text(encoding="utf-8")
     )
     files = files + tuple(sorted(references["source_pins"]))
     for name in files:
