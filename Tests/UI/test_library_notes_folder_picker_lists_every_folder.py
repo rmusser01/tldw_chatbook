@@ -217,7 +217,7 @@ async def _leave_text_fields(screen, pilot) -> None:
     raise AssertionError(f"no non-text control took focus ({screen.focused!r})")
 
 
-async def _open_picker(host, pilot, button_id: str) -> LibraryNoteFolderTargetDialog:
+async def _open_picker(host, pilot, button_id: str) -> tuple[Button, int]:
     # Pilot captures coordinates before yielding; a nonzero region may be stale.
     try:
         async with asyncio.timeout(WAIT):
@@ -244,6 +244,8 @@ async def _open_picker(host, pilot, button_id: str) -> LibraryNoteFolderTargetDi
         raise AssertionError(
             f"timed out waiting for {button_id} painted and enabled"
         ) from None
+    # The modal may outlive the underlying button's layout.
+    click_x = button.region.x
     await pilot.click(button_id)
     await _wait(
         pilot,
@@ -259,7 +261,7 @@ async def _open_picker(host, pilot, button_id: str) -> LibraryNoteFolderTargetDi
     assert picker.focused is picker.query_one(
         "#library-note-folder-target-filter", Input
     )
-    return picker
+    return button, click_x
 
 
 async def _choose(
@@ -338,8 +340,11 @@ async def test_move_note_picker_offers_nested_folders_on_a_fresh_visit_and_narro
             button.styles.offset = (2, 0)
             assert button.region == previous_region
             try:
-                await _open_picker(host, pilot, "#library-notes-placement-move")
-                assert button.region.x == previous_region.x + 2
+                clicked_button, click_x = await _open_picker(
+                    host, pilot, "#library-notes-placement-move"
+                )
+                assert clicked_button is button
+                assert click_x == previous_region.x + 2
             finally:
                 button.styles.offset = previous_offset
         else:
