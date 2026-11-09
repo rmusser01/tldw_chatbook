@@ -247,6 +247,8 @@ async def test_automatic_forecast_matches_real_preflight_with_overhead_and_cap(
                 "forecast unavailable"
                 in build_console_context_cost_state(states[-1], _COST).label.lower()
             )
+            # Retire any in-flight read at the old settings revision.
+            await projection._wait_for_refresh()
             controller.store.set_session_context_policy_overrides(
                 session.id,
                 ConsoleContextPolicyOverrides(
