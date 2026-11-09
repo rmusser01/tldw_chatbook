@@ -176,12 +176,21 @@ async def test_pause_and_explicit_resume_keep_exact_job_cas(tmp_path, request):
         job = rig.refresh()
         assert scanner.before_publish.wait(10)
         current = rig.service.status(rig.key)
-        scanner.release.set()
-        paused = rig.service.pause(
-            job,
-            expected_scope=current.scope,
-            expected_job_revision=current.job_revision,
+        stop = rig.service._runs[job].stop
+        pause = asyncio.create_task(
+            asyncio.to_thread(
+                rig.service.pause,
+                job,
+                expected_scope=current.scope,
+                expected_job_revision=current.job_revision,
+            )
         )
+        try:
+            # Pause commits the fence before it signals this exact run.
+            assert await asyncio.to_thread(stop.wait, 10)
+        finally:
+            scanner.release.set()
+            paused = await pause
         replacement = rig.service.resume(
             job, expected_scope=paused.scope, expected_job_revision=paused.job_revision
         )

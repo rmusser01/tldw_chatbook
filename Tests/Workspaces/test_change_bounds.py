@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 from pathlib import Path
 
 import pytest
 
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Workspaces.change_bounds import (
     DEFAULT_MAX_FILES,
     DEFAULT_RETENTION_DAYS,
@@ -927,58 +929,57 @@ class TestChangeReviewGating:
 class TestGatingCoversRegistrationHook:
     """Qodo #1264: the opt-out must gate the registration-time snapshot too."""
 
-    def test_disabled_workspace_add_binding_takes_no_snapshot(
-        self, tmp_path, monkeypatch
-    ):
+    def _snapshot_containers_after_binding(self, tmp_path, *, workspace_enabled):
         from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
-        from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
-
-        registry = LocalWorkspaceRegistryService(
-            WorkspaceDB(tmp_path / "workspaces.db", client_id="t")
-        )
-        registry.create_workspace(workspace_id="ws-off", name="Off WS")
-        registry.set_change_review_enabled("ws-off", False)
-        root = tmp_path / "offroot"
-        root.mkdir()
-        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
-
-        registry.add_folder_binding("ws-off", root)
-
         from tldw_chatbook.Utils.paths import get_user_data_dir
+        from tldw_chatbook.Workspaces import (
+            ChangeReviewConsentService,
+            LocalWorkspaceRegistryService,
+        )
+
+        root = tmp_path / "project"
+        root.mkdir()
+        with closing(WorkspaceDB(tmp_path / "workspaces.db", client_id="t")) as db:
+            registry = LocalWorkspaceRegistryService(db)
+            registry.create_workspace(workspace_id="ws-gated", name="Gated WS")
+            registry.set_change_review_enabled("ws-gated", workspace_enabled)
+            review = ChangeReviewConsentService(registry, worker_count=1)
+            registry.attach_change_review_consent_service(review)
+            try:
+                registry.add_folder_binding("ws-gated", root)
+                # Scheduling starts the worker pool synchronously. An
+                # empty directory alone could race a wrongly queued snapshot.
+                assert not review._workers_started
+            finally:
+                review.shutdown()
 
         change_dir = get_user_data_dir() / "change_review"
-        containers = (
+        return (
             [d for d in change_dir.iterdir() if d.is_dir()]
             if change_dir.is_dir()
             else []
+        )
+
+    @private_profile_test
+    def test_disabled_workspace_add_binding_takes_no_snapshot(
+        self, tmp_path, monkeypatch, request
+    ):
+        monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "1")
+        containers = self._snapshot_containers_after_binding(
+            tmp_path, workspace_enabled=False
         )
         assert containers == [], (
             "a change-review-disabled workspace still snapshotted on "
             f"binding add: {containers}"
         )
 
-    def test_global_kill_gates_the_registration_hook(self, tmp_path, monkeypatch):
-        from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
-        from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
-
+    @private_profile_test
+    def test_global_kill_gates_the_registration_hook(
+        self, tmp_path, monkeypatch, request
+    ):
         monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "0")
-        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg2"))
-        registry = LocalWorkspaceRegistryService(
-            WorkspaceDB(tmp_path / "workspaces2.db", client_id="t")
-        )
-        registry.create_workspace(workspace_id="ws-g", name="G WS")
-        root = tmp_path / "groot"
-        root.mkdir()
-
-        registry.add_folder_binding("ws-g", root)
-
-        from tldw_chatbook.Utils.paths import get_user_data_dir
-
-        change_dir = get_user_data_dir() / "change_review"
-        containers = (
-            [d for d in change_dir.iterdir() if d.is_dir()]
-            if change_dir.is_dir()
-            else []
+        containers = self._snapshot_containers_after_binding(
+            tmp_path, workspace_enabled=True
         )
         assert containers == [], (
             f"globally-disabled change review still snapshotted: {containers}"

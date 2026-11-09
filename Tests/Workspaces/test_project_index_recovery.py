@@ -162,11 +162,9 @@ def test_actual_restore_and_rollback_issue_distinct_verified_generations(
     from tldw_chatbook.Backup_Recovery.later_rollback import preview_rollback
     from tldw_chatbook.Backup_Recovery import recovery_copies
 
-    with _completed(tmp_path, monkeypatch, helper_resource_root) as (
-        case,
-        operation,
-        original,
-    ):
+    with _completed(
+        tmp_path, monkeypatch, helper_resource_root, edit_selector=False
+    ) as (case, operation, original):
         restored = verified_data_identity()
         assert restored[1] != "ordinary"
         control = tmp_path / "control"
