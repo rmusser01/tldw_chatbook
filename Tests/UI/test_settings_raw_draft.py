@@ -2,6 +2,7 @@
 
 import asyncio
 import threading
+from contextlib import contextmanager
 
 import pytest
 from textual.widgets import TextArea
@@ -16,8 +17,10 @@ from Tests.UI.test_settings_category_sweep import (
 )
 from Tests.UI.test_settings_configuration_hub import _seed_active_config
 from tldw_chatbook import config
-from tldw_chatbook.UI.Settings_Modules.settings_advanced_config import AdvancedConfigSettings
 from tldw_chatbook.state.settings_config_models import SettingsCategoryId
+from tldw_chatbook.UI.Settings_Modules.settings_advanced_config import (
+    AdvancedConfigSettings,
+)
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 
@@ -43,6 +46,23 @@ def raw_profile(request):
     return path
 
 
+def _fail_committed_snapshot_read(fault, profile, submitted, error):
+    open_binary = config.open_private_binary
+    expected = submitted.encode("utf-8")
+
+    @contextmanager
+    def open_with_fault(path):
+        with open_binary(path) as opened:
+            if path == profile:
+                if opened.stream.read() == expected:
+                    raise error
+                opened.stream.seek(0)
+            yield opened
+
+    # Keep the registered config reader installed and fault its real private open.
+    fault.setattr(config, "open_private_binary", open_with_fault)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("text", ['[broken\napi_key = "synthetic-key"', ""])
 @private_profile_test
@@ -62,7 +82,10 @@ async def test_invalid_and_empty_raw_drafts_survive_navigation(
             screen.query_one("#settings-advanced-config-editor", TextArea).text == text
         )
         assert screen._category_has_unsaved_changes(SettingsCategoryId.ADVANCED_CONFIG)
-        assert "Unsaved" in _static_text(screen.query_one(".settings-state-banner"))
+        assert _static_text(screen.query_one(".settings-state-banner")) == (
+            "State: Validate, then Save · 1 unsaved | Draft kept when you leave; "
+            "use raw editor controls."
+        )
         assert "Save (s)" not in _static_text(
             screen.query_one(".settings-state-banner")
         )
@@ -249,25 +272,21 @@ async def test_committed_raw_save_survives_refresh_failure(
     await model.validate()
     if failure_phase == "runtime":
         monkeypatch.setattr(config, "_publish_runtime_config_unlocked", fail_refresh)
-    elif failure_phase == "snapshot":
-        read = config._try_read_cli_config_serialized_unlocked
-
-        def fail_post_write_read(path):
-            serialized = read(path)
-            if serialized == submitted:
-                fail_refresh()
-            return serialized
-
-        monkeypatch.setattr(
-            config, "_try_read_cli_config_serialized_unlocked", fail_post_write_read
-        )
 
     replace = model.adapter.replace_snapshot
     started, release = threading.Event(), threading.Event()
 
     def replace_then_wait(text, snapshot):
         try:
-            return replace(text, snapshot)
+            with monkeypatch.context() as fault:
+                if failure_phase == "snapshot":
+                    _fail_committed_snapshot_read(
+                        fault,
+                        raw_profile,
+                        submitted,
+                        RuntimeError("synthetic-sensitive-content"),
+                    )
+                return replace(text, snapshot)
         finally:
             started.set()
             release.wait(3)
@@ -318,20 +337,16 @@ async def test_missing_committed_snapshot_requires_explicit_reload_after_navigat
         model = screen._raw_config_model()
         screen.query_one(TextArea).text = submitted
         await model.validate()
-        read = config._try_read_cli_config_serialized_unlocked
-
-        def fail_post_write_read(path):
-            serialized = read(path)
-            if serialized == submitted:
-                raise OSError("synthetic post-write read failure")
-            return serialized
-
+        assert model.can_save, (model.validation_status, model.status)
         with monkeypatch.context() as fault:
-            fault.setattr(
-                config, "_try_read_cli_config_serialized_unlocked", fail_post_write_read
+            _fail_committed_snapshot_read(
+                fault,
+                raw_profile,
+                submitted,
+                OSError("synthetic post-write read failure"),
             )
             await model.save()
-        assert raw_profile.read_text() == submitted
+        assert raw_profile.read_text() == submitted, model.status
         assert model.state.snapshot is None
         if newer_edit:
             screen.query_one(TextArea).text = newer
