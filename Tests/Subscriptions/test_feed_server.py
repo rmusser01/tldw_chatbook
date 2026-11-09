@@ -399,6 +399,7 @@ def test_a_non_loopback_bind_warns_once_and_is_loopback_bind_says_so(
     test_attachment_policy.py`'s `TestSvgCapability`); a temporary loguru
     sink is used instead.
     """
+
     class BindOnlyServer(feed_server_module.http.server.ThreadingHTTPServer):
         def verify_request(self, _request, _client_address) -> bool:
             return False
@@ -411,7 +412,9 @@ def test_a_non_loopback_bind_warns_once_and_is_loopback_bind_says_so(
             scoped.setattr(
                 feed_server_module,
                 "http",
-                SimpleNamespace(server=SimpleNamespace(ThreadingHTTPServer=BindOnlyServer)),
+                SimpleNamespace(
+                    server=SimpleNamespace(ThreadingHTTPServer=BindOnlyServer)
+                ),
             )
             url = server.start(served_dir, bind="0.0.0.0", port=0)
     finally:
