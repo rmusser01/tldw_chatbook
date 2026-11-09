@@ -9,7 +9,7 @@ import threading
 import time
 import traceback
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC
 from itertools import pairwise
@@ -89,21 +89,60 @@ def target_harness(
     ]
 ]:
     """Return the real local target stack over one temporary database."""
-    db = CharactersRAGDB(tmp_path / "target.db", client_id="target-template")
-    service = NotesInteropService(
-        base_db_directory=tmp_path,
-        api_client_id="target-api",
-        global_db_to_use=db,
-    )
-    target_db = service._get_db("target-user")
-    folders = LocalNoteFolderRepository(target_db)
-    target = LocalNoteImportTarget(
-        db=target_db,
-        folder_repository=folders,
-    )
-    yield target, service, folders, target_db
-    service.close_all_user_connections()
-    db.close_connection()
+    with ExitStack() as owners:
+        db = CharactersRAGDB(tmp_path / "target.db", client_id="target-template")
+        owners.callback(db.close_connection)
+        service = NotesInteropService(
+            base_db_directory=tmp_path,
+            api_client_id="target-api",
+            global_db_to_use=db,
+        )
+        owners.callback(service.close_all_user_connections)
+        target_db = service._get_db("target-user")
+        folders = LocalNoteFolderRepository(target_db)
+        target = LocalNoteImportTarget(
+            db=target_db,
+            folder_repository=folders,
+        )
+        yield target, service, folders, target_db
+
+
+def test_target_harness_retires_owners_on_setup_refusal(tmp_path, monkeypatch):
+    events = []
+    refusal = CharactersRAGDBError("test setup refusal")
+
+    class Template:
+        def close_connection(self):
+            events.append("template closed")
+
+    template = Template()
+
+    def make_template(db_path, *, client_id):
+        assert db_path == tmp_path / "target.db"
+        assert client_id == "target-template"
+        return template
+
+    class Interop:
+        def __init__(self, *, base_db_directory, api_client_id, global_db_to_use):
+            assert base_db_directory == tmp_path
+            assert api_client_id == "target-api"
+            assert global_db_to_use is template
+
+        def _get_db(self, user_id):
+            assert user_id == "target-user"
+            events.append("setup refused")
+            raise refusal
+
+        def close_all_user_connections(self):
+            events.append("interop closed")
+
+    monkeypatch.setitem(globals(), "CharactersRAGDB", make_template)
+    monkeypatch.setitem(globals(), "NotesInteropService", Interop)
+    with pytest.raises(CharactersRAGDBError) as caught:
+        next(target_harness.__wrapped__(tmp_path))
+
+    assert caught.value is refusal
+    assert events == ["setup refused", "interop closed", "template closed"]
 
 
 def _payload(
@@ -292,6 +331,7 @@ def test_target_constructor_rejects_a_different_repository_database_safely(
         assert private_value not in rendered
 
 
+@pytest.mark.bootstrap_profile
 def test_target_ensure_folder_is_deterministic_and_replay_safe(
     target_harness,
 ) -> None:
