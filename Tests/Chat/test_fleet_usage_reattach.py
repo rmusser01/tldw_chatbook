@@ -63,6 +63,10 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderStreamSignals
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Chat.thinking_blocks import (
+    DisplayableThinkingBlock,
+    ThinkingEnvelope,
+)
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
@@ -470,6 +474,85 @@ async def test_re_attaching_twice_yields_the_same_stored_total():
     assert store.get_message(placeholder.id).usage.to_json() == first_json, (
         "re-attaching twice must yield the SAME stored record"
     )
+
+
+@pytest.mark.asyncio
+async def test_late_fleet_usage_preserves_selected_canonical_thinking():
+    store = ConsoleChatStore()
+    bridge = _FakeFleetBridge()
+    controller = ConsoleChatController(
+        store=store, provider_gateway=object(), agent_bridge=bridge
+    )
+    session = store.ensure_session()
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    placeholder = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    resolution = SimpleNamespace(provider="llama_cpp", model="Qwen3.8-27B")
+
+    def envelope(block_id, text):
+        return ThinkingEnvelope(
+            (
+                DisplayableThinkingBlock(
+                    block_id=block_id,
+                    round_ordinal=0,
+                    provider="llama_cpp",
+                    model="Qwen3.8-27B",
+                    protocol="chat_completions",
+                    source_format="reasoning_content",
+                    status="complete",
+                    text=text,
+                ),
+            )
+        )
+
+    original = envelope("original", "original thought")
+    selected = envelope("selected", "selected thought")
+    signals = _turn_signals()
+    store.append_stream_chunk(placeholder.id, "done")
+    await _finalize(controller, placeholder.id, session.id, signals, resolution)
+    assert store.get_message(placeholder.id).usage.total_tokens == 120
+    store.replace_message_thinking(placeholder.id, original)
+
+    store.begin_variant_stream(placeholder.id)
+    store.replace_message_thinking(placeholder.id, selected)
+    store.append_stream_chunk(placeholder.id, "done")
+    variant = store.finalize_variant_stream(placeholder.id)
+    old, new = variant.variants.variants
+    assert old.id != new.id and old.content == new.content == "done"
+    assert old.thinking == original
+    assert new.thinking == selected
+
+    def assert_selected_generation():
+        row = store.get_message(placeholder.id)
+        assert row.variants.selected_index == 1
+        assert row.variants.current.id == new.id
+        assert row.variants.variants[0].id == old.id
+        assert row.variants.variants[0].thinking == original
+        assert row.content == "done" and row.status == "complete"
+        assert row.thinking == row.variants.current.thinking == selected
+        assert row.provider_continuation is None
+
+    assert_selected_generation()
+    signals.record_usage_payload({"prompt_tokens": 40, "completion_tokens": 5})
+    signals.close_usage_call()
+    assert controller.unattributed_fleet_tokens(session.id) == 45
+    deliver = bridge.registered["usage-reattach"]
+    event = _drain_event(session.id, placeholder.id)
+    loop = asyncio.get_running_loop()
+    usage_records = []
+
+    for _ in range(2):
+        deliver(event)
+        folded = loop.create_future()
+        loop.call_soon(folded.set_result, None)
+        await folded
+        usage = store.get_message(placeholder.id).usage
+        assert usage.total_tokens == 165
+        usage_records.append(usage.to_json())
+        assert controller.unattributed_fleet_tokens(session.id) == 0
+        assert_selected_generation()
+    assert usage_records[0] == usage_records[1]
 
 
 @pytest.mark.asyncio
