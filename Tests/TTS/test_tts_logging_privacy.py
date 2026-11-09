@@ -1023,6 +1023,7 @@ async def test_openai_backend_never_logs_api_key_details(monkeypatch) -> None:
     assert "API key length" not in rendered
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_openai_backend_hostile_error_response_is_not_exposed() -> None:
     private_input = "PRIVATE_OPENAI_SYNTHESIS_INPUT_91f24d"
@@ -1137,6 +1138,7 @@ async def _capture_openai_stream_failure(
     return caught, messages
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_openai_backend_request_error_has_no_private_exception_context() -> None:
     private_input = "PRIVATE_OPENAI_REQUEST_INPUT_50e4d7"
@@ -1155,6 +1157,7 @@ async def test_openai_backend_request_error_has_no_private_exception_context() -
         assert private_value not in rendered
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_openai_backend_unexpected_error_has_no_private_exception_context() -> (
     None

@@ -57,6 +57,7 @@ def test_connection_error_copy_points_at_the_server_not_the_config() -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_openai_backend_raises_the_typed_error_on_connection_failure(
     monkeypatch,

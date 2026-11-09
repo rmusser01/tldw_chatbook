@@ -402,6 +402,7 @@ async def test_higgs_bounds_source_and_float32_audio_before_delivery(
         await higgs_backend.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider", ["elevenlabs", "alltalk"])
 async def test_remote_buffer_limit_preserves_typed_nonretryable_failure(
@@ -433,6 +434,7 @@ async def test_remote_buffer_limit_preserves_typed_nonretryable_failure(
         await backend.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider", ["elevenlabs", "alltalk", "openai"])
 async def test_empty_remote_success_is_rejected(provider):

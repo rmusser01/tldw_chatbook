@@ -50,6 +50,7 @@ async def _synthesize(backend: AllTalkTTSBackend, voice: str) -> bytes:
     return b"".join([chunk async for chunk in backend.generate_speech_stream(request)])
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("voice", (*_PINNED_ALLTALK_VOICES, "default"))
 async def test_alltalk_voice_request_satisfies_pinned_openai_schema(voice):
@@ -63,6 +64,7 @@ async def test_alltalk_voice_request_satisfies_pinned_openai_schema(voice):
         assert await _synthesize(backend, voice) == b"accepted speech bytes"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_alltalk_custom_voice_is_opaque_when_endpoint_accepts_it():
     def handle(request: httpx.Request) -> httpx.Response:
@@ -74,6 +76,7 @@ async def test_alltalk_custom_voice_is_opaque_when_endpoint_accepts_it():
         assert await _synthesize(backend, "StudioVoice-17") == b"custom speech bytes"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_alltalk_unsupported_custom_voice_is_not_silently_remapped():
     submitted = []
@@ -89,6 +92,7 @@ async def test_alltalk_unsupported_custom_voice_is_not_silently_remapped():
     assert submitted == ["p225"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status_code", (200, 503))
 async def test_alltalk_initialization_awaits_the_http_health_request(status_code):
@@ -115,6 +119,7 @@ async def test_alltalk_initialization_awaits_the_http_health_request(status_code
         assert "status=503" in "".join(captured)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_alltalk_initialization_handles_actual_connection_failure_safely():
     requested = []
@@ -135,6 +140,7 @@ async def test_alltalk_initialization_handles_actual_connection_failure_safely()
     assert "PRIVATE_CONNECTION_DETAIL" not in "".join(captured)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_alltalk_advertises_endpoint_aliases_instead_of_native_speakers():
     def handle(request: httpx.Request) -> httpx.Response:
@@ -252,6 +258,7 @@ def test_shipped_alltalk_default_is_an_endpoint_alias():
     assert config["TTSSettings"]["ALLTALK_TTS_VOICE_DEFAULT"] == "alloy"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "config, expected",
