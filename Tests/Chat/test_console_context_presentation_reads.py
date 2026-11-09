@@ -306,6 +306,10 @@ async def _real_compaction_resume(tmp_path, monkeypatch):
     )
     assert preparation.state is ConsoleTurnPreparationState.PAUSED
     assert preparation.pause_kind is ConsolePreparationPauseKind.CONTEXT_COMPACTION
+    # A real summary makes the presentation reader take its lineage path.
+    compacted, copy = await controller.compact_context_now("session-1")
+    assert compacted, copy
+    assert controller.context_compaction_hold(preparation.preparation_id) is not None
     echo = controller._held_send_echo_id("session-1")
     assert echo is not None and store.get_message(echo).persisted_message_id is None
     original = gateway.resolve_for_send
