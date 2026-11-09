@@ -703,6 +703,7 @@ def test_target_read_note_returns_a_frozen_private_projection(target_harness) ->
         assert private_value not in rendered
 
 
+@pytest.mark.bootstrap_profile
 def test_target_create_note_persists_exact_payload_and_reconciles_retry(
     target_harness,
 ) -> None:
@@ -724,6 +725,7 @@ def test_target_create_note_persists_exact_payload_and_reconciles_retry(
     assert count == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_target_uses_injected_service_database_client_id_for_direct_writes(
     target_harness,
 ) -> None:
@@ -780,6 +782,7 @@ def test_target_create_note_rejects_deterministic_id_payload_conflicts(
     assert count == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_target_replace_note_pins_one_version_increment_and_reconciles_retry(
     target_harness,
 ) -> None:
@@ -907,6 +910,7 @@ def test_target_replace_rolls_back_text_on_internal_keyword_sync_failure(
     assert target.read_note(note_id=_NOTE_ID) == original
 
 
+@pytest.mark.bootstrap_profile
 def test_target_keyword_sync_is_exact_canonical_and_idempotent(target_harness) -> None:
     target, service, _folders, db = target_harness
     target.create_note(note_id=_NOTE_ID, payload=_payload(keywords=()))
@@ -958,6 +962,7 @@ def test_target_keyword_sync_is_exact_canonical_and_idempotent(target_harness) -
     assert tuple(stale) == ("stale", 0)
 
 
+@pytest.mark.bootstrap_profile
 def test_target_keyword_sync_handles_hidden_deleted_links_exactly(
     target_harness,
 ) -> None:
@@ -4285,6 +4290,7 @@ def test_target_injected_failures_do_not_log_raw_private_details(
     assert hostile not in "".join(loguru_messages) + caplog.text
 
 
+@pytest.mark.bootstrap_profile
 def test_target_sql_matches_service_metadata_fts_and_sync_conventions(
     target_harness,
 ) -> None:
@@ -4508,6 +4514,7 @@ def _note_link_rows(db: CharactersRAGDB) -> set[tuple[str, str]]:
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_imported_bodies_maintain_the_note_link_relation(target_harness) -> None:
     """Import writes notes with its own SQL, so it maintains links too.
 
