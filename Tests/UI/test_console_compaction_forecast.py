@@ -257,6 +257,7 @@ async def test_automatic_forecast_matches_real_preflight_with_overhead_and_cap(
                     compaction_mode=ContextCompactionMode.ASK,
                 ),
             )
+            await _sync_console_control_bar_now(console)
             assert await memory.warm(controller, session.id)
             states = []
             assert projection.run(
