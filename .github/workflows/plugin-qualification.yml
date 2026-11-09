@@ -29,6 +29,10 @@ jobs:
       TLDW_TEST_GC_EVERY: "1"
       PLUGIN_COLLECTION_ARTIFACT: plugin-collected-nodes.json
     steps:
+      - name: Enable long checkout paths on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: git config --global core.longpaths true
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:

@@ -851,3 +851,9 @@ Real checkout HEAD, whole index, status and 375 captured path states were indepe
 - The nested backup retry pinned the child processes to the candidate. Its rebackup still refuses at the complete-inventory preview; the unchanged dev temporary-media restore control also hits a complete-inventory refusal. The unchanged standalone workflow restore passes in this bootstrap. This is not a passing rebackup claim. The real migration and bounded recovery results above are separate.
 
 GitHub's automatic pull-request runs and current-head review remain the qualification for AC23.
+
+### Windows checkout follow-up
+
+[Windows managed-plugin job 128906761569](https://github.com/rmusser01/tldw_chatbook/actions/runs/42538088446/job/128906761569) failed on `7bab6d66181faf818dbb2b3adfde06b3d209149f` before setup or tests. The log reported `Filename too long` for the retained-temporary archive manifest in the historical `hook_native_final` QA receipts. The logged checkout root and the 229-character repository path yield a 262-character absolute path.
+
+Managed plugin qualification and Eval recovery both perform a full Windows checkout before their tests. The first step on Windows now enables Git long paths, using the same setup as the GGUF import evidence workflow. Eval recovery's existing private clone and ownership setup follow the initial checkout as before. A parsed workflow comparison verified that removing each added Windows step restores the previous workflow exactly. The historical receipt, manifests, and ruling digests are byte-identical. Actual Windows Actions results are pending.
