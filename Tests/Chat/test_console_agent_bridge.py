@@ -1998,20 +1998,26 @@ def test_unsafe_model_summary_emits_no_planning_with_resume_parity(
 
 
 @pytest.mark.bootstrap_profile
-def test_persona_buddy_tool_step_uses_real_on_step_and_releases_result(tmp_path):
+@pytest.mark.parametrize(
+    "persisted_id", [None, "durable-conversation"], ids=["local-only", "persisted"]
+)
+def test_persona_buddy_tool_step_uses_real_on_step_and_releases_result(
+    tmp_path, monkeypatch, persisted_id
+):
     """The bridge's real step callback brackets tool execution exactly."""
     buddy = PersonaBuddyController()
 
     class RecordingAdapter(PersonaBuddyConsoleAdapter):
         def __init__(self):
             super().__init__(buddy)
-            self.observed: list[tuple[str, int]] = []
+            self.observed: list[tuple[str, int, str, str | None, int]] = []
             self.released_runs: list[str] = []
 
         def tool_step(self, run_id, sequence, kind, *, session_id=None):
             result = super().tool_step(run_id, sequence, kind, session_id=session_id)
-            if kind in {"tool_call", "tool_result", "error"}:
-                self.observed.append((kind, self.active_owner_count("tool")))
+            self.observed.append(
+                (run_id, sequence, kind, session_id, self.active_owner_count("tool"))
+            )
             return result
 
         def release_run(self, run_id):
@@ -2019,12 +2025,22 @@ def test_persona_buddy_tool_step_uses_real_on_step_and_releases_result(tmp_path)
             super().release_run(run_id)
 
     sink = RecordingAdapter()
+    narrative = "It is now. tool_call error offline"
     gateway = _ChunkGateway(
-        [[_native_calls("get_current_datetime", {})], ["It is now."]]
+        [[_native_calls("get_current_datetime", {})], [narrative]]
     )
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
+    if persisted_id is not None:
+        assert persisted_id != session.id
+        store.publish_first_persisted_conversation(session.id, persisted_id)
+    assert session.persisted_conversation_id == persisted_id
+    conversation_id = persisted_id or session.id
+    sink.set_scope(
+        session_ids=frozenset({session.id}),
+        conversation_ids=frozenset({conversation_id}),
+    )
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
     assistant = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
@@ -2036,14 +2052,75 @@ def test_persona_buddy_tool_step_uses_real_on_step_and_releases_result(tmp_path)
         buddy_sink=sink,
     )
 
+    publish_live = bridge._publish_live
+    previous_child = console_agent_bridge.AgentLiveSnapshot(
+        status="running",
+        steps=(
+            console_agent_bridge.AgentLiveStep(STEP_TOOL_CALL, narrative, "subagent"),
+        ),
+    )
+    primary_tool_steps = []
+    tool_kinds = {STEP_TOOL_CALL, STEP_TOOL_RESULT}
+
+    def publish_with_previous_child(key, run_key, snapshot, *, primary):
+        publish_live(key, run_key, snapshot, primary=primary)
+        if primary or not snapshot.steps:
+            return
+        step = snapshot.steps[-1]
+        if step.agent_kind != "primary" or step.kind not in tool_kinds:
+            return
+        assert key == conversation_id and run_key != "previous-child"
+        summary = bridge.live_snapshot(key)
+        assert summary.steps == snapshot.steps
+        state = buddy.snapshot()
+        expected_state = "tool_running" if step.kind == STEP_TOOL_CALL else "idle"
+        assert state.state == expected_state
+        events = tuple(sink.observed)
+        publish_live(key, "previous-child", previous_child, primary=False)
+        assert bridge.live_run_snapshot(key, "previous-child") == previous_child
+        assert bridge.live_snapshot(key) == summary
+        assert buddy.snapshot() == state
+        assert tuple(sink.observed) == events
+        primary_tool_steps.append((run_key, step))
+
+    monkeypatch.setattr(bridge, "_publish_live", publish_with_previous_child)
     outcome = _run(
-        bridge, store, session, assistant.id, resolution=_native_resolution()
+        bridge,
+        store,
+        session,
+        assistant.id,
+        conversation_id=conversation_id,
+        resolution=_native_resolution(),
     )
 
     assert outcome.status == "done"
-    assert sink.observed[:2] == [("tool_call", 1), ("tool_result", 0)]
-    assert sink.released_runs
+    assert outcome.final_text == narrative
+    assert any(step.kind == STEP_MODEL for step in outcome.steps)
+    call, result = [step for step in outcome.steps if step.kind in tool_kinds]
+    assert (call.kind, result.kind) == (STEP_TOOL_CALL, STEP_TOOL_RESULT)
+    assert call.index != result.index
+    run_id = bridge.live_primary_run_id(conversation_id)
+    assert run_id and run_id != "previous-child"
+    assert sink.observed == [
+        (run_id, call.index, STEP_TOOL_CALL, session.id, 1),
+        (run_id, call.index, STEP_TOOL_RESULT, session.id, 0),
+    ]
+    assert sink.released_runs == [run_id]
     assert sink.active_owner_count("tool") == 0
+    primary_key = bridge._live_primary_keys[conversation_id]
+    assert [(key, step.kind) for key, step in primary_tool_steps] == [
+        (primary_key, STEP_TOOL_CALL),
+        (primary_key, STEP_TOOL_RESULT),
+    ]
+
+    terminal = bridge.live_snapshot(conversation_id)
+    assert terminal.status == "done"
+    terminal_with_call = replace(terminal, steps=(primary_tool_steps[0][1],))
+    events = tuple(sink.observed)
+    publish_live(conversation_id, primary_key, terminal_with_call, primary=False)
+    assert bridge.live_snapshot(conversation_id) == terminal_with_call
+    assert tuple(sink.observed) == events
+    assert buddy.snapshot().state == "idle"
 
 
 @pytest.mark.bootstrap_profile

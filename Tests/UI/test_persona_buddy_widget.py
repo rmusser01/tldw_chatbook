@@ -1344,10 +1344,32 @@ async def test_compact_keyboard_move_preserves_preferred_size_on_restore(
 @pytest.mark.asyncio
 async def test_drag_while_viewport_becomes_compact_preserves_preferred_size():
     controller = _FakeController(size=(28, 12))
+    original_geometry = replace(controller.preferences.geometry, x=40, y=10)
+    controller.preferences = replace(controller.preferences, geometry=original_geometry)
     app = _BuddyApp(controller)
     async with app.run_test(size=(80, 24)) as pilot:
         buddy = app.screen.query_one(PersonaBuddyWidget)
-        await _wait_until(lambda: buddy.region.width == 28)
+        await _wait_until(lambda: buddy.region.size == (26, 7))
+        original_region = buddy.region
+        assert (original_region.x, original_region.y) == (40, 10)
+
+        await pilot.resize_terminal(12, 4)
+        await _wait_until(
+            lambda: buddy.has_class("persona-buddy-compact")
+            and buddy.region.size == (12, 1)
+        )
+        assert (buddy.region.x, buddy.region.y) == (0, 3)
+        assert controller.preferences.geometry == original_geometry
+        assert controller.preference_writes == controller.persisted == []
+
+        await pilot.resize_terminal(80, 24)
+        await _wait_until(
+            lambda: buddy.region == original_region
+            and not buddy.has_class("persona-buddy-compact")
+        )
+        assert controller.preferences.geometry == original_geometry
+        assert controller.preference_writes == controller.persisted == []
+
         frame = buddy.query_one("#persona-buddy-frame", Static)
         buddy.on_mouse_down(
             _mouse(
