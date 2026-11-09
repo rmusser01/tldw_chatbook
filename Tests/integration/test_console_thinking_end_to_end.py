@@ -17,10 +17,7 @@ import httpx
 import pytest
 from textual.app import App, ComposeResult
 
-from Tests.Chat.test_console_automatic_library_preparation import (
-    _PolicyCoordinator,
-    _RagService,
-)
+from Tests.Chat.test_console_automatic_library_preparation import _RagService
 from Tests.console_provider_doubles import with_destination
 from Tests.UI.test_destination_shells import _build_test_app
 from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
@@ -37,7 +34,14 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleProviderSelection,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.Chat.console_library_policy import ConsoleAutoRetrieve
+from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+    ConsoleDispatchCheckpointState,
+)
+from tldw_chatbook.Chat.console_library_policy import (
+    ConsoleAssistantLibraryAccess,
+    ConsoleAutoRetrieve,
+    ConsoleLibraryPolicyDefaults,
+)
 from tldw_chatbook.Chat.console_prepared_request import (
     THINKING_OWNER_KEY,
     build_console_request,
@@ -132,7 +136,11 @@ class _PausedThinkingGateway(ConsoleProviderGateway):
         )
         return self.prepared
 
-    async def stream_chat(self, _resolution, _messages, **_kwargs):
+    async def stream_chat(
+        self, _resolution, _messages, *, before_provider_dispatch=None, **_kwargs
+    ):
+        if before_provider_dispatch is not None:
+            await before_provider_dispatch()
         self.provider_contacts += 1
         yield ProviderThinkingDelta(
             text=DISPLAYABLE_THINKING,
@@ -170,7 +178,11 @@ class _DispositionGateway(ConsoleProviderGateway):
             )
         )
 
-    async def stream_chat(self, _resolution, _messages, **_kwargs):
+    async def stream_chat(
+        self, _resolution, _messages, *, before_provider_dispatch=None, **_kwargs
+    ):
+        if before_provider_dispatch is not None:
+            await before_provider_dispatch()
         self.provider_contacts += 1
         yield "CONTROL-ANSWER"
 
@@ -180,7 +192,11 @@ class _ScriptedEvidenceGateway(_DispositionGateway):
         super().__init__(disposition)
         self.events = events
 
-    async def stream_chat(self, _resolution, _messages, **_kwargs):
+    async def stream_chat(
+        self, _resolution, _messages, *, before_provider_dispatch=None, **_kwargs
+    ):
+        if before_provider_dispatch is not None:
+            await before_provider_dispatch()
         self.provider_contacts += 1
         for event in self.events:
             if isinstance(event, BaseException):
@@ -581,6 +597,7 @@ async def test_unsupported_persistent_backend_refuses_before_provider_and_recove
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["retry", "bypass"])
 async def test_resumed_preparation_thinking_refusal_preserves_exact_owner(
@@ -590,8 +607,13 @@ async def test_resumed_preparation_thinking_refusal_preserves_exact_owner(
     db = CharactersRAGDB(tmp_path / f"resumed-{action}.sqlite", f"resumed-{action}")
     supported = ChatPersistenceService(db)
     persistence = _VersionedPersistence(supported, 1)
-    store = ConsoleChatStore(persistence=persistence)  # type: ignore[arg-type]
-    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
+    store = ConsoleChatStore(
+        persistence=persistence,  # type: ignore[arg-type]
+        library_policy_defaults=ConsoleLibraryPolicyDefaults(
+            auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+            assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+        ),
+    )
     session = store.create_session(title="Pre-send title")
     store.active_session_id = session.id
     store.set_session_draft(session.id, "INTERVENING-DRAFT-CANARY")
@@ -611,6 +633,8 @@ async def test_resumed_preparation_thinking_refusal_preserves_exact_owner(
         assert paused is not None
         assert paused.state is ConsoleTurnPreparationState.PAUSED
         assert paused.pause_kind is ConsolePreparationPauseKind.RETRIEVAL
+        assert [call["query"] for call in service.calls] == ["RESUMED-OWNER-CANARY"]
+        assert gateway.provider_contacts == 0
         assert paused.transient_user_message_id is not None
         owner_before = store.get_message(paused.transient_user_message_id)
         continuation_before = controller._prepared_send_continuations[
@@ -814,6 +838,7 @@ async def test_unsupported_preflight_preserves_existing_conversation_exactly(
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stop_and_failure_preserve_only_received_displayable_evidence(
     tmp_path,
@@ -849,6 +874,10 @@ async def test_stop_and_failure_preserve_only_received_displayable_evidence(
     try:
         stopped_send = asyncio.create_task(stopped_controller.submit_draft("Stop"))
         await asyncio.wait_for(stopped_gateway.evidence_seen.wait(), timeout=2)
+        dispatch = stopped_store.dispatch_recovery_for_session(stopped_session.id)
+        assert dispatch is not None and dispatch.in_flight
+        assert dispatch.checkpoint is not None
+        assert dispatch.checkpoint.state is ConsoleDispatchCheckpointState.DISPATCH_STARTED
         assert stopped_controller.stop_active_run() is True
         stopped_gateway.release_answer.set()
         await asyncio.wait_for(stopped_send, timeout=2)
@@ -860,6 +889,7 @@ async def test_stop_and_failure_preserve_only_received_displayable_evidence(
         assert stopped.status == "stopped"
         assert stopped.content == ""
         assert stopped.thinking is not None
+        assert [block.text for block in stopped.thinking.blocks] == [DISPLAYABLE_THINKING]
         assert {block.status for block in stopped.thinking.blocks} == {"stopped"}
         stopped_row = stopped_db.get_message_by_id(stopped.persisted_message_id)
         assert {
@@ -879,6 +909,7 @@ async def test_stop_and_failure_preserve_only_received_displayable_evidence(
         assert failed.status == "failed"
         assert failed.content == ""
         assert failed.thinking is not None
+        assert [block.text for block in failed.thinking.blocks] == [DISPLAYABLE_THINKING]
         assert {block.status for block in failed.thinking.blocks} == {"failed"}
         failed_row = failed_db.get_message_by_id(failed.persisted_message_id)
         assert {
@@ -1140,6 +1171,7 @@ def test_sync_v2_applies_one_complete_generation_then_hydrates(tmp_path) -> None
         target.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 def test_edit_delete_and_generation_replacement_clear_owned_private_state(
     tmp_path,
 ) -> None:
@@ -1187,9 +1219,10 @@ def test_edit_delete_and_generation_replacement_clear_owned_private_state(
         ).fetchone()
         assert dict(deleted) == {
             "deleted": 1,
-            "thinking_blocks_json": None,
-            "provider_continuation_json": None,
+            "thinking_blocks_json": delete_row["thinking_blocks_json"],
+            "provider_continuation_json": delete_row["provider_continuation_json"],
         }
+        assert db.get_message_by_id(delete_id) is None
 
         replacement_id = db.add_message(
             {
