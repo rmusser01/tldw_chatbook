@@ -361,8 +361,7 @@ async def rewarm_console_presentation(screen: Any) -> None:
         and not projection._retry_delay
     ):
         projection.run(lambda: None, life=projection.max_age)  # Expired only.
-        if projection.pending:
-            await projection._settled.wait()
+        await projection._wait_for_refresh()
 
 
 def full_sync_replay_delay(screen: Any) -> bool | float:
