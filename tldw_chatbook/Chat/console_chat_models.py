@@ -22,10 +22,11 @@ from tldw_chatbook.Chat.console_endpoint_provenance import (
 )
 
 if TYPE_CHECKING:
-    from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture
+    from tldw_chatbook.Chat.console_approval_feedback import ApprovalFeedback
     from tldw_chatbook.Chat.console_dispatch_checkpoint import (
         ConsoleDispatchCheckpoint,
     )
+    from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
     from tldw_chatbook.Provider_Contract.provider_continuation import ProviderContinuationCheckpoint
     from tldw_chatbook.Chat.provider_usage import ProviderUsage
@@ -299,6 +300,7 @@ ConsoleActivityKind = Literal[
     "activity",
 ]
 ConsoleActivityStatus = Literal[
+    "starting",
     "queued",
     "running",
     "awaiting_approval",
@@ -344,6 +346,7 @@ _CONSOLE_ACTIVITY_KINDS = frozenset(
 )
 CONSOLE_ACTIVITY_STATUSES = frozenset(
     {
+        "starting",
         "queued",
         "running",
         "awaiting_approval",
@@ -753,6 +756,7 @@ class ConsoleActivityPresentation:
     result_preview: str | None = None
     started_at_monotonic: float | None = None
     elapsed_seconds: float | None = None
+    approval_feedback: ApprovalFeedback | None = None
 
     def __post_init__(self) -> None:
         """Reject unbounded labels and values outside the public vocabulary."""
@@ -1654,3 +1658,29 @@ class ConsoleForkTitleInput(BaseModel):
     @classmethod
     def _normalize_title(cls, value: object) -> str:
         return validate_console_fork_title(value)
+
+
+@dataclass(frozen=True)
+class ConsoleViewHookSlot:
+    """One runtime-object attribute a mounted Console view owns.
+
+    Args:
+        name: The attribute name on the target object.
+        target: Which runtime object holds it — ``"controller"``,
+            ``"store"`` or ``"wake"`` (the controller's
+            ``fleet_wake`` coordinator).
+        viewless_default: What `detach_view` restores. Almost always
+            `None`, which is every one of these slots' documented
+            "no UI wired" value.
+    """
+
+    name: str
+    target: str
+    viewless_default: Any = None
+    #: WHY this slot's viewless default is correct — i.e. what the
+    #: production read site does with it. Task 4's rule: a `None` default
+    #: is only allowed where the read site's own guard makes `None` mean
+    #: the semantically right thing (inert, or fail-closed); anywhere the
+    #: guard's fallback is a WRONG answer, the default must be an explicit
+    #: callable. Kept next to the value so the two cannot drift.
+    why: str = ""

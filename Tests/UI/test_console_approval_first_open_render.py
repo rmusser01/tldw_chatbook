@@ -45,7 +45,6 @@ from __future__ import annotations
 
 import functools
 import re
-import time
 from html import unescape
 
 import pytest
@@ -72,11 +71,9 @@ from Tests.UI.test_console_store_continuity import (
     _seed_console,
     _terminal_survivor_run,
 )
-
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
-
 
 # ---------------------------------------------------------------------------
 # rendered-frame helpers
@@ -105,8 +102,8 @@ def _card_paint_state(app) -> str:
     painted = _painted(app)
     return (
         f"title_painted={'Approval required' in painted} "
-        f"tool_painted={'write_file (high risk)' in painted} "
-        f"controls_painted={'Approve all' in painted}"
+        f"tool_painted={'write_file' in painted} "
+        f"controls_painted={'Allow once' in painted}"
     )
 
 
@@ -157,11 +154,12 @@ async def _assert_card_paints_answerable(app, pilot, chat_screen, box) -> None:
         f"the approval card is not painted at all ({deadline_msg}); the round "
         "is invisible and unanswerable"
     )
-    assert "write_file (high risk)" in painted, (
+    assert "write_file" in painted, (
         "task-17500's live pane: the card painted TITLE-ONLY -- no tool row, "
         f"no arguments, no controls ({deadline_msg})"
     )
-    assert "Approve all" in painted, (
+    assert "High risk: current policy requires approval for this call." in painted
+    assert "Allow once" in painted, (
         f"the decision controls are not painted ({deadline_msg}); the user "
         "was told to come and answer and cannot"
     )
@@ -185,6 +183,7 @@ async def _assert_card_paints_answerable(app, pilot, chat_screen, box) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_first_open_paints_an_answerable_card_nav_away_path(tmp_path):
     """AC#1: wake armed with Console unmounted (left via real navigation);
     the FIRST open must paint the full card -- no session switch.
@@ -226,10 +225,13 @@ async def test_first_open_paints_an_answerable_card_nav_away_path(tmp_path):
             assert chat2 is not chat, "screens are never cached"
             assert await _settle(
                 lambda: bool(list(chat2.query(".approval-row"))), seconds=5.0
-            ), "harness precondition: the mount sync must have built the rows"
-            assert await _settle(
-                lambda: "write_file (high risk)" in _painted(app), seconds=5.0
             ), (
+                "harness precondition: the mount sync must have built the rows; "
+                f"round_claimable={_round_is_claimable(controller, session_id)} "
+                f"active_session={store.active_session_id == session_id} "
+                f"card_state={_card_paint_state(app)}"
+            )
+            assert await _settle(lambda: "write_file" in _painted(app), seconds=5.0), (
                 "harness precondition: the card must be PAINTED before the "
                 "deferred work is delivered, or the delivery proves nothing: "
                 f"{_card_paint_state(app)}"
@@ -249,6 +251,7 @@ async def test_first_open_paints_an_answerable_card_nav_away_path(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_first_ever_open_paints_an_answerable_card_launch_path(tmp_path):
     """AC#2: the round armed before ANY ChatScreen ever existed in the
     process (launch wake, Console never opened); the first-ever open must
@@ -301,10 +304,13 @@ async def test_first_ever_open_paints_an_answerable_card_launch_path(tmp_path):
             )
             assert await _settle(
                 lambda: bool(list(chat.query(".approval-row"))), seconds=5.0
-            ), "harness precondition: the mount sync must have built the rows"
-            assert await _settle(
-                lambda: "write_file (high risk)" in _painted(app), seconds=5.0
             ), (
+                "harness precondition: the mount sync must have built the rows; "
+                f"round_claimable={_round_is_claimable(controller, session_id)} "
+                f"active_session={store.active_session_id == session_id} "
+                f"card_state={_card_paint_state(app)}"
+            )
+            assert await _settle(lambda: "write_file" in _painted(app), seconds=5.0), (
                 "harness precondition: the card must be PAINTED before the "
                 f"deferred work is delivered: {_card_paint_state(app)}"
             )
@@ -375,7 +381,7 @@ async def test_deferred_mount_work_cannot_unrender_a_live_batch():
             deferred.deliver()
             await pilot.pause()
             painted = _painted(app)
-            assert "write_file (high risk)" in painted and "Approve all" in painted, (
+            assert "write_file (high risk)" in painted and "Allow once" in painted, (
                 "the card's mount-deferred work unrendered a live batch: "
                 f"painted={painted!r}"
             )
@@ -415,7 +421,7 @@ async def test_a_mounted_but_never_synced_surface_paints_nothing():
         ), "harness precondition: the card's children must be attached"
         await pilot.pause()
         painted = _painted(app)
-        assert "Approval required" not in painted and "Approve all" not in painted, (
+        assert "Approval required" not in painted and "Allow once" not in painted, (
             f"an empty task surface painted card chrome: {painted!r}"
         )
         assert app.query_one("#approval-batch-body").display is False

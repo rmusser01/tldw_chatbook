@@ -281,7 +281,7 @@ class FakeMobileService:
                     {
                         "call_id": "c1",
                         "llm_name": "fs_list",
-                        "options": ["approve_once", "deny"],
+                        "options": ["approve_once", "allow_matching", "deny"],
                         "arguments": {"path": "."},
                     }
                 ],
@@ -1041,6 +1041,24 @@ async def test_approvals_list_and_decide(tmp_path, mobile_surface_gate) -> None:
             },
         ) in service.calls
 
+        matching_call = body["approvals"][0]["calls"][0]
+        assert "allow_matching" in matching_call["options"]
+        matching = await client.post(
+            "/api/v1/mobile/approvals/r1",
+            json={"decisions": {matching_call["call_id"]: "allow_matching"}},
+            headers={CSRF_HEADER_NAME: csrf},
+        )
+        assert matching.status == 200
+        assert (await matching.json()) == {"ok": True}
+        assert service.calls[-1] == (
+            "decide_approval",
+            {
+                "round_id": "r1",
+                "decisions": {"c1": "allow_matching"},
+                "child_id": None,
+            },
+        )
+
         unknown = await client.post(
             "/api/v1/mobile/approvals/no-such-round",
             json={"decisions": {"c1": "deny"}},
@@ -1049,13 +1067,16 @@ async def test_approvals_list_and_decide(tmp_path, mobile_surface_gate) -> None:
         assert unknown.status == 200
         assert (await unknown.json()) == {"ok": False}
 
-        invalid = await client.post(
-            "/api/v1/mobile/approvals/r1",
-            json={"decisions": {"c1": "not-a-verdict"}},
-            headers={CSRF_HEADER_NAME: csrf},
-        )
-        assert invalid.status == 400
-        assert (await invalid.json()) == {"error": "invalid_decisions"}
+        calls_before = len(service.calls)
+        for verdict in ("not-a-verdict", None, False, 3, [], {}):
+            invalid = await client.post(
+                "/api/v1/mobile/approvals/r1",
+                json={"decisions": {"c1": verdict}},
+                headers={CSRF_HEADER_NAME: csrf},
+            )
+            assert invalid.status == 400
+            assert (await invalid.json()) == {"error": "invalid_decisions"}
+        assert len(service.calls) == calls_before
 
         missing = await client.post(
             "/api/v1/mobile/approvals/r1",

@@ -47,7 +47,22 @@ from tldw_chatbook.Agents.approval_provenance import (
     approval_key_unanswered,
     selected_approval_key,
 )
-from tldw_chatbook.Chat.approval_constants import TOOL_DESCRIPTION_CAPTURE_CAP
+from tldw_chatbook.Chat.approval_constants import (
+    TOOL_DESCRIPTION_CAPTURE_CAP as TOOL_DESCRIPTION_CAPTURE_CAP,
+    _DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS as _DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS,
+    _MCP_APPROVAL_POLL_SECONDS as _MCP_APPROVAL_POLL_SECONDS,
+    _DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS as _DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS,
+    _DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS as _DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS,
+    _DEFAULT_CHAT_CREATE_CONFIRM_TIMEOUT_SECONDS as _DEFAULT_CHAT_CREATE_CONFIRM_TIMEOUT_SECONDS,
+    _CHAT_CREATE_SESSION_GONE as _CHAT_CREATE_SESSION_GONE,
+    _DEFAULT_WORKTREE_MERGE_CONFIRM_TIMEOUT_SECONDS as _DEFAULT_WORKTREE_MERGE_CONFIRM_TIMEOUT_SECONDS,
+    _DEFAULT_ASK_USER_TIMEOUT_SECONDS as _DEFAULT_ASK_USER_TIMEOUT_SECONDS,
+    ASK_USER_TIMEOUT_ENV_VAR as ASK_USER_TIMEOUT_ENV_VAR,
+    _MAX_TRACKED_QUESTION_BOUNCE_RUNS as _MAX_TRACKED_QUESTION_BOUNCE_RUNS,
+    _LEGACY_PENDING_APPROVAL_ROUND_ID as _LEGACY_PENDING_APPROVAL_ROUND_ID,
+    _APPROVAL_SCOPE_RANK as _APPROVAL_SCOPE_RANK,
+    _APPROVING_DECISIONS as _APPROVING_DECISIONS,
+)
 from tldw_chatbook.Character_Chat.emote_directives import (
     CharacterEmoteRunSnapshot,
     append_character_emote_prompt_instruction,
@@ -411,6 +426,7 @@ from tldw_chatbook.Chat.console_skill_resolver import (
 from tldw_chatbook.Chat.prompt_history import PromptHistory
 
 if TYPE_CHECKING:
+    from .console_approval_feedback import ApprovalFeedbackStore
     from tldw_chatbook.Chat.response_rules.runtime import ResponseRuleRuntime
     from tldw_chatbook.Chat.console_goal_runs import GoalIterationAuthorization
     from tldw_chatbook.Agents.agent_lesson_promotion import ManagedSkillProposalGate
@@ -799,52 +815,6 @@ _CONSOLE_SETTINGS_FIELD_ORDER = (
 )
 
 
-#: Fallback used when no `mcp_approval_timeout_seconds` seam is injected --
-#: mirrors `UnifiedMCPControlPlaneService.approval_timeout_seconds`'s own
-#: default (ADR-314), read directly here since the controller has no
-#: dependency on that service (T6 wires the service into `MCPToolProvider`,
-#: not into this controller).
-#:
-#: The PRE-ADR default was 120.0, kept strictly below
-#: ``RunBudget.max_tool_call_seconds`` (300s at defaults,
-#: ``Agents/agent_models.py``) because the invoke-path approval wait runs
-#: INSIDE ``agent_service._call_with_timeout``'s per-call wrapper: an
-#: approval timeout at/above the wrapper ceiling would let the wrapper fire
-#: first, report the call failed, and a late approval would then execute
-#: the tool for real on the abandoned thread. That invariant is SUPERSEDED:
-#: the wrapper's deadline now PAUSES while a human decision is pending for
-#: the run (``Agents/human_input_wait`` marks the wait;
-#: ``_call_with_timeout``'s ``pauses_deadline`` re-arms the ceiling each
-#: poll slice), so wall-clock counts tool execution, not human deliberation
-#: -- an indefinite wait can no longer lose that race. Cancellation was
-#: already closed by ``revoke_approval_rounds_for_run`` and is unaffected.
-_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS = 0.0
-#: Poll granularity for `request_mcp_approvals`'s wait loop (binding, from
-#: the Phase-5 plan) -- also the worst-case slack added on top of a
-#: configured timeout/cancellation before this method observes it.
-_MCP_APPROVAL_POLL_SECONDS = 1.0
-#: Same ADR-314 contract as `_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS`, for
-#: `request_skill_install_confirm`'s own wait loop (fallback used when no
-#: `skill_install_confirm_timeout_seconds` seam is injected).
-_DEFAULT_SKILL_INSTALL_CONFIRM_TIMEOUT_SECONDS = 0.0
-#: Same ADR-314 contract as `_DEFAULT_MCP_APPROVAL_TIMEOUT_SECONDS`, for
-#: `request_skill_script_confirm`'s own wait loop (fallback used when no
-#: `skill_script_confirm_timeout_seconds` seam is injected).
-_DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS = 0.0
-#: Same ADR-314 contract as `_DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS`,
-#: for `request_chat_create_confirm`'s own wait loop (fallback used when no
-#: `chat_create_confirm_timeout_seconds` seam is injected).
-_DEFAULT_CHAT_CREATE_CONFIRM_TIMEOUT_SECONDS = 0.0
-_CHAT_CREATE_SESSION_GONE = "session_gone"
-#: Same ADR-314 contract, for `request_worktree_merge_confirm`'s own wait
-#: loop (fallback used when no `worktree_merge_confirm_timeout_seconds`
-#: seam is injected).
-_DEFAULT_WORKTREE_MERGE_CONFIRM_TIMEOUT_SECONDS = 0.0
-#: PRD A7: `[console] ask_user_timeout_seconds`. 0 = no deadline (ADR-314);
-#: a positive value auto-continues the run with `answered: false`.
-_DEFAULT_ASK_USER_TIMEOUT_SECONDS = 0.0
-#: Env override for `[console] ask_user_timeout_seconds` (env -> config -> default).
-ASK_USER_TIMEOUT_ENV_VAR = "TLDW_CONSOLE_ASK_USER_TIMEOUT_SECONDS"
 #: task-32344: ceiling on the pre-provider setup a send will wait through
 #: before giving up on the optional part of it and calling the provider
 #: anyway. The one seam that needed a bound is the app-owned Personal
@@ -875,16 +845,8 @@ CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS = 10.0
 #: anything. Self-healing survives: the original worker clears the flag and
 #: caches the service if the OS ever answers.
 _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT = threading.Event()
-#: A9 bounce counters are keyed by run id; a run that only ever bounced has no
-#: end-of-run hook here, so the map is bounded by evicting the oldest run.
-_MAX_TRACKED_QUESTION_BOUNCE_RUNS = 64
 _DISPATCH_IDENTIFIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}\Z", re.ASCII)
-#: TASK-1050: synthetic round id `set_run_pending_approval`'s deprecated
-#: boolean shim registers under, internally, so its add/discard composes
-#: safely with the round-keyed `_pending_approvals` accounting (see that
-#: method's docstring) without ever colliding with a real bridge round's
-#: `uuid4()` id -- every genuine round id is a UUID string; this is not.
-_LEGACY_PENDING_APPROVAL_ROUND_ID = "__legacy_pending_approval__"
+
 
 
 def project_recovery_should_skip_send_interception(
@@ -2364,26 +2326,6 @@ AGENT_LESSON_DENIED = "foreground approval denied for Agent Lesson save"
 #: import-free leaf `Agents.tool_refusals`; every NAME below stays put.
 KILL_SWITCH_REFUSAL = TOOL_KILL_SWITCH_REFUSAL
 
-#: TASK-1861: how broad each approval scope is. A session/always grant is
-#: recorded against a tool NAME, so when per-call rows of one tool are
-#: approved at different scopes only one can be stamped -- and it must be the
-#: broadest the user chose, or the grant they asked for is silently dropped
-#: and re-prompted. Unknown values rank 0 (narrower than anything known).
-_APPROVAL_SCOPE_RANK: dict[str, int] = {
-    "approve_once": 1,
-    "approve_session": 2,
-    "always_allow": 3,
-}
-
-#: The card answers that approve a call for every tool owner. MCP rows also
-#: accept ``"allow_matching"``; built-in and local rows do not.
-_APPROVING_DECISIONS: tuple[str, ...] = (
-    "approve_once",
-    "approve_session",
-    "always_allow",
-)
-
-
 def approval_was_unanswered(
     row: "MCPPendingCall", decisions: Mapping[str, str]
 ) -> bool:
@@ -2668,6 +2610,8 @@ def _build_approval_payload(
     pending: "list[MCPPendingCall]",
     timeout_seconds: float,
     deadline: float | None,
+    *,
+    revision: int = 1,
 ) -> dict[str, Any]:
     """Forward to the documented console_interrupt_rounds implementation."""
     from tldw_chatbook.Chat.console_interrupt_rounds import (
@@ -2682,6 +2626,7 @@ def _build_approval_payload(
         timeout_seconds,
         deadline,
         read_global_ToolExecutionPolicy=lambda: ToolExecutionPolicy,
+        revision=revision,
     )
 
 
@@ -3992,6 +3937,9 @@ class ConsoleChatController:
 
         from tldw_chatbook.Chat.console_interrupt_rounds import InterruptRoundHost
 
+        self._approval_feedback: ApprovalFeedbackStore | None = None
+        self._approval_feedback_lock = threading.Lock()
+        self.approval_feedback_changed = None
         self._interrupt_host = InterruptRoundHost(
             read_controller__active_assistant_message_ids=lambda: (
                 self._active_assistant_message_ids
@@ -4012,6 +3960,11 @@ class ConsoleChatController:
             read_controller__answerable_decision_by_session=lambda: (
                 self._answerable_decision_by_session
             ),
+            read_controller_approval_feedback=lambda: self.approval_feedback,
+            read_controller__publish_approval_observation=lambda: (
+                self._publish_approval_observation
+            ),
+            read_controller__notify_approval_feedback=lambda: self._notify_approval_feedback,
             read_controller__approval_view_is_detached=lambda: (
                 self._approval_view_is_detached
             ),
@@ -14439,7 +14392,10 @@ class ConsoleChatController:
         never go stale.
         """
         self._agent_runtime_enabled = enabled
-        self._agent_bridge = bridge
+        with self._approval_feedback_lock:
+            self._agent_bridge = bridge
+            if bridge is not None:
+                bridge.approval_feedback_store = self._approval_feedback
         # PR3a-2 Task 3: a refreshed bridge is a fresh fan-out registry --
         # re-register the usage fold on it (replace-by-name makes calling
         # this with the SAME bridge a safe no-op).
@@ -16266,7 +16222,12 @@ class ConsoleChatController:
                 state = service.gate_tool_test_for_profile(hub, profile_id)
             return persona_floor_state(state, persona_policy, hub.name)
 
+        from tldw_chatbook.Chat.approval_presentation import profile_authority
+
         provider = LocalToolProvider(
+            presentation_authority=profile_authority(
+                "local", profile_id, str(root), "call"
+            ),
             workspace_root=root,
             allow_write=allow_write,
             authority_scope=authority_scope,
@@ -16416,8 +16377,12 @@ class ConsoleChatController:
             return service.arg_rule_allows_call(hub, dict(args), **profile_kwargs)
 
         from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
+        from tldw_chatbook.Chat.approval_presentation import profile_authority
 
         provider = VirtualCliProvider(
+            presentation_authority=profile_authority(
+                "virtual_cli", profile_id, str(root), "call"
+            ),
             workspace_root=root,
             resolve_state=resolve_state,
             local_tools_enabled=lambda: coerce_bool_setting(
@@ -16694,6 +16659,28 @@ class ConsoleChatController:
             assistant_access=library_authority.policy.assistant_access,
         )
         return provider, authority
+
+    @property
+    def approval_feedback(self) -> ApprovalFeedbackStore:
+        from .console_approval_feedback import controller_feedback_store
+
+        return controller_feedback_store(self)
+
+    @approval_feedback.setter
+    def approval_feedback(self, value: ApprovalFeedbackStore | None) -> None:
+        from .console_approval_feedback import set_controller_feedback_store
+
+        return set_controller_feedback_store(self, value)
+
+    def _notify_approval_feedback(self, session_id: str, run_id: str) -> None:
+        from .console_approval_feedback import notify_controller_approval_feedback
+
+        return notify_controller_approval_feedback(self, session_id, run_id)
+
+    def _publish_approval_observation(self, observation) -> None:
+        from .console_approval_feedback import publish_controller_approval_observation
+
+        return publish_controller_approval_observation(self, observation)
 
     def resolve_pending_approval(
         self, decisions: dict[str, str], *, round_id: str | None = None

@@ -51,25 +51,43 @@ def _timeout_seconds(raw: Any) -> int:
         return 0
 
 
-def _relay_calls(raw_calls: Any) -> list[dict[str, Any]]:
+def _relay_calls(raw_calls: Any, view: Any = None) -> list[dict[str, Any]]:
     """Map console approval rows down to the four relay-safe call fields.
 
     The protocol's payload registry rejects unknown top-level fields, so the
     publisher also keeps each row minimal: only what the phone's approval
     card renders (``llm_name``, ``call_id``, ``options``, ``arguments``).
+    A captured view supplies legal choices for an implicit option set and
+    narrows explicit producer choices. Matching arguments stay original.
     """
 
+    legal_by_key = None
+    if view is not None:
+        from tldw_chatbook.Chat.approval_presentation import ApprovalBatchView
+
+        if isinstance(view, ApprovalBatchView):
+            legal_by_key = {row.verdict_key: row.legal_decisions for row in view.rows}
     if not isinstance(raw_calls, list):
         return []
     calls: list[dict[str, Any]] = []
     for row in raw_calls:
         if not isinstance(row, Mapping):
             continue
+        options = list(row.get("options") or [])
+        if legal_by_key is not None:
+            key = row.get("call_id") or row.get("llm_name") or ""
+            legal = legal_by_key.get(key, ())
+            options = (
+                [option for option in options if option in legal]
+                if options else list(legal)
+            )
         calls.append(
             {
                 "llm_name": str(row.get("llm_name") or ""),
-                "call_id": row.get("call_id") if isinstance(row.get("call_id"), str) else None,
-                "options": list(row.get("options") or []),
+                "call_id": row.get("call_id")
+                if isinstance(row.get("call_id"), str)
+                else None,
+                "options": options,
                 "arguments": dict(row.get("arguments") or {}),
             }
         )
@@ -114,9 +132,7 @@ class ServedRelayPublisher:
     # Lifecycle                                                            #
     # ------------------------------------------------------------------ #
 
-    def attach(
-        self, *, run_state_source: _RunStateSource | None = None
-    ) -> None:
+    def attach(self, *, run_state_source: _RunStateSource | None = None) -> None:
         """Start the drainer (and optional run-status poller) on this loop.
 
         Must be called from the event loop the client sends on (the app's
@@ -197,7 +213,7 @@ class ServedRelayPublisher:
                     if isinstance(payload.get("session_id"), str)
                     else ""
                 ),
-                "calls": _relay_calls(payload.get("calls")),
+                "calls": _relay_calls(payload.get("calls"), payload.get("view")),
                 "timeout_seconds": _timeout_seconds(payload.get("timeout_seconds")),
             },
         )
@@ -242,9 +258,7 @@ class ServedRelayPublisher:
         loop = self._loop
         queue = self._queue
         if loop is None or queue is None or loop.is_closed():
-            logger.debug(
-                "served relay drop type=%s reason=not_attached", message_type
-            )
+            logger.debug("served relay drop type=%s reason=not_attached", message_type)
             return
 
         def _put() -> None:
@@ -258,9 +272,7 @@ class ServedRelayPublisher:
         try:
             loop.call_soon_threadsafe(_put)
         except RuntimeError:
-            logger.debug(
-                "served relay drop type=%s reason=closed_loop", message_type
-            )
+            logger.debug("served relay drop type=%s reason=closed_loop", message_type)
 
     async def _drain(self) -> None:
         queue = self._queue

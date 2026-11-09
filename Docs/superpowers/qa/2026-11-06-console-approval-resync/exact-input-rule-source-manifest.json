@@ -1,0 +1,63 @@
+{
+  "scope": "TASK-34569 AC13 exact-input rule renewal and truthful owner-confirmed persistence feedback; no physical qualification",
+  "before_revision": "4540c24c14ce163fb58b0a64074d81d7b129d5e4",
+  "hash_basis": "SHA-256 of UTF-8 text with CRLF normalized to LF, matching Git text bytes. Native source freezes and private raw witnesses are separate.",
+  "files_SHA256": {
+    "tldw_chatbook/MCP/permission_store.py": "481ea82ba652bdffc9bb0ffe62c8491a1ef3e5792e830a61990ae480bdbf6492",
+    "tldw_chatbook/MCP/unified_control_plane_service.py": "1c3f142ae4f4b773ed8bfa9646145494d88c420c1100c8958d4ec6f075c6bd62",
+    "tldw_chatbook/MCP/arg_rule_approval.py": "4f118e29ac4f65d842b6b5c9efd6ffe4b9977cc3161c32f84421ef0ae5c9ac65",
+    "Tests/MCP/test_control_plane_permissions.py": "42cdf2c2a5316cb440c698341ec347837ea925fd916422a88870709bf74f7ae9",
+    "Tests/MCP/test_unified_control_plane_service.py": "c7f36b81554e285af176b1556c2a3deb8184edc82ae58d5a954fed3c3df6ff2c",
+    "Docs/superpowers/plans/2026-11-07-console-exact-input-rule-renewal.md": "4f7ea15dd5475ad4a4f6319c8d98737f7e9ef55749539db165d84ab824de2e29"
+  },
+  "results": {
+    "new_regressions_original_RED": {
+      "failed": 6,
+      "passed": 2
+    },
+    "new_regressions_candidate_GREEN": {
+      "passed": 8,
+      "failed": 0
+    },
+    "initial_full_affected_modules": {
+      "passed": 87,
+      "failed": 8,
+      "permission_module": {
+        "passed": 70,
+        "failed": 8
+      },
+      "service_module": {
+        "passed": 17,
+        "failed": 0
+      }
+    },
+    "bounded_fixture_correction_previously_failed_only": {
+      "passed": 8,
+      "deselected": 70,
+      "seconds": 28.87
+    },
+    "full_95_case_repeat": false,
+    "initial_full_run_relabeled_as_all_pass": false,
+    "baseline_failure_attribution_claim": false,
+    "new_Ruff_diagnostics": 0,
+    "scoped_diff_check_exit": 0
+  },
+  "source_preservation": {
+    "public_writer_signatures_decorators_void_error_contracts_preserved": true,
+    "other_original_product_module_AST_preserved": true,
+    "matcher_mutation_source_durable_lifecycle_bodies_unchanged": true,
+    "original_test_assertions_unchanged": true,
+    "service_lines": 6045,
+    "service_existing_cap": 6049,
+    "permission_store_lines": 3132,
+    "no_cap_raise": true
+  },
+  "independent_source_review": {
+    "P2_repair": "CLEAR",
+    "bounded_fixture_only_delta": "CLEAR"
+  },
+  "App_launch_UI_capture_fullsuite": false,
+  "physical_qualified_samples": 0,
+  "responsiveness_or_stall_causality_claim": false,
+  "Task_done_or_merge_claim": false
+}

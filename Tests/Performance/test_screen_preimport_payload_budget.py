@@ -387,7 +387,10 @@ def _run_census(tmp_path: Path, script: str = _CENSUS_SCRIPT, *args: str) -> dic
         "XDG_DATA_HOME": str(data),
         "XDG_CONFIG_HOME": str(config_dir),
         "TLDW_TEST_MODE": "1",
-        "PYTHONPATH": str(REPO_ROOT),
+        "PYTHONPATH": os.pathsep.join(
+            (str(REPO_ROOT), str(REPO_ROOT / "packages/tldw_profile_core/src"))
+        ),
+        "PYTHONIOENCODING": "utf-8",
     }
     env.pop("PYTEST_CURRENT_TEST", None)
     env.pop("TLDW_CONFIG_PATH", None)
@@ -397,6 +400,7 @@ def _run_census(tmp_path: Path, script: str = _CENSUS_SCRIPT, *args: str) -> dic
         cwd=REPO_ROOT,
         env=env,
         text=True,
+        encoding="utf-8",
         capture_output=True,
         check=False,
         timeout=300,

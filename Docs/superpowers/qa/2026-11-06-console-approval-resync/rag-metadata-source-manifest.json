@@ -1,0 +1,62 @@
+{
+  "scope": "Final RAG metadata repair source/control bindings; no physical performance qualification",
+  "before_revision": "7cf51a723f0636aa585d00e91c70938447a9e887",
+  "files_SHA256": {
+    "tldw_chatbook/RAG_Search/config_metadata.py": "1011c53d669b52ba2da372dc0377df5119d1dcea4d9e905fe6c62100519b8d8a",
+    "tldw_chatbook/RAG_Search/simplified/__init__.py": "f166934307fdf247ba799732763187742e994937fa4651853ddddd69d8489993",
+    "tldw_chatbook/RAG_Search/simplified/active_config.py": "35968f036d36d93306329c96442e3c816ad49d1231c4cac5d54890468c863a71",
+    "tldw_chatbook/RAG_Search/config_profiles.py": "9fa2e5b53ccadc754e9c9752c7f0422557b39eca4060b721d6222751307e8546",
+    "tldw_chatbook/RAG_Search/reranker.py": "255b11b998fed07e1636da4a4e19ce35ba84ee4e50d011145efb69d9b1506e2d",
+    "tldw_chatbook/RAG_Search/parallel_processor.py": "533bbb8ff031545326907566d4c95d6d956e8d2a52b2a857b384931f01834700",
+    "Tests/RAG/_metadata_import_probe.py": "46575ac9fc93a362ab0e7f243e8173c8a8361ce9da743d1771061a5ffe64d4c5",
+    "Tests/RAG/test_metadata_import_boundary.py": "7e35cfdfa98b84a8856faddae7e472530e1b1b3d0b95a90edf08c43097db50c8",
+    "Tests/Chat/test_console_configuration_preparation.py": "f46fbd69f7427cdd7717866d5701dddd788a5e34174cf0c59d838258bcf4ec82",
+    "backlog/tasks/task-34569 - Qualify-Console-approval-clarity-and-responsiveness.md": "1c826283d05a46e097d25da8a16e07e41be23d44293be61b12c83a7b72d669ca",
+    "backlog/decisions/355-lightweight-rag-state-path-resolution.md": "3c379d655154f4cae5bf32e9d9e82d9956cd0716d464cb928c7a0414ca0ebfd1",
+    "Docs/superpowers/plans/2026-11-06-console-approval-resync.md": "66ca8602a35e4c2adcb450051d708a493601132bfe6937e956b8e0bc3fb28996",
+    "Docs/superpowers/qa/2026-11-06-console-approval-resync/rag-metadata-followup.md": "c98f4d2c22eba3a8a47f7c5554c53715a40452241dfd9c2070764267547f3d2c"
+  },
+  "class_and_body_AST_equivalence": {
+    "RerankingConfig_original_AST_preserved": true,
+    "tldw_chatbook/RAG_Search/reranker.py_other_bodies_unchanged": true,
+    "ProcessingConfig_original_AST_preserved": true,
+    "tldw_chatbook/RAG_Search/parallel_processor.py_other_bodies_unchanged": true,
+    "tldw_chatbook/RAG_Search/simplified/active_config.py_all_nonimport_bodies_unchanged": true,
+    "tldw_chatbook/RAG_Search/config_profiles.py_all_nonimport_bodies_unchanged": true,
+    "ordered_public_all_preserved": true
+  },
+  "results": {
+    "unique_current_passed": 109,
+    "exact_same_baseline_failed": 20,
+    "metadata": 40,
+    "profiles": 46,
+    "import_order": 3,
+    "facade": 2,
+    "received_node": 1,
+    "active_current_and_exact8b": {
+      "passed": 17,
+      "failed": 20,
+      "failed_node_list_identical": true
+    },
+    "baseline_tracked_clean": true,
+    "new_Ruff_diagnostics": 0,
+    "Root_metadata": 40,
+    "Root_Audio": 12,
+    "Root_CI": 119,
+    "UI_ready_budget": "PASS unchanged limit",
+    "Windows_eager_budget": "688; inherited strict<688 failure with no new module"
+  },
+  "preserved_preparation_negatives": [
+    "local-hostname overclassification (corrected as local metadata, no traffic allowance)",
+    "exact urllib3._has_ipv6 bind remains refused/OSError, separate from unknown network failures"
+  ],
+  "physical_qualified_samples": 0,
+  "full_wait_causality": "not established",
+  "independent_source_review": "CLEAR",
+  "commit_or_App_launch_by_implementer": false,
+  "hash_basis": "SHA-256 of UTF-8 text with CRLF normalized to LF, matching Git text bytes; native run freezes remain separate exact raw bytes.",
+  "repair_commit": "fc1ad3cde5444a2d59bbbba08ae8b37a198a69ad",
+  "rebased_before_evidence_commit": "0078632afb3c886b70817b0a3d917298971f02aa",
+  "results_source_revision": "fc1ad3cde5444a2d59bbbba08ae8b37a198a69ad",
+  "historical_raw_manifest_commit": "fc1ad3cde5444a2d59bbbba08ae8b37a198a69ad"
+}

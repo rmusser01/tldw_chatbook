@@ -1866,12 +1866,18 @@ class MCPPermissionStore:
                 "definition_hash": definition_hash,
                 "created_at": _iso_utc_now(),
             }
-            if rule["args_json"] in {
-                existing.get("args_json")
-                for existing in rules
-                if isinstance(existing, Mapping)
-            }:
-                return False
+            for index, existing in enumerate(rules):
+                if (
+                    isinstance(existing, Mapping)
+                    and existing.get("args_json") == rule["args_json"]
+                ):
+                    if (
+                        server_key in HASH_FREE_SERVER_KEYS
+                        or existing.get("definition_hash") == definition_hash
+                    ):
+                        return False
+                    rules[index] = rule
+                    return True
             rules.append(rule)
             return True
 
@@ -1885,6 +1891,50 @@ class MCPPermissionStore:
             change,
             expected_profile_digest=None,
             expected_revision=None,
+        )
+
+    @mcp_sources.guarded
+    def has_current_tool_arg_rule(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        args: Mapping[str, Any],
+        definition_hash: str | None,
+        profile_id: str = _DEFAULT_PROFILE_ID,
+    ) -> bool:
+        """Confirm a persisted exact rule in the requested profile itself.
+
+        This is a write observation, not execution permission. It never treats
+        an inherited or hand-written pattern rule as the requested exact rule.
+        Existing fingerprint exemptions remain unchanged.
+
+        Args:
+            server_key: Owning server's stable key.
+            tool_name: Tool name within that server.
+            args: Original exact arguments requested for remembering.
+            definition_hash: Current captured fingerprint, or a hash-free None.
+            profile_id: Exact profile whose persisted rule must be present.
+
+        Returns:
+            Whether that profile contains the exact current-definition rule.
+        """
+        if definition_hash is None and server_key not in HASH_FREE_SERVER_KEYS:
+            return False
+        profile = _as_mapping(self.load().get("profiles")).get(profile_id)
+        entry = self._tool_entry(profile, server_key, tool_name)
+        rules = entry.get("arg_rules") if entry is not None else None
+        if not isinstance(rules, list):
+            return False
+        call_json = _canonical_args_json(args)
+        return any(
+            isinstance(rule, Mapping)
+            and rule.get("args_json") == call_json
+            and (
+                server_key in HASH_FREE_SERVER_KEYS
+                or rule.get("definition_hash") == definition_hash
+            )
+            for rule in rules
         )
 
     @mcp_sources.guarded

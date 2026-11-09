@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import os
 from pathlib import Path
 
 import pytest
@@ -594,3 +595,101 @@ def test_a_split_census_file_keeps_every_test_gated_once(path):
         len({index % total for index, entry in enumerate(entries) if entry in selected})
         > 1
     )
+
+
+def test_removing_an_older_noncritical_member_fails_current_floor(monkeypatch, capsys):
+    spec = importlib.util.spec_from_file_location("cen_current_floor", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    entries = module.read_census(module.CENSUS_PATH)
+    assert module.main([]) == 0
+    capsys.readouterr()
+    entries.remove("Tests/UI/test_adaptive_pane_shell.py")
+    monkeypatch.setattr(module, "read_census", lambda path: entries)
+    assert module.main([]) == 1
+    assert (
+        f"census has shrunk: {len(entries)} entries, floor is {module.MINIMUM_FILES}"
+        in capsys.readouterr().err
+    )
+
+
+def _source_parse_reuse_checker(tmp_path):
+    root = _node_tree(tmp_path)
+    path = root / "Tests/UI/test_p0.py"
+    source = _NODE_SOURCE.replace("['80x24']", "['80x24', '81x24']").replace(
+        "(size):", "(size, shared_fixture):"
+    )
+    path.write_text(source, encoding="utf-8")
+    conftest = root / "conftest.py"
+    conftest.write_text(
+        "import pytest\n\n@pytest.fixture(          )\n"
+        "def shared_fixture():\n    return None\n",
+        encoding="utf-8",
+    )
+    checker = _checker(
+        tmp_path,
+        [
+            "Tests/UI/test_p0.py::test_stop_is_reachable[80x24]",
+            "Tests/UI/test_p0.py::test_stop_is_reachable[81x24]",
+        ],
+        floor=2,
+        root=root,
+    )
+    return checker, path, conftest
+
+
+def test_source_parse_reuse_is_limited_to_one_main_call(tmp_path, monkeypatch):
+    checker, path, conftest = _source_parse_reuse_checker(tmp_path)
+    counts = {file.read_text(encoding="utf-8"): 0 for file in (path, conftest)}
+    original_parse = checker.ast.parse
+
+    def parse(source, *args, **kwargs):
+        if source in counts:
+            counts[source] += 1
+        return original_parse(source, *args, **kwargs)
+
+    monkeypatch.setattr(checker.ast, "parse", parse)
+    assert checker.main([]) == 0
+    assert list(counts.values()) == [1, 1]
+    assert checker.main([]) == 0
+    assert list(counts.values()) == [2, 2]
+
+
+@pytest.mark.parametrize("changed_source", ["module", "conftest"])
+def test_source_parse_reuse_sees_same_stamp_changes(
+    tmp_path, monkeypatch, capsys, changed_source
+):
+    checker, path, conftest = _source_parse_reuse_checker(tmp_path)
+    target = path if changed_source == "module" else conftest
+    source = target.read_text(encoding="utf-8")
+    changed = (
+        source.replace("test_stop_is_reachable", "test_stop_is_reachablx")
+        if changed_source == "module"
+        else source.replace("          ", "params=[0]", 1)
+    )
+    assert changed != source
+    assert len(changed.encode("utf-8")) == len(source.encode("utf-8"))
+    stamp = target.stat()
+    original_resolve = checker.resolve_node
+    first = True
+
+    def resolve(path, node, **kwargs):
+        nonlocal first
+        result = original_resolve(path, node, **kwargs)
+        if first:
+            first = False
+            target.write_text(changed, encoding="utf-8")
+            os.utime(target, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+            assert target.stat().st_size == stamp.st_size
+            assert target.stat().st_mtime_ns == stamp.st_mtime_ns
+        return result
+
+    monkeypatch.setattr(checker, "resolve_node", resolve)
+    assert checker.main([]) == 1
+    error = capsys.readouterr().err
+    expected = (
+        "does not define test_stop_is_reachable"
+        if changed_source == "module"
+        else "uses the parametrized fixture 'shared_fixture'"
+    )
+    assert expected in error

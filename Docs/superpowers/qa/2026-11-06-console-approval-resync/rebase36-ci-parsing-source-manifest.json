@@ -1,0 +1,25 @@
+{
+  "scope": "Rebase36 targeted source and CI parsing verification; physical qualification remains open",
+  "base_revision": "36a21dc4d270940e3576b49487a71b37c78896f8",
+  "hash_basis": "SHA256 UTF8 text with CRLF normalized to LF",
+  "files_SHA256": {
+    "scripts/check_ui_pr_gate_census.py": "c97511225d384d18709d6f06a42066b52c3e9278a7fcc84d3f18ccf582b55e4f",
+    "scripts/ui_pr_gate_census.txt": "be6750d374acd616168b59a642b013cb45dfd838239ac2430fa0198e02987b00",
+    "Tests/CI/test_ui_pr_gate_census_checker.py": "7af8a8a07e99a6372e6eb7074bd79b9aee22ee5c35f6b0755359925d5a4b6059",
+    "tldw_chatbook/RAG_Search/simplified/__init__.py": "20e73952f8bb097b55f5f501d23f1966cf6eaa82b3f27f42440f179091137869",
+    "Tests/RAG/test_metadata_import_boundary.py": "60822071dba70bb392fd1b1ac816cad14b874a079ecad95a9a7bde4ac63093d7",
+    "tldw_chatbook/Tools/remote_worker_bundle.py": "c55663abb16267180f2ced7d3be119f6128990cce8b88b0551bb8897e6cb26cc",
+    "tldw_chatbook/Tools/build_remote_worker_bundle.py": "dd91f4514c45510a140aea9f3747bcc2f299aa1c2a6b0e0bd48fff1e3379c256",
+    "Docs/superpowers/plans/2026-11-07-console-approval-ci-boundaries.md": "3721a82f32c25de6123b1d2909284e91da14464405c2984427809fce2269b323",
+    "backlog/tasks/task-34569 - Qualify-Console-approval-clarity-and-responsiveness.md": "7636db5014d09381bc7bbca43bf20ac3c022047037c735ec703f904e0fe6561e",
+    "Docs/superpowers/qa/2026-11-06-console-approval-resync/rebase36-ci-parsing-followup.md": "e02d68edf6937959af64a480fa0ad35e3556792a5a6a33964b4e0bb03c84787a"
+  },
+  "targeted_passes": {
+    "checker": 87,
+    "P0_default_resolvers": 70,
+    "PR_step_default_resolver": 1,
+    "RAG_metadata": 41,
+    "worker_identity": 4
+  },
+  "qualified_samples": 0
+}

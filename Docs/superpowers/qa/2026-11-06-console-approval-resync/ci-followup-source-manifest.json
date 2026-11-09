@@ -1,0 +1,19 @@
+{
+  "parent_revision": "7cfdb2bd690c526f7b4bf59f4d7a66e7234f685e",
+  "scope": "Raw Windows checkout bytes of the final targeted CI repair; code/test hashes verified after all focused runs.",
+  "sha256": {
+    "tldw_chatbook/MCP/unified_control_plane_service.py": "2599b1e6e73808e9ddb74deaa5dce663c44973d3702a94911b6e76e90a4a453f",
+    "tldw_chatbook/UI/Console_Modules/approval_feedback.py": "e9c0e8ff35398a121e4e1c8cf9c521be71077b268dea6950240132c1575efe71",
+    "tldw_chatbook/UI/Console_Modules/wiring.py": "638f53d25987501c9efc667c84f6cbc9eb1e42276245cb61283af4ec3edc78b8",
+    "tldw_chatbook/UI/Screens/chat_screen.py": "278cb82100ab562fcc3d9f09be0b402b81561b094e577b62f6f50d0effeb56c3",
+    "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": "04dc3900e3d122040dc6398326eb3715249e4b1a892ab071fe3419d59668f5a1",
+    "tldw_chatbook/Chat/console_chat_controller.py": "d1d8fbf1089356c44b00f0453420cb4baef63eadf7a634e9887d400c57067bc7",
+    "tldw_chatbook/Chat/console_interrupt_rounds.py": "e8c14ab21567f1146cfe0e0d9099965ceb6e3782b608b9c62a947a2cff7945a8",
+    "Tests/Chat/test_console_approval_feedback.py": "0536af05a763daee9f1993260363bab77399034f6191619b0f726bc664e00ee6",
+    "Tests/UI/test_approval_feedback.py": "ae2af45aa209612bda8c8586e8c441b0da520676f4e90da365206a0b32bd5b5f",
+    "Tests/UI/test_approval_review_repairs.py": "816408d63665b7c6c0eea72b25f139a6671a5c805b99c47351bd0f0aaba8f4eb",
+    "Tests/QA/test_project_chat_uat.py": "998ed3f5b13a49f0d625d7ff67e2cc1a9f16f68fc4da74310eda07dc4ea96674",
+    "Tests/Performance/test_ui_ready_module_census.py": "3a880e4e4cae606c02a0f002cbda2e4ab01db5c18466aceb6da0c5444a7fc948",
+    "Docs/superpowers/qa/2026-10-05-console-approval-ux/private_control.py": "90ffb0002fd88c38c944a98d5ee0d90f939a50774864d21b809775cc3ce68f10"
+  }
+}

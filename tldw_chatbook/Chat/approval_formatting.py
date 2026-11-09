@@ -14,7 +14,7 @@ from typing import Any, Mapping
 from tldw_chatbook.MCP.redaction import redact_mapping
 
 RATIONALE_DISPLAY_CAP = 240
-CONTEXT_LABEL = "Model context:"
+CONTEXT_LABEL = "Agent stated reason:"
 SUMMARY_LABEL = "Summary:"
 
 _ARGS_SUMMARY_LIMIT = 80

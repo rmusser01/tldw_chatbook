@@ -1,5 +1,11 @@
 # Lessons: verifying against the real thing
 
+## On Windows, bind the interpreter rather than the venv launcher; separate startup from fixture work (TASK-34569, 2026-11-08)
+
+**Incident.** A private Console approval probe treated the PID returned by the venv launcher as the Python interpreter PID. The interpreter was an actual child of that launcher. A guarded bootstrap with a held, authenticated interpreter handle and a nonce/PID acknowledgment reached normal closure. In the first App attempt with that ownership, workspace binding began with about 16 seconds left on a shared startup deadline and was censored there. Under a separate fixture phase, a later binding completed in about 27 seconds and exposed a real config identity refusal. Another launch hit its original startup deadline before the mounted-context marker, even though it had logged "on_mount completed in". That log is emitted before the end of the App's mount body.
+
+**What to do.** Authenticate the actual interpreter's image, creation time, ancestry and argv against the owned launcher, retain its handle, and acknowledge ownership before product imports. Start the fixture clock at the mounted-context boundary. Keep explicit phase deadlines and a single cleanup bound; report the last observed marker as censored evidence, without diagnosing the next call from its absence.
+
 ## A regression filed against a reviewed head can be gone from the merge: measure the merged code (TASK-33620.15.51, 2026-11-05)
 
 **Incident.** TASK-33620.15.51 was filed from TASK-33620.15.18's review. A first send's

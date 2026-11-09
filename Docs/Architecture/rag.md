@@ -11,6 +11,7 @@ This document describes the RAG stack: the shared RAG service (embeddings + vect
 | `RAG_Search/simplified/enhanced_rag_service.py` / `_v2.py` | `EnhancedRAGServiceV2` — the runtime class; adds reranking + experiment tracking |
 | `RAG_Search/simplified/rag_factory.py` | `create_rag_service(profile, config)` — must receive the full profile or reranking config is lost |
 | `RAG_Search/simplified/config.py` | `RAGConfig` (embedding/vector-store/chunking/search sections); hybrid constants |
+| `RAG_Search/state_paths.py` | Live Chroma/profile directory resolution without importing optional RAG/ML services; legacy getters delegate to this owner |
 | `RAG_Search/simplified/vector_store.py` | `VectorStore` Protocol, `ChromaVectorStore`, `InMemoryVectorStore`, `create_vector_store` |
 | `RAG_Search/simplified/embeddings_wrapper.py` + `Embeddings/Embeddings_Lib.py` | `EmbeddingsServiceWrapper` over `EmbeddingFactory` — exactly two providers: local HuggingFace transformers and OpenAI API |
 | `RAG_Search/chunking_service.py` | `ChunkingService` — the only door from RAG into `Chunking/` |
@@ -62,6 +63,8 @@ Families: cross-encoder (local, offline — loads with `local_files_only=True`; 
 - `[AppRAGSearchConfig.rag.<section>]` — `vector_store` (type/persist_directory, `auto` resolves chroma-with-deps else in-memory), `indexing` (`enabled` kill switch), `retriever` (`hybrid_alpha`), search/cache keys.
 - `[Embeddings]` — `embedding_provider` (default openai), `embedding_model` (default text-embedding-3-large; dataclass default for local profiles `mxbai-embed-large-v1`), `onnx_model_path`, `chunk_size`/`overlap` (defaults 400/100 words), api url/key.
 - Dataclass defaults: top_k 10, inline citations on, cache TTL 3600 s, `hybrid_alpha` 0.7, `rrf_k` 5, pool multiplier 2.
+
+Protected-file checks use the lightweight `RAG_Search/state_paths.py` accessors; they do not initialize the optional RAG runtime to locate its state. The existing getters in `simplified/config.py` and `config_profiles.py` retain their no-argument APIs and live configuration/user-data seams. Chroma priority remains `RAG_PERSIST_DIR` → current vector-store setting → legacy Chroma setting → user-data `chromadb`; profiles remain user-data `rag_profiles`. Resolution is live, with no new directory cache or change to sensitive-path memoization. [ADR-357](../../backlog/decisions/357-lightweight-rag-state-path-resolution.md) records the import boundary and compatibility requirements.
 
 ## Boundaries
 

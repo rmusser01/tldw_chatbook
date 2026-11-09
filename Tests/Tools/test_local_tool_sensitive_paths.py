@@ -413,7 +413,7 @@ def test_fs_glob_omits_denylisted_matches():
 # ---------------------------------------------------------------------------
 
 
-def _denylisted_candidates() -> list[tuple[str, Path]]:
+def _denylisted_candidates(owned_root: Path) -> list[tuple[str, Path]]:
     """Denylisted paths, each planted as a synthetic marker file.
 
     The third element says whether the file's own parent directory is
@@ -456,13 +456,17 @@ def _denylisted_candidates() -> list[tuple[str, Path]]:
         ),
         ("chachanotes db", app_config.get_chachanotes_db_path(), False),
     ]
+    assert all(
+        path.resolve().is_relative_to(owned_root.resolve())
+        for _label, path, _dotted in candidates
+    )
     for _label, path, _dotted in candidates:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("synthetic-19551\n")
     return candidates
 
 
-def test_both_file_tool_families_refuse_the_same_denylisted_paths(monkeypatch):
+def test_both_file_tool_families_refuse_the_same_denylisted_paths(monkeypatch, tmp_path):
     """Neither family may drift from the other on the denylist.
 
     ``fs_*`` (``Tools/local_tool_impls.py``, workspace-root confined) and
@@ -477,16 +481,24 @@ def test_both_file_tool_families_refuse_the_same_denylisted_paths(monkeypatch):
     path"): it passes ``allow_hidden=True``, and each root here is the
     file's own directory, so nothing else could refuse it.
     """
+    from Tests.Backup_Recovery.config_test_support import select_config_source
     from tldw_chatbook.Tools import file_operation_tools as fot
     from tldw_chatbook.Tools import workspace_file_roots as wfr
     from tldw_chatbook.Utils.sensitive_paths import is_sensitive_path
+
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
+    assert config_path.resolve().is_relative_to(tmp_path.resolve())
+    assert _home().is_relative_to(tmp_path.resolve())
+    monkeypatch.setenv("USERPROFILE", os.environ["HOME"])
+    monkeypatch.setenv("RAG_PERSIST_DIR", str(tmp_path / "chroma"))
+    select_config_source(monkeypatch, config_path)
 
     def _raise():
         raise RuntimeError("no workspace registry in this test")
 
     monkeypatch.setattr(wfr, "_registry_factory", _raise)
 
-    for label, path, dotted_parent in _denylisted_candidates():
+    for label, path, dotted_parent in _denylisted_candidates(tmp_path):
         # The shared oracle both families are supposed to consult.
         assert is_sensitive_path(path), label
 

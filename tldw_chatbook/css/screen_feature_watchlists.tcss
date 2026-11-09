@@ -302,6 +302,9 @@ $ds-portrait-idle-offset-px: 0;
 
 $ds-portrait-review-cols: 24;
 $ds-portrait-review-lines: 13;
+$ds-approval-decision-width: 28;
+
+$ds-approval-compact-body-height: 6;
 
 
 .tldw-agentic-split-preamble-end { }

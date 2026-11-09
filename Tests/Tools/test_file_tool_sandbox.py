@@ -286,6 +286,7 @@ def test_read_file_refuses_wal_sidecar_of_this_apps_own_sqlite_db(monkeypatch):
 
 def test_read_file_refuses_chroma_vector_store_file_even_when_sandbox_root_contains_it(
     monkeypatch,
+    tmp_path,
 ):
     """TASK-848 AC#1: ``chromadb/chroma.sqlite3`` -- plaintext chunks of the
     same conversations and notes ``ChaChaNotes.db`` protects -- must not
@@ -294,11 +295,17 @@ def test_read_file_refuses_chroma_vector_store_file_even_when_sandbox_root_conta
     existing-directory exemption); only the file directly inside it is
     refused.
     """
-    from tldw_chatbook.RAG_Search.simplified.config import (
-        default_chroma_persist_directory,
-    )
+    from Tests.Backup_Recovery.config_test_support import select_config_source
+    from tldw_chatbook.RAG_Search.simplified import config as rag_config
 
-    chroma_dir = default_chroma_persist_directory()
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
+    assert config_path.resolve().is_relative_to(tmp_path.resolve())
+    assert Path(os.environ["HOME"]).resolve().is_relative_to(tmp_path.resolve())
+    monkeypatch.setenv("RAG_PERSIST_DIR", str(tmp_path / "chroma"))
+    select_config_source(monkeypatch, config_path, vars(rag_config))
+
+    chroma_dir = rag_config.default_chroma_persist_directory()
+    assert chroma_dir.resolve().is_relative_to(tmp_path.resolve())
     chroma_dir.mkdir(parents=True, exist_ok=True)
     (chroma_dir / "chroma.sqlite3").write_text("plaintext vector chunk marker")
 

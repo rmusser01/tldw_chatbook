@@ -7499,31 +7499,9 @@ class ConsoleTranscript(VerticalScroll):
         action_signature: list[tuple] = []
         detail_signature: list[tuple] = []
         if presentation.call_id:
-            metadata = ""
-            if activity.raw_cli_presentation is not None:
-                from tldw_chatbook.Chat.console_raw_cli import format_raw_cli_metadata
+            from tldw_chatbook.Chat.console_tool_activity import format_tool_activity_detail
 
-                metadata = (
-                    format_raw_cli_metadata(activity.raw_cli_presentation) + "\n\n"
-                )
-            detail = (
-                f"Arguments\n{presentation.arguments or 'Not retained'}\n\n"
-                + metadata
-                + (
-                    "Live output\n"
-                    if presentation.status == "running"
-                    and presentation.result_preview is not None
-                    else "Result\n"
-                )
-                + (
-                    activity.tool_output_full
-                    or (
-                        (presentation.result_preview or "Completed — no output")
-                        if presentation.result_preview is not None
-                        else "Waiting for result…"
-                    )
-                )
-            )
+            detail = format_tool_activity_detail(activity, presentation)
             detail_widgets.append(
                 Static(
                     Content(detail),

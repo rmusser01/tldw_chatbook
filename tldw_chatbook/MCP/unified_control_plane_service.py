@@ -11,25 +11,26 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from loguru import logger
 
-from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
-from tldw_chatbook.runtime_policy.types import RuntimeSourceState
-
 from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
     ProducerLifetime,
     producer_call,
 )
+from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
+from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+from tldw_chatbook.Utils.filesystem_identity import DirectoryChain
 
 from .activation import action_guard, guarded, server_branch_guard
 from .execution_log import (
     KILL_SWITCH_DENIED_DECISION,
-    MCPExecutionLog,
     POLICY_DENIED_DECISION,
     UNRESOLVED_DENIED_DECISION,
+    MCPExecutionLog,
     build_record,
 )
 from .hub_tool_catalog import (
@@ -39,15 +40,6 @@ from .hub_tool_catalog import (
     schema_argument_names,
 )
 from .local_control_service import MCPGovernanceDenied
-from .tool_results import (
-    DispatchState,
-    MCPDispatchObservation,
-    MCPToolResult,
-    current_dispatch,
-    observe_dispatch,
-    project_tool_result,
-    transport_failure,
-)
 from .local_runtime_delegate import (
     PERMISSION_STATE_UNRESOLVED_CLAUSE,
     RAW_TOOL_CALL_REFUSED_MESSAGE,
@@ -61,11 +53,11 @@ from .permission_prompt_reducer import (
     build_permission_prompt_report,
 )
 from .permission_store import (
-    EffectiveToolState,
-    arg_rule_allows,
     HASH_FREE_SERVER_KEYS,
+    EffectiveToolState,
     MCPPermissionStore,
     ProfileMutationError,
+    arg_rule_allows,
     definition_hash,
     profile_lifecycle_disposition,
     profile_policy_digest,
@@ -74,9 +66,17 @@ from .permission_store import (
 )
 from .redaction import is_secret_key, redact_mapping
 from .server_target_store import ConfiguredServerTargetStore
+from .tool_results import (
+    DispatchState,
+    MCPDispatchObservation,
+    MCPToolResult,
+    current_dispatch,
+    observe_dispatch,
+    project_tool_result,
+    transport_failure,
+)
 from .unified_context_store import UnifiedMCPContextStore
 from .unified_control_models import ServerAccessContext, UnifiedMCPContext
-from tldw_chatbook.Utils.filesystem_identity import DirectoryChain
 
 if TYPE_CHECKING:
     from .hub_test_execution import (
@@ -310,6 +310,29 @@ def _resolve_tool_states_from_payload(
         )
         for tool in tools
     }
+
+
+def _publish_grant_application(*args, **kwargs) -> None:
+    """Load optional display observations only when a grant owner reports one."""
+    try:
+        from tldw_chatbook.Agents.approval_observation import publish_grant_application
+
+        publish_grant_application(*args, **kwargs)
+    except Exception:  # noqa: BLE001, S110 - display cannot change a grant outcome
+        pass
+
+
+def _observe_grant_errors(function):
+    """Preserve the writer's result or exception without importing observers at boot."""
+    @wraps(function)
+    def observed(*args, **kwargs):
+        try:
+            return function(*args, **kwargs)
+        except Exception:
+            _publish_grant_application("failed", error_code="writer_failed")
+            raise
+
+    return observed
 
 
 class UnifiedMCPControlPlaneService:
@@ -3450,6 +3473,7 @@ class UnifiedMCPControlPlaneService:
         """Construct, invoke, sanitize, and close one local provider in-worker."""
         from tldw_chatbook.Agents.agent_models import ToolResult
         from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
+
         from . import local_server_tools
         from .hub_test_execution import (
             LocalHubExecutionOutcome,
@@ -5259,6 +5283,7 @@ class UnifiedMCPControlPlaneService:
         except (TypeError, ValueError):
             return 0.0
 
+    @_observe_grant_errors
     def approve_for_session(
         self,
         server_key: str,
@@ -5268,58 +5293,21 @@ class UnifiedMCPControlPlaneService:
         expected_profile_digest: str | None = None,
         expected_revision: int | None = None,
     ) -> None:
-        """Grant a session-scoped approval for one profile/server/tool triple.
+        """Grant one session triple through the unchanged fenced session-grant owner."""
+        from .session_approval import apply_session_approval
 
-        Session approvals are held in memory only, for the lifetime of
-        this service instance (an app-run singleton) -- they are never
-        persisted to disk and do not survive an app restart or a fresh
-        instance of this service.
-
-        Args:
-            server_key: Prefixed server key the tool belongs to.
-            tool_name: Name of the tool being approved.
-            profile_id: Exact permission profile receiving the approval.
-            expected_profile_digest: Captured policy digest to revalidate
-                under the permission-store fence.
-            expected_revision: Captured imported-profile revision, when
-                applicable.
-        """
-        if expected_profile_digest is None and expected_revision is None:
-            # Compatibility seam for non-UI callers. Captured UI approvals
-            # always supply the digest (and imported revision) below.
-            with self._session_approvals_lock:
-                self._session_approvals.add((profile_id, server_key, tool_name))
-            return
-        store = self.permission_store
-        if store is None:
-            if expected_profile_digest is not None or expected_revision is not None:
-                raise ProfileMutationError("stale_profile")
-            with self._session_approvals_lock:
-                self._session_approvals.add((profile_id, server_key, tool_name))
-            return
-        with store.mutation_fence():
-            snapshot = store.read_snapshot_strict()
-            profile = snapshot.payload["profiles"].get(profile_id)
-            if not isinstance(profile, Mapping):
-                raise ProfileMutationError("stale_profile")
-            disposition = profile_lifecycle_disposition(profile)
-            if disposition in {"invalid", "tombstone"}:
-                raise ProfileMutationError("lifecycle_invalid")
-            digest = profile_policy_digest(profile)
-            if (
-                expected_profile_digest is not None
-                and digest != expected_profile_digest
-            ):
-                raise ProfileMutationError("stale_profile")
-            revision = (
-                profile["tool_pack_lifecycle"]["revision"]
-                if disposition == "imported"
-                else None
-            )
-            if expected_revision is not None and revision != expected_revision:
-                raise ProfileMutationError("stale_revision")
-            with self._session_approvals_lock:
-                self._session_approvals.add((profile_id, server_key, tool_name))
+        return apply_session_approval(
+            self,
+            server_key,
+            tool_name,
+            profile_id=profile_id,
+            expected_profile_digest=expected_profile_digest,
+            expected_revision=expected_revision,
+            publish=_publish_grant_application,
+            lifecycle=profile_lifecycle_disposition,
+            policy_digest=profile_policy_digest,
+            mutation_error=ProfileMutationError,
+        )
 
     def is_session_approved(
         self,
@@ -5683,6 +5671,7 @@ class UnifiedMCPControlPlaneService:
                 type(exc).__name__,
             )
 
+    @_observe_grant_errors
     def set_tool_state(
         self,
         server_key: str,
@@ -5723,6 +5712,7 @@ class UnifiedMCPControlPlaneService:
         """
         store = self.permission_store
         if store is None:
+            _publish_grant_application("not_applied", error_code="writer_unavailable")
             return
         hash_value: str | None = None
         if ui_state == "allow" and server_key not in HASH_FREE_SERVER_KEYS:
@@ -5741,6 +5731,8 @@ class UnifiedMCPControlPlaneService:
             expected_revision=expected_revision,
             expected_policy_chain_digest=expected_policy_chain_digest,
         )
+        if ui_state == "allow":
+            _publish_grant_application("applied", actual_scope="always_allow")
 
     def set_server_default(
         self,
@@ -5792,6 +5784,7 @@ class UnifiedMCPControlPlaneService:
             return
         store.set_kill_switch(value)
 
+    @_observe_grant_errors
     def add_tool_arg_rule(
         self,
         server_key: str,
@@ -5811,20 +5804,18 @@ class UnifiedMCPControlPlaneService:
                 fingerprint feeds the rug-pull guard (AC#4).
             profile_id: Permission profile to write.
         """
-        store = self.permission_store
-        if store is None:
-            return
-        hash_value: str | None = None
-        if server_key not in HASH_FREE_SERVER_KEYS:
-            if tool is None:
-                raise ValueError("tool is required to add an arg rule")
-            hash_value = definition_hash(tool.description, tool.input_schema)
-        store.add_tool_arg_rule(
+        from .arg_rule_approval import apply_exact_arg_rule
+
+        return apply_exact_arg_rule(
+            self.permission_store,
             server_key,
             tool_name,
             args=args,
-            definition_hash=hash_value,
+            tool=tool,
             profile_id=profile_id,
+            publish=_publish_grant_application,
+            hash_definition=definition_hash,
+            hash_free_server_keys=HASH_FREE_SERVER_KEYS,
         )
 
     def arg_rule_allows_call(

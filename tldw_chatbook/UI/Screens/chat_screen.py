@@ -187,6 +187,7 @@ from ..Console_Modules import raw_cli as raw_cli_ui
 from ..Console_Modules import composer_run_controls as run_controls
 from ..Console_Modules import wiring
 from ..Console_Modules import config_sync  # Resident at compose (context_spend).
+from ...Canvas.config_policy import _end_canvas_poll_handoffs
 from ..Console_Modules.session import (
     _has_selected_text,
     _is_empty_select_value,
@@ -4175,7 +4176,7 @@ class ChatScreen(BaseAppScreen):
             transcript_style=self._console_transcript_style(),
         )
 
-    @spend.retry_after_config_rebuild
+    @spend.retry_console_identity_after_config_rebuild
     def _sync_console_identity_surfaces(self) -> None:
         """Refresh mounted surfaces derived from active chat presentation."""
         self._sync_console_chat_core_state()
@@ -15858,6 +15859,7 @@ class ChatScreen(BaseAppScreen):
         self._console_runtime_attachment_retired = True
         self._pending_resume_local_conversation_id = None
         self._pending_character_conversation_target = None
+        _end_canvas_poll_handoffs(self)
         runtime.detach_view(self, generation)
         dismiss_project_decisions = getattr(
             getattr(self, "_session", None),
@@ -17668,6 +17670,7 @@ class ChatScreen(BaseAppScreen):
     def _console_sync_maintenance_close_admission(self) -> None:
         """Defer new UI sync passes while an admitted pass finishes naturally."""
         self._console_sync_maintenance_paused = True
+        _end_canvas_poll_handoffs(self)
 
     async def _console_sync_maintenance_drain(self, deadline: float) -> bool:
         """Observe actual sync completion without cancelling its publication."""
@@ -20903,26 +20906,7 @@ class ChatScreen(BaseAppScreen):
         self._hands_free.on_console_auto_speak_retry_requested(event)
 
     def _run_coalesced_control_bar_sync(self) -> None:
-        """Execute one coalesced control-bar sync (task-3010)."""
-        self._console_control_bar_sync_scheduled = False
-        if _console_screen_is_torn_down(self):
-            self._console_control_bar_replay_whole_sync = False
-            return
-        if getattr(self, "_console_control_bar_replay_whole_sync", False):
-            if self._console_sync_in_progress or getattr(
-                self, "_console_sync_maintenance_paused", False
-            ):
-                self._request_console_control_bar_sync(delayed=True)
-                return
-            self._console_control_bar_replay_whole_sync = False
-            self._console_sync_requested = False
-            self.run_worker(
-                self._sync_native_console_chat_ui(),
-                exclusive=True,
-                group="console-sync",
-            )
-        else:
-            self._sync_console_control_bar()
+        config_sync.run_coalesced_control_bar_sync(self, _console_screen_is_torn_down)
 
     def _sync_console_control_bar(
         self,
@@ -22816,6 +22800,7 @@ class ChatScreen(BaseAppScreen):
           leave running/installed across a suspend.
         """
         self._console_attach_visit_generation += 1
+        _end_canvas_poll_handoffs(self)
         note_suspend_style_inputs(self)  # TASK-38950
         self._console_discovery_rearm_pending = True
         if not self._hooks.review_open:
@@ -23873,24 +23858,15 @@ class ChatScreen(BaseAppScreen):
             lambda: send_os_notification(kind, session_display, settings=settings)
         )
 
+    @on(ChatApprovalCard.ApprovalFeedbackChanged)
     @on(ChatApprovalCard.ApprovalDecided)
     def handle_console_approval_decided(
         self, event: ChatApprovalCard.ApprovalDecided
     ) -> None:
-        """Forward the user's batch decisions to the controller's waiting worker thread.
+        """Route card facts and decisions using their captured owning identity."""
+        from ..Console_Modules.wiring import handle_approval_card_event
 
-        Task 9 fix round 1: forwards ``event.round_id`` too -- this message
-        is delivered asynchronously (it can arrive after a `switch_session`
-        already moved the active session elsewhere), so
-        `resolve_pending_approval` must resolve the round the card was
-        actually showing, never "whichever session is active right now".
-        """
-        event.stop()
-        controller = self._console_chat_controller
-        if controller is not None:
-            controller.resolve_pending_approval(
-                event.decisions, round_id=event.round_id
-            )
+        handle_approval_card_event(self, event)
 
     @on(SkillInstallConfirmCard.InstallDecided)
     def handle_console_skill_install_decided(self, event: Any) -> None:

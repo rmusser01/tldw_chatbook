@@ -1,0 +1,115 @@
+{
+  "scope": "Speech-route import and real PCM meter repair; not App performance qualification",
+  "base_revision": "c1833ae9e9fdabb38a976151ab3c9a79c280b245",
+  "source_sha256": {
+    "tldw_chatbook/Audio/dictation_service_lazy.py": "203010be22ccef4a1df6eae3d3ede4eb49e01b97ddb9b51c90df9617c75774e9",
+    "Tests/Audio/test_dictation_meter_import_contract.py": "935150881087d4eaea7dd4e3e920bb4e5319d7cd86c2019eceafd189e24124a0",
+    "Docs/Architecture/speech.md": "be27eacd5621c1e2bcdc7faecc3ec2cc65939331338ae655cdcbb209b5bba865",
+    "Docs/superpowers/qa/2026-10-05-console-approval-ux/private_control.py": "aaf29e4890e7a720f4a7cbe967c2ff00cb0fd9e444df9b9e1a8d3b19e172e66d"
+  },
+  "original_audio_sha256": "3aec374eb0ef139bb3d8d6770a7126ba1c1c12775ffcd33bc33de9e3d7d8979a",
+  "exact_original_AST_transform": {
+    "module_numpy_import": 1,
+    "meter_numpy_branch": 1
+  },
+  "all_other_semantics_and_UTF8_strings_preserved": true,
+  "tests": {
+    "new_focused_passed": 12,
+    "affected_audio_passed": 45,
+    "affected_constructor_failures": 2,
+    "exact_dev8b_control": "Same capture-release 2 pass / 2 raw_source_selection_changed failures before meter assertions",
+    "preimport_payload_passed": 1,
+    "Windows_app_import": "688 fails strict <688 on exact dev8b and feature; unchanged limit and sole Utils.windows_files residency delta"
+  },
+  "static": {
+    "original": {
+      "exit_code": 1,
+      "diagnostics": [
+        {
+          "code": "E402",
+          "message": "Module level import not at top of file",
+          "row": 61
+        }
+      ]
+    },
+    "candidate": {
+      "exit_code": 1,
+      "diagnostics": [
+        {
+          "code": "E402",
+          "message": "Module level import not at top of file",
+          "row": 49
+        }
+      ]
+    },
+    "new_test": {
+      "exit_code": 0,
+      "diagnostics": []
+    }
+  },
+  "new_test_format_check_exit": 0,
+  "launcher": {
+    "old_count": 72,
+    "new_count": 79,
+    "old_order_preserved": true,
+    "all_other_AST_identical": true,
+    "additions": [
+      "Tests/Audio/test_dictation_speech_resumed.py",
+      "Tests/Audio/test_dictation_recorder_factory.py",
+      "Tests/Audio/test_dictation_privacy_allowlist.py",
+      "Tests/Audio/test_dictation_capture_release.py",
+      "Tests/Audio/test_dictation_stop_join.py",
+      "Tests/Performance/test_screen_preimport_payload_budget.py::test_preimport_pass_payload_stays_within_budget",
+      "Tests/Audio/test_dictation_meter_import_contract.py"
+    ],
+    "73_target_intermediate_sha_root_receipt": "3c81bbaae59489f9d0f3efc296d1a21827d1627677d1abf5c86619c8b28639f6"
+  },
+  "CI": {
+    "prior_fast_targets": 167,
+    "new_fast_targets": 168,
+    "original_ordered_prefix_preserved": true,
+    "UI_census_members_unchanged": 1816,
+    "critical_owner_missing_RED_then_passed": 1,
+    "queue_contracts_passed": 119,
+    "no_limits_flags_or_census_relaxation": true
+  },
+  "actual_capture_stack": {
+    "revision": "c1833ae9e9fdabb38a976151ab3c9a79c280b245",
+    "summary_sha256": "915a7f11961a01f0801eb857fd0b03699843a6d61d56e7506fbd3b009f016ff8",
+    "one_shot_stack_sha256": "254b2505f9dfe8d8bd54d840f122e84db212db80f773f5e4a68aa030354b8bdd",
+    "observation": "Concurrent speculative Speech preimport loading NumPy, UI Thread.start wait and idle original workspace worker; one snapshot does not prove the entire stall cause"
+  },
+  "original_proof_sha256": "565d98dc9d7ba78460f24b7f44bf0bdb243aeb7dc8fbe87ea3157dfd854b4eae",
+  "retained_test_receipt_sha256": {
+    "red-import.stdout.txt": "e1af2abf5b8dbc0aaf99a7e438d827fb99906d406675bb510385443d6e64a38a",
+    "red-empty-unit.stdout.txt": "3598be63550ee9fa07080e6a9a0abebbab1281926fedb8ca6b334bfed9a27297",
+    "green-final-query-aware.stdout.txt": "36301c65e4c7351d6336b22c1b3b69c512b4ae75a4daa19e6547c08187c3640f",
+    "green-final-query-aware.stderr.txt": "fa758a0bcf078bfb87fe52ae49f66e1aeeb505c8a661a616c33335ee5584bf51",
+    "green-final-query-aware.exit.json": "75876e0e3f497cad271143ba85bd4f36569cd81195509043f860dab14265b716",
+    "affected-results.json": "fa177b81cc0f8413e03d9888cadd4803adb8def28ae92a79154fb34d0ef7b8bd",
+    "baseline-capture-release.stdout.txt": "bf5c52f57cb6c20cfa1f25ca0d64bb512ee5da5e3467c7c08a83805df766c213",
+    "capture-release-baseline-byte-proof.json": "b56d10056b36062c07ab990eab9631e37eeb2ab55edc3d9958a3c4e41d0611d0",
+    "candidate-source-static-proof.json": "ff72f466f294f1b2f9a03b3e14068c20bc5a1162ef4246c377dce7ba793c5d8a",
+    "audio-meter-product.initial-delta-with-encoding-issue.txt": "bf8299ab37ea4092003af6eb5305f02c6ecc8d0a91aecd91a84de8e23e03fd8c"
+  },
+  "import_observations": [
+    {
+      "receipt": "final-import-observation-module.json",
+      "entry": "module",
+      "numpy_attempts": [],
+      "refused_ipv6_probe_count": 0,
+      "unexpected_network_attempts": []
+    },
+    {
+      "receipt": "final-import-observation-speech_route.json",
+      "entry": "speech_route",
+      "numpy_attempts": [],
+      "refused_ipv6_probe_count": 1,
+      "unexpected_network_attempts": []
+    }
+  ],
+  "independent_source_review": "CLEAR",
+  "new_source_App_or_hardware_runs": 0,
+  "qualified_timing_samples": 0,
+  "timing_qualified": false
+}

@@ -48,7 +48,7 @@ import time
 import weakref
 from collections.abc import Callable, Mapping
 from contextvars import ContextVar, copy_context
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field as dataclass_field, replace
 from types import FunctionType, MethodType
 from typing import TYPE_CHECKING, Any
 
@@ -103,6 +103,7 @@ from .tool_refusals import TOOL_KILL_SWITCH_REFUSAL
 # so the module stays off the UI-ready census path.
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
+    from tldw_chatbook.Chat.approval_presentation import ApprovalAuthority
     from tldw_chatbook.MCP.console_tool_preparation import ConsoleToolPreparation
 
 @dataclass(frozen=True)
@@ -395,6 +396,14 @@ class MCPPendingCall:
     #: ADR-332: the tool definition's description, for the external
     #: summarizer prompt; "" when the owner had none at hand.
     description: str = ""
+    #: Ephemeral display facts only; never consumed by a gate or writer.
+    presentation_authority: ApprovalAuthority | None = None
+    requires_individual_review: bool = False
+    #: Original owner inputs, separate from safe display summaries.
+    #: Display-only: excluded from repr/equality and all wire/persistence projections.
+    captured_arguments: Mapping[str, object] | None = dataclass_field(default=None, repr=False, compare=False)
+    # Producer records an absent original invocation ID; never stamp authority.
+    legacy_observation_key: bool = dataclass_field(default=False, compare=False, repr=False)
 
 
 def _has_non_text_content(value: Any) -> bool:
@@ -1081,6 +1090,9 @@ class MCPToolProvider:
                 (`ConsoleChatController.request_mcp_approvals`). Falsy
                 clears this run's slice without setting anything new.
         """
+        from .approval_observation import remember_approval_contexts
+
+        remember_approval_contexts(self, run_id, decisions)
         with self._decisions_lock:
             self._stamped_decisions = {
                 key: value
@@ -1214,22 +1226,25 @@ class MCPToolProvider:
                 normally the PARENT's, whose verdicts a nested run must
                 not disturb.
         """
-        with self._decisions_lock:
-            snapshot = {
-                key: value
-                for key, value in self._stamped_decisions.items()
-                if key[0] == run_id
-            }
-        try:
-            yield
-        finally:
+        from .approval_observation import provider_observation_scope
+
+        with provider_observation_scope(self, run_id, clear=False):
             with self._decisions_lock:
-                self._stamped_decisions = {
+                snapshot = {
                     key: value
                     for key, value in self._stamped_decisions.items()
-                    if key[0] != run_id
+                    if key[0] == run_id
                 }
-                self._stamped_decisions.update(snapshot)
+            try:
+                yield
+            finally:
+                with self._decisions_lock:
+                    self._stamped_decisions = {
+                        key: value
+                        for key, value in self._stamped_decisions.items()
+                        if key[0] != run_id
+                    }
+                    self._stamped_decisions.update(snapshot)
 
     # -- gate resolution for the batch-review hook (worker thread) --------
 
@@ -1289,8 +1304,9 @@ class MCPToolProvider:
             # one -- a tool set to "ask" in the named profile but "allow" in
             # default must surface its ask here, not fall through to a silent
             # default-profile execution at invoke.
+            captured_profile_kwargs = self._profile_kwargs()
             state = self._persona_floor(
-                self._service.gate_tool_test(tool, **self._profile_kwargs()), tool
+                self._service.gate_tool_test(tool, **captured_profile_kwargs), tool
             )
         except Exception as exc:  # noqa: BLE001 -- fail closed to "let invoke handle it"
             logger.warning(
@@ -1305,8 +1321,11 @@ class MCPToolProvider:
             # TASK-26012: a stored argument-scoped allow quiets exactly this
             # call; non-matching arguments for the same tool still ask.
             return None
+        from tldw_chatbook.Chat.approval_presentation import profile_authority
+
         return MCPPendingCall(
             llm_name=llm_name,
+            presentation_authority=profile_authority("mcp", captured_profile_kwargs.get("profile_id", "default"), tool.server_label, "tool_name"),
             server_key=tool.server_key,
             tool_name=tool.name,
             server_label=tool.server_label,
@@ -1530,8 +1549,9 @@ class MCPToolProvider:
             # ACTIVE workspace profile, so a named-profile "ask" beats a
             # default-profile "allow" here too (an approval round, never a
             # silent execution).
+            captured_profile_kwargs = self._profile_kwargs()
             state = self._persona_floor(
-                self._service.gate_tool_test(tool, **self._profile_kwargs()), tool
+                self._service.gate_tool_test(tool, **captured_profile_kwargs), tool
             )
         except Exception as exc:  # noqa: BLE001 -- invoke() must never raise
             return ToolResult(
@@ -1575,8 +1595,16 @@ class MCPToolProvider:
             self._record_decision_safe(tool, decision=POLICY_DENIED_DECISION)
             return ToolResult.blocked(DENY_REFUSAL)
 
+        from tldw_chatbook.Chat.approval_presentation import profile_authority
+
         pending = MCPPendingCall(
             llm_name=tool_id,
+            presentation_authority=profile_authority(
+                "mcp",
+                captured_profile_kwargs.get("profile_id", "default"),
+                tool.server_label,
+                "tool_name",
+            ),
             server_key=tool.server_key,
             tool_name=tool.name,
             server_label=tool.server_label,
@@ -1603,6 +1631,9 @@ class MCPToolProvider:
         # is what used to blame the user (or the permissions) for a refusal
         # no one made. `_apply_verdict`'s fall-through maps it to
         # `UNRESOLVED_REFUSAL`; the fail-closed posture is unchanged.
+        from .approval_observation import remember_approval_contexts
+
+        remember_approval_contexts(self, current_run_id(), decisions or {})
         verdict = (decisions or {}).get(tool_id, "unresolved")
         result = self._apply_verdict(
             verdict,
@@ -1841,9 +1872,28 @@ class MCPToolProvider:
     def _safe_side_effect(
         self, fn: Callable[[], None], tool: HubTool, *, what: str
     ) -> None:
+        from .approval_observation import (
+            approval_contexts_scope,
+            provider_approval_contexts,
+            publish_grant_application,
+        )
+
+        grant_writer = what in {
+            "approve_for_session", "set_tool_state", "add_tool_arg_rule"
+        }
+        contexts = provider_approval_contexts(self, tool.name) if grant_writer else ()
         try:
-            fn()
-        except Exception as exc:  # noqa: BLE001 -- a persistence failure must not block execution
+            with approval_contexts_scope(contexts):
+                if grant_writer and not callable(getattr(self._service, what, None)):
+                    publish_grant_application(
+                        "not_applied", error_code="writer_unavailable"
+                    )
+                else:
+                    fn()
+        except Exception as exc:  # noqa: BLE001 -- preserve best-effort side effects
+            if grant_writer:
+                with approval_contexts_scope(contexts):
+                    publish_grant_application("failed", error_code="writer_failed")
             logger.warning(
                 f"MCPToolProvider: {what} failed for {tool.server_key}/{tool.name}: {exc}"
             )

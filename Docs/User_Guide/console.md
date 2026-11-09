@@ -258,8 +258,8 @@ have on-screen routes:
 
 - Sending uses the composer's **Send** button; the composer **Menu**
   gathers the actions desktop reaches through hotkeys.
-- Tool approvals are fully tappable (per-call buttons, Approve all /
-  Deny all / Submit).
+- Tool approvals are fully tappable: **Allow once**, **Deny**, **More options**
+  and **Details**, with counted batch actions or staged **Apply**.
 - The header's **Hands-free** switch is the touch route into (and
   out of) the voice loop.
 - The command palette (`Ctrl+P` — on-screen keyboards can usually

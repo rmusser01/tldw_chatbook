@@ -58,7 +58,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -96,6 +96,7 @@ from tldw_chatbook.MCP.unified_control_plane_service import (
     UnifiedMCPControlPlaneService,
 )
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+from tldw_chatbook.Web_Server.served_relay_publisher import _relay_calls
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +164,75 @@ def _wire_safe(value: Any) -> Any:
     return value
 
 
+def _approval_wire_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep the mobile wire fields and the relay's captured-choice narrowing.
+
+    The owner retains the internal view and presentation state. Neither is
+    a wire object; matching arguments still come from the original calls.
+    """
+    raw_calls = payload.get("calls")
+    rows = (
+        [row for row in raw_calls if isinstance(row, Mapping)]
+        if isinstance(raw_calls, list)
+        else []
+    )
+    calls = _relay_calls(raw_calls, payload.get("view"))
+    for row, call in zip(rows, calls):
+        call.update(
+            (key, row[key])
+            for key in (
+                "server_key",
+                "tool_name",
+                "server_label",
+                "reason",
+                "effects",
+                "execution_policy",
+                "path_precheck_failed",
+                "full_command",
+                "warning",
+                "scope_notice",
+                "rationale",
+                "description",
+            )
+            if key in row
+        )
+    return {
+        **{
+            key: payload[key]
+            for key in (
+                "round_id",
+                "session_id",
+                "run_id",
+                "timeout_seconds",
+                "deadline_monotonic",
+                "summary",
+                "surface",
+                "child_id",
+            )
+            if key in payload
+        },
+        "calls": calls,
+    }
+
+
+def _matching_inputs_are_offered(
+    calls: Iterable[Mapping[str, Any]], keys: set[str]
+) -> bool:
+    """Check the exact offered verdict key, including shared tool-name rows."""
+    found = set()
+    for call in calls:
+        if not isinstance(call, Mapping):
+            continue
+        key = call.get("call_id") or call.get("llm_name")
+        if not isinstance(key, str) or not key or key not in keys:
+            continue
+        options = call.get("options")
+        if not isinstance(options, (list, tuple)) or "allow_matching" not in options:
+            return False
+        found.add(key)
+    return found == keys
+
+
 class MobileSendRefused(RuntimeError):
     """The engine refused a mobile send before a run started."""
 
@@ -196,7 +266,9 @@ class MobileEvent:
         return {
             "type": self.type,
             "session_id": self.session_id,
-            "payload": self.payload,
+            "payload": _approval_wire_payload(self.payload)
+            if self.type == "approval_requested"
+            else self.payload,
             "seq": self.seq,
         }
 
@@ -1226,7 +1298,7 @@ class MobileChatService:
         mobile first, then desktop (insertion order).
         """
         mobile = [
-            {**payload, "surface": "mobile"}
+            {**_approval_wire_payload(payload), "surface": "mobile"}
             for payload in self._state.pending_approvals.values()
         ]
         desktop = [dict(entry) for entry in self._desktop_approvals.values()]
@@ -1245,7 +1317,7 @@ class MobileChatService:
             round_id: The captured round's id.
             decisions: Verdict-key (``call_id`` or ``llm_name``) to
                 decision string (``approve_once`` / ``approve_session`` /
-                ``always_allow`` / ``deny``).
+                ``allow_matching`` / ``always_allow`` / ``deny``).
             child_id: Owning desktop child, for cross-child round_id
                 collisions (round ids are child-local). An explicit id
                 addresses exactly that child's round; without one, a
@@ -1256,19 +1328,34 @@ class MobileChatService:
 
         Returns:
             True when the round was known and the decision was delivered;
-            False for an unknown round (nothing was resolved), and — for
+            False for an unknown round or a matching-input choice absent
+            from the captured offer, and — for
             desktop rounds — when the owning child is dead, unknown, or
             failed to acknowledge within the routing budget (the round is
             then dropped from the list; the child's own timeout/deny
             semantics govern, ADR-236).
         """
+        matching_keys = {
+            key for key, decision in decisions.items() if decision == "allow_matching"
+        }
         key = self._desktop_round_key(round_id, child_id)
         if key is not None:
+            if matching_keys and not _matching_inputs_are_offered(
+                self._desktop_approvals[key].get("calls") or (), matching_keys
+            ):
+                return False
             return await self._decide_desktop_round(key, decisions)
-        if round_id not in self._state.pending_approvals:
+        if child_id is not None:
+            return False
+        pending = self._state.pending_approvals.get(round_id)
+        if pending is None:
             logger.info(
                 "mobile approval decision for unknown round_id=%s", round_id
             )
+            return False
+        if matching_keys and not _matching_inputs_are_offered(
+            _relay_calls(pending.get("calls"), pending.get("view")), matching_keys
+        ):
             return False
         engine = self._require_engine()
         engine.controller.resolve_pending_approval(
@@ -1286,8 +1373,8 @@ class MobileChatService:
     ) -> tuple[str, str] | None:
         """Locate the desktop entry one decision addresses (loop thread).
 
-        ``None`` means no desktop round matches — the caller falls through
-        to the mobile-round surface.
+        An absent explicit child match stays on the desktop surface.
+        Only an unaddressed decision can fall through to the mobile round.
         """
         if child_id is not None:
             key = (child_id, round_id)

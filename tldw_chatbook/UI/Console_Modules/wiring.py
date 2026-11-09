@@ -1365,6 +1365,7 @@ def build_console_controllers(
     Returns:
         None. The controllers are reachable as attributes of `screen`.
     """
+    screen._approval_feedback = None
     screen._context_spend = ConsoleContextSpendController(
         screen,
         ensure_chat_store=lambda: screen._ensure_console_chat_store(),
@@ -3732,6 +3733,7 @@ def console_view_hooks(self) -> dict[str, Any]:
     Returns:
         dict[str, Any]: slot name -> this view's value.
     """
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
     from tldw_chatbook.UI.Console_Modules.response_rules import refresh_rule_controls
 
     skill = getattr(self, "_skill", None)
@@ -3750,6 +3752,7 @@ def console_view_hooks(self) -> dict[str, Any]:
         # detected; native runs get this screen's callable back
         # untouched, identity included.
         "set_pending_approval": self._served_relay_routed_pending_approval(),
+        "approval_feedback_changed": lambda session_id, run_id: self.post_message(ChatApprovalCard.ApprovalFeedbackChanged(session_id, run_id)),
         # ADR-332: UI-thread bridge to patch a mounted approval card's
         # advisory summary line in place (never re-runs set_batch).
         "update_pending_approval_summary": self._update_console_approval_summary,
@@ -3813,3 +3816,37 @@ def console_view_hooks(self) -> dict[str, Any]:
             self._session._dismiss_project_instruction_decision_projection
         ),
     }
+
+
+def handle_approval_card_event(screen, event) -> None:
+    """Route feedback to its owner and decisions to the card's captured round.
+
+    Messages can arrive after the active chat changes. Resolve the round
+    shown by the originating card, never whichever chat is active now.
+    """
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+
+    event.stop()
+    if isinstance(event, ChatApprovalCard.ApprovalFeedbackChanged):
+        _refresh_approval_feedback(screen, event.session_id, event.run_id)
+        return
+    controller = screen._console_chat_controller
+    if controller is not None:
+        controller.resolve_pending_approval(event.decisions, round_id=event.round_id)
+
+
+def _refresh_approval_feedback(screen, session_id: str, run_id: str) -> None:
+    """Attach the optional display collaborator only after an approval emits facts."""
+    if screen._approval_feedback is None:
+        from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+
+        from .approval_feedback import ApprovalFeedbackController
+
+        screen._approval_feedback = ApprovalFeedbackController(
+            read_snapshot=lambda session_id, run_id: screen._ensure_console_chat_controller().approval_feedback.snapshot(session_id, run_id),
+            active_session=lambda: screen._ensure_console_chat_controller().store.active_session_id or "",
+            card_identity=lambda: screen.query_one(ChatApprovalCard).feedback_identity() if screen.query(ChatApprovalCard) else None,
+            paint_card=lambda text: screen.query_one(ChatApprovalCard).paint_feedback(text),
+            refresh_status=lambda: screen._sync_console_mode_bar(),
+        )
+    screen._approval_feedback.refresh(session_id, run_id)

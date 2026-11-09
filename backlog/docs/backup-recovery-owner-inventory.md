@@ -868,6 +868,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner.py | get_edge_cookies | open | 1 | unsupported | external |
 | tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner.py | get_firefox_cookies | connect_private_sqlite | 1 | external_input | external |
 | tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner.py | get_safari_cookies | open | 1 | unsupported | external |
+| tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py | ChatApprovalCard._open_details | open | 1 | memory | approval-details-page selection; no-independent-file |
 | tldw_chatbook/Widgets/Console/console_conversation_inspector.py | ConsoleConversationInspector._save_json._write_export._write | mkdir | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/Console/console_conversation_inspector.py | ConsoleConversationInspector._save_json._write_export._write | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/Console/console_transcript.py | ConsoleMarkdownMessage._open_link._open_and_report | open | 1 | unsupported | miscellaneous |

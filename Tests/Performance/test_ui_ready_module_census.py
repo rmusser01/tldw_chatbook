@@ -330,6 +330,13 @@ ABSENT_AT_READY_MODULES = (
     "tldw_chatbook.Terminal.session_manager",
     # ADR-332: the external-summary LLM graph is approval-time work.
     "tldw_chatbook.Chat.permission_summary_service",
+    # Approval data and disclosures are first-request work, not first-paint work.
+    "tldw_chatbook.Agents.approval_observation",
+    "tldw_chatbook.Chat.approval_presentation",
+    "tldw_chatbook.Chat.console_approval_feedback",
+    "tldw_chatbook.UI.Console_Modules.approval_controls",
+    "tldw_chatbook.UI.Console_Modules.approval_details",
+    "tldw_chatbook.UI.Console_Modules.approval_feedback",
     # TASK-21351: durable receipt coordination is first switcher/settlement
     # work. The bridge keeps a lazy proxy so the implementation module does
     # not spend the first-interactive-frame budget.
@@ -486,10 +493,13 @@ def _boot_and_census(tmp_path: Path) -> list[str]:
         "XDG_CONFIG_HOME": str(config_dir),
         "TLDW_CONFIG_PATH": str(config_dir / "config.toml"),
         "TLDW_TEST_MODE": "1",
+        "PYTHONIOENCODING": "utf-8",
         # Pin the whole-registry pre-importer OFF: its daemon thread would
         # race the census nondeterministically (see module docstring).
         "TLDW_SCREEN_PREIMPORT": "0",
-        "PYTHONPATH": str(REPO_ROOT),
+        "PYTHONPATH": os.pathsep.join(
+            (str(REPO_ROOT), str(REPO_ROOT / "packages/tldw_profile_core/src"))
+        ),
     }
     env.pop("PYTEST_CURRENT_TEST", None)
 
@@ -498,6 +508,7 @@ def _boot_and_census(tmp_path: Path) -> list[str]:
         cwd=REPO_ROOT,
         env=env,
         text=True,
+        encoding="utf-8",
         capture_output=True,
         check=False,
         timeout=300,
@@ -512,6 +523,7 @@ def _boot_and_census(tmp_path: Path) -> list[str]:
         cwd=REPO_ROOT,
         env=env,
         text=True,
+        encoding="utf-8",
         capture_output=True,
         check=False,
         timeout=300,
@@ -703,6 +715,10 @@ print("FIRST_USE_IDENTITY_OK")
             "XDG_CONFIG_HOME": str(profile / "config"),
             "TLDW_CONFIG_PATH": str(profile / "config.toml"),
             "TLDW_TEST_MODE": "1",
+            "PYTHONPATH": os.pathsep.join(
+                (str(REPO_ROOT), str(REPO_ROOT / "packages/tldw_profile_core/src"))
+            ),
+            "PYTHONIOENCODING": "utf-8",
             "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
             "HF_HUB_OFFLINE": "1",
             "TRANSFORMERS_OFFLINE": "1",
@@ -713,6 +729,7 @@ print("FIRST_USE_IDENTITY_OK")
         cwd=REPO_ROOT,
         env=env,
         text=True,
+        encoding="utf-8",
         capture_output=True,
         timeout=60,
         check=False,

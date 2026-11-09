@@ -1,0 +1,119 @@
+{
+  "scope": "Only actual current-feature single120x40/closedInspect/textual-dark/8x16. Offline pinned references; live hashes must be recomputed.",
+  "font": [
+    8,
+    16
+  ],
+  "theme": "textual-dark",
+  "shape": "single",
+  "size": [
+    120,
+    40
+  ],
+  "atlas": {
+    "495740ff34c9dfa8657628ea8f2d4dfcf2003c8cb8a117d5abb902498f5c0b85": "e",
+    "bfb8c3f6df222ec0809d69944cba3ea839537f7df5fe6be7e6f9925aa96b6b36": "4",
+    "7a80143a9b1b397f7ee363dac878898a8a4fe845c4f06ec50748af0052b9f08a": "b",
+    "73d0a41ef61b6720b3b5561f4c1d13d688c665ed694fccb1894dd9a6acd5d12a": "9",
+    "aed324e453e88d58f201802e2bac418922483724526e80fecf58b9dc6102669e": "f",
+    "58f42c6ce8293ad687af107f30b8fb1853eeec789c93e37d0d6904edaf8cb5c3": "d",
+    "ab98442ff9ecd3e51af8e028ae3888a3a7324b1f9441abe63f767e264262f746": "3",
+    "7d02a114320ddfa7ff7ff6eb1c03a8259d8d14a910991dd7ea8d952ab4f2918e": "8",
+    "2aac1f98fc47b5cb9220d600ca5f629344918fd24dacd9b335eafa205023f9d1": "7",
+    "a89b1a9fa03f8a58339f97f01f5d2e7b41b17b5ed128599343b7c9a87edd8766": "5",
+    "12d3b082709bcb74d3558f1fa3f884ece7c94d7dacfa93259951697284872c84": "2",
+    "b551c8bb98f81a02ddca5c94aea91a60dfdc18cce21be179fbe92e41162e65ca": "a",
+    "85563095d6a8608cd0fb23c84fdfe29276860fd67dcdcb0eca32fcdda4028122": "6",
+    "e9a4d8c955d3b15980e654e079bc2af25817c1d5915c6f1c2f8dbaeac298ee4c": "1",
+    "981f93b9c7ce26fec5dc5cc1853afbabc137be5cd0ae73d2250d7763927bcfb0": "0",
+    "670b077d25cec91b1d43a3891d7755cda3594871c0b5b9f227f39ebb64aa5309": "c"
+  },
+  "enabled": {
+    "c4121e66ca628829e2e3d3b990a4935c72fdca922285b6d18c9836226ba63661": "Allow once",
+    "d54b626767b7198ab3d979ad132719de985c8ccad70c8f2690cd33f0d9b6d1f6": "Allow once"
+  },
+  "prototype_sha256": "6d6e9627d4c143bca1277e046b9bdbe1b5a1f0b895185c997bd0316d4002e803",
+  "receipt_sha256": "ac68c5528545055d4c977f7eb4cff4b0d3b7a6b700d0501c69ec32f5d3d26b74",
+  "source_pins": {
+    "reference-fixtures/accepted-feedback-scene.png": "58eac3f9d559cb1a11ced9ae1fe51199300380cbc2912e45195e896af7184be2",
+    "reference-fixtures/accepted-feedback-state.json": "a8a33c19b4e08d6a3c3ed8bc79eb4df09ead801a0bce64725caf47bbe653f97b",
+    "reference-fixtures/accepted-title.png": "d8edbc4117d37aefa5860d13ed9bc15ec4f97ddc1b9f1e6b1aeb881097c4951c",
+    "reference-fixtures/action-blue.png": "fca37c1db746a94967c197a3137ae89a4019a3ebb3e849ebc00a5c0f4ef61040",
+    "reference-fixtures/action-white.png": "a5c1c5631d119923e56fe0d09cc8f7c52b87e0da96c396701ebc98c7c5aa04af",
+    "reference-fixtures/card-glyph-scene.png": "885339c28ce00f664ee16773fd711ac1f17c8ad0f0c27170fb660d5725de1349",
+    "reference-fixtures/card-nonce-strip.png": "d51c919f44944b8c4fae87896d600e1bc7736b4e1596547acb6af10919152bd5",
+    "reference-fixtures/enabled-blue-scene.png": "e83c4f163aed59aa58493ffc31de8ff16523b47f1a671734637d873a0e6e47fa",
+    "reference-fixtures/enabled-white-scene.png": "75e2cce9f1e19de488afdb55303a6b5000bc57facdbb2bd2a2a38fe296e2811e",
+    "reference-fixtures/header-baseline-glyphs.png": "2c0d10b5fb271bb8232f10860f57855d8ca796885287227238ef475ffaf08e38",
+    "reference-fixtures/header-current.png": "21a04e77a1abbedc2820787f961fad70976b4e1b6059af20c19d52a86513769c",
+    "reference-fixtures/header-v14.png": "68fa8c1b120b4fe513686a1d245c02401a0e0724002da4135aee9947ca88b64c",
+    "reference-fixtures/provenance.json": "293078f1a58f766b9e835b4b27a34c9c7c6acda03ca308f2fce9ed435a5332ef",
+    "reference-fixtures/root-feedback-review-export.json": "15fdf4b369a62c82831238de161ee4a4ac7be6bef870381e9c26feef21eaaaaa"
+  },
+  "accepted_feedback": {
+    "RGBA_sha256": "d0276654a78d029b8a39b0882fb676495b211c41685a99a7524cc5803ab9d94e",
+    "pixel_size": [
+      568,
+      16
+    ],
+    "fixture": "reference-fixtures/accepted-title.png",
+    "Root_viewed_label": "Decision accepted",
+    "disabled_actions_valid": true
+  },
+  "terminal_atlas": {
+    "c614bceb513231583972c70453a2d26f6ddb6a80d45d787b3737f270310f6d78": "f",
+    "1c443c319cf3530dfad47ac4abf7af169ecc23b3b715886fcdadf81d598c184c": "6",
+    "05511788985edfb22eb7d2ce55598340f6d0b31bbe8640aa7d89a24911602348": "5",
+    "6a86c50dcd42ead0a630c98453308659a57081abf325c734475513261a238d24": "a",
+    "c37c65b99c3802b2d36d48a74193a34c7714ed7dad78d41e63bf4be4c79fd9c6": "0",
+    "08fdfe6c7530da1c82716336376802f3624517efdb8f6e819fa353ab7e1d6de5": "3",
+    "3bef54f181a645839b64a1dc4273a8ed6bdd168d1689ad37648a153378c90450": "c",
+    "2c72ac43660a82e6d16066a5c10ef8e1b64c594c84aa8fc672cbed8382d58e66": "d",
+    "a264e51deadbbb9a2e433f3933f411fb32245f0c33c6a8e512d69d1b8b337e0e": "8",
+    "3bde8aa62e16fb8f7d15bc471a5722abf2eab8baa78ffa792618c9eabffc3e8b": "e",
+    "0479763f27493ab2e10333aeac31809cf497ee49e3b3d8e433955cb392f36428": "4",
+    "aafb4723637d83bb7424e8c4bdfd42ca21dc31e5d7604669f3e130db3edaaa34": "b",
+    "9827f728339a9304b3b7050b855a71bc56618cc77d846d1684aad15f42a5698d": "9",
+    "458b12c97a07b5f5209622d7abe109896f139635a92d5e003b27252219082b77": "2",
+    "3e138002f6ce77120007b9ba8642ea3c2d8d85bc9857e798317b89feb94b7b20": "7",
+    "4a9cbd5ae9f141eefbb3d3db9e965ea93ba458ed46fdf4983e2146a0ad4df948": "1"
+  },
+  "terminal_atlas_coverage": "0123456789abcdef",
+  "terminal_patches": null,
+  "terminal_reference_status": "MISSING; V18/026 explicitly transitional, not terminal.",
+  "terminal_atlas_sources": [
+    {
+      "fixture": "reference-fixtures/header-current.png",
+      "expected_prefix": "f65a5053cfd8",
+      "nonce_start_xy": [
+        144,
+        0
+      ]
+    },
+    {
+      "fixture": "reference-fixtures/header-v14.png",
+      "expected_prefix": "e4b9fd38848f",
+      "nonce_start_xy": [
+        144,
+        0
+      ]
+    },
+    {
+      "fixture": "reference-fixtures/header-baseline-glyphs.png",
+      "expected_prefix": "20b837c771ec",
+      "nonce_start_xy": [
+        144,
+        0
+      ],
+      "scope": "Additional rawglyph1/2/7 only; baseline clip-refusal."
+    }
+  ],
+  "ui_source_pins": {
+    "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": "35709491eb7d9f6d6caca9b837e623561b4a1af5914c40f20e9e8a082c24220f",
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": "2109c778ba4689096a7eadaadac4f4b1a5cfee2498f5d44a730e3b7beb9263e9",
+    "tldw_chatbook/Widgets/Console/console_status_chips.py": "2b479f27d3f3ba7047ed15293191b8b20fc5bdb517b539ca1c5059165d070bb8",
+    "tldw_chatbook/Widgets/Console/console_session_surface.py": "9f5f0b5280333f96973c1bc0f6e56dab057b33952439973d9dfab5497dd549eb",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "94697ab2411f9189919dc27a07e4f500d4e0df57fbd73ef9c6ff8f479957d77e"
+  },
+  "reference_scope": "Current-feature single120x40/Inspectclosed/textual-dark only; original/export hashes in reference-fixtures/provenance.json."
+}

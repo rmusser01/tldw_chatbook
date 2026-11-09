@@ -144,6 +144,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-219](219-console-chat-destinations-and-bounded-starts.md) | Accepted | Let Console agents create workspace or casual drafts and start background work with destination defaults, scoped approvals, shared finite budgets, and durable recovery. |
 | [ADR-351](351-file-notes-replica-retention.md) | Proposed | Bound the ADR-296 File Notes replica's recovery data: 50 most-recent checkpoints per unprotected note, 30-day tombstone/revision expiry on root change and session end, with protected paths and the most-recent tombstone never evicted. |
 | [ADR-355](355-ruff-lint-gate.md) | Accepted | Gate ruff in CI: F-class findings stay at zero, and B/ASYNC/PLE debt is ratcheted per rule against a checked-in baseline produced by a pinned ruff version. |
+| [ADR-357](357-lightweight-rag-state-path-resolution.md) | Accepted for implementation | Resolve protected RAG state paths and profile metadata without importing optional engines. Renumbered from the RAG draft of ADR-355. |
 | [ADR-221](221-prompt-injection-cold-start-caches.md) | Accepted | Pay prompt-injection cold starts (book fetch, entry processing, pattern compilation) once per store generation: a monotonic WorldBookManager generation counter, a lock-guarded 8-conversation LRU of built processors keyed (conversation, character, generation), precompiled entry keys, and id-set recursion dedup; chat dictionaries adopt the same contract. |
 
 | [ADR-211](211-ephemeral-provider-failure-presentation.md) | Accepted | Keep sanitized provider failure presentation transient across the gateway, agent outcome and Console while preserving typed fallback semantics and diagnostic persistence. |
@@ -236,3 +237,10 @@ Do not reuse numbers.
 
 | [ADR-282: Opt-in Console OS notification dispatch](282-console-os-notification-dispatch.md) | Accepted | Separate default-off desktop channel with fixed argv, bounded literal identity, content-free diagnostics, and timeout ownership through orderly process exit. |
 | [ADR-286](286-console-prompt-mix-ins.md) | Accepted | Add literal Before/After Mix-in library artifacts through the existing composer Prompts button, with chat-owned selections, exact retry snapshots and current-send-only caching semantics. |
+
+### Console approval resync references
+
+| Decision | Status | Scope |
+| --- | --- | --- |
+| [ADR-235](235-console-approval-interaction-and-feedback.md) | Accepted | Captured Console approval actions, supported choices, lazy Details and observed decision feedback; existing grant authority/lifetimes preserved. |
+| [ADR-354](354-served-webauthn-passkey-login.md) | Accepted | Served WebAuthn passkeys; younger decision renumbered from235 under the oldest-Date ownership rule, with authentication behavior unchanged. |

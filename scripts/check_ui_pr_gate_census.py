@@ -885,6 +885,12 @@ MINIMUM_FILES = 1814
 # and its whole-file entry Tests/UI/test_media_viewer_prompt_search_15477.py are
 # deleted, so the census drops one entry: 1814 - 1 = 1813.
 MINIMUM_FILES = 1813
+# PR3036 resync: retain all 1813 current entries and append 4 approval contracts.
+MINIMUM_FILES = 1817
+# PR3036 whole-branch review: append two bounded literal-Details regressions.
+MINIMUM_FILES = 1819
+# TASK-34569: preserve actual feedback MessagePump dispatch without eager helpers.
+MINIMUM_FILES = 1820
 
 
 def read_census(path: Path) -> list[str]:
@@ -1163,8 +1169,28 @@ def _fixtures(body: list[ast.stmt]) -> dict[str, tuple[bool, bool, list[str]]]:
     return found
 
 
+_ParsedSources = dict[Path, tuple[str, ast.Module]]
+
+
+def _parse_source(path: Path, parsed_sources: _ParsedSources | None) -> ast.Module:
+    """Read fresh UTF-8 text; reuse only a successful parse of the same body."""
+    source = path.read_text(encoding="utf-8")
+    if parsed_sources is not None:
+        previous = parsed_sources.get(path)
+        if previous is not None and previous[0] == source:
+            return previous[1]
+    tree = ast.parse(source)
+    if parsed_sources is not None:
+        parsed_sources[path] = (source, tree)
+    return tree
+
+
 def _parametrized_fixture(
-    path: Path, tree: ast.Module, owners: list[ast.AST]
+    path: Path,
+    tree: ast.Module,
+    owners: list[ast.AST],
+    *,
+    _parsed_sources: _ParsedSources | None = None,
 ) -> str | None:
     """A parametrized fixture the test reaches, if the checker can see one.
 
@@ -1185,9 +1211,7 @@ def _parametrized_fixture(
         directory = directory.parent
     for conftest in reversed(conftests):  # nearer conftests override
         try:
-            available.update(
-                _fixtures(ast.parse(conftest.read_text(encoding="utf-8")).body)
-            )
+            available.update(_fixtures(_parse_source(conftest, _parsed_sources).body))
         except (OSError, SyntaxError, ValueError):
             continue
     available.update(_fixtures(tree.body))
@@ -1216,7 +1240,9 @@ def _parametrized_fixture(
     return None
 
 
-def resolve_node(path: Path, node: str) -> str | None:
+def resolve_node(
+    path: Path, node: str, *, _parsed_sources: _ParsedSources | None = None
+) -> str | None:
     """Check that `path` still defines the test a node id names.
 
     Static on purpose: the census check runs install-free, so it cannot import
@@ -1243,7 +1269,7 @@ def resolve_node(path: Path, node: str) -> str | None:
     name_part, bracket, param = node.partition("[")
     names = name_part.split("::")
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = _parse_source(path, _parsed_sources)
     except (OSError, SyntaxError, ValueError) as error:
         return f"cannot read {path.name}: {type(error).__name__}"
     body: list[ast.stmt] = tree.body
@@ -1281,7 +1307,7 @@ def resolve_node(path: Path, node: str) -> str | None:
             f"parametrize id [{wanted}] cannot be resolved statically: module- or "
             "class-level parametrize. Gate the whole test instead."
         )
-    fixture = _parametrized_fixture(path, tree, owners)
+    fixture = _parametrized_fixture(path, tree, owners, _parsed_sources=_parsed_sources)
     if fixture is not None:
         return (
             f"parametrize id [{wanted}] cannot be resolved statically: the test "
@@ -1380,6 +1406,7 @@ def main(argv: list[str] | None = None) -> int:
         print("\n".join(shard(entries, int(args[1]), int(args[2]))))
         return 0
     problems: list[str] = []
+    parsed_sources: _ParsedSources = {}
 
     # Duplicates, a node id beside its own whole file, and anything under a
     # listed directory: the same helper pins every PR-lane pytest step.
@@ -1407,7 +1434,9 @@ def main(argv: list[str] | None = None) -> int:
             continue
         if not node:
             continue
-        reason = resolve_node(REPO_ROOT / file_part, node)
+        reason = resolve_node(
+            REPO_ROOT / file_part, node, _parsed_sources=parsed_sources
+        )
         if reason is not None:
             problems.append(
                 f"listed test does not resolve: {entry}\n"

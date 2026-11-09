@@ -644,7 +644,7 @@ class WebAuthManager:
 
         Thin ``_new_session`` wrapper for login paths whose credential was
         verified outside this manager — the served WebAuthn passkey
-        assertion flow (ADR-235).  No token check or attempt recording
+        assertion flow (ADR-354).  No token check or attempt recording
         happens here: callers must have fully authenticated the request
         (a verified ceremony) before calling, and the minted session is
         always disk-persistent like every remembered device.

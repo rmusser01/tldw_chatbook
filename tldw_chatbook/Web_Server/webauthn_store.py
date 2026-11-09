@@ -1,5 +1,5 @@
 # tldw_chatbook/Web_Server/webauthn_store.py
-"""Disk-backed persistence for WebAuthn passkey credentials (ADR-235).
+"""Disk-backed persistence for WebAuthn passkey credentials (ADR-354).
 
 Framework-neutral on purpose and a byte-for-byte sibling of
 ``Web_Server/session_store.py`` in discipline: atomic tmp+rename writes,

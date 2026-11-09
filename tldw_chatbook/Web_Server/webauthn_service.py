@@ -1,5 +1,5 @@
 # tldw_chatbook/Web_Server/webauthn_service.py
-"""WebAuthn (passkey) registration and login ceremonies for served mode (ADR-235).
+"""WebAuthn (passkey) registration and login ceremonies for served mode (ADR-354).
 
 The service owns a ``fido2.server.Fido2Server`` for the derived RP and drives
 both ceremonies against it.  Pending challenges live in an in-memory,
@@ -235,7 +235,7 @@ class WebAuthnService:
 
         Resident keys are REQUIRED so roaming authenticators create
         discoverable credentials; login_begin offers an empty allow-list, so
-        only discoverable credentials can complete login (ADR-235).
+        only discoverable credentials can complete login (ADR-354).
         """
         existing = [
             attested

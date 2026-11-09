@@ -1,5 +1,11 @@
 # Lessons: what counts as evidence a change works
 
+## A parent source pin does not bind a private pytest child's Core import (PR3036, 2026-11-07)
+
+**Incident.** The approval launcher verified selected Main, Core and Tests origins in its `-I` parent after inserting the selected paths into `sys.path`. `Tests.private_profile` then spawned a fresh interpreter: only Main survived through its working directory, and Core resolved through the primary checkout's editable installation. A real child-environment metadata probe reproduced that foreign origin even though all 14 Core Python files happened to have identical content. Earlier parent-origin receipts therefore did not prove complete child-source closure. Performance helper environments had the same omission, including one first-use environment whitelist that dropped `PYTHONPATH` entirely.
+
+**What worked.** Pass selected Main and Core together in the child's `PYTHONPATH`, including every independently constructed/filtered environment. Verify the actual environment builder followed by a fresh interpreter's metadata lookup; avoid importing product code merely to prove a path. Keep before/after source bindings and preserve older results with their narrower provenance scope. The repaired original UI-ready and preimport checks passed; the strict Windows eager-import check still failed at `688 < 688`, so correcting provenance did not turn an unrelated failure green. See `Docs/superpowers/qa/2026-11-06-console-approval-resync/ci-boundary-followup.md` and its source manifest.
+
 ## An empty rejection ledger does not identify a submission failure (TASK-39147, 2026-11-07)
 
 **Incident.** DeepSeek accepted findings, then three dispatched submissions failed
@@ -24862,3 +24868,27 @@ so that candidate was discarded.
 **What to do.** Establish the actual readiness preconditions of a low-level
 fixture call through its original owners. Mount completion alone is not service
 readiness; keep teardown assertions when selecting a different capture route.
+
+### 2026-10-15 — Unique receipt directories preserve prerequisite evidence (TASK-34564)
+
+During current-dev integration of PR3036, an adapted focused runner reused the pre-edit control's destination and overwrote three original launch/result/XML receipts. The original hash inventory and independent review survived, but no genuine alternate bytes were found. We retained the overwritten files and expected/actual hashes as an incident, explicitly recorded the original retention gap, and ran the unchanged25-case original control into a new unique directory as fresh verification. It did not recreate the original receipt or timing. Runners now require a unique run identifier and fail if its destination exists; bind actual selected-test/source hashes and keep setup/collection failures separate from behavioral RED.
+
+## A conflict rewrite can parse while deleting almost the entire module (PR3036, 2026-11-06)
+
+While rebasing PR3036, a conflict rewrite used dot-star in marker lines under DOTALL. The closing marker consumed through EOF: the card still parsed because only imports remained, but the commit diff showed2209deletions. The error was caught before tests/publication. The full card was restored from its preserved pre-replay source and only the three literal-label wrappers reapplied; its44classmembers were checked against that source. User docs were reconstructed from exact base/current-dev/published inputs and every current heading retained. Match marker lines with explicit non-newline characters, inspect the complete diff and compare structural inventories; syntax alone does not prove source retention. Git merge-file returns the conflict count (not always1); decode/normalize newline style before reading its markers.
+
+During the 2026-11-06 approval resync, a Windows text-decoding error occurred in the second file of a multi-file edit, after the workflow had already changed. Retrying the edit without inspecting partial writes duplicated a required-lane target; the exact invocation guard rejected it before publication. Check which writes completed before retrying and verify executable target multiplicity.
+
+### 2026-11-07: generated identity must survive Windows regeneration
+
+During PR3036 qualification, both Linux Tool Recovery jobs exposed an inherited stale remote-worker stamp. Canonical regeneration corrected it, but the Windows raw-prefix check still failed: the existing CLI's default write_text converted LF to CRLF. A real CLI-to-private-temp byte test failed at byte73 before the repair and passed with explicit newline="\n". Pinning that one generated artifact to LF also preserves its identity on checkout. Verify the real writer and raw bytes as well as read_text drift checks; universal-newline reads can hide a broken self-stamp.
+### 2026-11-07: normalize paths before applying governance exemptions
+
+PR3036's Windows verification first exposed a CSS pin error message using components\active.css while the check expected a portable path. Reading the same helper found a substantive second defect: str(relative_path) also prevented its documented core/_variables.tcss exemption on Windows. A real temporary-token fixture went RED, then nine targeted cases passed after two as_posix conversions; the hard-zero refusal, existing assertions and actual baseline bytes stayed unchanged. Inspect path-dependent decisions before treating a separator failure as an assertion-only fix.
+### 2026-11-07: functional tests do not detect unrelated encoding drift
+
+During the PR3036 audio-meter repair, Path.read_text() used the Windows locale rather than UTF8, and write_text(..., encoding="utf-8") encoded that misdecoded text. The meter tests passed, but full-diff review found eight corrupted preexisting bullet characters in unrelated error messages; the same edit pattern affected the speech architecture note. Both files were reconstructed from preserved original bytes with explicit UTF8 decoding before publication. Use explicit encodings for both reads and writes, retain original byte snapshots, and compare the entire diff; passing focused behavior tests does not establish preservation of untouched strings.
+
+### A tool session ID is not an operating-system PID
+
+PR3036 native validation17 (2026-11-07) returned exec session 82824. The initial postflight audit incorrectly passed that number to OpenProcess and counted its absence as authenticated process closure. The actual guarded observer receipt identified PID 37684; the captured product, worker and launcher identified 43112, 41036 and 26956. Preserve the erroneous seal and bind an explicit correction. Obtain process identities from authenticated run/guard receipts and retain their lineage/creation evidence; a tool session identifier is only a handle for polling tool output and its absence as a PID proves nothing.

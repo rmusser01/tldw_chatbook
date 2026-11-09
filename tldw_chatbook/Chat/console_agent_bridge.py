@@ -5274,6 +5274,7 @@ class ConsoleAgentBridge:
         self._live_usage_closed = False
         self._raw_shell_marker_lock = threading.Lock()
         self._tool_activity_runs = {}
+        self.approval_feedback_store = None
         self._raw_shell_markers: dict[tuple[str, str], _RawShellMarkerState] = {}
         self._skills_service = skills_service
         self._native_tools_enabled = native_tools_enabled
@@ -7142,6 +7143,7 @@ class ConsoleAgentBridge:
                         activity_round_ordinal=planning.activity_round_ordinal,
                     )
             tool_activity.observe(step, planning_deriver.active_round_ordinal)
+            self._observe_approval_step(session_id, run_id, step)
 
         def on_resolved_target(run_id: str, provider: str, model: str) -> None:
             for index, summary in enumerate(subagents):
@@ -7161,6 +7163,7 @@ class ConsoleAgentBridge:
                 break
 
         def on_step(step: AgentStep, agent_kind: str, run_id: str) -> None:
+            self._observe_approval_step(session_id, run_id, step)
             if agent_kind == AGENT_KIND_PRIMARY and run_id:
                 self._live_primary_runs[conversation_id] = run_id
             # PR 2a (task-3): AgentService now attributes every step to its
@@ -8008,7 +8011,14 @@ class ConsoleAgentBridge:
             on_tool_terminal=on_tool_terminal,
             on_tool_result_terminal=on_tool_result_terminal,
             on_run_terminal=lambda run_id: self._on_live_run_terminal(
-                run_id, plugin_run_terminal if plugin_entries else on_run_terminal
+                run_id,
+                plugin_run_terminal if plugin_entries else on_run_terminal,
+                observation_owners=(
+                    mcp_provider,
+                    local_provider,
+                    virtual_cli_provider,
+                    raw_shell_provider,
+                ),
             ),
             run_model_scope=functools.partial(
                 self._live_usage_run_scope,
@@ -8212,18 +8222,14 @@ class ConsoleAgentBridge:
             if callable(unbind_promotion_context):
                 unbind_promotion_context()
             run_cancelled = "outcome" in locals() and outcome.status == RUN_CANCELLED
-            self._clear_raw_shell_progress(
-                raw_shell_progress_run_ids, cancelled=run_cancelled
+            from .console_tool_activity import finish_approval_activity
+
+            finish_approval_activity(
+                self, session_id, tool_activity, tool_activity_run_ids,
+                raw_shell_progress_run_ids, run_cancelled,
+                (mcp_provider, local_provider, virtual_cli_provider, raw_shell_provider),
+                log=logger,
             )
-            try:
-                tool_activity.finish(run_cancelled)
-            except Exception as exc:  # noqa: BLE001 — display cannot prevent run teardown
-                logger.warning(
-                    "Console tool activity display could not be settled ({})",
-                    type(exc).__name__,
-                )
-            for activity_run_id in tool_activity_run_ids:
-                self._tool_activity_runs.pop(activity_run_id, None)
             if self._buddy_sink is not None:
                 for buddy_run_id in primary_buddy_run_ids:
                     self._buddy_sink.release_run(buddy_run_id)
@@ -9994,10 +10000,15 @@ class ConsoleAgentBridge:
         self,
         run_id: str,
         callback: Callable[[str], object] | None,
+        *,
+        observation_owners: tuple[object, ...] = (),
     ) -> None:
         with self._live_usage_lock:
             self._live_usage_owners.pop(run_id, None)
             self._live_turn_usage.pop(run_id, None)
+        from .console_tool_activity import retire_child_approval_feedback
+
+        retire_child_approval_feedback(self, run_id, observation_owners)
         if callback is not None:
             callback(run_id)
 
@@ -11417,62 +11428,36 @@ class ConsoleAgentBridge:
         event: RawCliStreamEvent | RawCliResult,
     ) -> None:
         """Apply bounded progress to the exact app-owned raw-shell marker."""
-        key = (run_id, call_id)
-        with self._raw_shell_marker_lock:
-            state = self._raw_shell_markers.get(key)
-            if state is None:
-                return
-            if isinstance(event, RawCliResult):
-                state.result = event
-                return
-            if not isinstance(event, RawCliStreamEvent):
-                return
-            try:
-                state.stdout, state.stderr, clipped = self._append_raw_shell_preview(
-                    state.stdout,
-                    state.stderr,
-                    event,
-                )
-            except UnicodeError:
-                return
-            state.truncated = state.truncated or event.truncated or clipped
-            started_at = state.presentation.started_at_monotonic
-            if started_at is None:
-                started_at = self._clock()
-            state.presentation = dataclass_replace(
-                state.presentation,
-                lifecycle_state="running",
-                started_at_monotonic=started_at,
-                elapsed_seconds=max(0.0, self._clock() - started_at),
-                truncated=state.truncated,
-            )
-            self._update_raw_shell_marker(state)
+        from .console_tool_activity import apply_raw_shell_progress
+
+        apply_raw_shell_progress(
+            self, run_id, call_id, event,
+            result_type=RawCliResult,
+            stream_type=RawCliStreamEvent,
+            replace_presentation=dataclass_replace,
+            step_factory=AgentStep,
+        )
 
     def _clear_raw_shell_progress(
         self, run_ids: AbstractSet[str], *, cancelled: bool = False
     ) -> None:
         """Detach ended runs before settling rows so late worker events are ignored."""
-        if not run_ids:
-            return
-        with self._raw_shell_marker_lock:
-            states = [
-                self._raw_shell_markers.pop(key)
-                for key in tuple(self._raw_shell_markers)
-                if key[0] in run_ids
-            ]
-        for state in states:
-            try:
-                self._settle_raw_shell_marker(
-                    state,
-                    outcome="cancelled" if cancelled else "failure",
-                    message=(f"{state.stderr}\n\n" if state.stderr else "")
-                    + "Run ended before a result was received. Process cleanup is unknown.",
-                )
-            except Exception as exc:  # noqa: BLE001 — display cannot prevent run teardown
-                logger.warning(
-                    "Console shell activity display could not be settled ({})",
-                    type(exc).__name__,
-                )
+        from .console_tool_activity import clear_raw_shell_progress
+
+        clear_raw_shell_progress(self, run_ids, cancelled=cancelled, log=logger)
+
+    def project_approval_feedback(self, session_id: str, run_id: str) -> None:
+        """Keep the latest facts on the owning tool before its run maps retire."""
+        from .console_tool_activity import project_approval_feedback
+
+        project_approval_feedback(
+            self, session_id, run_id, replace_presentation=dataclass_replace
+        )
+
+    def _observe_approval_step(self, session_id: str, run_id: str, step: AgentStep) -> None:
+        from .console_tool_activity import observe_approval_step
+
+        observe_approval_step(self, session_id, run_id, step)
 
     def set_tool_approval_pending(
         self,

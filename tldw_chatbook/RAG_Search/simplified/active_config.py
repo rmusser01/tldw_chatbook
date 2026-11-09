@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ..config_profiles import ProfileConfig
 from ..ingestion_indexing import reset_shared_rag_service
-from ..reranker import RerankingConfig
+from ..config_metadata import RerankingConfig
 
 # TASK-21731: the mode vocabulary + its normalizer live in the stdlib-only
 # `RAG_Search/search_modes.py` so `Library/library_local_rag_search_service`

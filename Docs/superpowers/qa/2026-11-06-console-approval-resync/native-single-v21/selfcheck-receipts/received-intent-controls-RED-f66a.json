@@ -1,0 +1,18 @@
+{
+  "scope": "Pure actual fixture delegation and stock-owner source contracts only; no App/product import/GUI/dispatch/timing qualification",
+  "workload_SHA256": "2bab44e762702a8c8f18f3e59e5e769a1cc67fa31a2d4d735599b4217cc2825c",
+  "results": {
+    "actual_boundary_calls_receive_once_and_captures_exact_task": false
+  },
+  "details": {
+    "original_boundary": {
+      "receive_calls": 0,
+      "direct_submit_calls": 1,
+      "captured_exact_custody_task": false
+    }
+  },
+  "passed": 0,
+  "failed": 1,
+  "qualified": false,
+  "product_samples": 0
+}
