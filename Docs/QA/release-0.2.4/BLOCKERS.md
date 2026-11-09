@@ -4,6 +4,15 @@
 
 The initial sweep covered **5,670 unique files**,386 primary attempts and4 supplemental groups. Raw outcomes:119,256 passed,13,966 failed,1,581 errors,484 skipped,8 expected failures, and1 successful subtests-parent category;135,296 logical parents. Nine failed collectors are separate. Supplemental evidence establishes873 successful parents plus5 successful subtests inside one parent; the original parser's false completion flags are preserved. Tools177 required forced residual process retirement; Utils296 exited-9. Both need clean final qualification. The cause of that kill is unknown.39 saved reports warned of FD growth beyond200; no physical-retirement claim follows from a functional pass.
 
+The complete local sweep of repair candidate `e2c8c432` is recorded in [candidate-e2c8-condition.json](candidate-e2c8-condition.json). All **390 partitions** across **5,671 files** retired naturally. The 135,613 logical test results were **127,045 passed, 7,415 failed, 677 errors, 468 skipped, and 8 expected failures**. Two collectors failed separately. Forty-seven skips lack matching approval, and 44 partitions reported descriptor growth. Against exact frozen identities, 7,641 former failures now pass; this candidate still fails qualification.
+
+| Current release gate | Root cause / necessary fix | Verification |
+|---|---|---|
+| Complete local qualification | Many cases stop at selected-profile admission; others reach and fail their original behavior. Keep the production guard, fix only the affected setup or reached behavior, and verify the original cases. | Full `e2c8c432` sweep completed; all receipts accounted for. No passing exact-head qualification. |
+| Buddy collectors and non-approved skips | Two retired collector paths and 47 skips need exact current coverage or reason reconciliation. Do not retire coverage based on absence. | Failed collectors: `Tests/UI/test_persona_buddy_host.py` and `Tests/UI/test_persona_buddy_view.py`. Replacement controls and explicit prerequisites are still open. |
+| Descriptor retirement | Forty-four partitions grew beyond the existing limit. Identify and close each confirmed owner while preserving the native and privacy checks. | Workspaces repeats +810 descriptors on both cuts; natural process exit does not prove in-process closure. |
+| Final package artifacts | Build the canonical wheel and sdist separately on the passing repaired head, then install each offline in a clean environment. | Not started. |
+
 | Blocker / requirement | Root cause / necessary fix | Verification |
 |---|---|---|
 | ToolResult subclass positional regression (TASK-39403) | Optional dispatch/termination fields entered the positional constructor. Make both keyword-only, preserving four base positionals, metadata defaults and authority. |25 existing focused cases pass, all phases pass, JSON/JUnit agree, exit0 and natural unforced process retirement. Exact two-field AST diff; no new lint diagnostics. Final integrated run pending. |
