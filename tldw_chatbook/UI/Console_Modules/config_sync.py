@@ -420,6 +420,8 @@ def cut_replay_backoff(screen: Any, held: bool) -> None:
         return
     if getattr(screen, "_console_replay_backoff_timer", None) is not None:
         screen._request_console_control_bar_sync()
+    elif getattr(screen, "_console_fixed_replay_backoff_at", None) is not None:
+        screen._console_fixed_replay_backoff_at = False
 
 
 def request_control_bar_sync(screen: Any, delayed: bool | float) -> None:
@@ -432,10 +434,18 @@ def request_control_bar_sync(screen: Any, delayed: bool | float) -> None:
     """
     backoff = getattr(screen, "_console_replay_backoff_timer", None)
     if getattr(screen, "_console_control_bar_sync_scheduled", False):
+        fixed = getattr(screen, "_console_fixed_replay_backoff_at", None)
+        if not delayed and fixed is not None:
+            screen._console_fixed_replay_backoff_at = False
+        elif delayed and delayed is not True and fixed is True:
+            # Keep the fixed callback for CORE, but it must not start FULL early.
+            screen._console_fixed_replay_backoff_at = time.monotonic() + delayed
         if delayed or backoff is None:
             return
         backoff.stop()  # Stopping a fired timer is a no-op; its run finds no replay.
     screen._console_replay_backoff_timer = None
+    # A fixed callback can adopt one deadline unless explicit work already needs it.
+    screen._console_fixed_replay_backoff_at = True if delayed is True else None
     screen._console_control_bar_sync_scheduled = True
     run = screen._run_coalesced_control_bar_sync
     if not delayed:
@@ -712,6 +722,8 @@ def sync_config_unreadable_notice(screen) -> None:
 def run_coalesced_control_bar_sync(screen: Any, is_torn_down: Callable) -> None:
     """Service one accepted CORE handoff without reordering the original FULL."""
     screen._console_control_bar_sync_scheduled = False
+    fixed = getattr(screen, "_console_fixed_replay_backoff_at", None)
+    screen._console_fixed_replay_backoff_at = None
     if is_torn_down(screen):
         _abandon_console_config_handoffs(screen)
         screen._console_control_bar_replay_whole_sync = False
@@ -725,12 +737,21 @@ def run_coalesced_control_bar_sync(screen: Any, is_torn_down: Callable) -> None:
         if request is not None:
             request.retire()
     if whole:
-        if screen._console_sync_in_progress or paused:
+        deadline = fixed if type(fixed) is float else 0.0
+        busy = screen._console_sync_in_progress or paused
+        if busy or deadline > time.monotonic():
             request = getattr(screen, "_console_config_handoffs", {}).get("core")
             if not paused and request is not None and request.eligible():
                 sync_console_core_state(screen)
-            screen._request_console_control_bar_sync(delayed=True)
-            return
+            remaining = deadline - time.monotonic()
+            if not paused and remaining > 0:
+                screen._request_console_control_bar_sync(delayed=remaining)
+                return
+            if busy:
+                screen._request_console_control_bar_sync(delayed=True)
+                if fixed is False and screen._console_fixed_replay_backoff_at is True:
+                    screen._console_fixed_replay_backoff_at = False
+                return
         screen._console_control_bar_replay_whole_sync = False
         screen._console_sync_requested = False
         screen.run_worker(

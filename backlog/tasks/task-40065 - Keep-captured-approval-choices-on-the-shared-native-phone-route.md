@@ -14,7 +14,7 @@ references:
 - backlog/decisions/236-served-desktop-approval-relay.md
 - tldw_chatbook/Chat/console_remote_rounds.py
 - tldw_chatbook/Web_Server/static/mobile/app.js
-updated_date: 2026-11-09 16:05
+updated_date: 2026-11-09 17:27
 ---
 
 ## Description
@@ -54,6 +54,8 @@ Reason: Compose the existing captured presentation and feedback with the already
 15. Reproduce the review finding by replacing the Move button during Pilot’s first yield. Observe the first dispatch of the actual native Button.Pressed through Textual’s existing test message hook. Compare the originating button and its then-current shifted geometry, deduplicate delivery of the same event, and preserve the original one-click helper and deadline. Require the replacement control to fail and the post-click recompose and all original cases to pass.
 16. Reproduce UI31 with a real pending context worker and a competing native FULL sync. Move the existing stricter settle before the synthetic durable-commit window and immediately invoke the same manual timer callback inside it. Preserve every original hold, replay, provider, and timing assertion and the native product policy. Verify the same competitor and the original whole test file.
 17. Trace UI19’s actual counted row, compositor clip, tray height and bounded owner. Preserve the original filter and hit-test assertions. Exercise the real legacy action mount after a native fit without that control and change only the measured owner when the causal control identifies it.
+18. Trace a same-owner FULL refusal colliding with a previously armed fixed core/control-bar timer. Preserve the fixed callback’s native release opportunity and original maintenance and explicit-ready behavior. Keep the refused FULL’s existing backoff delay when the earlier callback runs, without raising any deadline or changing the original assertions. Verify the actual lock-held CORE control and original replay controls.
+19. Trace both Settings Return attempts through actual readiness and context preparation, discovery and exact pre-push ownership. Isolate a native stale-read or read-publication refusal before changing its producer. Keep the one owned convergence reopen, original handoff authority, ABA refusal and waits. ADR required: no. ADR path: N/A. Reason: restore the existing native backoff and exact return contracts. ADR-095 D1 already governs convergence.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -80,6 +82,12 @@ On 1c3c7d0, UI19 reported one match but its row was clipped. A native control me
 UI31’s fixture could yield to a real context-owned full sync after opening its synthetic durable-commit window. The existing strict settle now finishes before that window, and the fixture invokes the same manual timer immediately inside it. The same competing-sync control and all four original cases passed with the original assertions and waits. The hosted callback ordering in both failures remains unobserved.
 
 The scoped rail and size run passed 210 cases. An optional Character rail fixture refused profile selection before it reached the UI, and that test is outside the PR gate roster. Diagnostic inventory and all 34 boot ratchets passed. Fresh original software UAT passed all 15 browser cases and the mounted parent and three children with matching retained artifacts, ordinary reopen, and clean guard records. Hosted qualification remains pending on the new source head.
+
+On 4470ef9, the repaired UI19 and UI31 shards passed all 164 and 375 original cases. UI3 still observed seven warm-up refusals in three seconds. A fixed CORE callback could discard FULL’s already-requested longer backoff. A real config lock reproduced eight warm-up starts in the original window. The fix preserves the fixed CORE callback, carries the original absolute FULL deadline, and honors urgent requests before and after promotion and across rearming. The same native control and all 35 replay and coalescing cases passed.
+
+UI5’s native resume overlapped the first attempt, but both attempts returned without restoring the draft. A real old checked read held after native lock release reproduced the same refusal for the current explicit opener. After the old read retires, the opener can issue one ordinary checked read for its still-current key. The original same-key busy admission and exact modal ownership fences remain. Both the real Return control and the native lease retirement regression passed. All 22 original Settings save and Return cases passed, including discovery and stale selection refusal. The hosted callback order is unobserved.
+
+Two supplemental runs retain their mixed results. Eight unmounted Settings doubles lacked a Textual node tree, and a mode-bar double lacked a content field. Those exact unchanged cases are outside the PR gate roster. The native busy open, move, and cancel cases passed. All 207 size and globals cases, the diagnostic inventory, 34 boot checks, all 15 original browser cases, and the original mounted journey passed on this source. Hosted qualification remains pending on the new commit.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

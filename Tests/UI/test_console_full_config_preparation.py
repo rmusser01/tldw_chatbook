@@ -590,3 +590,48 @@ async def test_explicit_settings_keeps_busy_config_custody(
         sys.setprofile(old_main)
         database.close()
     assert not holder.is_alive()
+
+
+
+@pytest.mark.asyncio
+async def test_explicit_settings_refreshes_after_a_retired_old_config_read(tmp_path):
+    database, store, _controller, screen, tasks = _screen(tmp_path)
+    opener = None
+    try:
+        projection = await _warm(screen, tasks)
+        old_mapping = screen.app_instance.app_config
+        with _held_original_config_read(
+            projection=projection, snapshot=old_mapping
+        ) as (entered, release, observed):
+            projection.run(lambda: None, life=0)
+            assert await asyncio.to_thread(entered.wait, 5)
+            old = projection._admission
+            state = observed[0]
+            assert old is not None and state.active and projection._reads
+            session = store.active_session_id
+            origin = store.capture_console_settings_origin(session)
+            current_mapping = screen.app_instance.app_config = dict(old_mapping)
+            assert projection._key()[-1] is not old.key[-1]
+
+            def owns_settings():
+                return (
+                    screen.app_instance.app_config is current_mapping
+                    and store.capture_console_settings_origin(session) == origin
+                )
+
+            opener = asyncio.create_task(
+                projection.warm(retry_busy_if_current=owns_settings)
+            )
+            await asyncio.sleep(0)
+            assert not opener.done() and projection._admission is old
+            release.set()
+            assert await opener
+            assert projection.key[-1] is current_mapping
+            assert not state.active and not projection.pending and not projection._reads
+            with storage._lock:
+                assert all(lease not in storage._live_leases for lease in state.leases)
+    finally:
+        if opener is not None:
+            await asyncio.gather(opener, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
+        database.close()
