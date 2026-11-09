@@ -14,7 +14,7 @@ references:
 - backlog/decisions/236-served-desktop-approval-relay.md
 - tldw_chatbook/Chat/console_remote_rounds.py
 - tldw_chatbook/Web_Server/static/mobile/app.js
-updated_date: 2026-11-09 17:27
+updated_date: 2026-11-09 18:10
 ---
 
 ## Description
@@ -56,6 +56,7 @@ Reason: Compose the existing captured presentation and feedback with the already
 17. Trace UI19’s actual counted row, compositor clip, tray height and bounded owner. Preserve the original filter and hit-test assertions. Exercise the real legacy action mount after a native fit without that control and change only the measured owner when the causal control identifies it.
 18. Trace a same-owner FULL refusal colliding with a previously armed fixed core/control-bar timer. Preserve the fixed callback’s native release opportunity and original maintenance and explicit-ready behavior. Keep the refused FULL’s existing backoff delay when the earlier callback runs, without raising any deadline or changing the original assertions. Verify the actual lock-held CORE control and original replay controls.
 19. Trace both Settings Return attempts through actual readiness and context preparation, discovery and exact pre-push ownership. Isolate a native stale-read or read-publication refusal before changing its producer. Keep the one owned convergence reopen, original handoff authority, ABA refusal and waits. ADR required: no. ADR path: N/A. Reason: restore the existing native backoff and exact return contracts. ADR-095 D1 already governs convergence.
+20. Reproduce the UI23 Notifications fixture looking up the toolbar while the real two-row table is attached and the toolbar children are still mounting. Use the existing 15-second activation budget for the previous button and the selected replacement. Keep both real overlapping writes, native commits, refresh order, original mutation assertions and runtime limits. ADR required: no. ADR path: N/A. Reason: fixture waits on the existing native mount boundary.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -88,6 +89,8 @@ On 4470ef9, the repaired UI19 and UI31 shards passed all 164 and 375 original ca
 UI5’s native resume overlapped the first attempt, but both attempts returned without restoring the draft. A real old checked read held after native lock release reproduced the same refusal for the current explicit opener. After the old read retires, the opener can issue one ordinary checked read for its still-current key. The original same-key busy admission and exact modal ownership fences remain. Both the real Return control and the native lease retirement regression passed. All 22 original Settings save and Return cases passed, including discovery and stale selection refusal. The hosted callback order is unobserved.
 
 Two supplemental runs retain their mixed results. Eight unmounted Settings doubles lacked a Textual node tree, and a mode-bar double lacked a content field. Those exact unchanged cases are outside the PR gate roster. The native busy open, move, and cancel cases passed. All 207 size and globals cases, the diagnostic inventory, 34 boot checks, all 15 original browser cases, and the original mounted journey passed on this source. Hosted qualification remains pending on the new commit.
+
+On 35fcbaf, UI3 and UI5 passed all original cases with the four replay controls. UI23 found the Notifications table already attached while Mark read’s nested toolbar was still mounting. A real held toolbar mount reproduced the same first lookup failure. Both the original and selected replacement buttons now use one existing 15-second activation budget, and the fixture presses the replacement without yielding after its final readiness check. The same native control and all 12 original Notifications cases passed, including both overlapping mutations and their native commit-to-refresh assertions. Runtime, original browser and mounted UAT consumers are byte-identical to 35fcbaf, so those actual software UAT results carry through. The hosted callback ordering remains unobserved, and the new commit must earn its own hosted qualification.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
