@@ -13,6 +13,7 @@ import json
 import sqlite3
 import sys
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import cached_property
 from datetime import datetime, timezone
@@ -441,22 +442,19 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             ):
                 from .recovery_operations import _legacy_workflow_upgrade
 
-                bridge = _legacy_workflow_upgrade(conn)
-                if bridge is None:
-                    raise sqlite3.DatabaseError("unsupported legacy workflow schema")
-                previous_sync = int(conn.execute("PRAGMA synchronous").fetchone()[0])
                 conn.execute("PRAGMA foreign_keys=ON")
-                conn.execute("PRAGMA synchronous=FULL")
-                try:
-                    conn.execute("BEGIN IMMEDIATE")
-                    for statement in bridge[1]:
-                        conn.execute(statement)
-                    conn.commit()
-                except BaseException:
-                    conn.rollback()
-                    raise
-                finally:
-                    conn.execute(f"PRAGMA synchronous={previous_sync}")
+                with _workflow_schema_transaction(conn):
+                    # Another opener may have completed the bridge while we waited.
+                    review_table = conn.execute(
+                        "SELECT 1 FROM sqlite_schema WHERE type='table' "
+                        "AND name='automatic_review_boundary_claims'"
+                    ).fetchone()
+                    if review_table is None:
+                        bridge = _legacy_workflow_upgrade(conn)
+                        if bridge is None:
+                            raise sqlite3.DatabaseError("unsupported legacy workflow schema")
+                        for statement in bridge[1]:
+                            conn.execute(statement)
             conn.executescript(
                 """
                 PRAGMA foreign_keys = ON;
@@ -914,111 +912,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                     "ALTER TABLE automatic_wake_attempts ADD COLUMN attempt_kind TEXT NOT NULL DEFAULT 'fleet_wake' CHECK (attempt_kind IN ('fleet_wake', 'goal_iteration'))"
                 )
             conn.executescript(_GOAL_RUNS_SCHEMA)
-            if not conn.execute(
-                "SELECT 1 FROM schema_version WHERE version=26"
-            ).fetchone():
-                previous_sync = int(conn.execute("PRAGMA synchronous").fetchone()[0])
-                conn.execute("PRAGMA synchronous=FULL")
-                try:
-                    conn.executescript(
-                        "BEGIN IMMEDIATE;\n"
-                        + _WORKFLOW_RUNS_SCHEMA
-                        + "\nINSERT INTO schema_version(version) VALUES (26);\nCOMMIT;"
-                    )
-                except BaseException:
-                    conn.rollback()
-                    raise
-                finally:
-                    conn.execute(f"PRAGMA synchronous={previous_sync}")
-            if not conn.execute(
-                "SELECT 1 FROM schema_version WHERE version=27"
-            ).fetchone():
-                from .recovery_workflow_schema import WORKFLOW_ADMISSION_MIGRATION
-
-                previous_sync = int(conn.execute("PRAGMA synchronous").fetchone()[0])
-                conn.execute("PRAGMA synchronous=FULL")
-                try:
-                    conn.execute("BEGIN IMMEDIATE")
-                    for statement in WORKFLOW_ADMISSION_MIGRATION:
-                        conn.execute(statement)
-                    conn.commit()
-                except BaseException:
-                    conn.rollback()
-                    raise
-                finally:
-                    conn.execute(f"PRAGMA synchronous={previous_sync}")
-
-            if not conn.execute(
-                "SELECT 1 FROM schema_version WHERE version=28"
-            ).fetchone():
-                from .recovery_workflow_schema import WORKFLOW_CHECKPOINT_MIGRATION
-
-                previous_sync = int(conn.execute("PRAGMA synchronous").fetchone()[0])
-                conn.execute("PRAGMA synchronous=FULL")
-                try:
-                    conn.execute("BEGIN IMMEDIATE")
-                    for statement in WORKFLOW_CHECKPOINT_MIGRATION:
-                        conn.execute(statement)
-                    conn.commit()
-                except BaseException:
-                    conn.rollback()
-                    raise
-                finally:
-                    conn.execute(f"PRAGMA synchronous={previous_sync}")
-
-            if not conn.execute(
-                "SELECT 1 FROM schema_version WHERE version=29"
-            ).fetchone():
-                from .recovery_workflow_schema import WORKFLOW_WINDOW_MIGRATION
-
-                previous_sync = int(conn.execute("PRAGMA synchronous").fetchone()[0])
-                conn.execute("PRAGMA synchronous=FULL")
-                try:
-                    conn.execute("BEGIN IMMEDIATE")
-                    for statement in WORKFLOW_WINDOW_MIGRATION:
-                        conn.execute(statement)
-                    conn.commit()
-                except BaseException:
-                    conn.rollback()
-                    raise
-                finally:
-                    conn.execute(f"PRAGMA synchronous={previous_sync}")
-
-            if not conn.execute(
-                "SELECT 1 FROM schema_version WHERE version=30"
-            ).fetchone():
-                from .recovery_workflow_schema import WORKFLOW_REPAIR_INPUT_MIGRATION
-
-                previous_sync = int(conn.execute("PRAGMA synchronous").fetchone()[0])
-                conn.execute("PRAGMA synchronous=FULL")
-                try:
-                    conn.execute("BEGIN IMMEDIATE")
-                    for statement in WORKFLOW_REPAIR_INPUT_MIGRATION:
-                        conn.execute(statement)
-                    conn.commit()
-                except BaseException:
-                    conn.rollback()
-                    raise
-                finally:
-                    conn.execute(f"PRAGMA synchronous={previous_sync}")
-
-            if not conn.execute(
-                "SELECT 1 FROM schema_version WHERE version=31"
-            ).fetchone():
-                from .recovery_workflow_schema import WORKFLOW_RECOVERY_REVIEW_MIGRATION
-
-                previous_sync = int(conn.execute("PRAGMA synchronous").fetchone()[0])
-                conn.execute("PRAGMA synchronous=FULL")
-                try:
-                    conn.execute("BEGIN IMMEDIATE")
-                    for statement in WORKFLOW_RECOVERY_REVIEW_MIGRATION:
-                        conn.execute(statement)
-                    conn.commit()
-                except BaseException:
-                    conn.rollback()
-                    raise
-                finally:
-                    conn.execute(f"PRAGMA synchronous={previous_sync}")
+            _upgrade_workflow_schema(conn)
 
             # Keep the (write-only, audit) version table in step with the
             # DDL -- append-per-version, matching the INSERT OR IGNORE
@@ -3940,6 +3834,58 @@ _CHANGE_REVIEW_READ_SOURCES = tuple(
     )
     for outer in (inspect.getattr_static(AgentRunsDB, name),)
 )
+
+
+@contextmanager
+def _workflow_schema_transaction(conn: sqlite3.Connection) -> Iterator[None]:
+    previous_sync = int(conn.execute("PRAGMA synchronous").fetchone()[0])
+    conn.execute("PRAGMA synchronous=FULL")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        yield
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute(f"PRAGMA synchronous={previous_sync}")
+
+
+def _upgrade_workflow_schema(conn: sqlite3.Connection) -> None:
+    installed = {
+        row[0] for row in conn.execute(
+            "SELECT version FROM schema_version WHERE version BETWEEN 26 AND 31"
+        )
+    }
+    if len(installed) == 6:
+        return
+
+    from . import recovery_workflow_schema as schema
+
+    for version, migration in (
+        (26, None),
+        (27, schema.WORKFLOW_ADMISSION_MIGRATION),
+        (28, schema.WORKFLOW_CHECKPOINT_MIGRATION),
+        (29, schema.WORKFLOW_WINDOW_MIGRATION),
+        (30, schema.WORKFLOW_REPAIR_INPUT_MIGRATION),
+        (31, schema.WORKFLOW_RECOVERY_REVIEW_MIGRATION),
+    ):
+        if version in installed:
+            continue
+        with _workflow_schema_transaction(conn):
+            if conn.execute(
+                "SELECT 1 FROM schema_version WHERE version=?", (version,)
+            ).fetchone():
+                continue
+            if migration is None:
+                from .sql_validation import split_migration_statements
+
+                migration = split_migration_statements(
+                    _WORKFLOW_RUNS_SCHEMA, error_type=sqlite3.DatabaseError
+                )
+                migration.append("INSERT INTO schema_version(version) VALUES (26)")
+            for statement in migration:
+                conn.execute(statement)
 
 
 # ADR-285 passive workflow persistence; no runtime imports at ordinary DB open.

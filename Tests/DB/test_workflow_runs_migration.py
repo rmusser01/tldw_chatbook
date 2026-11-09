@@ -596,3 +596,77 @@ def test_legacy_workflow_bridge_cancellation_rolls_back_real_first_ddl(
     assert first_ddl_returned == [True]
     assert cancel.is_set()
     assert _legacy_sql_state(path) == before
+
+
+@pytest.mark.parametrize("lineage", ["shipped-v25", "legacy-workflow-v30"])
+def test_concurrent_workflow_upgrade_rechecks_after_the_writer_lock(
+    tmp_path, monkeypatch, lineage
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event, current_thread
+
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.recovery_operations import _AGENT_RUNS_SCHEMA
+
+    if lineage == "shipped-v25":
+        path = tmp_path / "runs.db"
+        v24(path)
+    else:
+        path, legacy_rows, _ = _legacy_workflow_fixture(tmp_path, 30)
+    before_begin = Event()
+    release_begin = Event()
+    main_thread = current_thread()
+    original_configure = AgentRunsDB._configure_connection
+
+    def configure(db, conn):
+        conn = original_configure(db, conn)
+        if current_thread() is not main_thread:
+            full_sync = False
+
+            def pause_before_lock(statement):
+                nonlocal full_sync
+                sql = statement.strip().upper().rstrip(";")
+                if sql == "PRAGMA SYNCHRONOUS=FULL":
+                    full_sync = True
+                if full_sync and sql == "BEGIN IMMEDIATE" and not before_begin.is_set():
+                    before_begin.set()
+                    release_begin.wait(timeout=10)
+
+            conn.set_trace_callback(pause_before_lock)
+        return conn
+
+    def open_agent_runs():
+        db = AgentRunsDB(path, reconcile_on_init=False)
+        db.close()
+
+    monkeypatch.setattr(AgentRunsDB, "_configure_connection", configure)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(open_agent_runs)
+        try:
+            assert before_begin.wait(timeout=10)
+            open_agent_runs()
+        finally:
+            release_begin.set()
+        first.result(timeout=10)
+
+    with closing(sqlite3.connect(path)) as conn:
+        assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (31,)
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        catalog = tuple(
+            row[0]
+            for row in conn.execute(
+                "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
+            )
+        )
+        assert catalog in [
+            installed for version, installed in _AGENT_RUNS_SCHEMA if version == 31
+        ]
+        if lineage == "shipped-v25":
+            assert conn.execute("SELECT id,result FROM agent_runs").fetchall() == [
+                ("legacy", "preserved result")
+            ]
+        else:
+            assert conn.execute(
+                "SELECT id,launch_id,payload_hash,request_json,conversation_id,chain_id,"
+                "status,control_revision FROM workflow_runs"
+            ).fetchall() == legacy_rows

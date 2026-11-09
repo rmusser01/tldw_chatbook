@@ -9,13 +9,19 @@ from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 def _drop_later_history(conn):
-    """Remove additive Goal/workflow fixtures before rebuilding an older schema."""
+    """Remove later review, Goal and workflow tables from the fixture."""
     from tldw_chatbook.DB.recovery_goal_schema import GOAL_TABLES
-    from tldw_chatbook.DB.recovery_workflow_schema import WORKFLOW_TABLES
 
+    workflow_tables = {
+        row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_schema WHERE type='table' AND name GLOB 'workflow_*'"
+        )
+    }
     conn.execute("DROP TRIGGER IF EXISTS goal_launch_immutable")
-    for table in sorted(GOAL_TABLES | WORKFLOW_TABLES):
-        conn.execute(f'DROP TABLE IF EXISTS "{table}"')
+    for table in sorted(GOAL_TABLES | workflow_tables):
+        quoted = table.replace('"', '""')
+        conn.execute(f'DROP TABLE IF EXISTS "{quoted}"')
+    conn.execute("DROP TABLE IF EXISTS automatic_review_boundary_claims")
     conn.execute("DROP TABLE IF EXISTS automatic_progress_wake_claims")
 
 

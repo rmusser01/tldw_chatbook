@@ -1288,6 +1288,27 @@ consistent with the earlier opaque MCP footprint observation.
 See `/tmp/pr39147-live-dev-lane15-retained-1533.txt`. The published check and
 AC23 remain open.
 
+### Current-dev rebase and migration review
+
+Replayed the 106 published commits onto live dev `b498bc3a` and retained
+the locally qualified integration tree. An independent review identified
+two stale migration fixtures and a race between AgentRuns constructors.
+The runtime now rechecks the legacy catalog and each workflow version under
+the same SQLite writer lock as the original DDL. This implements ADR356's
+existing additive migration with the same version allocation, SQL and
+per-step durability.
+
+The file-backed concurrent regressions reproduced the duplicate v26 audit
+row and duplicate legacy review-boundary column before the repair. Both
+passed after it, preserving the exact current catalog, original history
+and foreign keys. All 75 targeted Goal, automatic work, workflow and
+archive recovery migration tests passed. Independent re-review found no
+critical or important issue in the migration follow-up.
+
+The cross-session Send case still fails while waiting for the second
+provider gate. The architecture review still reports seven upstream
+workflow dependencies. AC23 and published CI and review remain open.
+
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
