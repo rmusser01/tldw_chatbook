@@ -217,7 +217,7 @@ async def _leave_text_fields(screen, pilot) -> None:
     raise AssertionError(f"no non-text control took focus ({screen.focused!r})")
 
 
-async def _open_picker(host, pilot, button_id: str) -> tuple[Button, int]:
+async def _open_picker(host, pilot, button_id: str) -> LibraryNoteFolderTargetDialog:
     # Pilot captures coordinates before yielding; a nonzero region may be stale.
     try:
         async with asyncio.timeout(WAIT):
@@ -244,8 +244,6 @@ async def _open_picker(host, pilot, button_id: str) -> tuple[Button, int]:
         raise AssertionError(
             f"timed out waiting for {button_id} painted and enabled"
         ) from None
-    # The modal may outlive the underlying button's layout.
-    click_x = button.region.x
     await pilot.click(button_id)
     await _wait(
         pilot,
@@ -261,7 +259,7 @@ async def _open_picker(host, pilot, button_id: str) -> tuple[Button, int]:
     assert picker.focused is picker.query_one(
         "#library-note-folder-target-filter", Input
     )
-    return button, click_x
+    return picker
 
 
 async def _choose(
@@ -297,7 +295,19 @@ async def test_move_note_picker_offers_nested_folders_on_a_fresh_visit_and_narro
     """AC#4: every active folder at any depth, a named title, type-to-filter."""
     host, tree = _mounted(tmp_path)
     note_id = tree.profile.note_id
-    async with host.run_test(size=SIZE) as pilot:
+    presses: dict[Button.Pressed, tuple[Button, int]] = {}
+
+    def observe_move(message) -> None:
+        if (
+            isinstance(message, Button.Pressed)
+            and message.button.id == "library-notes-placement-move"
+            and message not in presses
+        ):
+            presses[message] = (message.button, message.button.region.x)
+
+    async with host.run_test(
+        size=SIZE, message_hook=observe_move if pending_layout else None
+    ) as pilot:
         screen = await _notes_collapsed(host, pilot)
         outcomes = _record_mutations(screen, monkeypatch)
         await _leave_text_fields(screen, pilot)
@@ -336,15 +346,14 @@ async def test_move_note_picker_offers_nested_folders_on_a_fresh_visit_and_narro
             button = screen.query_one("#library-notes-placement-move", Button)
             previous_offset = button.styles.offset
             previous_region = button.region
+            presses.clear()
             # A nonzero region can still precede a queued layout frame.
             button.styles.offset = (2, 0)
             assert button.region == previous_region
             try:
-                clicked_button, click_x = await _open_picker(
-                    host, pilot, "#library-notes-placement-move"
-                )
-                assert clicked_button is button
-                assert click_x == previous_region.x + 2
+                await _open_picker(host, pilot, "#library-notes-placement-move")
+                # Read the originating press before the modal can retire the button.
+                assert list(presses.values()) == [(button, previous_region.x + 2)]
             finally:
                 button.styles.offset = previous_offset
         else:
