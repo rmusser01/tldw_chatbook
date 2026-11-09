@@ -14,7 +14,7 @@ references:
 - backlog/decisions/236-served-desktop-approval-relay.md
 - tldw_chatbook/Chat/console_remote_rounds.py
 - tldw_chatbook/Web_Server/static/mobile/app.js
-updated_date: 2026-11-09 19:04
+updated_date: 2026-11-09 20:20
 ---
 
 ## Description
@@ -58,6 +58,7 @@ Reason: Compose the existing captured presentation and feedback with the already
 19. Trace both Settings Return attempts through actual readiness and context preparation, discovery and exact pre-push ownership. Isolate a native stale-read or read-publication refusal before changing its producer. Keep the one owned convergence reopen, original handoff authority, ABA refusal and waits. ADR required: no. ADR path: N/A. Reason: restore the existing native backoff and exact return contracts. ADR-095 D1 already governs convergence.
 20. Reproduce the UI23 Notifications fixture looking up the toolbar while the real two-row table is attached and the toolbar children are still mounting. Use the existing 15-second activation budget for the previous button and the selected replacement. Keep both real overlapping writes, native commits, refresh order, original mutation assertions and runtime limits. ADR required: no. ADR path: N/A. Reason: fixture waits on the existing native mount boundary.
 21. Reproduce UI10's empty image-refusal strip by holding the native checked-readiness lock through the original paint attempt. Verify the same staged attachment, blocker and strip assertions after the existing checked-render helper completes. Reuse that helper at the three staged-image call sites and retain every original assertion, Pilot pause, runtime limit and product policy. ADR required: no. ADR path: N/A. Reason: synchronize the fixture on the existing checked display boundary.
+22. Reproduce the UI28 Stop visibility failure at the native callback handoff with the real rebuild lock held. Keep the original five-second observation, Pilot cadence, real Stop and phase/custody assertions, and wait on the existing button’s rendered state as well as the queued flag. Verify the same lock control and original file. ADR required: no. ADR path: N/A. Reason: observe completion of the existing checked presentation in the fixture.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -96,6 +97,10 @@ On 35fcbaf, UI3 and UI5 passed all original cases with the four replay controls.
 UI10’s hosted staged-image test found an empty strip after both live blocker checks passed. A controlled local run held the real config rebuild lock until the checked display proof expired. The bare sync deferred and left the strip empty. With the same lock control, the existing checked-render helper let all original assertions pass after release. All five original file cases passed after using that helper at the three staged-image sites. The product, the 180-second case limit, and the original software UAT consumers are unchanged. The hosted callback order was not observed.
 
 The separate hosted admission-sensitive 3 step passed the Roleplay body and timed out at its existing three-second native executor join. A local run of the original 213-case step passed, with no live callback at the traced join in the affected case. The observer detected a live native callback in the existing canceled-worker control. This leaves the hosted cause open. Roleplay and shared retirement are unchanged. The new head still requires its own admission and full hosted gates.
+
+UI28’s rebuild case observed the real rule phase idle and the helper retired, while the mounted Stop button still showed the prior state. A native control with the rebuild lock held reproduced the original visibility assertion after the callback cleared its queued flag. A second control established a cold checked read and verified that production replay hid that same button. The fixture now waits on the rendered Stop state and the queued flag within the original five seconds. All 143 original assertions, the real Stop action and the 180-second case limit are preserved.
+
+All 24 original file cases passed. Ruff’s one-line formatting preserved the complete executable AST, and the affected rebuild case passed on those final bytes. Two additional diagnostic attempts stopped at distinct native handoff preconditions and remain separate from the passing receipts. The actual hosted callback order is unknown. The original browser and mounted UAT evidence from the recovery commit carries forward through the same runtime and consumed UAT files.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
