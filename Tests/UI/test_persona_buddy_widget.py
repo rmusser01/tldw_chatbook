@@ -1493,8 +1493,8 @@ async def test_decode_failure_freezes_the_currently_painted_frame():
         controller.generation += 1
         buddy.refresh_from_controller()
         await _wait_until(
-            lambda: buddy._accepted_render is not None
-            and buddy._accepted_render.visual is controller.visual
+            lambda: buddy._resolved_authority
+            == buddy._resolution_authority(controller.snapshot())
         )
         assert buddy._frame_timer is None
         buddy._next_frame_at = 0
@@ -1502,6 +1502,52 @@ async def test_decode_failure_freezes_the_currently_painted_frame():
         assert buddy.frame_index == 1
         assert "FRAME-B" in _compositor_text(app.screen)
         assert buddy.region == painted_region
+
+
+@pytest.mark.asyncio
+async def test_decode_failure_cannot_fit_expanded_frames_into_folded_view():
+    controller = _FakeController(frames=("EXPANDED",))
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)) as pilot:
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: "EXPANDED" in _compositor_text(app.screen))
+        controller.visual = replace(
+            controller.visual, reason="persona_buddy_frame_unavailable", animate=False
+        )
+
+        buddy.action_toggle_collapse()
+        await _wait_until(lambda: controller.resolve_sizes[-1] == (10, 4))
+        await pilot.pause()
+
+        assert "EXPANDED" not in _compositor_text(app.screen)
+        assert buddy.region.size == (12, 6)
+
+
+@pytest.mark.asyncio
+async def test_decode_failure_cannot_refit_from_prior_viewport_frames():
+    controller = _ViewportGenerationController(
+        frames=("PAINTED",), frame_sizes=((12, 10),)
+    )
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)) as pilot:
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(
+            lambda: buddy.region.size == (14, 7)
+            and "PAINTED" in _compositor_text(app.screen)
+        )
+        controller.visual = replace(
+            _visual_with_frame(controller, label="PRIOR", width=16, height=10),
+            reason="persona_buddy_frame_unavailable",
+            animate=False,
+        )
+
+        await pilot.resize_terminal(18, 8)
+        await _wait_until(lambda: controller.resolve_sizes[-1] == (16, 6))
+        await pilot.pause()
+
+        assert "PRIOR" not in _compositor_text(app.screen)
+        assert "PAINTED" in _compositor_text(app.screen)
+        assert buddy.region.size == (14, 7)
 
 
 @pytest.mark.asyncio
