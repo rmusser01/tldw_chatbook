@@ -2532,6 +2532,254 @@ async def test_mounted_owned_precapture_reuses_original_configuration_and_source
     assert calls and all(tree is not None and tree.footprint.opaque for tree in calls)
 
 
+@pytest.fixture
+def mounted_stock_mcp(snapshot_case, native_ordinary_host):
+    import tldw_chatbook.MCP.server  # noqa: F401 - load the actual stock manifest
+    from tldw_chatbook.MCP.local_control_service import _default_manifest_provider
+    from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
+
+    h = native_ordinary_host
+    case = snapshot_case
+
+    def unused_state_provider():
+        raise AssertionError("the actual local override must own this policy decision")
+
+    enforcer = ServicePolicyEnforcer(state_provider=unused_state_provider)
+    case.local.manifest_provider = _default_manifest_provider
+    case.local.policy_enforcer = h.app.service_policy_enforcer = enforcer
+    screen, owner = _mounted_test_screen(h)
+    return screen, owner, enforcer
+
+
+async def test_mounted_stock_mcp_prepares_cold_sources_for_both_sessions(
+    snapshot_case, native_ordinary_host, mounted_stock_mcp
+):
+    from tldw_chatbook.Chat.console_configuration_capture import (
+        _capture_mcp_definition_selection,
+    )
+    from tldw_chatbook.UI.Console_Modules.wiring import _precapture_turn_authority
+
+    h = native_ordinary_host
+    case = snapshot_case
+    screen, owner, _ = mounted_stock_mcp
+    case.service._permission_store = None
+    assert _capture_mcp_definition_selection(h.app).pending
+    assert case.service._permission_store is None
+    session_b = h.store.create_session(workspace_id=h.session.workspace_id)
+
+    async def prepare(session_id):
+        prepared = await _precapture_turn_authority(screen, session_id)
+        with prepared():
+            return owner._build_console_turn_execution_context(session_id)
+
+    probe = snapshot_controls._MaximumProbe(case.source, case.permissions)
+    with probe.installed():
+        first, second = await asyncio.gather(
+            prepare(h.session.id), prepare(session_b.id)
+        )
+    published = case.service._permission_store
+    assert published is not None and published.path == case.permissions.path
+    for configuration in (first, second):
+        assert configuration.mcp_definition_complete
+        assert not configuration.mcp_capture_pending
+        assert "local:one::first" in configuration.mcp_definition_maximum
+        assert len(configuration.mcp_definition_maximum) > 1
+    assert probe.permission_calls
+    assert all(
+        permission is published and thread is not threading.current_thread()
+        for permission, thread in probe.permission_calls
+    )
+    assert probe.read_threads and all(
+        thread is not threading.current_thread() for thread in probe.read_threads
+    )
+    assert not probe.audit_threads
+
+
+@pytest.mark.parametrize(
+    "action", ["mcp.external_profiles.list.local", "mcp.inventory.list.local"]
+)
+async def test_mounted_stock_mcp_checks_live_deny_before_read(
+    snapshot_case, native_ordinary_host, mounted_stock_mcp, monkeypatch, action
+):
+    from dataclasses import replace
+
+    from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
+    from tldw_chatbook.UI.Console_Modules.wiring import _precapture_turn_authority
+
+    case = snapshot_case
+    h = native_ordinary_host
+    screen, owner, _ = mounted_stock_mcp
+    case.service._permission_store = None
+    monkeypatch.setitem(
+        CAPABILITY_REGISTRY, action, replace(CAPABILITY_REGISTRY[action], enabled=False)
+    )
+    probe = snapshot_controls._MaximumProbe(case.source, case.permissions)
+    with probe.installed():
+        prepared = await _precapture_turn_authority(screen, h.session.id)
+        with prepared():
+            configuration = owner._build_console_turn_execution_context(h.session.id)
+    assert not configuration.mcp_definition_maximum
+    assert not configuration.mcp_definition_complete
+    assert not configuration.mcp_capture_pending
+    assert case.service._permission_store is None
+    assert (
+        not probe.permission_calls
+        and not probe.read_threads
+        and not probe.audit_threads
+    )
+
+
+@pytest.mark.parametrize(
+    "change", ["enforcer", "engine", "registry", "permission", "cancel"]
+)
+async def test_mounted_stock_mcp_rechecks_sources_and_retires_its_original_worker(
+    snapshot_case, native_ordinary_host, mounted_stock_mcp, monkeypatch, change
+):
+    import time
+
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
+    from tldw_chatbook.runtime_policy.engine import PolicyEngine
+    from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY
+    from tldw_chatbook.UI.Console_Modules.wiring import _precapture_turn_authority
+
+    case = snapshot_case
+    h = native_ordinary_host
+    screen, _, enforcer = mounted_stock_mcp
+    probe = snapshot_controls._MaximumProbe(case.source, case.permissions, hold=True)
+    with probe.installed():
+        task = asyncio.create_task(_precapture_turn_authority(screen, h.session.id))
+        try:
+            await snapshot_controls.catalog_controls._worker_entered(probe, task)
+            assert h.controller._preparation_reads and probe.leases
+            if change == "cancel":
+                case.service._maintenance_close_admission()
+                task.cancel()
+                await asyncio.sleep(0)
+                assert not task.done()
+                assert not await case.service._maintenance_drain(
+                    time.monotonic() + 0.03
+                )
+                expected = asyncio.CancelledError
+            else:
+                if change == "enforcer":
+                    replaced = ServicePolicyEnforcer(
+                        state_provider=enforcer._state_provider
+                    )
+                    monkeypatch.setattr(h.app, "service_policy_enforcer", replaced)
+                    monkeypatch.setattr(case.local, "policy_enforcer", replaced)
+                elif change == "engine":
+                    monkeypatch.setattr(
+                        enforcer, "_engine", PolicyEngine(CAPABILITY_REGISTRY)
+                    )
+                elif change == "registry":
+                    monkeypatch.setattr(
+                        enforcer._engine, "_registry", dict(CAPABILITY_REGISTRY)
+                    )
+                else:
+                    monkeypatch.setattr(
+                        case.permissions,
+                        "path",
+                        case.permissions.path.with_name("wrong.json"),
+                    )
+                expected = RecoveryRequired
+            probe.release.set()
+            with pytest.raises(expected):
+                await task
+            assert not h.controller._preparation_reads
+            assert not probe.audit_threads
+            if change == "cancel":
+                assert await case.service._maintenance_drain(time.monotonic() + 0.5)
+        finally:
+            await snapshot_controls.catalog_controls._settle(task, probe)
+            if case.service._producer_lifetime.closed:
+                case.service._maintenance_resume()
+
+
+async def test_mounted_stock_mcp_witness_survives_later_canonical_log_publication(
+    snapshot_case, native_ordinary_host, mounted_stock_mcp
+):
+    from tldw_chatbook.UI.Console_Modules.wiring import _precapture_turn_authority
+
+    case = snapshot_case
+    h = native_ordinary_host
+    screen, owner, _ = mounted_stock_mcp
+    prepared = await _precapture_turn_authority(screen, h.session.id)
+    assert case.service._execution_log is None
+    assert case.service.execution_log is case.service._execution_log
+    with prepared():
+        configuration = owner._build_console_turn_execution_context(h.session.id)
+    assert configuration.mcp_definition_complete
+    assert "local:one::first" in configuration.mcp_definition_maximum
+
+
+async def test_mounted_stock_mcp_defers_downgrade_to_the_original_admitted_audit(
+    snapshot_case, native_ordinary_host, mounted_stock_mcp
+):
+    from tldw_chatbook.UI.Console_Modules.wiring import _precapture_turn_authority
+
+    case = snapshot_case
+    h = native_ordinary_host
+    h.app.app_config["console"] = {"agent_runtime": False}
+    h.controller._agent_runtime_enabled = False
+    screen, owner, _ = mounted_stock_mcp
+    case.permissions.set_tool_state(
+        "local:one", "first", "allow", definition_hash="0" * 64
+    )
+    prepared = await _precapture_turn_authority(screen, h.session.id)
+    entry = case.permissions.get_tool_entry("local:one", "first", profile_id="default")
+    assert not entry.get("config_changed")
+    assert case.service._execution_log is None
+    with prepared():
+        configuration = owner._build_console_turn_execution_context(h.session.id)
+        assert configuration.mcp_capture_pending
+        result = await h.controller.submit_draft(
+            "apply original downgrade",
+            session_id=h.session.id,
+            configuration=configuration,
+        )
+    assert result.accepted and h.gateway.payloads
+    entry = case.permissions.get_tool_entry("local:one", "first", profile_id="default")
+    assert entry["config_changed"] is True
+    assert [
+        row["tool_name"]
+        for row in case.service.execution_log.read_recent()
+        if row["decision"] == "downgraded"
+    ] == ["first"]
+
+
+async def test_mounted_stock_mcp_leaves_the_opaque_owners_cold_permission_slot(
+    snapshot_case, native_ordinary_host, mounted_stock_mcp
+):
+    from tldw_chatbook.Agents.execution_capacity import WorkOrigin
+    from tldw_chatbook.UI.Console_Modules.wiring import _precapture_turn_authority
+    from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
+
+    case = snapshot_case
+    h = native_ordinary_host
+    screen, owner, _ = mounted_stock_mcp
+    case.service._permission_store = None
+    activity = h.runtime.worktree_activity
+    with activity.prelaunch(footprint=WorktreeFootprint(opaque=True)) as claim:
+        assert claim is not None
+        execution = h.runtime.execution_capacity.begin_execution(
+            origin=WorkOrigin.MANUAL, conversation_id=h.session.id
+        )
+        claim.bind_owner(execution)
+        try:
+            prepared = await _precapture_turn_authority(screen, h.session.id)
+            with prepared():
+                configuration = owner._build_console_turn_execution_context(
+                    h.session.id
+                )
+            assert configuration.mcp_capture_pending
+            assert case.service._permission_store is None
+            activity.validate_opaque_claim(claim, owner=execution)
+        finally:
+            execution.finish_root()
+            claim.settle(durable=True)
+
+
 async def test_mounted_owned_precapture_defers_original_custom_mcp(
     snapshot_case, native_ordinary_host
 ):

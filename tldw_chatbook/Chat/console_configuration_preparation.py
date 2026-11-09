@@ -7,7 +7,7 @@ import inspect
 import os
 import sys
 from collections.abc import Callable, Mapping
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from functools import partial
@@ -1745,7 +1745,10 @@ async def capture_console_turn_configuration_owned(
     from tldw_chatbook import config
     from tldw_chatbook.DB.base_db import operation_owned_connection
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
-    from tldw_chatbook.MCP.console_snapshot import _capture_console_definition_selection
+    from tldw_chatbook.MCP.console_snapshot import (
+        _bounded_console_metadata,
+        _capture_console_definition_selection,
+    )
 
     from .console_preparation_reads import current_planning_preparation
 
@@ -1806,8 +1809,12 @@ async def capture_console_turn_configuration_owned(
         raw_config = _freeze(raw_config)
     require_current()
 
+    bounded_mcp_sources = None
+
     def current():
         _require_mcp_attachment_source(app, creator, attachment)
+        if bounded_mcp_sources is not None:
+            bounded_mcp_sources.require_current()
         if planning is not None:
             require_received_configuration_preparation(
                 planning._skill_preparation,
@@ -1894,20 +1901,30 @@ async def capture_console_turn_configuration_owned(
     )
     maximum, mcp_sources, mcp_complete, mcp_pending = {}, (), True, False
     if planning is None and refs.mcp is not None:
-        mcp_selection = await _capture_console_definition_selection(
-            refs.mcp,
-            CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
-            _run_native=run_native,
-            profile_id=profile,
-            persona_policy_rules=rules,
-            _admitted=not _has_managed_console_runtime(app, creator),
+        managed = _has_managed_console_runtime(app, creator)
+        metadata = (
+            _bounded_console_metadata(app, refs.mcp, runtime)
+            if managed
+            else nullcontext()
         )
+        async with metadata as bounded_mcp_sources:
+            mcp_selection = await _capture_console_definition_selection(
+                refs.mcp,
+                CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
+                _run_native=run_native,
+                profile_id=profile,
+                persona_policy_rules=rules,
+                _admitted=not managed,
+                _bounded_sources=bounded_mcp_sources,
+            )
         maximum, mcp_sources, mcp_complete, mcp_pending = (
             mcp_selection.definitions,
             mcp_selection.sources,
             mcp_selection.complete,
             mcp_selection.pending,
         )
+        if mcp_pending:
+            bounded_mcp_sources = None
     current()
     require_current()
 
@@ -1995,7 +2012,7 @@ async def capture_console_turn_configuration_owned(
                 ),
             )
             current()
-            if composition_mcp:
+            if composition_mcp and bounded_mcp_sources is None:
                 result = replace(
                     result,
                     mcp_tool_maximum=None,
@@ -2037,7 +2054,7 @@ async def capture_console_turn_configuration_owned(
                 result,
                 _prepared_skills,
                 _consent_source_identity(refs.consent),
-                _mcp_source_identity(refs.mcp),
+                _mcp_source_identity(refs.mcp, bounded_mcp_sources),
             )
         )
     else:
@@ -2067,7 +2084,7 @@ def _consent_source_identity(service):
     )
 
 
-def _mcp_source_identity(service):
+def _mcp_source_identity(service, bounded_sources=None):
     """Record selected MCP receivers and callbacks without invoking them."""
     if service is None:
         return ()
@@ -2111,6 +2128,7 @@ def _mcp_source_identity(service):
         inspect.getattr_static(permission, "path", None)
         if permission is not None
         else None,
+        bounded_sources,
     )
 
 
@@ -2124,7 +2142,10 @@ def _same_mcp_source_entry(original, current):
 def _same_mcp_source(left, right):
     if not left or not right:
         return left == right
-    return left[1:] == right[1:] and all(
+    bounded_sources = left[3]
+    if bounded_sources is not None:
+        bounded_sources.require_current()
+    return left[1:3] == right[1:3] and all(
         _same_mcp_source_entry(original, current)
         for original, current in zip(left[0], right[0], strict=True)
     )

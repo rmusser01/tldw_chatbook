@@ -268,6 +268,12 @@ class WorktreeActivity:
         self._notify_released()
 
     @contextmanager
+    def _mcp_permission_publication(self):
+        # Protect the empty slot of an already admitted opaque owner.
+        with self._lock:
+            yield not any(state.footprint.opaque for state in self._claims.values())
+
+    @contextmanager
     def _snapshot_prelaunch(self, source):
         """Finite original jobs conflict physically without acquiring a tree lane."""
         from .change_review_ownership import _SnapshotSource
