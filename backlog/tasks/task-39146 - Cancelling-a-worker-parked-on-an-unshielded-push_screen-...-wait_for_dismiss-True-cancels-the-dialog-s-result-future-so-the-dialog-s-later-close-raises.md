@@ -89,4 +89,7 @@ It now flags any `push_screen` call that may pass a non-False `wait_for_dismiss`
 
 **Review r12p-rev2 M3 (2026-11-08).** A `*args` splat could carry the third positional `wait_for_dismiss`. `_waits_for_dismiss` now treats any starred argument as unprovable and fails closed, as it does for a `**` splat. The forms test adds `await app.push_screen(*args)`, so the expected lines are now `[2, 3, 7, 8, 10, 11, 12, 13]`. With the new check removed, the forms test goes red. The package scan still finds only the allowlisted `await_quit_prompt`.
 
+
+**Restack onto dev 3a6498ae14 (2026-11-09).** Dev deleted `Widgets/Media/media_viewer_panel.py` (TASK-38605 dead-code purge), so that site and its fix are gone. Its case was removed from `Tests/UI/test_cancelled_dialog_waits.py`, which now drives the 8 remaining sites (8 passed). The guard still finds no unshielded site apart from the allowlisted `await_quit_prompt`.
+
 Files: the six product modules above, `UI/Screens/personas_screen.py`, the four test files, `Tests/Architecture/test_worker_exclusive_group_inventory.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.

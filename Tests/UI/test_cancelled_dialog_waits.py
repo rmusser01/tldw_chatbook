@@ -97,20 +97,6 @@ def _character_import(app):
     )
 
 
-def _media_analysis_delete(app):
-    from tldw_chatbook.Widgets.Media.media_viewer_panel import MediaViewerPanel
-
-    worker = inspect.unwrap(MediaViewerPanel._run_delete_confirmation)
-    return worker(
-        SimpleNamespace(
-            app=app,
-            media_data={"id": 1},
-            all_analyses=[{"version_number": 1, "uuid": "analysis"}],
-            current_analysis_index=0,
-        )
-    )
-
-
 _WIZARD = "tldw_chatbook.UI.Wizards.ChatbookCreationWizard.ChatbookCreationWizard"
 _TEMPLATES = "tldw_chatbook.UI.ChatbookTemplatesWindow.ChatbookTemplatesWindow"
 
@@ -157,11 +143,6 @@ SITES = {
     "character-import": (
         ["tldw_chatbook.Widgets.enhanced_file_picker.EnhancedFileOpen"],
         _character_import,
-        [],
-    ),
-    "media-analysis-delete": (
-        ["tldw_chatbook.Widgets.delete_confirmation_dialog.DeleteConfirmationDialog"],
-        _media_analysis_delete,
         [],
     ),
 }
