@@ -176,6 +176,7 @@ class TestLocalOverwritePersistence:
 
 
 class TestEncodingSelection:
+    @pytest.mark.bootstrap_profile
     def test_plaintext_latin1_selection_decodes_correctly(self, tmp_path: Path):
         source = tmp_path / "latin1.txt"
         source.write_bytes("café résumé naïveté".encode("latin-1"))
@@ -184,6 +185,7 @@ class TestEncodingSelection:
 
         assert payload["content"] == "café résumé naïveté"
 
+    @pytest.mark.bootstrap_profile
     def test_plaintext_cp1252_selection_decodes_correctly(self, tmp_path: Path):
         source = tmp_path / "cp1252.txt"
         source.write_bytes("smart “quotes” and – dashes".encode("cp1252"))
@@ -192,6 +194,7 @@ class TestEncodingSelection:
 
         assert payload["content"] == "smart “quotes” and – dashes"
 
+    @pytest.mark.bootstrap_profile
     def test_plaintext_utf16_selection_decodes_correctly(self, tmp_path: Path):
         source = tmp_path / "utf16.txt"
         source.write_bytes("wide chars: äöü".encode("utf-16"))
@@ -200,6 +203,7 @@ class TestEncodingSelection:
 
         assert payload["content"] == "wide chars: äöü"
 
+    @pytest.mark.bootstrap_profile
     def test_plaintext_auto_keeps_clean_utf8(self, tmp_path: Path):
         source = tmp_path / "utf8.txt"
         source.write_text("plain utf-8 with é accents", encoding="utf-8")
@@ -208,6 +212,7 @@ class TestEncodingSelection:
 
         assert payload["content"] == "plain utf-8 with é accents"
 
+    @pytest.mark.bootstrap_profile
     def test_plaintext_absent_encoding_defaults_to_auto(self, tmp_path: Path):
         source = tmp_path / "plain.txt"
         source.write_text("no encoding option at all", encoding="utf-8")
@@ -216,6 +221,7 @@ class TestEncodingSelection:
 
         assert payload["content"] == "no encoding option at all"
 
+    @pytest.mark.bootstrap_profile
     def test_html_latin1_selection_decodes_correctly(self, tmp_path: Path):
         source = tmp_path / "latin1.html"
         source.write_bytes(
@@ -232,6 +238,7 @@ class TestEncodingSelection:
         # runs first). Pinned here as-is; out of task-3301's scope.
         assert payload["title"] == "latin1"
 
+    @pytest.mark.bootstrap_profile
     def test_html_latin1_under_utf8_selection_does_not_crash(self, tmp_path: Path):
         """An explicit wrong choice degrades to replacement chars, not a crash.
 
@@ -246,6 +253,7 @@ class TestEncodingSelection:
         assert "caf" in payload["content"]
         assert "café" not in payload["content"]
 
+    @pytest.mark.bootstrap_profile
     def test_plaintext_unknown_encoding_degrades_with_warning(self, tmp_path: Path):
         """(task-3301 xhigh review round 2, F13) An explicit encoding name
         Python's codec registry doesn't know (``utf8-bom`` is not a codec;
@@ -265,6 +273,7 @@ class TestEncodingSelection:
             f"no warning names the unknown encoding: {payload['warnings']}"
         )
 
+    @pytest.mark.bootstrap_profile
     def test_html_unknown_encoding_degrades_with_warning(self, tmp_path: Path):
         """(F13) Same contract on the HTML branch."""
         source = tmp_path / "bom.html"
@@ -282,6 +291,7 @@ class TestEncodingSelection:
 
 
 class TestChunkToggleReachesProcessors:
+    @pytest.mark.bootstrap_profile
     def test_pdf_chunk_off_passes_perform_chunking_false(
         self, tmp_path: Path, monkeypatch
     ):
@@ -319,6 +329,7 @@ class TestChunkToggleReachesProcessors:
         # stored either: Chunk OFF means no chunk rows.
         assert payload["chunks"] is None
 
+    @pytest.mark.bootstrap_profile
     def test_pdf_chunk_on_passes_perform_chunking_true(
         self, tmp_path: Path, monkeypatch
     ):
@@ -355,6 +366,7 @@ class TestChunkToggleReachesProcessors:
         assert calls[0]["perform_chunking"] is True
         assert payload["chunks"] == [{"text": "PDF text", "metadata": {"chunk_num": 0}}]
 
+    @pytest.mark.bootstrap_profile
     def test_ebook_chunk_off_passes_perform_chunking_false(
         self, tmp_path: Path, monkeypatch
     ):
@@ -1103,6 +1115,7 @@ def _document_stub_result(content: str = "Document text") -> Dict[str, Any]:
 
 
 class TestDocumentOptionWiring:
+    @pytest.mark.bootstrap_profile
     def test_processing_options_reach_process_document(
         self, tmp_path: Path, monkeypatch
     ):
@@ -1136,6 +1149,7 @@ class TestDocumentOptionWiring:
         assert calls[0]["enable_ocr"] is True
         assert calls[0]["ocr_language"] == "de"
 
+    @pytest.mark.bootstrap_profile
     def test_document_defaults_match_the_real_signature(
         self, tmp_path: Path, monkeypatch
     ):
@@ -1202,6 +1216,7 @@ class TestDocumentOptionWiring:
 
 
 class TestPdfOcrDetailWiring:
+    @pytest.mark.bootstrap_profile
     def test_ocr_language_and_backend_reach_process_pdf(
         self, tmp_path: Path, monkeypatch
     ):
@@ -1247,6 +1262,7 @@ class TestPdfOcrDetailWiring:
         assert calls[0]["ocr"] is True
         assert calls[0]["engine"] == "docext"
 
+    @pytest.mark.bootstrap_profile
     def test_pdf_ocr_detail_defaults_match_the_real_signature(
         self, tmp_path: Path, monkeypatch
     ):
@@ -1288,6 +1304,7 @@ class TestPdfOcrDetailWiring:
 
 
 class TestEbookChunkMethodWiring:
+    @pytest.mark.bootstrap_profile
     def test_chunk_method_reaches_process_ebook(self, tmp_path: Path, monkeypatch):
         source = tmp_path / "book.epub"
         source.write_bytes(b"PK\x03\x04" + b"\x00" * 32)
