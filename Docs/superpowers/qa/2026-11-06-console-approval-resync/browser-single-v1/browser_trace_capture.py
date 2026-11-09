@@ -35,7 +35,9 @@ class BrowserTraceCapture:
         self.complete = asyncio.get_running_loop().create_future()
         await self.cdp.send('Tracing.start',{'transferMode':'ReportEvents','screenshotMaxSize':1500,'screenshotMaxCount':50,'traceConfig':{
             'recordMode':'recordContinuously','traceBufferSizeInKb':8192,
-            'includedCategories':['benchmark','cc','viz','blink.user_timing','devtools.timeline','disabled-by-default-devtools.timeline.frame','disabled-by-default-devtools.screenshot']}})
+            # The benchmark group member enables PipelineReporter, FramePresented
+            # and Display::FrameDisplayed without the broad compositor categories.
+            'includedCategories':['benchmark','blink.user_timing','disabled-by-default-devtools.screenshot']}})
         await self.calibrate('before', samples=calibration_samples)
 
     async def calibrate(self, phase, *, samples=20):

@@ -867,7 +867,10 @@ def _projection_inputs(screen: Any) -> tuple[tuple, tuple]:
     """
     from tldw_chatbook import config
     from tldw_chatbook.Backup_Recovery import storage_admission
-    from tldw_chatbook.Chat.console_chat_models import FEEDBACK_ACTIVE_RUN_STATUSES
+    from tldw_chatbook.Chat.console_chat_models import (
+        FEEDBACK_ACTIVE_RUN_STATUSES,
+        ConsoleRunStatus,
+    )
     from tldw_chatbook.Chat.provider_test_evidence import shared_connection_evidence
 
     store = getattr(screen, "_console_chat_store", None)
@@ -891,6 +894,18 @@ def _projection_inputs(screen: Any) -> tuple[tuple, tuple]:
                 state is not None and state.status in FEEDBACK_ACTIVE_RUN_STATUSES
             )
             run += (_cost_inputs(store, controller, agent, session_id, in_flight),)
+            # A terminal run state can paint before its queue releases. Observe
+            # that final ownership change even when the run state stays put.
+            if (
+                state is not None
+                and state.status is not ConsoleRunStatus.IDLE
+                and state.is_send_allowed
+            ):
+                lifecycle_revision = getattr(
+                    controller, "_lifecycle_revision_for", None
+                )
+                if callable(lifecycle_revision):
+                    run += (lifecycle_revision(session_id),)
     if agent is not None:
         with agent.historical_reads_held():  # The projection starts those.
             run += (

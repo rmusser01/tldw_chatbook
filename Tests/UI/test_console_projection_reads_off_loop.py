@@ -452,6 +452,66 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
                 timer.resume()
 
 
+@pytest.mark.asyncio
+async def test_run_poll_repaints_send_when_a_completed_turn_releases_its_queue(
+    monkeypatch,
+):
+    """Queue release changes the composer after the run status is already final."""
+    from textual.widgets import Button
+
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleRunState,
+        ConsoleRunStatus,
+        ConsoleSubmissionOrigin,
+    )
+
+    _install_clock(monkeypatch)
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            await _fresh_display(console)
+            controller = console._ensure_console_chat_controller()
+            store = controller.store
+            session_id = store.active_session_id
+            composer.load_draft("")
+            button = composer.query_one("#console-send-message", Button)
+            queue = controller.prompt_queue_coordinator
+            completed = ConsoleRunStatus.COMPLETED
+
+            async def project_poll(screen):
+                config_sync.begin_console_sync(screen)
+                return config_sync.project_console_tick(screen)
+
+            async def complete_turn():
+                queue.turn_accepted(
+                    session_id,
+                    origin=ConsoleSubmissionOrigin.MANUAL,
+                    context_epoch=store.conversation_context_epoch(session_id),
+                )
+                controller._set_run_state(
+                    ConsoleRunState(completed), session_id=session_id
+                )
+                assert await config_sync.run_periodic_console_sync(
+                    project_poll, console
+                )
+                assert button.label.plain == "Queue"
+                assert button.disabled
+                return ConsoleSubmitResult(True, True, terminal_status=completed)
+
+            result = await controller.run_prompt_chain(
+                session_id=session_id, initial_turn=complete_turn
+            )
+            assert result.terminal_status is completed
+            assert not controller.activity_for(session_id).accepted_live_turn
+            assert not controller.prompt_queue_registry.snapshot(session_id).total_count
+
+            assert await config_sync.run_periodic_console_sync(project_poll, console)
+            assert button.label.plain == "Send"
+            assert button.disabled
+
+
 def test_a_stopping_poll_hands_a_request_it_was_left_to_the_running_sync():
     """AC#5: a request coalesced into a poll that then stops is still rendered.
 

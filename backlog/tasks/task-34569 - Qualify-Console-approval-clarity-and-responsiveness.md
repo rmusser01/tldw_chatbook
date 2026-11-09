@@ -36,7 +36,7 @@ Verify the reviewed permission interaction and measure the resulting native and 
 - [ ] #4 Targeted checks, generated artifacts, documentation and evidence reflect the shipped behavior; unqualified metrics and any remaining measured gaps are explicitly reported.
 - [ ] #5 The refreshed required UI/PR lanes preserve existing executable membership and limits while enrolling bounded new Details-privacy, currentness and real-invocation regressions, with nonvacuous membership controls and exact final-head hosted results.
 - [ ] #6 Existing boot import and _ui_ready module ratchets pass at their unchanged limits; project-chat wrong-family UAT verifies the current visible action and original captured request through successful execution.
-- [ ] #7 The generated remote-worker artifact matches the canonical renderer and passes its bundle identity checks without changes to worker sources or limits.
+- [x] #7 The generated remote-worker artifact matches the canonical renderer and passes its bundle identity checks without changes to worker sources or limits.
 - [x] #8 The governance pin helper preserves its hard-zero refusal and documented token-file exemption on Windows, with portable CSS paths and no unexpected baseline writes.
 - [x] #9 Speculative Speech-screen preimport does not initialize NumPy solely for the dictation level meter; normalized PCM16 levels remain correct with the existing stdlib calculation, including zero for empty or malformed input, while recorder/transcriber dependency and lifecycle contracts remain intact.
 - [x] #10 Real Library profile-depth and received Console configuration preparation read the canonical live profile metadata without loading NumPy, Torch or RAG engines; all profile defaults, environment overrides, invalid/missing fallbacks, storage admission/CRUD, public aliases and historical pickle references remain compatible. Full RAG resolution retains its existing device/configuration behavior.
@@ -175,6 +175,14 @@ Reproduce admission of deeply nested JSON through the approval owner. Bound the 
 ADR required: no new decision. ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md. Reason: preserve the existing round ownership and review contract.
 
 
+### Recover native and Edge timing validation on merged dev
+
+- [x] Reproduce the native stale Queue presentation after the actual accepted turn completes. Compare the current queue owner and the last painted composer projection. Write a focused regression at the first failing owner and make the smallest correction. Preserve an occupied queue, a successor turn, draft revision, cancellation and the existing two-second settlement cap.
+- [x] Reproduce the Edge capture failure from the retained data-loss trace and compare the required event categories with the successful trace from the same Edge executable. Exercise the real capture configuration and retained trace parser with focused controls. Reduce incidental trace traffic while preserving the pre-intent start, real screenshot presentation join, loss rejection, clock calibration and existing bounds. Review and regenerate any changed method source bindings.
+- [ ] Verify both corrections before a fresh display window. Run native and served-browser validation from current dev with the reviewed method files and fresh private profiles. Keep censored runs out of the distribution. After both methods validate, gather the required warm and comparable baseline observations under the existing scenario, geometry and timing rules before closing the task.
+
+ADR required: no new ADR. ADR paths are backlog/decisions/235-console-approval-interaction-and-feedback.md, backlog/decisions/098-visible-bounded-console-prompt-queue.md and backlog/decisions/231-console-polling-and-full-state-reconciliation.md. The repair preserves the established permission, queue and timing boundaries.
+
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -231,6 +239,16 @@ AC9 verified: removed only the lazy dictation meter's module NumPy import/vector
 
 
 AC10 verified (2026-11-07): real fresh Library depth and selected received-configuration capture no longer initialize NumPy/Torch/RAG engines. Kept the same canonical live profile manager/admission/CRUD/env/fallback and full device-resolution bodies; lazy simplified aliases plus exact plain dataclass relocation preserve public object/type aliases and historical pickle references, with documented canonical origins for new pickles. Meaningful cold RED15-vs5 became GREEN; current targeted109 unique passes include metadata40/profile46/order3/facade2/received1/active17. The remaining20 active-resolution raw_source_selection_changed fixture failures match exact unchanged dev8b20/17 and all failed nodes; no fixture/guard/limit change. Source class/body/export AST equivalence and independent six-file review are clear, no new Ruff diagnostics. Root metadata40/Audio12/CI119 and canonical inventory verified; boot retains the known unchanged Windows688 strict-limit failure. No native/browser timing sample or full-wait causal fix claimed; physical ACs and task In Progress stay open. Existing ADR357 extended before code. Evidence: Docs/superpowers/qa/2026-11-06-console-approval-resync/rag-metadata-followup.md and rag-metadata-source-manifest.json.
+
+AC7 reverified on the dev timing repair branch. The protected bundle suite passed 16 cases, with one POSIX-only locking case skipped on Windows. The committed artifact prefix, executable-entry stamp coverage, and actual worker ping identity each passed in a fresh private profile. The renderer, worker sources, artifact and limits are byte-identical to dev b498bc3aec.
+
+### Dev timing validation repairs
+
+On dev b498bc3aec, the native approval accepted the isolated read and completed the run. All 19 final settlement observations still showed disabled Queue with Ready, so the observer refused. A mounted regression reproduced the label after the real queue coordinator released the completed turn. The cadence now observes the existing viewed-session lifecycle revision only in terminal, send-allowed states. Idle and active-run cadence inputs keep their prior shape. The original context-snapshot and stopping-poll controls passed alongside the new regression on the final source. The separate run-start coalescing control timed out on the unchanged dev comparison.
+
+The foreground Edge trace on the same dev revision recorded data loss and zero screenshots across the actionable segment. The trace now asks only for benchmark, user-timing, and screenshot events. Earlier same-executable replay preserved four screenshots, two valid presentation joins, two rejected frames, and 40 clock marks. The failed trace still refuses on its original loss flag. Five browser controls passed. Source review cleared both repairs and pinned Ruff reported the same three findings as exact dev. The existing timing caps and sample rules still apply.
+
+These repairs and offline checks add zero qualified samples. Fresh single-call validation on merged dev, the remaining shape and geometry coverage, and comparable baseline distributions are still required.
 
 <!-- SECTION:NOTES:END -->
 
