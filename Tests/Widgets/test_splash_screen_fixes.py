@@ -54,12 +54,12 @@ def test_splash_screen_is_focusable_so_skip_keypress_works():
 
 
 def test_splash_screen_default_duration_is_seven_seconds():
-    def fake_get_cli_setting(section, key=None, default=None):
-        return default
-
-    with patch(
-        "tldw_chatbook.Widgets.splash_screen.get_cli_setting",
-        side_effect=fake_get_cli_setting,
+    with (
+        patch(
+            "tldw_chatbook.Widgets.splash_screen.load_cli_config_and_ensure_existence",
+            return_value={},
+        ),
+        patch("tldw_chatbook.Widgets.splash_screen.get_cli_setting", return_value=""),
     ):
         splash = SplashScreen()
         assert splash.config["duration"] == 7.0

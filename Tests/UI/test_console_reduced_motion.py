@@ -25,11 +25,6 @@ from tldw_chatbook.Widgets.Console.console_setup_modal import ConsoleSetupModal
 from tldw_chatbook.Widgets.splash_screen import SplashScreen
 
 
-def _fake_cli_setting(section, key=None, default=None):
-    """Offline config reader: every key resolves to its code default."""
-    return default
-
-
 class ModalHarness(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield ConsoleSetupModal(id="console-setup-modal")
@@ -100,9 +95,12 @@ async def test_guidance_sync_needs_no_config_read_while_backup_pauses_storage():
 
 @pytest.mark.asyncio
 async def test_splash_reduced_motion_renders_card_statically_without_timer():
-    with patch(
-        "tldw_chatbook.Widgets.splash_screen.get_cli_setting",
-        side_effect=_fake_cli_setting,
+    with (
+        patch(
+            "tldw_chatbook.Widgets.splash_screen.load_cli_config_and_ensure_existence",
+            return_value={},
+        ),
+        patch("tldw_chatbook.Widgets.splash_screen.get_cli_setting", return_value=""),
     ):
         app = SplashHarness(card_name="matrix", reduced_motion=True)
 
@@ -119,9 +117,12 @@ async def test_splash_reduced_motion_renders_card_statically_without_timer():
 
 @pytest.mark.asyncio
 async def test_splash_default_motion_starts_animation_timer():
-    with patch(
-        "tldw_chatbook.Widgets.splash_screen.get_cli_setting",
-        side_effect=_fake_cli_setting,
+    with (
+        patch(
+            "tldw_chatbook.Widgets.splash_screen.load_cli_config_and_ensure_existence",
+            return_value={},
+        ),
+        patch("tldw_chatbook.Widgets.splash_screen.get_cli_setting", return_value=""),
     ):
         app = SplashHarness(card_name="matrix", reduced_motion=False)
 

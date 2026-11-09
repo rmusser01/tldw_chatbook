@@ -150,6 +150,7 @@ class RecordingGateway:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_fixture_retrieval_runs_third_arm_and_retains_unknown_compute_cost(
     tmp_path, monkeypatch
@@ -345,7 +346,7 @@ async def test_deepseek_rate_boundary_keeps_bounded_cost_separate_from_unknown_u
 
     args = run_args(tmp_path)
     args.provider = "deepseek"
-    args.main_model, args.worker_model = "deepseek-v4-pro", "deepseek-v4-flash"
+    args.main_model, args.worker_model = "deepseek-v4-pro", "deepseek-flash"
     experiment.prepare(args.prepared)
     monkeypatch.setenv(args.api_key_env, "key")
     monkeypatch.setattr(experiment, "datetime", BoundaryClock)

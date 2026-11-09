@@ -18,7 +18,7 @@ from ..Constants import DEFAULT_SPLASH_DURATION_SECONDS
 from ..config import (
     ConfigMutationResult,
     apply_settings_mutation_to_cli_config,
-    get_cli_setting,
+    load_cli_config_and_ensure_existence,
 )
 from ..UI.Splash_Screens.card_definitions import get_all_card_definitions
 from ..Widgets.splash_screen import SplashScreen
@@ -77,7 +77,7 @@ class SettingsSplashScreenViewer(Vertical):
         try:
             # TASK-32804.8: one section read, then index it (same shape as
             # splash_screen.py's loader) instead of a call per key.
-            section = get_cli_setting("splash_screen", default={})
+            section = load_cli_config_and_ensure_existence().get("splash_screen", {})
             section = section if isinstance(section, dict) else {}
             effects = section.get("effects", {})
             effects = effects if isinstance(effects, dict) else {}
