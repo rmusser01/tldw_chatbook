@@ -57,6 +57,7 @@ from types import SimpleNamespace
 import pytest
 
 import tldw_chatbook.config as config_mod
+from Tests.Backup_Recovery.config_test_support import select_config_source
 from tldw_chatbook.config import get_cli_setting
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -77,25 +78,13 @@ paste_collapse_threshold = 77
 
 @contextmanager
 def _real_config(tmp_path, monkeypatch, toml_text: str):
-    """Point the real loader at a scratch TOML; restore + reload afterwards.
-
-    Mirrors Tests/Utils/test_config_nested_settings.py's `_real_config` --
-    drives the real TLDW_CONFIG_PATH + force_reload machinery, zero
-    monkeypatching of the loaders themselves.
-    """
+    """Select a scratch TOML and run the actual loaders."""
     config_path = tmp_path / "scratch-import-hygiene-config.toml"
     config_path.write_text(toml_text, encoding="utf-8")
-    original_env = os.environ.get("TLDW_CONFIG_PATH")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-    config_mod.load_cli_config_and_ensure_existence(force_reload=True)
-    try:
+    with monkeypatch.context() as selected:
+        source = select_config_source(selected, config_path, globals())
+        source.load_cli_config_and_ensure_existence(force_reload=True)
         yield config_path
-    finally:
-        if original_env is not None:
-            monkeypatch.setenv("TLDW_CONFIG_PATH", original_env)
-        else:
-            monkeypatch.delenv("TLDW_CONFIG_PATH", raising=False)
-        config_mod.load_cli_config_and_ensure_existence(force_reload=True)
 
 
 class TestBothCachesServeFromOneLoad:
@@ -204,6 +193,10 @@ class TestEmbeddedDefaultParsedOnce:
     def test_forced_full_reload_does_not_reparse_embedded_default(
         self, tmp_path, monkeypatch
     ):
+        config_path = tmp_path / "parse-count-config.toml"
+        config_path.write_text('[general]\ndefault_tab = "chat"\n', encoding="utf-8")
+        select_config_source(monkeypatch, config_path, globals())
+
         calls: list[str] = []
         real_loads = config_mod.tomllib.loads
 
@@ -221,10 +214,6 @@ class TestEmbeddedDefaultParsedOnce:
             "tomllib",
             SimpleNamespace(**{**vars(config_mod.tomllib), "loads": _counting_loads}),
         )
-
-        config_path = tmp_path / "parse-count-config.toml"
-        config_path.write_text('[general]\ndefault_tab = "chat"\n', encoding="utf-8")
-        monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
 
         config_mod.load_cli_config_and_ensure_existence(force_reload=True)
         config_mod.load_settings(force_reload=True)
@@ -260,7 +249,7 @@ class TestEmbeddedDefaultParsedOnce:
         """
         config_path = tmp_path / "parse-count-user-config.toml"
         config_path.write_text('[general]\ndefault_tab = "chat"\n', encoding="utf-8")
-        monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+        select_config_source(monkeypatch, config_path, globals())
         # Start both caches cold for this path, matching a fresh process.
         monkeypatch.setattr(config_mod, "_CONFIG_CACHE", None)
         monkeypatch.setattr(config_mod, "_CONFIG_CACHE_SOURCE", None)
