@@ -203,7 +203,7 @@ jobs:
             "Tests/Performance/test_console_keystroke_work_census.py::test_typing_census_excludes_elapsed_draft_pause_work" \
             "Tests/Performance/test_console_keystroke_work_census.py::test_settled_400_message_typing_traverses_no_history" \
             "Tests/Performance/test_console_keystroke_work_census.py::test_typing_does_not_rebuild_the_provider_derivation" \
-            -v --timeout=300
+            -v --timeout=300 -n 2 --max-worker-restart=0
 
       # The Console storage-unit ratchet joined with TASK-33260 after review
       # on #2888: without it here, a per-call admission or a per-connection
