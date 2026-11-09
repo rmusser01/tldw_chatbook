@@ -421,3 +421,172 @@ async def test_full_preparation_defers_for_busy_file_lock(tmp_path):
             await asyncio.gather(preparation, return_exceptions=True)
         await asyncio.gather(*tasks, return_exceptions=True)
         database.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["open", "move", "cancel"])
+async def test_explicit_settings_keeps_busy_config_custody(
+    tmp_path, monkeypatch, outcome
+):
+    from Tests.UI.test_console_shared_context_policy import _screen as settings_screen
+    from tldw_chatbook.Backup_Recovery.config_participants import operation
+    from tldw_chatbook.UI.Console_Modules.config_sync import (
+        prepare_console_presentation_sync,
+        rewarm_console_presentation,
+    )
+    from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
+        ConsoleReadinessConfigProjection,
+        prepare_console_settings_context,
+    )
+
+    database, store, controller, screen, tasks = settings_screen(tmp_path)
+    screen._ensure_console_chat_controller = lambda: controller
+    screen._ensure_console_chat_store = lambda: store
+    store.create_session(session_id="other")
+    store.active_session_id = "session-1"
+    projection = ConsoleReadinessConfigProjection.for_screen(screen)
+    held, release, waiting, expired = (threading.Event() for _ in range(4))
+    admitted, retire = threading.Event(), threading.Event()
+    active_states = []
+    native_thread = None
+    rebuild = config._settings_rebuild_lock()
+
+    def hold():
+        with rebuild:
+            held.set()
+            if not release.wait(10):
+                expired.set()
+
+    holder = threading.Thread(target=hold)
+    warm = projection.warm
+
+    async def warm_with_holder(**kwargs):
+        if holder.ident is None:
+            # The explicit route has already checked the live thinking policy.
+            holder.start()
+            assert await asyncio.to_thread(held.wait, 3)
+        return await warm(**kwargs)
+
+    monkeypatch.setattr(projection, "warm", warm_with_holder)
+    native_code = operation.__wrapped__.__code__
+    reader_code = projection.read_current.__code__
+    old_main, old_thread = sys.getprofile(), threading.getprofile()
+
+    def observe(frame, event, result):
+        nonlocal native_thread
+        if not held.is_set():
+            return
+        if event == "call" and frame.f_code is native_code and not waiting.is_set():
+            caller = frame.f_back
+            while caller is not None:
+                if (
+                    caller.f_code is reader_code
+                    and caller.f_locals.get("projection") is projection
+                ):
+                    native_thread = threading.get_ident()
+                    waiting.set()
+                    return
+                caller = caller.f_back
+        elif (
+            outcome == "open"
+            and event == "return"
+            and frame.f_code is checked_config_identity.__code__
+            and threading.get_ident() == native_thread
+            and result is not None
+            and release.is_set()
+            and not admitted.is_set()
+        ):
+            caller = frame.f_back
+            if caller.f_code is reader_code and "before" in caller.f_locals:
+                active_states.append(raw._states[frame.f_locals["active"]])
+                admitted.set()
+                assert retire.wait(10)
+
+    async def background_full():
+        ready = await prepare_console_presentation_sync(screen)
+        await rewarm_console_presentation(screen)
+        return ready
+
+    opener = waiter = background = moved = admitted_full = None
+    threading.setprofile_all_threads(observe)
+    try:
+        origin = store.capture_console_settings_origin("session-1")
+        opener = asyncio.create_task(
+            prepare_console_settings_context(
+                screen, controller, store, "session-1", origin, max_age=1
+            )
+        )
+        waiter = asyncio.create_task(asyncio.to_thread(waiting.wait, 5))
+        done, _ = await asyncio.wait(
+            (opener, waiter), timeout=6, return_when=asyncio.FIRST_COMPLETED
+        )
+        assert opener not in done, (
+            "explicit Settings lost its open on a busy config lock"
+        )
+        assert waiter in done and await waiter, (
+            "the original native operation never tried to enter"
+        )
+        assert projection.pending and projection._reads
+        background = asyncio.create_task(background_full())
+        done, _ = await asyncio.wait((background,), timeout=2)
+        assert background in done, "passive FULL waited for an unadmitted Settings read"
+        assert await background is False
+        assert not expired.is_set() and not opener.done()
+        if outcome == "move":
+            store.active_session_id = "other"
+            new_origin = store.capture_console_settings_origin("other")
+
+            def new_owner_is_current():
+                return (
+                    store.active_session_id == "other"
+                    and store.capture_console_settings_origin("other") == new_origin
+                )
+
+            moved = asyncio.create_task(
+                warm(retry_busy_if_current=new_owner_is_current)
+            )
+            done, _ = await asyncio.wait((moved,), timeout=2)
+            assert moved in done, "new Settings owner joined the old unadmitted read"
+            assert await moved is False
+        elif outcome == "cancel":
+            opener.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await opener
+            assert projection.pending and projection._reads
+        release.set()
+        if outcome == "open":
+            assert await asyncio.to_thread(admitted.wait, 5)
+            state = active_states[0]
+            assert state.active and projection.pending and projection._reads
+            admitted_full = asyncio.create_task(
+                prepare_console_presentation_sync(screen)
+            )
+            done, _ = await asyncio.wait((admitted_full,), timeout=0.05)
+            assert admitted_full not in done, "FULL skipped the original admitted read"
+            assert state.active
+            retire.set()
+            prepared = await opener
+            assert prepared is not None and prepared[1]()
+            assert await admitted_full is True
+            assert not state.active
+        elif outcome == "move":
+            assert await opener is None
+        await asyncio.gather(*tasks)
+        assert not projection.pending and not projection._reads
+    finally:
+        release.set()
+        retire.set()
+        await asyncio.gather(
+            *(
+                task
+                for task in (opener, waiter, background, moved, admitted_full, *tasks)
+                if task is not None
+            ),
+            return_exceptions=True,
+        )
+        if holder.ident is not None:
+            await asyncio.to_thread(holder.join, 3)
+        threading.setprofile_all_threads(old_thread)
+        sys.setprofile(old_main)
+        database.close()
+    assert not holder.is_alive()
