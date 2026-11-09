@@ -5370,6 +5370,17 @@ its precise phase. Review also caught a test-arm lookup that preceded button
 composition; prepare only that arm boundedly, preserving the original path.
 
 
+**Follow-up (PR #3345, 2026-11-09).** UI16 opened the Notes picker and
+then read a zero region from the retired Move button. A native canvas recompose
+after a real click reproduced the failure. Review found that sampling before
+Pilot also misses a replacement during its first yield: the unshifted new
+button emitted the actual press and opened the same picker. When a test
+promises that a specific shifted control received the click, record the
+originating `Button.Pressed` and its region at first dispatch. Deduplicate
+the same message as it bubbles. Keep the one click, existing readiness
+deadline, and separate dialog and database assertions. The replacement
+control failed this check and the post-click recompose passed.
+
 **TASK-24403, 2026-08-29.** The clean fast-PR lane passed all 670 selected tests,
 then a second identical run failed one 100x30 MCP Workbench interaction:
 `Pilot.click()` returned false even though the checkbox was painted, on-screen,
