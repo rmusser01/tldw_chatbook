@@ -916,6 +916,14 @@ first wait cannot mask the second. Verify that the native layout signal
 lets the tray grow to contain the replacement. The hosted callback order
 was unobserved.
 
+**Notifications follow-up, PR #3345 (2026-11-09 UTC).** The inbox's
+two-row table was already mounted while the nested toolbar buttons could
+still be unmounted. A real delayed toolbar mount reproduced the first
+Mark read lookup failure. Wait for the old control and then the selected
+replacement inside the same activation deadline. Make the final lookup
+and press without yielding between them. Keep both native writes and
+their commit-to-refresh assertions.
+
 **The same kept row broke a focus guard too (review round).**
 `RecomposeCaptureGuard` predicts where Textual's focus reset will land "as
 if every child is removed", and restores a rebuilt row's focus only when
