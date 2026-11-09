@@ -7,6 +7,17 @@ and this project adheres to Some kind of Versioning
     
 ## [Unreleased]
 
+## [0.2.4] - 2026-11-08
+
+### Fixed
+- Include the complete served web and mobile assets, device/passkey scripts and
+  vendored notice in application distributions. Installed commands continue to
+  treat package assets as immutable.
+- Restore access to Raw TOML Revert on narrow Settings layouts.
+- Honor saved splash duration and effects in both startup and Settings.
+- Keep Console capture purge and send preparation from overlapping, including
+  received and queued turns.
+
 ### Changed
 - Console replies now stream by default for every provider, including
   OpenAI, Anthropic and the Custom OpenAI-compatible slots: the shipped
@@ -36,21 +47,15 @@ and this project adheres to Some kind of Versioning
   a provider set to its saved key no longer spends the variable instead. To
   use the variable, remove the saved key in Settings ▸ Providers & Models and
   name the variable in the Env var field.
-
-## [0.2.4] - 2026-11-08
-
-### Fixed
-- Include the complete served web and mobile assets, device/passkey scripts and
-  vendored notice in application distributions. Installed commands continue to
-  treat package assets as immutable.
-
-### Changed
 - Defer Lightning Whisper MLX public availability for 0.2.4. Saved canonical and
   legacy selections remain unchanged and report unavailable before runtime work;
   supported replacement requires an explicit user choice.
 - Synchronize application and native companion source versions for the app-only
   release. Ordinary recording support remains available; speculative duplex
   voice stays unqualified and unavailable. No hardware qualification is claimed.
+- Show listening, waiting, and speaking states in Buddy for hands-free turns.
+  Errors remain visible until the next idle state or replacement.
+- Require an explicitly selected config profile for the source voice demo.
 
 ## [0.2.3] - 2026-10-02
 

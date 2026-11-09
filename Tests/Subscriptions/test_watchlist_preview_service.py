@@ -7,6 +7,7 @@ from tldw_chatbook.Subscriptions.watchlist_preview_service import (
 )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_preview_uses_run_executor_when_provided():
     async def fake_executor(subscription):
@@ -29,6 +30,7 @@ async def test_preview_uses_run_executor_when_provided():
     assert "Preview completed" in result["log_text"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_preview_closes_its_database_on_success(monkeypatch):
     """Since task-689 made the ``:memory:`` DB a real, functional connection
@@ -53,6 +55,7 @@ async def test_preview_closes_its_database_on_success(monkeypatch):
     assert len(closed) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_preview_closes_its_database_even_when_the_work_raises(monkeypatch):
     """A failed preview is exactly when the resource must come back: the
@@ -77,6 +80,7 @@ async def test_preview_closes_its_database_even_when_the_work_raises(monkeypatch
     assert len(closed) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_preview_url_source_completes_end_to_end_without_raising(monkeypatch):
     """Regression for task-689, exercising the real (non-overridden)

@@ -50,6 +50,7 @@ from Tests.Chat.test_console_agent_bridge import (
     _FleetTwoChildGateway,
     _join_fleet_threads,
     _run,
+    _test_resolution,
 )
 from tldw_chatbook.Agents.agent_models import RUN_DONE, RunOutcome
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
@@ -237,6 +238,7 @@ async def test_the_fold_lands_durably_when_the_child_settles_after_console_teard
     afterwards and the fold still lands in the persisted conversation --
     read back through a FRESH DB handle, not the old store's memory."""
     db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "test_client")
+    runs_db = None
     try:
         store = ConsoleChatStore(persistence=ChatPersistenceService(db))
         session = store.ensure_session()
@@ -267,7 +269,12 @@ async def test_the_fold_lands_durably_when_the_child_settles_after_console_teard
         controller = ConsoleChatController(
             store=store, provider_gateway=object(), agent_bridge=bridge
         )
-        resolution = _resolution()
+        resolution = _test_resolution(
+            provider="openai",
+            model="gpt-4o",
+            readiness_key="openai",
+            execution_key="openai",
+        )
         signals = _turn_signals()
         conversation_id = controller._agent_conversation_id(session.id)
         try:
@@ -298,7 +305,7 @@ async def test_the_fold_lands_durably_when_the_child_settles_after_console_teard
             signals.close_usage_call()
         finally:
             gate.set()
-        _join_fleet_threads()
+            _join_fleet_threads()
 
         folded = await _settle(
             lambda: (
@@ -320,6 +327,8 @@ async def test_the_fold_lands_durably_when_the_child_settles_after_console_teard
         finally:
             fresh.close()
     finally:
+        if runs_db is not None:
+            runs_db.close()
         db.close()
 
 
