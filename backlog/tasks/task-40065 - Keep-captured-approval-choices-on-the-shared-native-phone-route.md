@@ -14,7 +14,7 @@ references:
 - backlog/decisions/236-served-desktop-approval-relay.md
 - tldw_chatbook/Chat/console_remote_rounds.py
 - tldw_chatbook/Web_Server/static/mobile/app.js
-updated_date: 2026-11-09 13:31
+updated_date: 2026-11-09 14:17
 ---
 
 ## Description
@@ -50,6 +50,7 @@ Reason: Compose the existing captured presentation and feedback with the already
 11. Diagnose UI28’s pre-holder readiness wait with an actual unrelated mounted message pump held while the real Console refresh settles. If confirmed, narrow only that fixture wait to its existing owner predicates and Console after-refresh signal, preserving the two-second deadline and all held-REBUILD, phase and Stop assertions.
 12. Reproduce the independent review’s stale second-discovery edge with an actual A-to-B-to-A session selection and the original route. Recheck the retry’s exact native owner at the modal push boundary, while preserving the first attempt and post-transfer ownership.
 13. Retain the exact hosted Perf Guard timeout annotation and all seven passing step logs. Run the original five count-based keystroke census cases on two isolated pytest workers with worker restarts disabled. Keep the job at 15 minutes, every case at its original limit, and the actual latency and compact-setup probes serial. Verify exact commands, same cases and private-profile teardown before independent review and fresh hosted qualification.
+14. Preserve the hosted pending-layout picker failure and reproduce its zero-region assertion by recomposing the real Notes canvas after the real click opens the picker. Read the same armed button’s shifted geometry at dispatch before the background widget can retire. Keep the single click, ten-second readiness deadline, modal focus, folder, filter and durable mutation assertions. Verify the same forced recompose and all three picker journeys. ADR required: no, because this changes only when the existing fixture observes geometry.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -66,6 +67,8 @@ The canonical approval label now says Until Chatbook exits in the terminal and p
 The final original UI5 shard passed all 119 existing cases and one new stale-owner case. Chromium and WebKit both passed the phone-option control. The final original software UAT passed 15 browser cases and the mounted parent and three children with ordinary reopen and matching retained artifacts. Optional native return diagnostics retain their mixed results. The passive check recorded zero executions of the added retry branch in those eight optional controls. Exact committed-head review and its own hosted gates remain the AC3 evidence.
 
 GitHub cancelled the cf70156 Perf Guard at its existing 15-minute limit after all seven test steps passed. The five count-based keystroke cases now run on two isolated pytest workers with worker restarts disabled. All five passed in the local candidate invocation. Every selector and timeout is preserved, and the latency and compact-setup probes still run serially. The successor’s hosted wall-clock result remains required.
+
+On 98596fe, Perf Guard passed all seven original steps in 9 minutes 17 seconds with the original limits. UI16 separately opened the Notes picker but later read a zero region from its old Move button. A native post-click recompose reproduced the same assertion after a successful click. The test now records the exact hit-tested button and its shifted geometry at dispatch, keeping one click and the ten-second readiness deadline. The same forced recompose passed, and all three original picker journeys passed. The next exact head still needs its own hosted gates.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
