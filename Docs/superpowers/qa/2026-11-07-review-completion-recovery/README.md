@@ -758,3 +758,48 @@ the failed documentation-head run is not green. The earlier successful CI and
 review receipts remain historical evidence. No production/workflow/deadline
 change, manual CI rerun, new ADR or live qualification; additional live requests
 and product children remain zero.
+
+## Idle-test observer cost — 2026-11-09
+
+Normal Derived Artifacts run `42536771527` on `e27fe231` failed UI3 job
+`128920737481`: the malformed-config idle test counted two FULL entries in its
+two-second window (later 2/1/0, idle 0/0/0). The hosted log does not establish
+whether the enclosing FULL had settled or what requested those entries.
+
+The test's observer used `sys.setprofile` for every UI-thread call/return while
+counting only three code objects. A call-through control delaying actual TOML
+parse failures by 150 ms failed with that observer (later 3/0/1; 1 failure in
+30.05 s): its observation interval used 9.71 CPU seconds over 15.72 wall seconds
+and recorded 24 core-triggered replays. With code-local `PY_START` monitoring,
+the same control passed (1 / 19.21 s), using 0.75 CPU seconds over 6.98 wall
+seconds and recording two core-triggered replays, then no later entries.
+A reverse-order control restoring the original observer passed (1 / 18.61 s),
+with 2.58 CPU seconds over 8.90 wall seconds and five core-triggered replays.
+The original failure is therefore timing-dependent, not a deterministic red
+control. These results identify observer overhead without proving the exact
+hosted 2/1/0 cause or resolving every possible lock-starvation path.
+
+Only `_UiLoopStarts` now uses local monitoring. It still counts fresh entries
+on the entering UI thread, with the original core-push caller filter; resumes
+are excluded. Every executable statement in the original malformed-config
+test, its assertions, deadlines and cleanup is AST-identical. A focused helper
+regression checks repeated fresh coroutine starts, resume/caller/thread
+exclusion, preservation of an existing profiler and exceptional cleanup. It
+and the original idle case pass together (2 / 18.74 s). The actual replacement
+also passes the delayed-read control (1 / 18.53 s): initial core/identity work
+finished before the original deadline; the final window's boundary snapshots
+had no pending sync/retry flags, and no new entries were counted. A timer
+invoking real FULL syncs every 350 ms
+still fails the original excess-sync assertion (later 9/2/0; 1 failure in
+16.45 s). No threshold or deadline was widened.
+
+Changed-code formatting and whitespace pass. Whole-file Ruff retains its one
+pre-existing B905 finding and existing formatting differences; neither is
+claimed clean. Private source/log/validation evidence is retained under
+`recovered-final60-20261108/ui3-observer-20261109/`. The delta needs independent
+review and fresh normal CI before queue admission. TASK-39147's earlier Done
+status and green `69bdd` CI remain historical evidence, not admission for this
+repair. Application source, workflows, live qualification and prior evidence
+are unchanged. No new ADR under ADR-281/063/131, no manual CI rerun, and zero
+additional live requests or product children; cumulative recovery remains
+250 requests / 19 children, with no qualification allowance remaining.
