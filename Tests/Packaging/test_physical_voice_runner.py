@@ -1092,10 +1092,12 @@ async def _noop_prompt(_message: str) -> None:
 
 
 class _LiveHarness:
-    def __init__(self, *, aec: object) -> None:
+    def __init__(self, *, aec: object, render_capacity: int = 3) -> None:
         self.clock = ManualClock(now_ns=5_000_000_000)
         self.backend = FakeDuplexBackend(scripted_capture=self.capture_from_render)
         self.aec = aec
+        # The default fake has a 20 ms ADC-to-DAC lag plus a 10 ms frame.
+        self.render_capacity = render_capacity
         self.route = _target_route()
         self.prompts: list[str] = []
         self.notices: list[str] = []
@@ -1110,7 +1112,7 @@ class _LiveHarness:
             backend=self.backend,
             clock=self.clock,
             capture_capacity=8,
-            render_capacity=2,
+            render_capacity=self.render_capacity,
         )
 
     def capture_from_render(self, delayed_render: bytes, index: int) -> bytes:
@@ -1533,7 +1535,7 @@ def test_runner_keeps_playback_continuous_across_double_talk_windows() -> None:
                 backend=harness.backend,
                 clock=harness.clock,
                 capture_capacity=8,
-                render_capacity=2,
+                render_capacity=harness.render_capacity,
             )
 
         async def abort_output(self) -> None:
@@ -1725,7 +1727,7 @@ def test_automated_interruption_flow_stops_after_first_failed_sample() -> None:
                 backend=harness.backend,
                 clock=harness.clock,
                 capture_capacity=8,
-                render_capacity=2,
+                render_capacity=harness.render_capacity,
             )
             self.abort_calls = 0
 
@@ -2026,7 +2028,8 @@ def test_invalid_final_aec_metrics_return_valid_fail_observations(
 
 
 def test_safe_half_duplex_measures_manual_stop_without_acoustic_failure() -> None:
-    harness = _LiveHarness(aec=None)
+    # This fake's 220 ms ADC-to-DAC lag needs 23 ten-millisecond slots.
+    harness = _LiveHarness(aec=None, render_capacity=23)
     runner = _runner(harness)
 
     async def high_output_latency_wait(_seconds: float) -> None:
@@ -2195,7 +2198,7 @@ def test_abort_failure_returns_valid_failing_manual_stop_evidence() -> None:
                 backend=harness.backend,
                 clock=harness.clock,
                 capture_capacity=8,
-                render_capacity=2,
+                render_capacity=harness.render_capacity,
             )
             self.abort_calls = 0
 
