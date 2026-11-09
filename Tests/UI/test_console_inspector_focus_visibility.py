@@ -83,6 +83,7 @@ def test_container_focus_rules_do_not_use_focus_within():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_rail_tab_cycle_is_reachable_and_bounded():
     """The behavioural half: the rail's stops are all inside the rail, and
@@ -202,6 +203,7 @@ def test_the_container_focus_cue_is_an_edge_not_a_tint():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_focusing_a_rail_container_actually_changes_its_painted_edge():
     """The behavioural half of TASK-24702: the rule must resolve, not just

@@ -84,6 +84,7 @@ def test_console_focus_gaps_have_contract_style_rules(selector):
     assert "$accent" not in block
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_composer_pageup_scrolls_transcript_keyboard_only():
     """TASK-348: scrollback must be reachable without the mouse."""
@@ -140,6 +141,7 @@ def _switcher_rows() -> tuple[ConsoleConversationBrowserInputRow, ...]:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_switcher_arrow_keys_move_focus_through_results():
     """TASK-358: ArrowDown/ArrowUp must navigate results (quick-switcher
@@ -173,6 +175,7 @@ async def test_switcher_arrow_keys_move_focus_through_results():
         assert isinstance(host.focused, Input)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_f6_rail_stop_paints_owned_divider_and_restores_on_leave():
     """F6 emphasizes one owned divider and a non-color control cue."""
@@ -216,6 +219,7 @@ async def test_f6_rail_stop_paints_owned_divider_and_restores_on_leave():
         assert (rail.region, rail.content_region) == before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_shell_drops_header_at_small_height():
     """TASK-346: below the minimum viable height the header banner is

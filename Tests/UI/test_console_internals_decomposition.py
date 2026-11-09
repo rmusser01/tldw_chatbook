@@ -396,6 +396,7 @@ async def test_console_gate15_does_not_mount_full_legacy_chat_window_chrome():
         assert len(console.query("#chat-main-content")) == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_hidden_workbench_strips_do_not_reserve_rows():
     app = _build_test_app()
@@ -483,6 +484,7 @@ async def test_console_gate15_keeps_existing_chat_send_control_reachable():
         assert not list(console.query("#console-control-save-chatbook"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_composer_spans_below_workbench_with_single_input_surface():
     app = _build_test_app()
@@ -548,6 +550,7 @@ async def test_console_native_composer_spans_below_workbench_with_single_input_s
         assert legacy_inputs == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_composer_receives_typing_on_open():
     app = _build_test_app()
@@ -571,6 +574,7 @@ async def test_console_native_composer_receives_typing_on_open():
         assert "visible" in _visible_text(composer)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_marks_focus_state():
     app = _build_test_app()
@@ -599,6 +603,7 @@ async def test_console_composer_marks_focus_state():
         assert not composer.has_class("console-composer-focused")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_marks_has_draft_state():
     app = _build_test_app()
@@ -624,6 +629,7 @@ async def test_console_composer_marks_has_draft_state():
         assert composer.has_class("console-composer-has-draft")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_shows_cursor_when_focused():
     app = _build_test_app()
@@ -645,6 +651,7 @@ async def test_console_composer_shows_cursor_when_focused():
         assert ConsoleComposerBar.DRAFT_PLACEHOLDER in visible_draft.renderable.plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_hides_cursor_when_blurred():
     app = _build_test_app()
@@ -676,6 +683,7 @@ async def test_console_composer_hides_cursor_when_blurred():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_cursor_blink_toggles():
     app = _build_test_app()
@@ -704,6 +712,7 @@ async def test_console_composer_cursor_blink_toggles():
         assert ConsoleComposerBar.CURSOR_GLYPH in visible_draft.renderable.plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_cursor_blink_keeps_row_count_stable_at_wrap_width():
     """Verify a blink tick never changes the composer's rendered row count.
@@ -763,6 +772,7 @@ async def test_console_composer_cursor_blink_keeps_row_count_stable_at_wrap_widt
         assert len(rows_visible) == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_send_is_primary_only_with_draft():
     app = _build_test_app()
@@ -841,6 +851,7 @@ async def test_console_composer_ranks_actions_by_current_availability():
         assert send_button.has_class("console-action-primary")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_save_chatbook_left_this_row_for_the_menu():
     """Save Chatbook is no longer a button here; the ☰ menu owns it.
@@ -954,6 +965,7 @@ async def test_console_composer_active_run_blocker_keeps_generic_placeholder():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_actions_remain_visible_inside_composer_bounds():
     app = _build_test_app()
@@ -994,6 +1006,7 @@ async def test_console_composer_actions_remain_visible_inside_composer_bounds():
         assert menu_button.region.x + menu_button.region.width <= composer_right
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_save_chatbook_routes_available_artifact_action():
     app = _build_test_app()
@@ -1028,6 +1041,7 @@ async def test_console_composer_save_chatbook_routes_available_artifact_action()
     assert handled_launches[0].payload["target_id"] == "local:chatbook:77"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_stop_button_hidden_unless_streaming():
     app = _build_test_app()
@@ -1051,6 +1065,7 @@ async def test_console_stop_button_hidden_unless_streaming():
         assert stop.styles.display == "none"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_stop_button_tooltip_scopes_to_this_tab():
     """Fleet-UX expert review F7 (task-1234): under parallel runs, "Stop"
@@ -1083,6 +1098,7 @@ async def test_console_stop_button_tooltip_scopes_to_this_tab():
         assert str(collapsed_stop.tooltip) == "Stop this tab's run."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_composer_auto_expands_for_long_drafts():
     app = _build_test_app()
@@ -1111,6 +1127,7 @@ async def test_console_native_composer_auto_expands_for_long_drafts():
         assert "long composer qa" in visible_plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_large_paste_collapses_visible_token_but_preserves_payload():
     app = _build_test_app()
@@ -1212,6 +1229,7 @@ def test_console_composer_empty_placeholder_is_task_oriented():
     assert renderable.plain == "Ask, command, or paste task..."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_paste_under_threshold_remains_literal():
     app = _build_test_app()
@@ -1235,6 +1253,7 @@ async def test_console_paste_under_threshold_remains_literal():
         assert "Pasted text |" not in visible_plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_paste_threshold_can_be_configured_from_app_config():
     app = _build_test_app()
@@ -1275,6 +1294,7 @@ async def test_console_paste_threshold_can_be_configured_from_app_config():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("collapse_setting", [False, "false"])
 @pytest.mark.asyncio
 async def test_console_large_paste_collapse_can_be_disabled_from_config(
@@ -1304,6 +1324,7 @@ async def test_console_large_paste_collapse_can_be_disabled_from_config(
         _assert_visible_literal_projection(visible_plain, pasted_text)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_clear_draft_keeps_canonical_payload_empty():
     app = _build_test_app()
@@ -1330,6 +1351,7 @@ async def test_console_clear_draft_keeps_canonical_payload_empty():
         assert pasted_text not in visible_draft.renderable.plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_backspace_deletes_whole_chunk():
     app = _build_test_app()
@@ -1357,6 +1379,7 @@ async def test_console_collapsed_paste_backspace_deletes_whole_chunk():
         assert "Pasted text |" not in visible_plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_delete_key_deletes_whole_chunk():
     """Forward Delete removes the paste token right of the caret as a unit.
@@ -1399,6 +1422,7 @@ async def test_console_collapsed_paste_delete_key_deletes_whole_chunk():
         assert "Pasted text |" not in visible_plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_real_click_enters_unfurl_prompt():
     app = _build_test_app()
@@ -1431,6 +1455,7 @@ async def test_console_collapsed_paste_real_click_enters_unfurl_prompt():
         ).replace("\n", "") == _paste_confirm(pasted_text)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_composer_row_click_enters_unfurl_prompt():
     app = _build_test_app()
@@ -1458,6 +1483,7 @@ async def test_console_collapsed_paste_composer_row_click_enters_unfurl_prompt()
         assert composer.draft_text() == pasted_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_top_boundary_click_stays_with_neighbor():
     """task-17651: the row above the draft belongs to the widget above.
@@ -1495,6 +1521,7 @@ async def test_console_collapsed_paste_top_boundary_click_stays_with_neighbor():
         assert composer.draft_text() == pasted_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_bottom_boundary_click_stays_with_neighbor():
     """task-17651: the row below the draft belongs to the widget below.
@@ -1531,6 +1558,7 @@ async def test_console_collapsed_paste_bottom_boundary_click_stays_with_neighbor
         assert composer.draft_text() == pasted_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_row_click_keeps_focus_on_composer():
     app = _build_test_app()
@@ -1561,6 +1589,7 @@ async def test_console_collapsed_paste_row_click_keeps_focus_on_composer():
         assert composer.draft_text() == pasted_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_second_click_unfurls_literal_text():
     app = _build_test_app()
@@ -1586,6 +1615,7 @@ async def test_console_collapsed_paste_second_click_unfurls_literal_text():
         assert composer.draft_text() == pasted_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_confirm_click_outside_token_resets_to_collapsed():
     app = _build_test_app()
@@ -1615,6 +1645,7 @@ async def test_console_collapsed_paste_confirm_click_outside_token_resets_to_col
         assert composer.draft_text() == f"prefix {pasted_text}"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_ctrl_e_on_focused_composer_expands_in_place():
     """Owner decision 2026-10-30: Ctrl+E, not Enter, expands a token, at once."""
@@ -1643,6 +1674,7 @@ async def test_console_collapsed_paste_ctrl_e_on_focused_composer_expands_in_pla
         assert composer.draft_text() == pasted_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_click_targets_token_after_literal_newline():
     app = _build_test_app()
@@ -1669,6 +1701,7 @@ async def test_console_collapsed_paste_click_targets_token_after_literal_newline
         assert composer.draft_text() == f"prefix\n{pasted_text}"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_click_targets_second_chunk_independently():
     app = _build_test_app()
@@ -1717,6 +1750,7 @@ async def test_console_collapsed_paste_click_targets_second_chunk_independently(
         assert composer.draft_text() == f"{first_paste}\n{second_paste}"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_typing_resets_pending_unfurl_prompt():
     app = _build_test_app()
@@ -1754,6 +1788,7 @@ async def test_console_collapsed_paste_typing_resets_pending_unfurl_prompt():
         assert composer.draft_text() == f"{pasted_text}x"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_click_targets_token_after_visible_clipping():
     app = _build_test_app()
@@ -1814,6 +1849,7 @@ async def test_console_collapsed_paste_click_targets_token_after_visible_clippin
         assert composer.draft_text() == f"{prefix}{pasted_text}"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_click_elsewhere_resets_unfurl_prompt():
     app = _build_test_app()
@@ -1842,6 +1878,7 @@ async def test_console_collapsed_paste_click_elsewhere_resets_unfurl_prompt():
         assert composer.draft_text() == pasted_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_stale_suppressed_click_does_not_swallow_unrelated_click():
     app = _build_test_app()
@@ -1871,6 +1908,7 @@ async def test_console_stale_suppressed_click_does_not_swallow_unrelated_click()
         assert composer.draft_text() == pasted_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_normal_typing_remains_literal_over_paste_threshold():
     app = _build_test_app()
@@ -1897,6 +1935,7 @@ async def test_console_normal_typing_remains_literal_over_paste_threshold():
         assert not visible_draft.renderable.spans
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_composer_captures_printable_typing_from_non_text_focus():
     app = _build_test_app()
@@ -1925,6 +1964,7 @@ async def test_console_native_composer_captures_printable_typing_from_non_text_f
         assert "k" in _visible_text(composer)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_composer_select_all_shortcut_preserves_draft_and_copies():
     app = _build_test_app()
@@ -1966,6 +2006,7 @@ async def test_console_native_composer_select_all_shortcut_preserves_draft_and_c
         assert not composer.has_full_draft_selection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_composer_clicking_visible_draft_captures_typing():
     app = _build_test_app()
@@ -1987,6 +2028,7 @@ async def test_console_native_composer_clicking_visible_draft_captures_typing():
         assert "abc" in visible_draft.renderable.plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_composer_click_focuses_composer_not_visible_static():
     app = _build_test_app()
@@ -2007,6 +2049,7 @@ async def test_console_native_composer_click_focuses_composer_not_visible_static
         assert console.app.focused is not visible_draft
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_composer_does_not_capture_typing_from_select_focus(
     monkeypatch,
@@ -2031,6 +2074,7 @@ async def test_console_native_composer_does_not_capture_typing_from_select_focus
         assert composer.draft_text() == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_composer_does_not_capture_paste_from_select_focus(
     monkeypatch,
@@ -2055,6 +2099,7 @@ async def test_console_native_composer_does_not_capture_paste_from_select_focus(
         assert composer.draft_text() == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_send_without_ready_runtime_keeps_setup_block_tooltip_only(
     monkeypatch,
@@ -2092,6 +2137,7 @@ async def test_console_send_without_ready_runtime_keeps_setup_block_tooltip_only
         assert composer.draft_text() == "hello console"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_enter_while_setup_blocked_is_inert_behind_modal(monkeypatch):
     # Formerly ``test_console_enter_sends_native_composer_draft``: while setup
@@ -2132,6 +2178,7 @@ async def test_console_enter_while_setup_blocked_is_inert_behind_modal(monkeypat
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_setup_modal_blocks_workbench_with_three_steps():
     # Spec section 2 (revised): setup incomplete -> blocking modal over the
@@ -2160,6 +2207,7 @@ async def test_console_setup_modal_blocks_workbench_with_three_steps():
         assert console.app.focused is not composer
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_setup_modal_dismisses_when_readiness_and_model_satisfied():
     app = _build_test_app()
@@ -2189,6 +2237,7 @@ async def test_console_setup_modal_dismisses_when_readiness_and_model_satisfied(
         assert "Ready · not tested — type a message to begin." in _visible_text(console)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_setup_modal_visible_again_on_fresh_blocked_mount():
     # Returning to a Console with setup still incomplete re-runs the same
@@ -2224,6 +2273,7 @@ def _console_widget_is_inside_setup_modal(widget: object) -> bool:
     return False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_setup_modal_traps_tab_focus_cycle():
     # Regression: the setup modal is a hand-rolled overlay inside
@@ -2255,6 +2305,7 @@ async def test_console_setup_modal_traps_tab_focus_cycle():
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_setup_modal_traps_shift_tab_focus_cycle():
     # Shift+Tab counterpart of the Tab focus-trap regression above.
@@ -2282,6 +2333,7 @@ async def test_console_setup_modal_traps_shift_tab_focus_cycle():
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_on_screen_resume_resyncs_stale_setup_modal_block():
     # Regression: some provider recovery flows navigate to the full Settings
@@ -2325,6 +2377,7 @@ async def test_console_on_screen_resume_resyncs_stale_setup_modal_block():
         assert "Ready · not tested — type a message to begin." in _visible_text(console)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_empty_transcript_promotes_setup_card_over_banner():
     app = _build_test_app()
@@ -2402,6 +2455,7 @@ async def test_console_empty_transcript_promotes_setup_card_over_banner():
         assert text.lower().count("missing api key") == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_empty_ready_transcript_shows_first_run_guidance():
     app = _build_test_app()
@@ -2427,6 +2481,7 @@ async def test_console_empty_ready_transcript_shows_first_run_guidance():
         assert "No messages yet. Send a prompt or attach context." not in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_provider_blocker_exposes_open_settings_action(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -2473,6 +2528,7 @@ async def test_console_provider_blocker_exposes_open_settings_action(monkeypatch
         assert text.lower().count("missing api key") == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_provider_settings_action_posts_navigation_message(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -2502,6 +2558,7 @@ async def test_console_provider_settings_action_posts_navigation_message(monkeyp
     ] == ["settings"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_provider_settings_action_hidden_when_provider_ready(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -2518,6 +2575,7 @@ async def test_console_provider_settings_action_hidden_when_provider_ready(monke
         assert not list(console.query("#console-empty-action-row"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -2607,6 +2665,7 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
         assert send_button.tooltip == "Choose a model in Chat settings before sending."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_empty_transcript_stays_neutral_when_setup_blocked(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -2638,6 +2697,7 @@ async def test_console_empty_transcript_stays_neutral_when_setup_blocked(monkeyp
         assert "Search Library" in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_inline_guidance_does_not_reserve_transcript_space():
     app = _build_test_app()
@@ -2674,6 +2734,7 @@ async def test_console_inline_guidance_does_not_reserve_transcript_space():
         assert title_copy.startswith("Conversation")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_inline_guidance_disappears_after_user_starts_typing():
     app = _build_test_app()
@@ -2781,6 +2842,7 @@ async def test_console_transcript_header_and_tabs_have_distinct_visual_roles():
         assert active_tab.has_class("console-session-tab-active")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_transcript_is_visible_transcript_surface():
     app = _build_test_app()
@@ -2840,6 +2902,7 @@ async def test_console_empty_transcript_uses_compact_ready_state():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_session_tab_strip_uses_readable_new_tab_control_with_tooltips():
     app = _build_test_app()
@@ -2863,6 +2926,7 @@ async def test_console_session_tab_strip_uses_readable_new_tab_control_with_tool
             assert close_button.region.width >= 3
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_gate15_does_not_mount_full_legacy_chat_window_chrome():
     app = _build_test_app()
@@ -2880,6 +2944,7 @@ async def test_console_gate15_does_not_mount_full_legacy_chat_window_chrome():
         ] == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_app_footer_status_bar_remains_visible_below_console():
     """task-264: the Console screen's own `AppFooterStatus` (mounted by
@@ -2902,6 +2967,7 @@ async def test_console_app_footer_status_bar_remains_visible_below_console():
         assert composer.region.y + composer.region.height <= footer.region.y
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_inspector_live_work_sources_stay_near_top():
     app = _build_test_app()
@@ -2930,6 +2996,7 @@ async def test_console_inspector_live_work_sources_stay_near_top():
         assert live_work_viewport.region.height <= 20
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_inspector_source_readiness_rows_fit_without_tooltip_overlay():
     app = _build_test_app()
@@ -2963,6 +3030,7 @@ async def test_console_inspector_source_readiness_rows_fit_without_tooltip_overl
             assert all(len(line) <= row.region.width for line in lines)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_empty_inspector_hides_disabled_actions_until_actionable():
     app = _build_test_app()
@@ -2986,6 +3054,7 @@ async def test_console_empty_inspector_hides_disabled_actions_until_actionable()
             assert str(button.tooltip or "") == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_run_inspector_orders_state_source_tools_and_approvals():
     app = _build_test_app()
@@ -3057,6 +3126,7 @@ async def test_console_run_inspector_orders_state_source_tools_and_approvals():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workbench_weights_transcript_as_primary_region():
     app = _build_test_app()
@@ -3089,6 +3159,7 @@ async def test_console_workbench_weights_transcript_as_primary_region():
         assert console.query_one("#console-run-inspector-state").region.width > 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_left_rail_sections_use_available_space():
     app = _build_test_app()
@@ -3140,6 +3211,7 @@ async def test_console_left_rail_sections_use_available_space():
         assert workspace_context.region.width == conversations_body.content_region.width
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_empty_regions_do_not_stack_nested_terminal_frames():
     app = _build_test_app()
@@ -3188,6 +3260,7 @@ async def test_console_empty_regions_do_not_stack_nested_terminal_frames():
         assert composer_border.bottom[0] in {"", "none"}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_staged_context_tray_stays_quiet_when_populated():
     app = _build_test_app()
@@ -3226,6 +3299,7 @@ async def test_console_staged_context_tray_stays_quiet_when_populated():
         assert staged_context_border.left[0] in {"", "none"}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workbench_panes_have_visible_terminal_frames():
     app = _build_test_app()
@@ -3324,6 +3398,7 @@ async def test_console_empty_staged_context_shows_guidance_and_count():
         assert "Stage sources from Library" in guidance_plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_empty_staged_context_omits_attach_action():
     app = _build_test_app()
@@ -3396,6 +3471,7 @@ async def test_console_non_empty_staged_context_keeps_room_for_source_details():
         assert "Review citations before sending." in staged_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_control_bar_renders_readable_summary_line():
     app = _build_test_app()
@@ -3414,6 +3490,7 @@ async def test_console_control_bar_renders_readable_summary_line():
         assert " | Sources:" in plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_status_renders_session_metadata_as_plain_text():
     app = _build_test_app()
@@ -3450,6 +3527,7 @@ async def test_console_composer_status_renders_session_metadata_as_plain_text():
         assert "forged assistant" in plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_control_bar_and_staged_context_reflect_pending_handoff():
     app = _build_test_app()
@@ -3486,6 +3564,7 @@ async def test_console_native_control_bar_and_staged_context_reflect_pending_han
         assert "Review citations before sending." in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_control_bar_uses_existing_compact_model_sync_seam():
     app = _build_test_app()
@@ -3508,6 +3587,7 @@ async def test_console_native_control_bar_uses_existing_compact_model_sync_seam(
         assert compact_bar.query_one("#compact-temperature", Input).value == "0.2"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_mounts_only_one_compact_model_bar():
     app = _build_test_app()
@@ -3521,6 +3601,7 @@ async def test_console_mounts_only_one_compact_model_bar():
         assert len(console.query("#compact-model-bar")) == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_control_labels_refresh_after_compact_control_sync():
     app = _build_test_app()
@@ -3548,6 +3629,7 @@ async def test_console_control_labels_refresh_after_compact_control_sync():
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_console_control_state_tolerates_missing_config_and_precise_rag_source():
     app = _build_test_app()
     app.app_config = None
@@ -3566,6 +3648,7 @@ def test_console_control_state_tolerates_missing_config_and_precise_rag_source()
     assert rag_state.rag_label == non_rag_state.rag_label
 
 
+@pytest.mark.bootstrap_profile
 def test_console_control_state_tolerates_missing_launch_source():
     app = _build_test_app()
     screen = ChatScreen(app)
@@ -3597,6 +3680,7 @@ def test_console_control_and_inspector_share_effective_provider_model_sources(
     assert rows_by_label["Provider"].text == "Provider: ready"
 
 
+@pytest.mark.bootstrap_profile
 def test_console_rag_source_status_unchanged_with_a_pending_launch():
     """D1b: a sent-notice count must never override an actually staged
     launch -- live staging always wins, mirroring the strip's own
@@ -3634,6 +3718,7 @@ def test_console_rag_source_status_remembers_the_last_send_when_nothing_is_stage
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_console_rag_source_status_genuinely_empty_reads_not_staged():
     """Neither a pending launch nor a sent-notice: the honest empty copy."""
     app = _build_test_app()
@@ -3689,6 +3774,7 @@ def test_console_strip_never_repeats_the_receipt_the_inspector_keeps():
     assert rows_by_label["Retrieval"].value == "attached to the last message · 5 sources"
 
 
+@pytest.mark.bootstrap_profile
 def test_console_prefers_configured_provider_when_app_reactive_is_stale_default():
     app = _build_test_app()
     app.app_config = {
@@ -3722,6 +3808,7 @@ def test_provider_name_resolution_matches_config_key_case_insensitively():
     assert resolve_provider_name("local-llamacpp", providers_models) == "local-llamacpp"
 
 
+@pytest.mark.bootstrap_profile
 def test_console_provider_selection_normalizes_display_provider_key():
     app = _build_test_app()
     app.app_config = {
@@ -3746,6 +3833,7 @@ def test_console_provider_selection_normalizes_display_provider_key():
     assert selection.base_url == "http://127.0.0.1:9099"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_run_inspector_shows_blocked_provider_and_missing_rag_source():
     app = _build_test_app()
@@ -3852,6 +3940,7 @@ async def test_console_run_inspector_exposes_pending_approval_and_chatbook_artif
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_run_inspector_shows_mcp_tools_ready_row():
     app = _build_test_app()
@@ -3873,6 +3962,7 @@ async def test_console_run_inspector_shows_mcp_tools_ready_row():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_run_inspector_shows_mcp_not_connected_row():
     """Finding I2: the blocked "not connected" row must win even when
@@ -3895,6 +3985,7 @@ async def test_console_run_inspector_shows_mcp_not_connected_row():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_run_inspector_omits_mcp_row_by_default():
     """No `console_mcp_tool_count` seam wired -- e.g. no `unified_mcp_service`
@@ -3910,6 +4001,7 @@ async def test_console_run_inspector_omits_mcp_row_by_default():
         assert not list(console.query("#console-inspector-mcp"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_run_inspector_mcp_row_reflects_real_compose_mcp_provider():
     """P5 review fix: the three tests above only prove the render logic
@@ -3947,6 +4039,7 @@ async def test_console_run_inspector_mcp_row_reflects_real_compose_mcp_provider(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_run_inspector_mcp_row_shows_blocked_when_stale_server_has_tools():
     """Finding I2, RED per the review: build the state from a REAL
@@ -3982,6 +4075,7 @@ async def test_console_run_inspector_mcp_row_shows_blocked_when_stale_server_has
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_rag_action_requests_library_retrieval_and_stages_result(
     monkeypatch,
@@ -4049,6 +4143,7 @@ async def test_console_rag_action_requests_library_retrieval_and_stages_result(
         assert "Review citations before sending." in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_rag_action_inherits_active_profile_top_k(monkeypatch):
     """TASK-3170 task 9: the chip's manual run must not hardcode top_k=5.
@@ -4106,6 +4201,7 @@ async def test_console_rag_action_inherits_active_profile_top_k(monkeypatch):
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_rag_action_falls_back_to_default_top_k_when_profile_unavailable(
     monkeypatch,
@@ -4255,6 +4351,7 @@ def test_console_evidence_authority_rows_preserve_blocked_status():
     assert inspector_rows["Authority"].status == "blocked"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_rag_staging_shows_evidence_summary_authority_and_snippet():
     app = _build_test_app()
@@ -4296,6 +4393,7 @@ async def test_console_rag_staging_shows_evidence_summary_authority_and_snippet(
         assert "evidence_bundle:" not in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_rag_send_blocks_when_staged_evidence_is_not_context_eligible():
     app = _build_test_app()
@@ -4354,6 +4452,7 @@ async def test_console_rag_send_blocks_when_staged_evidence_is_not_context_eligi
         assert composer.draft_text() == "Answer using the staged RAG evidence"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_rag_query_validation_blocks_unsafe_markup():
     app = _build_test_app()
@@ -4382,6 +4481,7 @@ async def test_console_rag_query_validation_blocks_unsafe_markup():
         await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_rag_action_without_service_stages_recoverable_blocker(
     monkeypatch,
@@ -4418,6 +4518,7 @@ async def test_console_rag_action_without_service_stages_recoverable_blocker(
         assert rag_factory_calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_control_bar_run_library_rag_opens_settings_modal_when_blank():
     """RAG-41/42: the always-visible control-bar action has no place for a
@@ -4457,6 +4558,7 @@ async def test_console_control_bar_run_library_rag_opens_settings_modal_when_bla
         assert service.calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_control_bar_run_library_search_preserves_path_shaped_draft():
     """The one-shot search modal preserves the exact composer draft as its query."""
@@ -4489,6 +4591,7 @@ async def test_console_control_bar_run_library_search_preserves_path_shaped_draf
         assert composer.draft_text() == "/Users/x/notes.md"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_rag_modal_source_toggle_narrows_the_retrieval_request(
     monkeypatch,
@@ -4547,6 +4650,7 @@ async def test_console_rag_modal_source_toggle_narrows_the_retrieval_request(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_inspector_search_library_opens_modal_when_query_is_blank():
     """Inspector Search remains reachable without a previously stored query."""
@@ -4571,6 +4675,7 @@ async def test_console_inspector_search_library_opens_modal_when_query_is_blank(
         assert run_rag.disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_alt_m_opens_model_popover_and_apply_updates_session_settings():
     app = _build_test_app()
@@ -4626,6 +4731,7 @@ def test_console_keyboard_hints_visible_in_native_footer():
         assert bindings_by_key[key].show is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_returns_focus_to_composer_and_ctrl_t_opens_tab():
     app = _build_test_app()
@@ -4656,6 +4762,7 @@ async def test_escape_returns_focus_to_composer_and_ctrl_t_opens_tab():
         assert len(store.sessions()) == before + 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_alt_digit_jumps_to_tab():
     app = _build_test_app()
@@ -4674,6 +4781,7 @@ async def test_alt_digit_jumps_to_tab():
         assert store.active_session_id == first.id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_command_provider_lists_commands_only_on_console():
     from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
@@ -4696,6 +4804,7 @@ async def test_console_command_provider_lists_commands_only_on_console():
         assert other_hits == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_command_provider_session_settings_targets_guarded_action():
     # Fix 3: the palette command must route through the guarded action
@@ -4718,6 +4827,7 @@ async def test_console_command_provider_session_settings_targets_guarded_action(
         assert matching[0].command == console.action_open_console_session_settings
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_command_provider_terminal_targets_guarded_action():
     """The palette and pinned rail must share the screen's guarded action."""
@@ -4738,6 +4848,7 @@ async def test_console_command_provider_terminal_targets_guarded_action():
         assert matching[0].command == console.action_open_console_terminal
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_session_settings_action_noop_while_setup_modal_blocking():
     # With the first-run setup modal blocking, invoking the guarded action
@@ -4757,6 +4868,7 @@ async def test_console_session_settings_action_noop_while_setup_modal_blocking()
         assert host.screen_stack[-1].__class__.__name__ != "ConsoleSettingsModal"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_alt_letter_is_not_captured_as_composer_typing():
     """TASK-1800: Alt+<letter> must not be swallowed as composer text.
@@ -4805,6 +4917,7 @@ async def test_alt_letter_is_not_captured_as_composer_typing():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_command_provider_covers_every_alt_bound_action():
     """AC-03 (TASK-2154.20): each Alt binding has a palette path."""
@@ -4844,6 +4957,7 @@ def test_console_f1_help_documents_the_macos_alt_caveat():
     assert "Ctrl+K" in rendered
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_left_rail_section_headers_all_visible_without_scrolling():
     """Keep default headers visible while enforcing the 20-row section ceiling.

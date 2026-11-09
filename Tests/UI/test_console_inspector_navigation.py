@@ -173,6 +173,7 @@ def _staged_state(row_count: int) -> ConsoleStagedContextState:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_outer_hint_is_pinned_last_child_with_exact_nonfocusable_copy():
     async with make_console_pilot(size=(160, 45)) as pilot:
@@ -188,6 +189,7 @@ async def test_outer_hint_is_pinned_last_child_with_exact_nonfocusable_copy():
         assert hint.can_focus is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_terminal_resize_drives_counterfactual_hint_without_feedback_loop():
     async with make_console_pilot(size=(160, 80)) as pilot:
@@ -259,6 +261,7 @@ async def test_terminal_resize_drives_counterfactual_hint_without_feedback_loop(
         assert body.scroll_y == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_virtual_size_only_body_update_invalidates_owner_and_settles_cue(
     monkeypatch,
@@ -317,6 +320,7 @@ async def test_virtual_size_only_body_update_invalidates_owner_and_settles_cue(
         assert body.virtual_size.height > body.content_region.height
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_outer_hint_slot_stays_but_copy_blanks_at_scroll_end():
     async with make_console_pilot(size=(160, 45)) as pilot:
@@ -423,6 +427,7 @@ async def test_staged_owner_sync_drives_ten_eleven_ten_cue_and_clamp():
         assert tuple(child.region.height for child in rail.children) == (1, 1, 6, 11, 0)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scroll_owner_cue_preserves_bold_and_clears_without_stale_underline():
     css = """
@@ -482,6 +487,7 @@ async def test_scroll_owner_cue_preserves_bold_and_clears_without_stale_underlin
         assert not source_title.get_visual_style().underline
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_n_and_p_are_rail_local_no_wrap_and_editable_input_keeps_printable_key():
     async with make_console_pilot(size=(160, 45)) as pilot:
@@ -532,6 +538,7 @@ async def test_n_and_p_are_rail_local_no_wrap_and_editable_input_keeps_printable
         assert pilot.app.focused is editor
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "key,boundary_selector", (("p", "sources"), ("n", "live-work"))
@@ -576,6 +583,7 @@ async def test_no_wrap_navigation_consumes_bubbled_key_before_screen_barge_in(
         assert bubbled_key._no_default_action is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_navigation_keys_remain_unconsumed_outside_inspector_and_in_editable_input():
     async with make_console_pilot(size=(160, 45)) as pilot:
@@ -600,6 +608,7 @@ async def test_navigation_keys_remain_unconsumed_outside_inspector_and_in_editab
         assert outside_key._no_default_action is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_navigation_from_scope_uses_first_following_boundary():
     async with make_console_pilot(size=(160, 45)) as pilot:
@@ -636,6 +645,7 @@ async def test_navigation_from_scope_uses_first_following_boundary():
         assert rail.query_one("#console-inspector-run-recipe")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_navigation_focuses_overflow_viewport_contains_header_and_preserves_state():
     async with make_console_pilot(
@@ -691,6 +701,7 @@ async def test_navigation_focuses_overflow_viewport_contains_header_and_preserve
         assert sources.display is section_display
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_nested_selected_boundary_uses_actual_sibling_header_coordinates():
     async with make_console_pilot(size=(160, 30)) as pilot:
@@ -736,6 +747,7 @@ async def test_nested_selected_boundary_uses_actual_sibling_header_coordinates()
         assert _fully_inside_outer(actual_header, outer)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_newer_navigation_prevents_stale_delayed_header_reveal(
     monkeypatch: pytest.MonkeyPatch,
@@ -882,6 +894,7 @@ async def test_newer_navigation_prevents_stale_delayed_header_reveal(
         assert _fully_inside_outer(successor_header, outer)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_navigation_focuses_first_enabled_visible_control_in_nonoverflow_target():
     async with make_console_pilot(size=(160, 45)) as pilot:
@@ -975,6 +988,7 @@ async def test_navigation_focuses_first_enabled_visible_control_in_nonoverflow_t
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("target_mode", "expected_selector"),
@@ -1090,6 +1104,7 @@ async def test_run_boundary_focus_never_leaks_to_sibling_group_control(
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_interior_direct_boundaries_n_then_p_do_not_wrap():
     async with make_console_pilot(
@@ -1132,6 +1147,7 @@ async def test_interior_direct_boundaries_n_then_p_do_not_wrap():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_other_nonboundary_anchor_and_outer_body_previous_target():
     async with make_console_pilot(size=(160, 45)) as pilot:
@@ -1171,6 +1187,7 @@ async def test_other_nonboundary_anchor_and_outer_body_previous_target():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tab_and_shift_tab_preserve_header_viewport_body_order():
     async with make_console_pilot(size=(160, 45)) as pilot:
@@ -1218,6 +1235,7 @@ async def test_tab_and_shift_tab_preserve_header_viewport_body_order():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_collapse_anchor_targets_first_or_last_without_wrapping():
     async with make_console_pilot(size=(160, 45)) as pilot:
@@ -1260,6 +1278,7 @@ async def test_collapse_anchor_targets_first_or_last_without_wrapping():
         assert pilot.app.focused is live_work.viewport
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_disappearing_target_recovers_next_then_previous_and_keeps_outside_focus():
     async with make_console_pilot(size=(160, 45)) as pilot:
@@ -1314,6 +1333,7 @@ async def test_disappearing_target_recovers_next_then_previous_and_keeps_outside
         assert pilot.app.focused is outside
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_focus_leave_clears_recovery_incident_before_mutation_and_reentry():
     async with make_console_pilot(size=(160, 45)) as pilot:
@@ -1360,6 +1380,7 @@ async def test_focus_leave_clears_recovery_incident_before_mutation_and_reentry(
         _assert_recovery_references_are_current(rail)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_inactive_section_history_cannot_recover_after_focus_moves_elsewhere():
     async with make_console_pilot(size=(160, 45)) as pilot:
@@ -1403,6 +1424,7 @@ async def test_inactive_section_history_cannot_recover_after_focus_moves_elsewhe
         _assert_recovery_references_are_current(rail)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_empty_owner_is_settled_absence_with_one_outer_fallback():
     async with make_console_pilot(size=(160, 45)) as pilot:
@@ -1439,6 +1461,7 @@ async def test_empty_owner_is_settled_absence_with_one_outer_fallback():
         assert sources.section_id not in rail._section_focus_history
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_persistent_malformed_owner_drains_recovery_with_outer_fallback():
     async with make_console_pilot(size=(160, 45)) as pilot:
@@ -1483,6 +1506,7 @@ async def test_persistent_malformed_owner_drains_recovery_with_outer_fallback():
         assert sources.section_id not in rail._section_focus_history
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_structural_run_recompose_restores_same_stable_action_id():
     async with make_console_pilot(size=(160, 45)) as pilot:
@@ -1647,6 +1671,7 @@ async def test_structural_control_and_boundary_removal_recovers_without_stale_re
         _assert_recovery_references_are_current(rail)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_recovery_uses_external_header_control():
     async with make_console_pilot(size=(160, 45)) as pilot:
@@ -1673,6 +1698,7 @@ async def test_recovery_uses_external_header_control():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("disable_outer", (False, True))
 async def test_recovery_falls_back_to_outer_body_then_collapse(disable_outer):
@@ -1709,6 +1735,7 @@ async def test_recovery_falls_back_to_outer_body_then_collapse(disable_outer):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pointer_wheel_hands_from_local_boundary_to_outer_body():
     async with make_console_pilot(size=(160, 30)) as pilot:
@@ -1741,6 +1768,7 @@ async def test_pointer_wheel_hands_from_local_boundary_to_outer_body():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_local_offset_survives_collapse_reopen_without_extra_writes(
     monkeypatch,
@@ -1784,6 +1812,7 @@ async def test_local_offset_survives_collapse_reopen_without_extra_writes(
         assert len(writes) == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_run_sync_preserves_in_place_offsets_then_structural_shrink_clamps():
     async with make_console_pilot(size=(160, 60), css=RUN_OWNER_TEST_CSS) as pilot:
@@ -2013,6 +2042,7 @@ async def test_responsive_hide_and_reveal_hands_off_focus_without_losing_offset(
         assert section.viewport.scroll_y == 3
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_footer_and_f1_help_read_live_inspector_focus(monkeypatch):
     async with make_console_pilot(size=(160, 45)) as pilot:
@@ -2065,6 +2095,7 @@ async def test_footer_and_f1_help_read_live_inspector_focus(monkeypatch):
         assert "n / p: next / previous section" not in panel.state.render_text()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_boundary_anchor_does_not_survive_focus_leaving_the_scroller():
     """TASK-24704 (Qodo #5, second round): the anchor must not go stale.
@@ -2113,6 +2144,7 @@ async def test_boundary_anchor_does_not_survive_focus_leaving_the_scroller():
         assert rail._last_boundary_index is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rail_focus_prepends_escape_hint(monkeypatch) -> None:
     """TASK-32322: focusing either rail teaches the exits where they're needed.
