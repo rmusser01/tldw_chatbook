@@ -861,7 +861,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-08 rebase onto dev: 8983 -> 8842.
     # 2026-11-08, TASK-36949.6: 8983 -> 8967, the exact measurement (the seed
     # type now comes from the ChaChaNotes_DB import; no TYPE_CHECKING block).
-    "tldw_chatbook/config.py": 8851,
+    # 2026-11-08, TASK-36949.6: 8983 -> 8980, measured after the 2026-11-09
+    # rebase (the seed type now comes from the ChaChaNotes_DB import; no
+    # TYPE_CHECKING block).
+    "tldw_chatbook/config.py": 8844,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
