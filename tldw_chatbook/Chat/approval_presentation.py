@@ -123,6 +123,34 @@ def profile_authority(
 
 
 _PARAMETER_PREVIEW_BYTES = 256
+_MAX_ARGUMENT_DEPTH = 128
+
+
+class ApprovalArgumentsTooDeep(ValueError):
+    """Approval cannot present all levels of the request for review."""
+
+
+def _check_argument_depth(value: object, depth: int = 1) -> None:
+    if depth > _MAX_ARGUMENT_DEPTH:
+        raise ApprovalArgumentsTooDeep("Approval arguments exceed the nesting limit")
+    if isinstance(value, Mapping):
+        children = value.values()
+    elif isinstance(value, (list, tuple)):
+        children = value
+    else:
+        return
+    for child in children:
+        _check_argument_depth(child, depth + 1)
+
+
+def _capture_arguments(call: MCPPendingCall) -> Mapping[str, object]:
+    arguments = call.arguments
+    # The target uses dispatch arguments while Details can retain earlier inputs.
+    _check_argument_depth(arguments)
+    if call.captured_arguments is not None and call.captured_arguments is not arguments:
+        arguments = call.captured_arguments
+        _check_argument_depth(arguments)
+    return MappingProxyType(copy.deepcopy(dict(arguments)))
 
 
 def _display_target(arguments: Mapping[str, object], provider_kind: str) -> str:
@@ -173,6 +201,9 @@ def capture_approval_view(
 
     Returns:
         A display-only snapshot. Argument bodies are excluded from hot equality.
+
+    Raises:
+        ApprovalArgumentsTooDeep: An argument exceeds the review nesting limit.
     """
     grouped: dict[str, list[MCPPendingCall]] = {}
     for call in pending:
@@ -229,18 +260,7 @@ def capture_approval_view(
             action = "Run " + first.tool_name
         elif owner.provider_kind == "raw_shell":
             action = "Run shell command"
-        arguments = tuple(
-            MappingProxyType(
-                copy.deepcopy(
-                    dict(
-                        call.captured_arguments
-                        if call.captured_arguments is not None
-                        else call.arguments
-                    )
-                )
-            )
-            for call in calls
-        )
+        arguments = tuple(_capture_arguments(call) for call in calls)
         # Display redaction must precede target derivation. Matching keeps originals above.
         targets = tuple(
             display_literal(_display_target(call.arguments, owner.provider_kind))

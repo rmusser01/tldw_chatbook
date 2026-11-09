@@ -50,7 +50,7 @@
     "reference-fixtures/header-v14.png": "68fa8c1b120b4fe513686a1d245c02401a0e0724002da4135aee9947ca88b64c",
     "reference-fixtures/provenance.json": "293078f1a58f766b9e835b4b27a34c9c7c6acda03ca308f2fce9ed435a5332ef",
     "reference-fixtures/root-feedback-review-export.json": "15fdf4b369a62c82831238de161ee4a4ac7be6bef870381e9c26feef21eaaaaa",
-    "exact-pixel-refs.json": "398df27c80ae36ef73e1c232edbeb628944f74597e6011a42458de6e746b90f2"
+    "exact-pixel-refs.json": "80cacae4305d7a44e5ba31296f69c045bb62de6d76e521b3d834e6fcf6b994d9"
   },
   "controls": {
     "watchdog": 7,

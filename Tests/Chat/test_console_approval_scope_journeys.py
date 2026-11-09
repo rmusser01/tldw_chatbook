@@ -181,6 +181,82 @@ def test_failed_remembering_keeps_actual_call_and_feedback_honest(
     assert len(transport.execute_calls) == 1
 
 
+def test_deep_native_mcp_arguments_fail_closed_without_leaving_an_approval_round(
+    tmp_path, running_loop
+):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tldw_chatbook.Agents.agent_models import normalize_tool_review
+    from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
+    from tldw_chatbook.Agents.native_tools import parse_native_tool_calls
+    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+
+    controller, session, provider, service, transport = owner_journey(
+        tmp_path, running_loop
+    )
+    controller.app.unified_mcp_service = service
+    tool = provider.list_catalog()[0].id
+    leaf = "fixture-private-argument"
+    depth = 520
+    raw_args = '{"filters":' + "[" * depth + f'"{leaf}"' + "]" * depth + "}"
+    (call,) = parse_native_tool_calls(
+        {"tool_calls": [{"id": "deep", "function": {"name": tool, "arguments": raw_args}}]}
+    )
+    mounted = []
+    registered = []
+    answers = []
+
+    def timeout_config():
+        registered.extend(controller._pending_approval_rounds)
+        return 10.0
+
+    def show(payload):
+        if payload:
+            mounted.append(payload["round_id"])
+            controller.resolve_pending_approval(
+                {"deep": "approve_once"}, round_id=payload["round_id"]
+            )
+
+    def request(pending):
+        assert pending[0].arguments["filters"] is call.args["filters"]
+        answers.append(controller.request_mcp_approvals(pending, session_id=session.id))
+        return answers[-1]
+
+    controller.mcp_approval_timeout_seconds = timeout_config
+    controller.set_pending_approval = show
+    hook = build_tool_review_hook(BuiltinToolGate(service), None, provider, request)
+
+    def review():
+        with use_run_id("deep-journey"):
+            try:
+                return hook([call], "deep-journey")
+            finally:
+                controller.store.persistence.db.close()
+
+    with ThreadPoolExecutor(max_workers=1) as workers:
+        verdicts = workers.submit(review).result(timeout=5)
+
+    assert len(registered) == 1
+    assert not mounted
+    assert not controller._pending_approval_rounds
+    assert not controller._parked_approval_payloads
+    assert not controller.has_pending_approval_round(session.id)
+    assert answers == [{"deep": "deny"}]
+    assert answers[0].unresolved_keys == frozenset({"deep"})
+    verdict = normalize_tool_review(verdicts["deep"])
+    assert verdict.verdict != "proceed"
+    assert verdict.approval_decision is None
+    assert not transport.execute_calls
+    assert not service._session_approvals
+    records = service.execution_log.read_recent()
+    assert [record["decision"] for record in records] == ["denied-unresolved"]
+    assert leaf not in repr(records)
+    preserved = call.args["filters"]
+    for _ in range(depth):
+        (preserved,) = preserved
+    assert preserved == leaf
+
+
 def test_independent_same_tool_rows_withhold_matching_but_preserve_inputs(
     tmp_path, running_loop
 ):

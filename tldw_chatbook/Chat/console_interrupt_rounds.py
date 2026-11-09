@@ -2474,9 +2474,10 @@ class InterruptRoundHost(InitialHookReviewMixin):
             return bool(payloads and payloads[0] is payload)
 
     def _record_cancelled_approval_decisions(
-        self, keys: list[str], call_by_key: dict[str, "MCPPendingCall"]
+        self, keys: list[str], call_by_key: dict[str, "MCPPendingCall"],
+        *, error: str | None = "run stopped while approval pending",
     ) -> None:
-        """Best-effort audit log for calls denied by a stop/unmount mid-approval.
+        """Best-effort audit log for calls refused without a user decision.
 
         Finding I3: see the cancellation branch's own comment in
         ``request_mcp_approvals`` for why this direct call is necessary --
@@ -2505,14 +2506,9 @@ class InterruptRoundHost(InitialHookReviewMixin):
                 record(
                     call.server_key,
                     call.tool_name,
-                    # task-32280 fix round: the turn was stopped WHILE the
-                    # card was up -- the user never answered it. Recording
-                    # this as the bare "denied" made Audit report an
-                    # explicit "Denied by you" for a question nobody got to
-                    # answer.
                     decision=self.read_global_UNRESOLVED_DENIED_DECISION(),
                     initiator="agent",
-                    error="run stopped while approval pending",
+                    error=error,
                 )
             except Exception:  # noqa: BLE001 -- best-effort audit trail only
                 self.read_global_logger().opt(exception=True).debug(
@@ -3898,23 +3894,17 @@ class InterruptRoundHost(InitialHookReviewMixin):
                 call_by_key[key] = call
         if not unique_keys:
             return {}
-        if self.read_controller_app() is None:
-            # Qodo #2597 #8: no UI is wired, so no card can be shown and
-            # nobody can answer -- this fails CLOSED, but it is NOT a user
-            # denial. Returned as a bare dict it looked exactly like one to
-            # `approval_was_unanswered()`, and both review hooks then wrote
-            # a `record_user_denial()` audit row claiming a person picked
-            # Deny. Every key here is unresolved, by construction.
-            # No `denied-unresolved` audit row is written (or possible)
-            # here: the execution log is reached through
-            # `self.app.unified_mcp_service`, and this branch exists
-            # precisely because there is no app. `unresolved_keys` is what
-            # keeps the hooks from inventing a user decision instead.
-            headless = self.read_global_ApprovalDecisions()(
+        def refuse_unanswered():
+            denied = self.read_global_ApprovalDecisions()(
                 {key: "deny" for key in unique_keys}
             )
-            headless.unresolved_keys = frozenset(unique_keys)
-            return headless
+            denied.unresolved_keys = frozenset(unique_keys)
+            return denied
+
+        if self.read_controller_app() is None:
+            # Without an app there is no card or execution log. Keep the
+            # unanswered metadata so review hooks never attribute a user Deny.
+            return refuse_unanswered()
         event = self.read_global_threading().Event()
         decisions = self.read_global_ApprovalDecisions()()
         round_id = str(self.read_global_uuid4()())
@@ -3968,11 +3958,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
             self.read_controller__record_cancelled_approval_decisions()(
                 list(unique_keys), call_by_key
             )
-            denied = self.read_global_ApprovalDecisions()(
-                {key: "deny" for key in unique_keys}
-            )
-            denied.unresolved_keys = frozenset(unique_keys)
-            return denied
+            return refuse_unanswered()
         timeout_seconds = self.read_controller__resolve_mcp_approval_timeout_seconds()()
         deadline = (
             self.read_global_time().monotonic() + timeout_seconds
@@ -3994,14 +3980,20 @@ class InterruptRoundHost(InitialHookReviewMixin):
                     for policy in hook_policies
                 ]
             )
-        payload = self.read_global__build_approval_payload()(
-            round_id,
-            owning_session_id,
-            owning_run_id,
-            pending,
-            timeout_seconds,
-            deadline,
-        )
+        from tldw_chatbook.Chat.approval_presentation import ApprovalArgumentsTooDeep
+
+        try:
+            payload = self.read_global__build_approval_payload()(
+                round_id, owning_session_id, owning_run_id, pending, timeout_seconds, deadline
+            )
+        except (ApprovalArgumentsTooDeep, RecursionError):
+            with self.lock:
+                registry = self.registries["approval"]
+                if registry.get(round_id) is round_state:
+                    registry.pop(round_id)
+            self._record_cancelled_approval_decisions(unique_keys, call_by_key, error=None)
+            logger.warning("Console approval arguments exceeded the review nesting limit")
+            return refuse_unanswered()
         from tldw_chatbook.Chat.console_approval_feedback import (
             bind_round_observations,
         )

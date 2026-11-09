@@ -1,6 +1,7 @@
 """Display copies must not expose credentials from admitted captured calls."""
 
 import json
+import shlex
 from copy import deepcopy
 from urllib.parse import quote
 
@@ -61,6 +62,30 @@ def test_admitted_virtual_cli_details_keep_argv_credentials_masked(tmp_path, pat
     )
     assert all(len(page.text) <= 41 for page in pages)
     assert "synthetic-ordinary-credential" not in "".join(page.text for page in pages)
+    assert arguments == originals and dict(row.argument_sets[0]) == originals
+
+
+@pytest.mark.parametrize("prefix", ["URL=", "--endpoint="])
+@pytest.mark.parametrize("wrapper", ["", "'", '"'])
+@pytest.mark.parametrize("query_prefix", ["", "\n"])
+def test_admitted_inline_url_redacts_summary_and_details(
+    tmp_path, prefix, wrapper, query_prefix
+):
+    raw = prefix + wrapper + (
+        f"https://example.test/callback?{query_prefix}access_token="
+        "synthetic-assignment-credential&page=2"
+    ) + wrapper
+    expected = prefix + wrapper + (
+        "https://example.test/callback?access_token=%2A%2A%2A&page=2"
+    ) + wrapper
+    row, arguments, originals = captured_row(tmp_path, ["--", raw])
+    assert shlex.split(row.targets[0]) == ["grep", "--", expected]
+    pages = iter_redacted_details(row.argument_sets, targets=row.targets, page_chars=41)
+    safe = json.loads("".join(page.text for page in pages))
+    assert safe == [
+        {"captured_targets": list(row.targets)},
+        {"command": "grep", "argv": ["--", expected]},
+    ]
     assert arguments == originals and dict(row.argument_sets[0]) == originals
 
 

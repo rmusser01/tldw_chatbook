@@ -109,7 +109,7 @@
     }
   ],
   "ui_source_pins": {
-    "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": "9ee3cf3cb5d274e767eb289b8b11215f0c87e5d413f08789fd06ebe99e87054c",
+    "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": "35709491eb7d9f6d6caca9b837e623561b4a1af5914c40f20e9e8a082c24220f",
     "tldw_chatbook/Widgets/Console/console_composer_bar.py": "2109c778ba4689096a7eadaadac4f4b1a5cfee2498f5d44a730e3b7beb9263e9",
     "tldw_chatbook/Widgets/Console/console_status_chips.py": "2b479f27d3f3ba7047ed15293191b8b20fc5bdb517b539ca1c5059165d070bb8",
     "tldw_chatbook/Widgets/Console/console_session_surface.py": "9f5f0b5280333f96973c1bc0f6e56dab057b33952439973d9dfab5497dd549eb",

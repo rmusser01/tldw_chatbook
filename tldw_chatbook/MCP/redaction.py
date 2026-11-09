@@ -14,7 +14,7 @@ _SECRET_KEY_RE = re.compile(
     r"(?i)(token|secret|passwd|password|api[-_]?key|private[-_]?key"
     r"|authorization|bearer|credential)"
 )
-_INLINE_ARG_RE = re.compile(r"^(?P<key>[A-Za-z0-9_-]+)=(?P<value>.+)$")
+_INLINE_ARG_RE = re.compile(r"(?P<key>[A-Za-z0-9_-]+)=(?P<value>.+)", re.DOTALL)
 _URI_PREFIX_RE = re.compile(r"^[\x00-\x20]*(?:[A-Za-z][A-Za-z0-9+.-]*:|//)")
 
 #: A token that plausibly names a CLI flag rather than being a flag-shaped
@@ -198,13 +198,22 @@ def redact_args(args: Sequence[str]) -> list[str]:
             # The previous flag was never given a value (this arg really does
             # name another flag) - fall through and re-evaluate `text` so it
             # isn't silently swallowed as a secret value.
-        inline = _INLINE_ARG_RE.match(text)
+        inline = _INLINE_ARG_RE.fullmatch(text)
         if inline and is_secret_key(inline.group("key")):
             redacted.append(f"{inline.group('key')}={REDACTED}")
             continue
-        # A secret can also arrive as a bare positional token with no flag.
-        redacted.append(_redact_value(text))
-        if text.startswith("-") and is_secret_key(text.lstrip("-")):
+        # Check the whole token first so credential-shaped names stay masked.
+        safe = _redact_value(text)
+        if inline and safe == text:
+            key, value = inline.group("key", "value")
+            quote = value[0]
+            if len(value) > 1 and quote in {"'", '"'} and value.endswith(quote):
+                value = f"{quote}{_redact_value(value[1:-1])}{quote}"
+            else:
+                value = _redact_value(value)
+            safe = f"{key}={value}"
+        redacted.append(safe)
+        if not inline and text.startswith("-") and is_secret_key(text.lstrip("-")):
             previous_was_secret_flag = True
     return redacted
 

@@ -557,34 +557,75 @@ async def test_batch_broader_scopes_require_disclosure_and_survive_escape():
 
 
 @pytest.mark.asyncio
-async def test_ineligible_bulk_routes_to_individual_review_without_accepting_raw_default():
+@pytest.mark.parametrize("deny_all", [False, True], ids=["reselect-deny", "deny-all"])
+@pytest.mark.parametrize("captured_view", [True, False], ids=["captured", "legacy"])
+async def test_ineligible_bulk_routes_to_individual_review_without_accepting_raw_default(
+    tmp_path, deny_all, captured_view
+):
+    from textual.widgets import Static
+
+    from Tests.Chat.test_console_raw_shell_approval import _provider
+    from Tests.UI.test_approval_action_ownership import _wait_for_actionable_card
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+    from tldw_chatbook.Chat.console_chat_controller import _build_approval_payload
+
+    raw_call = _provider(tmp_path).pending_gate_for(
+        ToolCall("shell_exec", {"command": "echo sample"}, "raw-call-1")
+    )
+    assert raw_call is not None
+    payload = _build_approval_payload(
+        "mixed", "chat", "run", [MCPPendingCall(**_sample_calls()[0]), raw_call], 0, None
+    )
     app = _PaintedCardHarness()
     async with app.run_test(size=(80, 24)) as pilot:
         card = app.query_one(ChatApprovalCard)
-        card.set_batch(
-            [*_sample_calls()[:1], _raw_shell_call("echo sample")],
-            timeout_seconds=0,
-            round_id="mixed",
-        )
-        await pilot.pause()
+        if captured_view:
+            _set_payload(card, payload, round_id="mixed")
+        else:
+            card.set_batch(payload["calls"], timeout_seconds=0, round_id="mixed")
+        await _wait_for_actionable_card(card, pilot)
         review = card.query_one("#approval-approve-all", Button)
         assert str(review.label) == "Review individually" and not review.disabled
         _assert_painted(app, review)
         await pilot.click(review)
+        await pilot.pause()
         assert app.focused in list(card.query(Select))
         assert all(select.display for select in card.query(Select))
+        raw = list(card.query(Select))[1]
+        assert raw.value == "deny"
+        if captured_view:
+            assert not card._draft.can_apply()
         submit = card.query_one("#approval-submit", Button)
         _assert_painted(app, submit)
-        await pilot.click(submit)
-        assert not app.decided
-        raw = list(card.query(Select))[1]
-        raw.focus()
-        await pilot.press("enter", "enter")
-        await pilot.click(submit)
+        assert submit.disabled, "Apply is available before deliberate raw-shell review"
+        hint = card.query_one("#approval-choices-hint", Static)
+        _assert_painted(app, hint)
+        assert "Review required" in str(hint.content)
+        assert "each shell choice, even to keep Deny" in str(hint.content)
+
+        if deny_all:
+            deny = card.query_one("#approval-deny-all", Button)
+            assert not deny.disabled
+            _assert_painted(app, deny)
+            await pilot.click(deny)
+        else:
+            await pilot.click(submit)
+            assert not app.decided
+            raw.focus()
+            await pilot.press("enter", "enter")
+            await pilot.pause()
+            assert raw.value == "deny" and not submit.disabled
+            assert "Review required" not in str(hint.content)
+            await pilot.click(submit)
         await pilot.pause()
         assert app.decided == [
-            {"mcp__srv_a__search": "approve_once", "raw-call-1": "deny"}
+            {
+                "mcp__srv_a__search": "deny" if deny_all else "approve_once",
+                "raw-call-1": "deny",
+            }
         ]
+        assert app.decided_round_ids == ["mixed"]
 
 
 @pytest.mark.asyncio

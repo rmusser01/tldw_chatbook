@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from rich.cells import cell_len
 from rich.text import Text
-from textual import on
+from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.css.query import NoMatches
@@ -466,7 +466,7 @@ class ApprovalChoice(Select):
 
 
 class ApprovalActionButton(Button):
-    """Capture the displayed batch when a press is published, before delivery."""
+    """Keep approval input bound to the batch shown when it started."""
 
     class Pressed(Button.Pressed, namespace="button"):
         def __init__(self, button: ApprovalActionButton) -> None:
@@ -477,14 +477,34 @@ class ApprovalActionButton(Button):
 
     def __init__(self, *args: Any, generation: int = 0, **kwargs: Any) -> None:
         self.batch_generation = generation
+        self._mouse_down_owner: tuple[int, int] | None = None
         self.details_identity: DetailsIdentity | None = None
         self.details_page_index = 0
         super().__init__(*args, **kwargs)
 
     def post_message(self, message: Message) -> bool:
-        if type(message) is Button.Pressed and message.button is self:
+        if isinstance(message, events.MouseDown):
+            self._mouse_down_owner = (
+                None if self.is_disabled else (self.batch_generation, message.button)
+            )
+        elif isinstance(message, events.Click):
+            # Textual pairs events by widget identity. A reused button can
+            # change batches while a click is pending or the mouse is held.
+            owner = self._mouse_down_owner
+            if owner is not None and owner[1] == message.button:
+                message._approval_pointer_owner = owner
+                self._mouse_down_owner = None
+        elif type(message) is Button.Pressed and message.button is self:
             message = self.Pressed(self)
         return super().post_message(message)
+
+    def on_click(self, event: events.Click) -> None:
+        if getattr(event, "_approval_pointer_owner", None) != (
+            self.batch_generation,
+            event.button,
+        ):
+            event.prevent_default()
+            event.stop()
 
 
 class ChatApprovalCard(Container):
@@ -1088,6 +1108,7 @@ class ChatApprovalCard(Container):
             else ""
         )
         if not self.has_class("approval-single") and self._batch_selects:
+            self._sync_batch_apply(submit)
             if self._draft:
                 decisions = self._draft.summary(compact=True)
             else:
@@ -1127,6 +1148,33 @@ class ChatApprovalCard(Container):
             button.compact = compact
         for select in self._batch_selects:
             select.compact = compact
+
+    def _can_apply_batch(self) -> bool:
+        if self._draft is not None:
+            return self._draft.can_apply()
+        return not any(
+            raw and index not in self._raw_reviewed
+            for index, raw in enumerate(self._batch_is_raw_shell)
+        )
+
+    def _sync_batch_apply(self, submit: Button) -> None:
+        can_apply = self._can_apply_batch()
+        if self._draft is not None or any(self._batch_is_raw_shell):
+            submit.disabled = (
+                not self._information_ready
+                or self._batch_submitted
+                or self._batch_phase == "finishing"
+                or not can_apply
+            )
+        if self._options_open:
+            hint = "Choices apply when you press Apply"
+            if not can_apply:
+                hint = (
+                    "Review required. Select each shell choice, even to keep Deny."
+                    if any(self._batch_is_raw_shell)
+                    else "Review required. Select the remaining decisions."
+                )
+            self.query_one("#approval-choices-hint", Static).update(hint)
 
     # -- batch-approval API (task-5) -----------------------------------------
 
@@ -2015,6 +2063,8 @@ class ChatApprovalCard(Container):
             self._draft.stage(
                 self._batch_names[index], str(event.select.value), deliberate=True
             )
+        if self._options_open and not self.has_class("approval-single"):
+            self._sync_batch_apply(self.query_one("#approval-submit", Button))
 
     def _mark_row_needs_decision(self, row: Vertical, base_header: str) -> None:
         """Flag ``row`` as needing an explicit decision -- class AND text.
@@ -2178,12 +2228,7 @@ class ChatApprovalCard(Container):
             or not self._batch_names
         ):
             return
-        if self._draft is not None and not self._draft.can_apply():
-            return
-        if self._draft is None and any(
-            raw and index not in self._raw_reviewed
-            for index, raw in enumerate(self._batch_is_raw_shell)
-        ):
+        if not self._can_apply_batch():
             return
         decisions = {
             name: select.value

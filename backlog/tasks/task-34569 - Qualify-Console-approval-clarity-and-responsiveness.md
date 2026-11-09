@@ -154,6 +154,27 @@ An approval argument containing a single nested URI string can recurse until Pyt
 
 ADR required: no new decision. ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md. Reason: make existing display redaction fail safely on pathological nested inputs.
 
+### AC4 credentials in inline CLI URL arguments
+
+The approval summary and lazy Details can expose a nested URL credential when an admitted virtual CLI argument begins with a nonsecret assignment key. Reproduce both display paths with real captured arguments. Redact the value of the assignment through the existing URI-aware redactor, preserve the key, matched outer quotes and safe URL parameters, and keep the original invocation arguments. Inline assignments with their own value must not consume the next argument as a secret flag's value. Check embedded line breaks and preserve a safe argument's trailing newline.
+
+ADR required: no new decision. ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md. Reason: repair the existing display privacy contract.
+
+### AC1 and AC2 feedback for unreviewed raw-shell rows
+
+A staged raw-shell row can display its default Deny while still awaiting deliberate review. Apply decisions appears enabled but silently refuses. Reproduce that state through the mounted card. Make the unresolved state and next action visible, and keep Apply unavailable until the existing draft guard allows it. Keep Deny all immediate and the original authority, key, and stale-round checks. Exercise the shared card's existing raw-shell review guard when the caller supplies no captured view.
+
+ADR required: no new decision. ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md. Reason: expose the existing deliberate-review requirement through the existing controls.
+
+### AC1 and AC4 round ownership and display failure
+
+Exercise a physical press and release across a real replacement of the approval round. Keep the committing toolbar gesture bound to the round it started in, preserve fresh and keyboard activation, and leave the host's existing verdict ownership check in place.
+
+Reproduce admission of deeply nested JSON through the approval owner. Bound the recursive display work and fail closed if the request cannot be represented for review. Retire any registered round before returning an unresolved decision and keep raw arguments out of the error path.
+
+ADR required: no new decision. ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md. Reason: preserve the existing round ownership and review contract.
+
+
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -177,6 +198,18 @@ Hosted PerfGuard38822242015 CSS regression fixed without ratchet change. Exact83
 Hosted83 fast-lane exact pin fixed: unchanged9bbc reproduces both exact invocation failures; Root untouchedb8 exact2PASS0.381XMLs/0guards proves drift. Added only the three previously approved workflow strings to independent literal FAST_LANE_TARGETS in matching order, preserving every old member/equality/non-overlap/mutation control/budget/flag; workflow and product unchanged. Full queue-pressure plus adjacent derived-artifact/approval-critical/P0/personal-context contracts276PASS0F/E/S/0guards. Ruff touched-file clean; inherited formatter differences unchanged and formatter delta remains precisely the3literal additions. No mirroredtest/framework or2207test replay. ExistingADR103/235; new97path seal E/pr3036-fast-lane-pins-r1, all old evidence/limits/native/external ACs retained; tasks remain In Progress.
 Hosted83 markup guard correction: unchanged1bc real scanner RED1FAIL8.063XMLs reports315notify/83button/59tooltip,542pins and only two grown keys (_sync_control_layout1,set_batch2). One rich.text.Text import and three complete assigned-label Text wrappers make real guard GREEN315/80/59 with same542pins/census/scanner bytes. Actual flagged layout site is Apply+whitelist expression; conditional short-label assignment/escape alias untouched. AST is exactly original after removing only import/wrappers. Full existing scanner module and affected real count/layout/currentness/ownership UI controls72PASS0F/E/S18.708XMLs0warnings/guards. Canonical SVG regenerated unchanged267b8d73/0guards; no CSS input change. Ruff introduces0diagnostics, inherited2/format debt preserved. No census regeneration/newpolicy/newtestframework/fullsuite/app-provider/native/GitHub work. ExistingTASK1513/ADR235; unique152/134/97seal E/pr3036-literal-button-labels-r1; all old negatives/external ACs/status remain open.
 Resumed CI correction (2026-10-15): hosted b1df UI Fast Lane 3 failed at the learning/Stop test because the app-wide WorkerManager wait propagated WorkerCancelled. The unchanged test passed 2 cases locally, then a deliberate unrelated Console-worker cancellation reproduced the vulnerable global wait in both cases. The corrected test captures only the held command on the current Console node, waits for that actual worker and requires SUCCESS; original Stop, helper retirement, draft retention, current phase and non-active result assertions remain. The affected module passed 15 cases before the final early-failure cleanup adjustment; the final two-size selector passed 2 cases in 16.949 XML seconds with zero profile-write or network guard violations. Ruff check/format and diff whitespace checks pass. The unchanged Mermaid checker fetched all eight pinned public inputs and reproduced all six artifacts; no URL/hash/redirect/integrity rule was changed. Fresh PR CI remains required. Existing native/Windows/full-matrix/calibrated timing acceptance remains open; task stays In Progress. ADR required: no new ADR; existing ADR-235 and response-rule ADR-232 apply.
+### Final approval review fixes
+
+Pointer actions capture the batch generation when an enabled button receives MouseDown. The Click carries the generation and physical button through the widget queue. A held press or queued Click from a replaced batch, a press started on a disabled control and a release from a different mouse button all refuse. The mounted regressions verify that a new click still reaches the replacement round.
+
+Mixed raw-shell Apply reflects the existing deliberate-review guard for captured and legacy cards. The hint names the required shell choices and includes reselecting Deny. Deny all still applies immediately.
+
+The display redactor inspects quoted, unquoted and multiline URL assignments in their full argument tokens. It preserves nonsecret parameters, quotes and safe trailing line breaks, and the tool invocation keeps its original inputs. The approval owner rejects arguments that exceed the review nesting limit. It removes the exact preregistered round, returns an unresolved denial and keeps argument data out of the warning and audit.
+
+The focused mounted tests passed all four pointer cases and all four mixed-shell cases. The privacy and redaction checks passed 128 cases. The protected MCP journey ran 15 cases, including native JSON parsing, real MCP admission, unresolved audit and round retirement. The presentation and payload checks passed 27 cases, and the approval-owner and module-size checks passed 210. The independent re-review cleared the fixes. The Windows QA pack binds the updated source and retains the original reference pixels and provenance. The timing qualification in this task remains open.
+
+The optional Windows headless first-open file finished with four passes and two failures. The exact pre-review commit 88200953ae reproduced both failures at the same navigation and launch mount assertions. Both fixtures reported a claimable round and the active session with title-only paint before any approval input. The first-open cause remains open.
+
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Renumbering provenance
 

@@ -116,7 +116,13 @@ def test_redact_args_redacts_inline_flag_with_leading_dashes():
 
 
 def test_redact_args_leaves_non_secret_short_inline_flag_unchanged():
-    assert redact_args(["-k=v"]) == ["-k=v"]
+    assert redact_args(["-k=v", "URL=ordinary\n"]) == ["-k=v", "URL=ordinary\n"]
+
+
+def test_redact_inline_url_keeps_the_next_positional_argument():
+    prefix = "--endpoint=https://example.test/callback?access_token="
+    args = [prefix + "synthetic-assignment-credential&page=2", "keep-this"]
+    assert redact_args(args) == [prefix + "%2A%2A%2A&page=2", "keep-this"]
 
 
 def test_redact_args_reevaluates_flag_after_consecutive_secret_flags():
