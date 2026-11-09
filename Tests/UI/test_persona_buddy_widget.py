@@ -1469,6 +1469,42 @@ async def test_animation_cells_change_then_freeze_hidden_collapsed():
 
 
 @pytest.mark.asyncio
+async def test_decode_failure_freezes_the_currently_painted_frame():
+    controller = _FakeController(
+        animate=True,
+        frames=("FRAME-A", "FRAME-B"),
+        durations=(30_000, 30_000),
+    )
+    app = _BuddyApp(controller)
+    async with app.run_test(size=(80, 24)):
+        buddy = app.screen.query_one(PersonaBuddyWidget)
+        await _wait_until(lambda: "FRAME-A" in _compositor_text(app.screen))
+        buddy._next_frame_at = 0
+        buddy.advance_frame()
+        await _wait_until(lambda: "FRAME-B" in _compositor_text(app.screen))
+        assert buddy._frame_timer is not None
+        painted_region = buddy.region
+
+        controller.visual = replace(
+            controller.visual,
+            reason="persona_buddy_frame_unavailable",
+            animate=False,
+        )
+        controller.generation += 1
+        buddy.refresh_from_controller()
+        await _wait_until(
+            lambda: buddy._accepted_render is not None
+            and buddy._accepted_render.visual is controller.visual
+        )
+        assert buddy._frame_timer is None
+        buddy._next_frame_at = 0
+        buddy.advance_frame()
+        assert buddy.frame_index == 1
+        assert "FRAME-B" in _compositor_text(app.screen)
+        assert buddy.region == painted_region
+
+
+@pytest.mark.asyncio
 async def test_actionable_alert_freezes_animation_until_current_pet_resumes():
     controller = _FakeController(
         animate=True,

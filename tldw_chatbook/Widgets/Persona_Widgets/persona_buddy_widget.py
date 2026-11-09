@@ -60,7 +60,6 @@ def _visual_identity(visual: Any) -> tuple[object, ...]:
         getattr(visual, "cache_identity", None),
         getattr(visual, "frame_rate", None),
         getattr(visual, "loop", None),
-        getattr(visual, "animate", None),
         tuple(
             (
                 getattr(frame, "cache_identity", None),
@@ -559,8 +558,8 @@ class PersonaBuddyWidget(Widget, can_focus=True):
         * ``_paint_frame`` reads the compact class, the alert for
           ``snapshot.state``, and the accepted render (via
           ``_accepted_render_for_paint``, which also reads ``display``);
-        * ``_sync_frame_timer`` reads the accepted render's animation fields,
-          carried here by ``accepted.visual_identity``.
+        * ``_sync_frame_timer`` also reads ``animate``. Keep it separate from
+          frame identity so a decode failure can freeze the painted frame.
 
         The controller generations ride along so any authority move the
         painted fields happen not to expose still opens the gate. The frame
@@ -589,6 +588,7 @@ class PersonaBuddyWidget(Widget, can_focus=True):
             getattr(focused, "id", None),
             accepted.authority if accepted is not None else None,
             accepted.visual_identity if accepted is not None else None,
+            accepted.visual.animate if accepted is not None else None,
             accepted.collapsed if accepted is not None else None,
             accepted.content_width if accepted is not None else None,
             accepted.content_height if accepted is not None else None,
