@@ -169,7 +169,6 @@ class PluginService:
     def _worker(self):
         loop = owner = registry = None
         try:
-            from tldw_chatbook.DB.base_db import operation_owned_connection
             from tldw_chatbook.Skills_Interop.local_skills_service import (
                 default_local_skills_store_dir,
             )
@@ -210,11 +209,7 @@ class PluginService:
             )
             self._loop = loop
             self._ready.set_result(loop)
-            workspace_db = getattr(
-                getattr(self.workspace_lookup, "__self__", None), "db", None
-            )
-            with operation_owned_connection(workspace_db):
-                loop.run_forever()
+            loop.run_forever()
         # Publish all startup failures to waiters before releasing the owner.
         except BaseException as error:  # noqa: BLE001
             if not self._ready.done():
