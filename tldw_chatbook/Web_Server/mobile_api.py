@@ -102,7 +102,7 @@ _DEFAULT_SESSION_TITLE = "Mobile chat"
 
 #: Allowed approval verdicts (the service contract's closed set).
 _APPROVAL_DECISIONS = frozenset(
-    {"approve_once", "approve_session", "always_allow", "deny"}
+    {"approve_once", "approve_session", "always_allow", "allow_matching", "deny"}
 )
 
 #: Decide-route ``child_id`` bound (chars): the control protocol's
@@ -383,7 +383,7 @@ async def handle_decide(server: Any, request) -> Any:
         return _error(413, "body_too_large")
     decisions = payload.get("decisions")
     if not isinstance(decisions, Mapping) or not all(
-        isinstance(key, str) and value in _APPROVAL_DECISIONS
+        isinstance(key, str) and isinstance(value, str) and value in _APPROVAL_DECISIONS
         for key, value in decisions.items()
     ):
         return _error(400, "invalid_decisions")

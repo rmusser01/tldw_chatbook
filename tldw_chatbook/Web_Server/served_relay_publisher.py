@@ -57,8 +57,8 @@ def _relay_calls(raw_calls: Any, view: Any = None) -> list[dict[str, Any]]:
     The protocol's payload registry rejects unknown top-level fields, so the
     publisher also keeps each row minimal: only what the phone's approval
     card renders (``llm_name``, ``call_id``, ``options``, ``arguments``).
-    A captured view may narrow the original owner's choices, never add one.
-    Matching arguments and the runtime's permission decisions stay unchanged.
+    A captured view supplies legal choices for an implicit option set and
+    narrows explicit producer choices. Matching arguments stay original.
     """
 
     legal_by_key = None
@@ -76,9 +76,11 @@ def _relay_calls(raw_calls: Any, view: Any = None) -> list[dict[str, Any]]:
         options = list(row.get("options") or [])
         if legal_by_key is not None:
             key = row.get("call_id") or row.get("llm_name") or ""
-            options = [
-                option for option in options if option in legal_by_key.get(key, ())
-            ]
+            legal = legal_by_key.get(key, ())
+            options = (
+                [option for option in options if option in legal]
+                if options else list(legal)
+            )
         calls.append(
             {
                 "llm_name": str(row.get("llm_name") or ""),

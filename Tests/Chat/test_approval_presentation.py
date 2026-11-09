@@ -1,6 +1,9 @@
 """Captured approval facts never confer permission."""
 
 from dataclasses import replace
+from urllib.parse import parse_qs, quote, urlsplit
+
+import pytest
 
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 
@@ -300,3 +303,34 @@ def test_captured_url_targets_redact_query_credentials_without_changing_inputs()
         assert row.targets == (expected,)
         assert row.argument_sets == (call.arguments,)
         assert f"synthetic-{index}" in next(iter(call.arguments.values()))
+
+
+@pytest.mark.parametrize(
+    ("separator", "component"), [("?", "query"), ("#", "fragment")]
+)
+def test_captured_view_masks_deeply_nested_url_values(separator, component):
+    prefix = f"x:{separator}next="
+    original = prefix * 1000 + "x:deep-tail"
+    call = pending(owner=authority(), args={"url": original})
+    row = capture(call).rows[0]
+
+    (target,) = row.targets
+    assert target.startswith(prefix)
+    while target.startswith(prefix):
+        target = parse_qs(getattr(urlsplit(target), component))["next"][0]
+    assert target == "***"
+    assert row.argument_sets == ({"url": original},)
+    assert call.arguments == {"url": original}
+
+
+def test_captured_view_preserves_shallow_nested_url_masks():
+    inner = "x:?token=synthetic-credential&page=2"
+    original = f"x:?next={quote(inner, safe='')}#return={quote(inner, safe='')}"
+    row = capture(pending(owner=authority(), args={"url": original})).rows[0]
+
+    (target,) = row.targets
+    parts = urlsplit(target)
+    expected = ["x:?token=%2A%2A%2A&page=2"]
+    assert parse_qs(parts.query)["next"] == expected
+    assert parse_qs(parts.fragment)["return"] == expected
+    assert row.argument_sets == ({"url": original},)

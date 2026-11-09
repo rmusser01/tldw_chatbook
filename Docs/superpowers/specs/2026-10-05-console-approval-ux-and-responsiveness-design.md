@@ -2,7 +2,7 @@
 
 Date: 2026-10-05
 
-Status: Owner-approved design, implemented and integrated with current Console owners. Final native/browser presented-frame timing qualification remains mandatory before auto-merge.
+Status: Owner-approved design, implemented and integrated with current Console owners. Presented-frame timing qualification continues separately in [TASK-34569](../../../backlog/tasks/task-34569%20-%20Qualify-Console-approval-clarity-and-responsiveness.md).
 
 ADR: [ADR-235](../../../backlog/decisions/235-console-approval-interaction-and-feedback.md) (Accepted).
 
@@ -196,4 +196,4 @@ Synchronous work must stay outside the UI loop, and threaded workers marshal UI 
 
 Desktop and phone submit to the same current controller/interrupt host for the exact round; only host settlement can establish acceptance after cancellation and deadline arbitration. A phone delivery acknowledgement is not a saved grant or proof of execution. Settlement retires staged desktop choices and queued callbacks, preventing a resolved card from committing into its replacement. The relay retains its four safe call fields and intersects producer options with captured legal choices, so presentation can narrow choices but cannot grant new authority. Original arguments, grant domains, stamp ownership and wire contracts remain unchanged (ADR235/236).
 
-The owner explicitly requires actual Windows dispatch and native timing qualification before auto-merge. Functional, headless, compositor and server-frame results remain distinct from physical presentation/clock evidence; the proposed100/200ms/40-warm-sample budgets are not qualified by those substitutes.
+The owner chose to proceed with PR #3036 after required CI and review while native and browser timing qualification continues in TASK-34569. A native Windows run exercised the isolated synthetic dispatch. Physical timing qualification still requires presented frames and clock evidence for the proposed 100 ms and 200 ms budgets and 40 warm samples per scenario and transport.

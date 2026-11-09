@@ -652,6 +652,13 @@
     }
   }
 
+  function approvalDecisionKey(call) {
+    if (typeof call.call_id === "string" && call.call_id) {
+      return call.call_id;
+    }
+    return typeof call.llm_name === "string" ? call.llm_name : "";
+  }
+
   function renderApprovalCard(round) {
     const card = document.createElement("li");
     // ADR-236: tag which surface owns the round — desktop-relayed (from a
@@ -668,6 +675,15 @@
           : String(round.surface);
     card.append(surface);
     const calls = Array.isArray(round.calls) ? round.calls : [];
+    const keyCounts = new Map();
+    for (const call of calls) {
+      const key = approvalDecisionKey(call);
+      if (key) keyCounts.set(key, (keyCounts.get(key) || 0) + 1);
+    }
+    const sharedGroupNumbers = new Map();
+    for (const [key, count] of keyCounts) {
+      if (count > 1) sharedGroupNumbers.set(key, sharedGroupNumbers.size + 1);
+    }
     for (const call of calls) {
       const block = document.createElement("div");
       block.className = "approval-call";
@@ -690,7 +706,19 @@
         );
         options.append(button);
       }
-      block.append(name, args, options);
+      block.append(name, args);
+      const key = approvalDecisionKey(call);
+      const groupNumber = sharedGroupNumbers.get(key);
+      if (groupNumber) {
+        const count = keyCounts.get(key);
+        const note = document.createElement("p");
+        note.className = "approval-note";
+        note.textContent =
+          "Approval group " + groupNumber + " · This decision applies to all " +
+          count + " calls marked group " + groupNumber + ".";
+        block.append(note);
+      }
+      block.append(options);
       card.append(block);
     }
     if (!calls.length) {
@@ -703,8 +731,12 @@
   }
 
   async function decide(round, call, option, card) {
-    const callId = typeof call.call_id === "string" ? call.call_id : "";
-    const body = { decisions: { [callId]: option } };
+    const callKey = approvalDecisionKey(call);
+    if (!callKey) {
+      showError("invalid_decisions");
+      return;
+    }
+    const body = { decisions: { [callKey]: option } };
     // ADR-236: desktop rounds carry the owning child's id; sending it
     // addresses exactly that child even when two children collide on the
     // same child-local round_id. Phone rounds (no child_id) stay

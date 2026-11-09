@@ -195,6 +195,61 @@ def test_mobile_approval_wire_preserves_calls_and_narrows_captured_choices(
     assert call["options"] == ["approve_once", "approve_session", "deny"]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("call_id", "decision_key", "child_id", "repeated", "accepted"),
+    [
+        ("call-1", "call-1", None, False, True),
+        ("", "mcp__srv__read", None, False, True),
+        ("call-1", "mcp__srv__read", None, False, False),
+        ("call-1", "call-1", None, True, False),
+        ("call-1", "call-1", "expired-child", False, False),
+    ],
+)
+async def test_matching_input_decision_uses_the_exact_current_mobile_offer(
+    tmp_path, monkeypatch, call_id, decision_key, child_id, repeated, accepted
+) -> None:
+    from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+    from tldw_chatbook.Chat.approval_presentation import profile_authority
+    from tldw_chatbook.Chat.console_chat_controller import _build_approval_payload
+
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=AgentModeGateway())
+    received = []
+    controller = types.SimpleNamespace(
+        resolve_pending_approval=lambda decisions, *, round_id: received.append(
+            (round_id, decisions)
+        )
+    )
+    monkeypatch.setattr(
+        service, "_require_engine", lambda: types.SimpleNamespace(controller=controller)
+    )
+    calls = [
+        MCPPendingCall(
+            llm_name="mcp__srv__read",
+            server_key="local:srv",
+            tool_name="read",
+            server_label="Test server",
+            arguments={"query": key},
+            reason="ask",
+            options=("approve_once", "allow_matching", "deny"),
+            call_id=key,
+            presentation_authority=profile_authority(
+                "mcp", "Default", "Test server", "tool_name"
+            ),
+        )
+        for key in ((call_id, "call-2") if repeated else (call_id,))
+    ]
+    payload = _build_approval_payload("round", "chat", "run", calls, 0, None)
+    service._mount_approval(payload)
+    offered = service.list_approvals()[0]["calls"][0]["options"]
+    assert ("allow_matching" in offered) is not repeated
+
+    decisions = {decision_key: "allow_matching"}
+    delivered = await service.decide_approval("round", decisions, child_id=child_id)
+    assert delivered is accepted
+    assert received == ([("round", decisions)] if accepted else [])
+
+
 class _LoopSafeGate:
     """An ``asyncio.Event`` whose release works from any thread (TASK-35133).
 
@@ -1738,8 +1793,9 @@ async def test_relay_raised_round_lists_with_surface_and_fires_event(
 
 
 @pytest.mark.loopback_network
+@pytest.mark.parametrize("decision", ["approve_once", "allow_matching"])
 async def test_relay_decision_routes_to_child_and_clears_round(
-    tmp_path: Path,
+    tmp_path: Path, decision: str
 ) -> None:
     """A phone decision on a desktop round rides relay.decide.request to
     the owning child; delivered True clears the round and answers True."""
@@ -1750,9 +1806,15 @@ async def test_relay_decision_routes_to_child_and_clears_round(
     await child.start()
     service.attach_relay(broker, child_ids=lambda: ["child-a"])
     try:
-        await child.client.send_relay_event(
-            "relay.approval.raised", _relay_raised_payload()
+        payload = _relay_raised_payload()
+        payload["calls"].append(
+            {
+                **payload["calls"][0],
+                "call_id": "matching",
+                "options": ["approve_once", "allow_matching", "deny"],
+            }
         )
+        await child.client.send_relay_event("relay.approval.raised", payload)
         await _wait_for(
             lambda: any(
                 a["round_id"] == "round-desktop-1" for a in service.list_approvals()
@@ -1760,8 +1822,16 @@ async def test_relay_decision_routes_to_child_and_clears_round(
             timeout=5,
             what="desktop round in list_approvals",
         )
+        assert (
+            await service.decide_approval(
+                "round-desktop-1", {"call-1": "allow_matching"}, child_id="child-a"
+            )
+            is False
+        )
+        assert not any(m.message_type == "relay.decide.request" for m in child.seen)
+        decisions = {"matching" if decision == "allow_matching" else "call-1": decision}
         delivered = await service.decide_approval(
-            "round-desktop-1", {"call-1": "approve_once"}
+            "round-desktop-1", decisions, child_id="child-a"
         )
         assert delivered is True
         decide_requests = [
@@ -1770,7 +1840,7 @@ async def test_relay_decision_routes_to_child_and_clears_round(
         assert len(decide_requests) == 1
         assert decide_requests[0].payload == {
             "round_id": "round-desktop-1",
-            "decisions": {"call-1": "approve_once"},
+            "decisions": decisions,
         }
         assert not [
             a for a in service.list_approvals() if a["round_id"] == "round-desktop-1"

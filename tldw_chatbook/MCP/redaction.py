@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 REDACTED = "***"
+_MAX_URL_NESTING = 8
 
 _SECRET_KEY_RE = re.compile(
     r"(?i)(token|secret|passwd|password|api[-_]?key|private[-_]?key"
@@ -105,7 +106,7 @@ def looks_like_secret_value(value: Any) -> bool:
     return any(pattern.search(value) for pattern in _SECRET_VALUE_PATTERNS)
 
 
-def _redact_value(value: Any) -> Any:
+def _redact_value(value: Any, *, remaining_url_depth: int = _MAX_URL_NESTING) -> Any:
     """Redact scalar credential shapes and URI credentials for display only."""
     if isinstance(value, (bytes, bytearray)):
         # Decoded only to test the shape; the original is never returned once
@@ -118,7 +119,7 @@ def _redact_value(value: Any) -> Any:
     if looks_like_secret_value(value):
         return REDACTED
     if isinstance(value, str) and _URI_PREFIX_RE.match(value):
-        return redact_url(value)
+        return _redact_url(value, remaining_url_depth)
     return value
 
 
@@ -221,18 +222,28 @@ def redact_url(url: str) -> str:
 
     Query values are judged by name AND by shape, so a secret under an
     innocuous parameter name does not survive (TASK-26011 review, I6).
+    Nested URL values beyond the inspection limit are masked as a whole.
     """
+    return _redact_url(url, _MAX_URL_NESTING)
+
+
+def _redact_url(url: str, remaining_depth: int) -> str:
+    if remaining_depth == 0:
+        return REDACTED
     try:
         parts = urlsplit(str(url))
     except ValueError:
         return REDACTED
     if not parts.query and "@" not in parts.netloc and "=" not in parts.fragment:
         return str(url)
+    nested_depth = remaining_depth - 1
     original_query = parse_qsl(parts.query, keep_blank_values=True)
     query = [
         (
             key,
-            REDACTED if is_secret_key(key) else _redact_value(value),
+            REDACTED
+            if is_secret_key(key)
+            else _redact_value(value, remaining_url_depth=nested_depth),
         )
         for key, value in original_query
     ]
@@ -240,7 +251,12 @@ def redact_url(url: str) -> str:
         parse_qsl(parts.fragment, keep_blank_values=True) if "=" in parts.fragment else []
     )
     fragment_values = [
-        (key, REDACTED if is_secret_key(key) else _redact_value(value))
+        (
+            key,
+            REDACTED
+            if is_secret_key(key)
+            else _redact_value(value, remaining_url_depth=nested_depth),
+        )
         for key, value in original_fragment
     ]
     fragment = (

@@ -447,7 +447,9 @@ async def test_app_approval_wrapper_with_publisher_keeps_original_and_relay() ->
         await publisher.aclose()
 
 
-def _captured_repeated_tool_payload(*, grouped: bool = False):
+def _captured_repeated_tool_payload(
+    *, grouped: bool = False, implicit: bool = False
+):
     """Capture real owner rows, including the tool-name stamp limitation."""
     from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
     from tldw_chatbook.Chat.approval_presentation import profile_authority
@@ -461,7 +463,7 @@ def _captured_repeated_tool_payload(*, grouped: bool = False):
             server_label="Private test server",
             arguments={"query": value, "url": "https://example.test/?token=original"},
             reason="ask",
-            options=(
+            options=() if implicit else (
                 "approve_once",
                 "approve_session",
                 "allow_matching",
@@ -480,10 +482,11 @@ def _captured_repeated_tool_payload(*, grouped: bool = False):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("grouped", [False, True])
+@pytest.mark.parametrize("implicit", [False, True])
 async def test_relay_preserves_captured_effective_choices_and_original_arguments(
-    grouped,
+    grouped, implicit
 ):
-    payload = _captured_repeated_tool_payload(grouped=grouped)
+    payload = _captured_repeated_tool_payload(grouped=grouped, implicit=implicit)
     client = FakeRelayClient()
     publisher = ServedRelayPublisher(client)
     publisher.attach()
