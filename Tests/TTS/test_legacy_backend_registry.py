@@ -233,6 +233,7 @@ def test_builtin_import_attribute_error_propagates(
         BackendRegistry.ensure_builtins()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_openai_backend_uses_configured_endpoint_without_organization_header(
     monkeypatch: pytest.MonkeyPatch,
