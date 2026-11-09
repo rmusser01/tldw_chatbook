@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 from loguru import logger
 
 from tldw_chatbook.Chat.attachment_core import image_url_part
-from tldw_chatbook.Chat.console_compaction_hooks import _finish_compaction_hooks
+from .console_compaction_hooks import _finish_compaction_hooks, _own_hooks, _stock_compaction_methods
 from tldw_chatbook.Chat.console_context_policy import (
     CompactionFailureBehavior,
     ContextCarryForwardMode,
@@ -2928,6 +2928,7 @@ class ConsoleCompactionService:
             source="pricing_catalog",
             estimated=False,
         )
+    _stock_operations = _stock_compaction_methods(compact, _compact_once, summarize_manual)
 
 
 def _contains_reserved_envelope(text: str) -> bool:
@@ -3870,7 +3871,7 @@ class ConsoleCompactionPreflight:
                     active_request=not manual_action,
                 ),
                 honor_failure_latch=micro_compaction or not manual_action,
-                hooks=hooks,
+                hooks=_own_hooks(service, "compact", self.read_controller_store, session_id, hooks),
             )
             failure = await _finish_compaction_hooks(hooks)
             if failure is not None:

@@ -2,6 +2,70 @@
 
 import asyncio
 from dataclasses import replace
+from types import MappingProxyType
+
+
+def _stock_compaction_methods(compact, compact_once, summarize_manual):
+    def freeze(*methods):
+        return tuple((method.__name__, method, method.__code__) for method in methods)
+
+    return MappingProxyType(
+        {
+            "compact": freeze(compact, compact_once),
+            "summarize_manual": freeze(summarize_manual),
+        }
+    )
+
+
+def _own_hooks(service, operation, read_store, session_id, hooks):
+    from .console_chat_store import ConsoleChatStore
+    from .console_context_compaction import ConsoleCompactionService
+    from .console_received_dispatch import stock_native_methods
+
+    if type(service) is not ConsoleCompactionService or not stock_native_methods(
+        service, ConsoleCompactionService._stock_operations[operation]
+    ):
+        return hooks
+    store = read_store()
+    if type(store) is not ConsoleChatStore:
+        return hooks
+    session = next((row for row in store.sessions() if row.id == session_id), None)
+    if session is None or not session.persisted_conversation_id:
+        return hooks
+    conversation_id = session.persisted_conversation_id
+    binding_revision = session.conversation_binding_revision
+    persistence = store.persistence
+    persistence_db = getattr(persistence, "db", None)
+    repository = service._repository
+    repository_db = getattr(repository, "db", None)
+    if persistence_db is not None and repository_db is not persistence_db:
+        return hooks
+
+    class OwnedHooks:
+        async def before(self, candidate, cap):
+            return candidate if hooks is None else await hooks.before(candidate, cap)
+
+        def committed(self, memory):
+            # Publish for the captured Chat only after the durable selection succeeds.
+            try:
+                if (
+                    memory.conversation_id == conversation_id
+                    and read_store() is store
+                    and store.persistence is persistence
+                    and getattr(persistence, "db", None) is persistence_db
+                    and service._repository is repository
+                    and getattr(repository, "db", None) is repository_db
+                    and any(row is session for row in store.sessions())
+                    and session.id == session_id
+                    and session.persisted_conversation_id == conversation_id
+                    and session.conversation_binding_revision == binding_revision
+                ):
+                    store._bump_conversation_context_epoch(session_id)
+            finally:
+                if hooks is not None:
+                    hooks.committed(memory)
+
+    return OwnedHooks()
 
 
 async def _hooks_for_compaction(

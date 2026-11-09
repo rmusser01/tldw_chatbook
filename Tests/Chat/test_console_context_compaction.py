@@ -23,6 +23,7 @@ from tldw_chatbook.Chat.console_context_compaction import (
     CompactionDecision,
     CompactionPromptSnapshot,
     CompactionTerminal,
+    CompactionTransactionResult,
     ConsoleCompactionService,
     DurableConversationUnit,
     DurableMessageSnapshot,
@@ -4004,6 +4005,9 @@ async def test_manual_compact_now_is_explicit_and_transcript_neutral() -> None:
         (message.id, message.role, message.content)
         for message in store.messages_for_session(session.id)
     )
+    visible = store.create_session()
+    captured_epoch = store.conversation_context_epoch(session.id)
+    visible_epoch = store.conversation_context_epoch(visible.id)
 
     succeeded, visible_copy = await controller.compact_context_now(session.id)
 
@@ -4016,6 +4020,35 @@ async def test_manual_compact_now_is_explicit_and_transcript_neutral() -> None:
     assert gateway.calls == 1
     assert before == after
     assert len(controller._context_repository.memories) == 1
+    assert store.conversation_context_epoch(session.id) == captured_epoch + 1
+    assert store.active_session_id == visible.id
+    assert store.conversation_context_epoch(visible.id) == visible_epoch
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("override", ["nested", "foreign-bound"])
+async def test_custom_compaction_keeps_existing_hooks_and_epoch(monkeypatch, override):
+    controller, store, session, _assistant, gateway, _messages = (
+        _controller_preflight_fixture(ContextCompactionMode.OFF)
+    )
+    service = controller._compaction_service
+    epoch = store.conversation_context_epoch(session.id)
+    observed = []
+
+    async def custom_once(**kwargs):
+        observed.append(kwargs["hooks"])
+        return CompactionTransactionResult(CompactionTerminal.STALE)
+
+    if override == "nested":
+        monkeypatch.setattr(service, "_compact_once", custom_once)
+    else:
+        other = ConsoleCompactionService(controller._context_repository, gateway)
+        monkeypatch.setattr(other, "_compact_once", custom_once)
+        monkeypatch.setattr(service, "compact", other.compact)
+
+    succeeded, _ = await controller.compact_context_now(session.id)
+    assert not succeeded and observed == [None] and gateway.calls == 0
+    assert store.conversation_context_epoch(session.id) == epoch
 
 
 def test_automatic_admission_is_prefix_and_inherits_branch_suppression() -> None:

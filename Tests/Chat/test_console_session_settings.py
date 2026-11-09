@@ -3838,7 +3838,12 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
     request,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from Tests.Chat.test_console_context_compaction import _insert_real_prefix_memory
+    from types import SimpleNamespace
+
+    from Tests.Chat.test_console_context_compaction import (
+        _ControllerGateway,
+        _insert_real_prefix_memory,
+    )
     from Tests.UI.test_console_provider_apply_defaults_flow import (
         _ConsoleFlowHarness,
         _persisted_console_app,
@@ -3846,6 +3851,12 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
     from Tests.UI.test_destination_shells import _wait_for_selector
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
     from tldw_chatbook.Chat.console_context_compaction import prefix_digest
+    from tldw_chatbook.Chat.console_context_policy import (
+        ConsoleContextPolicyOverrides,
+        ContextBudgetMode,
+        ContextCompactionMode,
+    )
+    from tldw_chatbook.UI.Console_Modules import console_spend_projection as spend
 
     app_instance = _persisted_console_app()
     app = _ConsoleFlowHarness(app_instance)
@@ -3853,7 +3864,9 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
     release = asyncio.Event()
     finished = asyncio.Event()
     provider_cancelled = False
+    compact_results: list[tuple[bool, str]] = []
     notices: list[str] = []
+    monkeypatch.setattr(spend, "time", SimpleNamespace(monotonic=lambda: 10.0))
     monkeypatch.setattr(
         app, "notify", lambda message, **_kwargs: notices.append(message)
     )
@@ -3866,45 +3879,67 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
             store = console._ensure_console_chat_store()
             session = store.ensure_session()
             conversation_id = store.persist_session_if_needed(session.id)
+            store.set_session_context_policy_overrides(
+                session.id,
+                ConsoleContextPolicyOverrides(
+                    budget_mode=ContextBudgetMode.CUSTOM,
+                    custom_budget_tokens=1800,
+                    compaction_mode=ContextCompactionMode.OFF,
+                    summary_max_tokens=100,
+                ),
+            )
+            for index in range(2):
+                store.append_message(
+                    session.id,
+                    role=ConsoleMessageRole.USER,
+                    content=f"Older question {index} " + "x " * 450,
+                    persist=True,
+                )
+                store.append_message(
+                    session.id,
+                    role=ConsoleMessageRole.ASSISTANT,
+                    content=f"Older answer {index} " + "y " * 450,
+                    persist=True,
+                )
             store.append_message(
                 session.id,
                 role=ConsoleMessageRole.USER,
-                content="An older question",
+                content="Current question",
                 persist=True,
             )
             store.append_message(
                 session.id,
                 role=ConsoleMessageRole.ASSISTANT,
-                content="An older answer",
+                content="Current answer",
                 persist=True,
             )
             snapshots = controller._durable_context_snapshots(session.id)
-            assert snapshots is not None and len(snapshots) == 2
-
-            def publish_memory(memory_id: str) -> None:
-                # Use durable records with the real active-lineage digest so
-                # reopening exercises the controller's memory-selection boundary.
-                _insert_real_prefix_memory(
-                    controller._context_repository,
-                    conversation_id=conversation_id,
-                    memory_id=memory_id,
-                    selection_id=f"selection-{memory_id}",
-                    boundary_message_id=snapshots[0].message_id,
-                    activation_message_id=snapshots[-1].message_id,
-                    summarized_prefix_digest=prefix_digest(snapshots[:1]),
-                    created_at="2026-09-17T00:00:00Z",
-                )
-
-            publish_memory("original-memory")
+            assert snapshots is not None and len(snapshots) == 6
+            _insert_real_prefix_memory(
+                controller._context_repository,
+                conversation_id=conversation_id,
+                memory_id="original-memory",
+                selection_id="selection-original-memory",
+                boundary_message_id=snapshots[1].message_id,
+                activation_message_id=snapshots[-1].message_id,
+                summarized_prefix_digest=prefix_digest(snapshots[:2]),
+                created_at="2026-09-17T00:00:00Z",
+            )
+            gateway = _ControllerGateway()
+            gateway.text = "Summary for fresh-memory."
+            gateway.started = entered
+            gateway.release = release
+            monkeypatch.setattr(controller, "provider_gateway", gateway)
+            monkeypatch.setattr(controller._compaction_service, "_gateway", gateway)
+            compact = controller.compact_context_now
 
             async def compact_now(session_id: str) -> tuple[bool, str]:
                 nonlocal provider_cancelled
                 assert session_id == session.id
-                entered.set()
                 try:
-                    await release.wait()
-                    publish_memory("fresh-memory")
-                    return True, "Compaction complete."
+                    result = await compact(session_id)
+                    compact_results.append(result)
+                    return result
                 except asyncio.CancelledError:
                     provider_cancelled = True
                     raise
@@ -3936,10 +3971,12 @@ async def test_settings_active_compaction_close_anyway_keeps_provider_work_runni
             release.set()
             await asyncio.wait_for(finished.wait(), timeout=1)
             assert not provider_cancelled
+            assert len(compact_results) == 1 and compact_results[0][0], compact_results
+            assert gateway.calls == 1
             _overrides, _global, effective_memory = controller.context_control_inputs(
                 session.id
             )
-            assert effective_memory.memory.memory_id == "fresh-memory"
+            assert effective_memory.memory.summary_text == "Summary for fresh-memory."
             assert await console._open_console_settings(focus_context=True)
             await pilot.pause()
             reopened = app.screen

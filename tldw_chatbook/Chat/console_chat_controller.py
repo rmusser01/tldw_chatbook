@@ -19486,6 +19486,8 @@ class ConsoleChatController:
         self, message_id: str, *, from_here: bool, focus: str = ""
     ) -> ConsoleSubmitResult:
         """Plan and execute either manual memory direction through one service."""
+        from .console_compaction_hooks import _own_hooks
+
         planning = await self._manual_summary_planning(
             message_id, from_here=from_here, focus=focus
         )
@@ -19565,7 +19567,7 @@ class ConsoleChatController:
                 prompt=prompt,
                 current_admission=current_admission,
                 prepare_projection=prepare_projection,
-                hooks=hooks,
+                hooks=_own_hooks(service, "summarize_manual", lambda: self.store, session_id, hooks),
             )
             if hooks is not None:
                 await hooks.finish()
