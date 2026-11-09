@@ -112,6 +112,7 @@ def svg_text_contrast(svg, label):
     return foreground, background, (light + 0.05) / (dark + 0.05)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "size,label,floor",
     [
@@ -922,6 +923,7 @@ async def test_real_css_panes_f6_tab_and_precise_nested_issue_are_painted(
         assert_hit(screen, screen.query_one("#workflow-save-revision"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("activation", ["enter", "space", "pointer"])
 async def test_neighbors_are_real_selectable_controls(tmp_path, activation):
     harness = WorkflowEditorHarness(tmp_path)
@@ -944,6 +946,7 @@ async def test_neighbors_are_real_selectable_controls(tmp_path, activation):
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_typing_keeps_widget_cursor_and_lossless_durable_value(tmp_path):
     harness = WorkflowEditorHarness(tmp_path)
     async with harness.run_test(size=(110, 36)) as pilot:
@@ -1070,6 +1073,7 @@ async def test_operation_error_clears_after_successful_context_change(
         assert not retry_was_visible
 
 
+@pytest.mark.bootstrap_profile
 async def test_deleted_raw_step_returns_to_overview_and_can_edit_name(tmp_path):
     import json
 
@@ -1193,6 +1197,7 @@ async def test_historical_inspection_keeps_dirty_current_draft_and_edit_guard(tm
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_overlapping_overview_refresh_keeps_one_complete_form(tmp_path):
     harness = WorkflowEditorHarness(tmp_path)
     async with harness.run_test(size=(110, 36)) as pilot:
@@ -1384,6 +1389,7 @@ async def test_invalid_json_remains_after_navigation_and_reopen(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_expanded_editor_escape_restores_the_original_field(
     tmp_path,
 ):
@@ -1467,6 +1473,7 @@ async def test_validate_uses_authoring_issues_and_cannot_enable_execution(tmp_pa
     assert not list(tmp_path.glob("*.lock"))
 
 
+@pytest.mark.bootstrap_profile
 async def test_continuous_form_sections_expand_independently_and_restore(tmp_path):
     harness = WorkflowEditorHarness(tmp_path)
     async with harness.run_test(size=(110, 36)) as pilot:
@@ -1522,6 +1529,7 @@ async def test_pinned_status_distinguishes_stored_draft_from_saved_revision(
         assert harness.screen.controller.head != old_head
 
 
+@pytest.mark.bootstrap_profile
 async def test_short_viewport_keeps_prompt_label_with_focused_control(tmp_path):
     harness = WorkflowEditorHarness(tmp_path)
     async with harness.run_test(size=(60, 20)) as pilot:
@@ -1598,6 +1606,7 @@ async def test_short_viewport_real_app_paints_prompt_value_and_focus(
         assert field.content_region.height >= 1
 
 
+@pytest.mark.bootstrap_profile
 async def test_reference_selection_inserts_at_consumer_selection_and_stays_visible(
     tmp_path,
 ):

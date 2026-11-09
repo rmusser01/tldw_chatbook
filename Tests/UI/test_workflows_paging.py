@@ -342,6 +342,7 @@ async def test_library_pages_search_and_off_page_head_keep_pending_draft(tmp_pat
         assert harness.workflow_drafts.current == pending
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(110, 36), (60, 20)])
 async def test_compact_library_and_history_pages_reach_final_item(tmp_path, size):
     harness = WorkflowEditorHarness(tmp_path, seed=False)

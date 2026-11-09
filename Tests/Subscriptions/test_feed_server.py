@@ -26,6 +26,7 @@ from __future__ import annotations
 import socket
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -43,7 +44,7 @@ from tldw_chatbook.Subscriptions.feed_server import (
 # server on an ephemeral loopback port and fetches from it.
 # The autouse guard in Tests/conftest.py denies egress by default; every address
 # these tests reach is a port this process itself is listening on.
-pytestmark = [pytest.mark.unit, pytest.mark.allow_network]
+pytestmark = [pytest.mark.unit, pytest.mark.loopback_network]
 
 
 def _raw_http_request(port: int, request_bytes: bytes, timeout: float = 5.0) -> bytes:
@@ -385,7 +386,7 @@ def test_configured_bind_and_port_falls_back_to_loopback_on_a_blank_bind(
 
 
 def test_a_non_loopback_bind_warns_once_and_is_loopback_bind_says_so(
-    server: FeedDirectoryServer, served_dir: Path
+    server: FeedDirectoryServer, served_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A deliberately widened bind (or a config mistake that still
     resolves to a real address, unlike a blank/typo'd one) must not be
@@ -398,16 +399,29 @@ def test_a_non_loopback_bind_warns_once_and_is_loopback_bind_says_so(
     test_attachment_policy.py`'s `TestSvgCapability`); a temporary loguru
     sink is used instead.
     """
+    class BindOnlyServer(feed_server_module.http.server.ThreadingHTTPServer):
+        def verify_request(self, _request, _client_address) -> bool:
+            return False
+
     messages: list[str] = []
     sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
     try:
-        server.start(served_dir, bind="0.0.0.0", port=0)
+        # Exercise the real wildcard bind without exposing the test feed.
+        with monkeypatch.context() as scoped:
+            scoped.setattr(
+                feed_server_module,
+                "http",
+                SimpleNamespace(server=SimpleNamespace(ThreadingHTTPServer=BindOnlyServer)),
+            )
+            url = server.start(served_dir, bind="0.0.0.0", port=0)
     finally:
         loguru_logger.remove(sink_id)
 
     assert any("not loopback-only" in message for message in messages), messages
     assert server.bind == "0.0.0.0"
     assert is_loopback_bind(server.bind) is False
+    with socket.create_connection(("127.0.0.1", _url_port(url)), timeout=5.0) as peer:
+        assert peer.recv(1) == b""
 
 
 def test_a_loopback_bind_never_warns(
@@ -820,6 +834,7 @@ def test_configured_bind_and_port_falls_back_to_ephemeral_on_a_bad_value(
     assert port == 0
 
 
+@pytest.mark.bootstrap_profile
 def test_nothing_in_this_module_starts_a_server_on_import_or_config_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

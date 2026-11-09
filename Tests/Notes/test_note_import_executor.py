@@ -264,6 +264,13 @@ def real_executor(target_harness, tmp_path):
     return executor, target, receipts, service, folders, db
 
 
+@pytest.fixture
+def owned_sync_executor(real_executor, request):
+    _executor, _target, receipts, _service, _folders, _db = real_executor
+    request.addfinalizer(receipts._store.close)
+    return real_executor
+
+
 def _expected_note_id(item_id: str, payload_index: int) -> str:
     return str(
         uuid5(
@@ -1031,10 +1038,11 @@ def test_target_keyword_sync_handles_hidden_deleted_links_exactly(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_creates_multi_payload_notes_with_exact_keywords_and_memberships(
-    real_executor,
+    owned_sync_executor,
 ) -> None:
-    executor, target, receipts, _service, folders, db = real_executor
+    executor, target, receipts, _service, folders, db = owned_sync_executor
     payloads = (
         _payload(title="First", content="First body", keywords=("Alpha", "beta")),
         _payload(title="Second", content="Second body", keywords=("Gamma",)),
@@ -1103,11 +1111,12 @@ def test_executor_creates_multi_payload_notes_with_exact_keywords_and_membership
     assert durable.items[0].outcome is ImportItemOutcome.IMPORTED
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_links_wikilink_targets_created_in_the_same_batch(
-    real_executor,
+    owned_sync_executor,
 ) -> None:
     """Obsidian links to batch mates become note links; the rest stay literal."""
-    executor, target, _receipts, _service, _folders, _db = real_executor
+    executor, target, _receipts, _service, _folders, _db = owned_sync_executor
     linking = _execution_item(
         item_id="link-source",
         payloads=(
@@ -2475,10 +2484,11 @@ def test_executor_create_identity_collision_uses_note_conflict_reason(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_completed_single_payload_receipt_produces_private_exact_prior_observation(
-    real_executor,
+    owned_sync_executor,
 ) -> None:
-    executor, _target, receipts, _service, _folders, _db = real_executor
+    executor, _target, receipts, _service, _folders, _db = owned_sync_executor
     payload = _payload(title="Prior private", content="Private prior body")
     item = _execution_item(
         item_id="prior-single",
