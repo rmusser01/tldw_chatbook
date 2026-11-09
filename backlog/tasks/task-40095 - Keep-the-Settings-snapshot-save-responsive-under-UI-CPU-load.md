@@ -1,7 +1,7 @@
 ---
 id: TASK-40095
 title: Keep the Settings snapshot save responsive under UI CPU load
-status: In Progress
+status: Done
 created_date: 2026-11-09 10:44
 labels:
 - ci
@@ -12,7 +12,7 @@ references:
 - Tests/UI/test_llamacpp_snapshot_settings.py
 - tldw_chatbook/UI/Screens/settings_screen.py
 - tldw_chatbook/Chat/console_preparation_reads.py
-updated_date: 2026-11-09 11:15
+updated_date: 2026-11-09 21:12
 ---
 
 ## Description
@@ -25,7 +25,7 @@ UI30’s original five-second keyboard Save assertion expired while the real Set
 <!-- AC:BEGIN -->
 - [x] #1 The same real Save completes at the original five-second assertion under the same CPU pressure, with native lock and write ownership intact.
 - [x] #2 The scheduling scope restores the original process interval after physical retirement, and both original keyboard paint/save variants pass without higher limits or changed assertions.
-- [ ] #3 Independent exact-commit review and the published head’s own hosted gates verify the fix.
+- [x] #3 Independent exact-commit review and the published head’s own hosted gates verify the fix.
 <!-- AC:END -->
 
 ## Implementation Plan

@@ -1,7 +1,7 @@
 ---
 id: TASK-40004
 title: Back off refused Console full refreshes after readiness warm-up
-status: In Progress
+status: Done
 created_date: 2026-11-09 07:33
 labels:
 - ci
@@ -12,7 +12,7 @@ references:
 - Tests/UI/test_console_projection_reads_off_loop.py
 - tldw_chatbook/UI/Console_Modules/config_sync.py
 - tldw_chatbook/UI/Screens/chat_screen.py
-updated_date: 2026-11-09 08:07
+updated_date: 2026-11-09 21:11
 ---
 
 ## Description
@@ -25,7 +25,7 @@ UI3 observed six whole Console refreshes in the idle cold-config window. Mounted
 <!-- AC:BEGIN -->
 - [x] #1 An actual checked display refusal after successful warm-up uses the existing bounded whole-refresh retry schedule and recovers when custody clears.
 - [x] #2 The unchanged idle unparseable-config case and related native presentation cases pass without weakening source, freshness, lock, or attach checks or raising runtime limits.
-- [ ] #3 Independent exact review and the published repair’s own hosted gates verify the correction.
+- [x] #3 Independent exact review and the published repair’s own hosted gates verify the correction.
 <!-- AC:END -->
 
 ## Implementation Plan

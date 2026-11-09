@@ -1,7 +1,7 @@
 ---
 id: TASK-40034
 title: Drain the readiness read before the forecast test changes policy
-status: In Progress
+status: Done
 created_date: 2026-11-09 09:07
 labels:
 - ci
@@ -11,7 +11,7 @@ priority: high
 references:
 - Tests/UI/test_console_compaction_forecast.py
 - tldw_chatbook/UI/Console_Modules/console_spend_projection.py
-updated_date: 2026-11-09 09:37
+updated_date: 2026-11-09 21:11
 ---
 
 ## Description
@@ -24,7 +24,7 @@ UI4 failed the first forecast memory warm after changing the live session budget
 <!-- AC:BEGIN -->
 - [x] #1 The forecast fixture drains the old native readiness attempt before the policy change and the first original post-change warm succeeds under the same controlled scheduling.
 - [x] #2 The original forecast cases pass with their assertions, ownership checks, and runtime limits intact.
-- [ ] #3 The correction passes independent review of the published commit and its own hosted checks.
+- [x] #3 The correction passes independent review of the published commit and its own hosted checks.
 <!-- AC:END -->
 
 ## Implementation Plan
