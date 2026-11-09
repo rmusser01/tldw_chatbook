@@ -3,6 +3,7 @@
 import json
 import threading
 import time
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -41,7 +42,7 @@ def remote_case():
 
 
 @pytest.fixture
-def remote_round(remote_case):
+def remote_round(remote_case, request):
     projection, host, target = remote_case
     controller = projection.runtime.chat_controller
     store = projection.runtime.chat_store
@@ -49,16 +50,17 @@ def remote_round(remote_case):
     host.retain_decision_target(target.session_id)
     controller.mcp_approval_timeout_seconds = lambda: 60.0
     outcome = {}
+    pending = getattr(request, "param", None) or [_pending_call()]
 
-    def request():
+    def request_approval():
         with use_run_id("run-a"):
             outcome.update(
                 controller.request_mcp_approvals(
-                    [_pending_call()], session_id=target.session_id
+                    pending, session_id=target.session_id
                 )
             )
 
-    worker = threading.Thread(target=request, daemon=True)
+    worker = threading.Thread(target=request_approval, daemon=True)
     worker.start()
     deadline = time.monotonic() + 3
     round_id = None
@@ -242,6 +244,84 @@ async def test_exact_remote_decision_reaches_original_round_once(remote_round):
         "second",
     )
     assert state["decisions"] == {"write_file": "deny"}
+
+
+def _captured_phone_calls():
+    from tldw_chatbook.Chat.approval_presentation import ApprovalAuthority
+
+    call = replace(
+        _pending_call(),
+        server_key="mcp:server",
+        options=("approve_once", "allow_matching", "deny"),
+        presentation_authority=ApprovalAuthority(
+            "mcp", "profile", "Profile", "Local", "profile", "tool_name", "Settings"
+        ),
+    )
+    return [
+        replace(call, call_id="first"),
+        replace(call, call_id="second"),
+        replace(call, call_id="shared", options=("approve_once", "deny")),
+        replace(call, call_id="shared", options=("approve_session", "deny")),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("remote_round", [_captured_phone_calls()], indirect=True)
+async def test_phone_uses_captured_group_and_stamp_choices(remote_round):
+    projection, host, target = remote_round
+    with host.lock:
+        state = host.registries["approval"][target.round_id]
+        view = host.payloads["approval"][target.round_id]["view"]
+    captured = {row.verdict_key: set(row.legal_decisions) for row in view.rows}
+    assert captured == {
+        "first": {"approve_once", "deny"},
+        "second": {"approve_once", "deny"},
+        "shared": {"deny"},
+    }
+
+    with host.lock:
+        row = host.payloads["approval"][target.round_id]["calls"][0]
+        options = row["options"]
+    try:
+        for malformed in (False, "", {}, "approve_once deny", [None]):
+            with host.lock:
+                row["options"] = malformed
+            review = projection.snapshot(target)["decisions"][0]
+            assert not review["supported"] and "calls" not in review
+            assert not state["event"].is_set()
+        with host.lock:
+            row["options"] = []
+        implicit = projection.snapshot(target)["decisions"][0]["calls"]
+        assert set(implicit[0]["options"]) == captured["first"]
+    finally:
+        with host.lock:
+            row["options"] = options
+
+    async def submit(decisions, command_id):
+        return await projection._commands.execute(
+            "decision", target, {"kind": "approval", "answer": {"decisions": decisions}},
+            command_id,
+        )
+
+    refused = await submit(
+        {"first": "allow_matching", "second": "deny", "shared": "deny"}, "withheld"
+    )
+    assert refused["state"] == "refused"
+    assert not state["event"].is_set()
+    offered = projection.snapshot(target)["decisions"][0]["calls"]
+    assert len(offered) == 4
+    assert all(set(call["options"]) == captured[call["call_id"]] for call in offered)
+    refused = await submit(
+        {"first": "deny", "second": "deny", "shared": "approve_session"}, "not-shared"
+    )
+    assert refused["state"] == "refused"
+    assert not state["event"].is_set()
+    accepted = await submit(
+        {"first": "approve_once", "second": "deny", "shared": "deny"}, "native"
+    )
+    assert accepted["state"] == "accepted"
+    assert state["event"].is_set()
+    assert state["decisions"] == {"first": "approve_once", "second": "deny", "shared": "deny"}
 
 
 def test_snapshot_does_not_grant_unregistered_client_answerability(remote_round):
