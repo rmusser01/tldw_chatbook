@@ -287,7 +287,23 @@ class ConsoleReadinessConfigProjection:
                     raw.participant_identity,
                     loader,
                 )
-                with participants.operation(config) as active:
+                with ExitStack() as admission:
+                    if (
+                        type(projection) is ConsoleReadinessConfigProjection
+                        and projection in _standard_readiness_projections
+                        and projection.read_current is read_current
+                        and request is not None
+                        and loader is config.load_settings
+                    ):
+                        # Refuse before native entry; an admitted read still retires normally.
+                        for lock in (
+                            config._settings_rebuild_lock(),
+                            config._config_file_lock(),
+                        ):
+                            if not lock.acquire(blocking=False):
+                                raise _CheckedDisplayRefused()
+                            admission.callback(lock.release)
+                    active = admission.enter_context(participants.operation(config))
                     before = participants.checked_config_identity(config, active)
                     value = copy.deepcopy(loader())
                     # Match live get_cli_setting's sparse CLI lookup, rather

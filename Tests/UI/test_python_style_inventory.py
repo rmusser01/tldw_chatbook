@@ -19,14 +19,14 @@ from Tests.UI.python_style_inventory import StyleWrite, inventory_styles
         ('w.styles.set_styles("height: 3")', ["height"]),
     ],
 )
-@private_profile_test
+@pytest.mark.bootstrap_profile
 def test_inventory_catches_each_write_form(request, source, properties):
     writes = inventory_styles(source)
     assert [write.property for write in writes] == properties
     assert all(write.violation for write in writes)
 
 
-@private_profile_test
+@pytest.mark.bootstrap_profile
 def test_inventory_ignores_comments_strings_and_original_scope_exclusions(request):
     assert not inventory_styles("""
 # w.styles.width = 3
@@ -49,7 +49,7 @@ setattr(w.styles, "min_height", 3)
         "(0, SIZE)",
     ],
 )
-@private_profile_test
+@pytest.mark.bootstrap_profile
 def test_runtime_annotation_cannot_exempt_static_values(request, expression):
     source = f"""SIZE = 3
 w.set_styles(width={expression})  # ds-runtime: measured from current content
@@ -69,7 +69,7 @@ w.set_styles(width={expression})  # ds-runtime: measured from current content
         "w.set_styles(\n    # ds-runtime: measured terminal region\n    width=self.size.width,\n)",
     ],
 )
-@private_profile_test
+@pytest.mark.bootstrap_profile
 def test_adjacent_specific_annotation_accepts_runtime_value(request, source):
     writes = inventory_styles(source)
     assert len(writes) == 1
@@ -88,7 +88,7 @@ def test_adjacent_specific_annotation_accepts_runtime_value(request, source):
         "# ds-runtime: measured width\n\n",
     ],
 )
-@private_profile_test
+@pytest.mark.bootstrap_profile
 def test_unmarked_or_nonspecific_runtime_expressions_remain_visible(request, marker):
     writes = inventory_styles(f"{marker}\nw.set_styles(width=measured_width)")
     assert len(writes) == 1
@@ -96,14 +96,14 @@ def test_unmarked_or_nonspecific_runtime_expressions_remain_visible(request, mar
     assert writes[0].value_kind == "runtime"
 
 
-@private_profile_test
+@pytest.mark.bootstrap_profile
 def test_none_reset_is_legal_without_runtime_marker(request):
     writes = inventory_styles("w.styles.border = None\nw.set_styles(width=None)")
     assert len(writes) == 2
     assert all(not write.violation and write.value_kind == "reset" for write in writes)
 
 
-@private_profile_test
+@pytest.mark.bootstrap_profile
 def test_inventory_reports_unknown_css_and_expanded_kwargs_instead_of_skipping(request):
     writes = inventory_styles("w.set_styles(css_text)\nw.set_styles(**options)")
     assert [(write.property, write.violation) for write in writes] == [
@@ -112,7 +112,7 @@ def test_inventory_reports_unknown_css_and_expanded_kwargs_instead_of_skipping(r
     ]
 
 
-@private_profile_test
+@pytest.mark.bootstrap_profile
 def test_marker_inside_a_string_is_not_an_annotation(request):
     writes = inventory_styles(
         'note = "# ds-runtime: measured terminal region"; w.set_styles(width=measured)'
@@ -121,7 +121,7 @@ def test_marker_inside_a_string_is_not_an_annotation(request):
     assert writes[0].violation
 
 
-@private_profile_test
+@pytest.mark.bootstrap_profile
 def test_static_name_alias_and_finite_conditional_do_not_hide_literal_values(request):
     writes = inventory_styles("""
 SIZE = 3
@@ -168,7 +168,7 @@ def test_pin_refuses_ast_violations_without_rewriting_baseline(request, tmp_path
     assert baseline.read_text() == original
 
 
-@private_profile_test
+@pytest.mark.bootstrap_profile
 def test_function_parameter_is_not_confused_with_a_module_constant(request):
     writes = inventory_styles("""
 width = 3
@@ -188,7 +188,7 @@ def resize(width):
         "COLORS[state]",
     ],
 )
-@private_profile_test
+@pytest.mark.bootstrap_profile
 def test_literal_constructors_and_finite_lookup_remain_static(request, expression):
     writes = inventory_styles(f"""COLORS = {{"good": "green", "bad": "red"}}
 w.set_styles(color={expression})  # ds-runtime: user-selected theme preview
@@ -198,7 +198,7 @@ w.set_styles(color={expression})  # ds-runtime: user-selected theme preview
     assert writes[0].value_kind == "static"
 
 
-@private_profile_test
+@pytest.mark.bootstrap_profile
 def test_css_keyword_cannot_hide_string_or_dynamic_declarations(request):
     writes = inventory_styles(
         'w.set_styles(css="height: 3; color: red;")\nw.set_styles(css=theme_css)'
@@ -218,13 +218,13 @@ def test_css_keyword_cannot_hide_string_or_dynamic_declarations(request):
         'text = "w.set_styles(width=3)"',
     ],
 )
-@private_profile_test
+@pytest.mark.bootstrap_profile
 def test_style_free_syntax_has_no_writes(request, source):
     assert inventory_styles(source) == []
 
 
 @pytest.mark.parametrize("source", ["def broken(", "value ="])
-@private_profile_test
+@pytest.mark.bootstrap_profile
 def test_style_free_invalid_syntax_still_refuses(request, source):
     with pytest.raises(SyntaxError):
         inventory_styles(source)
@@ -276,6 +276,6 @@ def test_style_free_invalid_syntax_still_refuses(request, source):
         ),
     ],
 )
-@private_profile_test
+@pytest.mark.bootstrap_profile
 def test_attribute_gate_preserves_every_style_record_field(request, source, expected):
     assert inventory_styles(source) == expected

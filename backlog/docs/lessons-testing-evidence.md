@@ -46,6 +46,40 @@ Two of those were real product waste, fixed in round 13: the credential TTL flip
 
 **What worked.** Pass selected Main and Core together in the child's `PYTHONPATH`, including every independently constructed/filtered environment. Verify the actual environment builder followed by a fresh interpreter's metadata lookup; avoid importing product code merely to prove a path. Keep before/after source bindings and preserve older results with their narrower provenance scope. The repaired original UI-ready and preimport checks passed; the strict Windows eager-import check still failed at `688 < 688`, so correcting provenance did not turn an unrelated failure green. See `Docs/superpowers/qa/2026-11-06-console-approval-resync/ci-boundary-followup.md` and its source manifest.
 
+## Keep a native read observer armed through admission replay (TASK-39503, 2026-11-08)
+
+PR #3345's UI8 watchdog fired. A controlled run of the original test reproduced the failure and traced FULL waiting for a display read blocked before acquiring REBUILD. After admission was fixed, the mounted test missed the legitimate replay because its observer expired with the first refusal. Hold the matching projection and snapshot only after a successful native identity check. Keep the original responsiveness and lease-retirement assertions; a failed check can look like a return to the profiler.
+
+## Pure syntax cases do not need one pytest process each (TASK-39603, 2026-11-08)
+
+UI14 reported 293 passes just before its 20-minute job was cancelled. Its 49 pure AST cases each launched a private pytest process. The existing bootstrap profile keeps the UI autouse import on its bound sandbox without repeating process startup. Keep the real private child for the CLI case. The same 50 style case IDs on one machine went from 147.319 to 23.252 seconds; the unchanged full roster passed locally, with hosted timing still a separate check.
+
+## A visible Library can precede the archive navigation worker's scope update (TASK-39272, 2026-11-08)
+
+**Incident.** PR #3345's UI19 read Library scope `active` instead of `all`. Holding the real navigation stub after `push_screen` returned reproduced the original assertion: Library was visible while its host-owned `archive-recovery-library` worker was still running. Waiting for that exact worker then propagating `wait()` passed the same control; real cancellation and failure still raised. The uninstrumented full flow and original shard passed 204 cases.
+
+**What to do.** Screen visibility proves mounting, not completion of the action that selected its state. Capture the actual owning worker and await its result within the existing bound before asserting that state.
+
+## Warm a checked display before changing the state a same-tick focus test must paint (TASK-39372, 2026-11-08)
+
+**Incident.** UI31's original immediate control-sync assertion returned False. A native-lock control kept the actual issued display proof until its one-second lifetime elapsed; the original assertion failed at the real expiry refusal. One real preparation before changing capability passed the same control. Temporarily omitting hidden-row disabling still passed immediate sync and failed the original composer-focus assertion. The whole attachment file and original shard passed 384 cases.
+
+**What to do.** Share the existing five-second setup allowance with native preparation, before the state change. Keep dismissal restore and immediate sync in the same tick; an await after the change or an eventual-state wait would miss the focus race. The control proves this failure mechanism, not the unrecorded branch of the hosted failure.
+
+## A census's "gone" row can be a live producer the scanner stopped seeing (TASK-39053, 2026-11-06)
+
+**Incident.** The backup owner inventory reported 194 gone producer rows, and the task that filed it read them as removed or moved code. But 24 of them were live `os.replace` / `os.unlink` calls. Their modules had switched to `from tldw_chatbook.Utils.platform_files import os`, and the census only bound `os` from `import os`. Other reviewed rows looked gone for the same kind of reason:
+- `Backup_Recovery/native_platform.rename_noreplace` bound the native no-replace publication by tuple assignment (`fn, flags = libc.renameatx_np, 0x4`).
+- 4 modules had moved a counted write onto the `Utils/atomic_file_ops` writers, which were outside the vocabulary: `trajectory_export`, `model_discovery_disk_cache`, `config_profiles` and `file_operation_tools`.
+- The Personas exports ran `path.mkdir` / `write_text` / `write_bytes` through `asyncio.to_thread(path.write_text, ...)`. A callable passed by reference was never counted.
+- `EvalConfigLoader.save` wrote the qualified `eval.definitions` source with `yaml.safe_dump` into a stream from a non-vocabulary opener.
+
+The first fix round still missed the last two. It had read each surviving symbol's direct calls for known writer names, so it missed a callable passed as an argument and an unfamiliar serializer. Review r11b-rev1 found both.
+
+Deleting those rows as "gone" would have certified that live durable writers had no owner row.
+
+**What to do.** Before removing a gone row from a source census, check whether its symbol still exists. If it does, read every call it makes now, including callables passed as arguments (`to_thread`, `run_in_executor`, `partial`). A shim import, a new alias form, a reference passed to a runner or a repo-local or library writer that replaced the counted call is a scanner gap. Extend the scanner, with a unit test that is red first. If a symbol still writes through something you do not add (tempfile, a third-party exporter, a subprocess), say so where its row is removed. Only rows whose code is really gone (a deleted file, a removed call) leave the inventory without a note.
+
 ## An empty rejection ledger does not identify a submission failure (TASK-40127, 2026-11-07)
 
 **Incident.** DeepSeek accepted findings, then three dispatched submissions failed
@@ -161,32 +195,6 @@ so that candidate was discarded.
 **What to do.** Establish the actual readiness preconditions of a low-level
 fixture call through its original owners. Mount completion alone is not service
 readiness; keep teardown assertions when selecting a different capture route.
-
-## A visible Library can precede the archive navigation worker's scope update (TASK-39272, 2026-11-08)
-
-**Incident.** PR #3345's UI19 read Library scope `active` instead of `all`. Holding the real navigation stub after `push_screen` returned reproduced the original assertion: Library was visible while its host-owned `archive-recovery-library` worker was still running. Waiting for that exact worker then propagating `wait()` passed the same control; real cancellation and failure still raised. The uninstrumented full flow and original shard passed 204 cases.
-
-**What to do.** Screen visibility proves mounting, not completion of the action that selected its state. Capture the actual owning worker and await its result within the existing bound before asserting that state.
-
-## Warm a checked display before changing the state a same-tick focus test must paint (TASK-39372, 2026-11-08)
-
-**Incident.** UI31's original immediate control-sync assertion returned False. A native-lock control kept the actual issued display proof until its one-second lifetime elapsed; the original assertion failed at the real expiry refusal. One real preparation before changing capability passed the same control. Temporarily omitting hidden-row disabling still passed immediate sync and failed the original composer-focus assertion. The whole attachment file and original shard passed 384 cases.
-
-**What to do.** Share the existing five-second setup allowance with native preparation, before the state change. Keep dismissal restore and immediate sync in the same tick; an await after the change or an eventual-state wait would miss the focus race. The control proves this failure mechanism, not the unrecorded branch of the hosted failure.
-
-## A census's "gone" row can be a live producer the scanner stopped seeing (TASK-39053, 2026-11-06)
-
-**Incident.** The backup owner inventory reported 194 gone producer rows, and the task that filed it read them as removed or moved code. But 24 of them were live `os.replace` / `os.unlink` calls. Their modules had switched to `from tldw_chatbook.Utils.platform_files import os`, and the census only bound `os` from `import os`. Other reviewed rows looked gone for the same kind of reason:
-- `Backup_Recovery/native_platform.rename_noreplace` bound the native no-replace publication by tuple assignment (`fn, flags = libc.renameatx_np, 0x4`).
-- 4 modules had moved a counted write onto the `Utils/atomic_file_ops` writers, which were outside the vocabulary: `trajectory_export`, `model_discovery_disk_cache`, `config_profiles` and `file_operation_tools`.
-- The Personas exports ran `path.mkdir` / `write_text` / `write_bytes` through `asyncio.to_thread(path.write_text, ...)`. A callable passed by reference was never counted.
-- `EvalConfigLoader.save` wrote the qualified `eval.definitions` source with `yaml.safe_dump` into a stream from a non-vocabulary opener.
-
-The first fix round still missed the last two. It had read each surviving symbol's direct calls for known writer names, so it missed a callable passed as an argument and an unfamiliar serializer. Review r11b-rev1 found both.
-
-Deleting those rows as "gone" would have certified that live durable writers had no owner row.
-
-**What to do.** Before removing a gone row from a source census, check whether its symbol still exists. If it does, read every call it makes now, including callables passed as arguments (`to_thread`, `run_in_executor`, `partial`). A shim import, a new alias form, a reference passed to a runner or a repo-local or library writer that replaced the counted call is a scanner gap. Extend the scanner, with a unit test that is red first. If a symbol still writes through something you do not add (tempfile, a third-party exporter, a subprocess), say so where its row is removed. Only rows whose code is really gone (a deleted file, a removed call) leave the inventory without a note.
 
 ## Waiting for the worker an action queued misses the loads that worker's result queues (TASK-39058, 2026-11-06)
 
