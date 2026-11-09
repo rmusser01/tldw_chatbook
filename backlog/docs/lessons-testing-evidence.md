@@ -26067,3 +26067,8 @@ assertions. Do not clear a refusal flag to make a UI fixture look ready.
 The same head's P0 job passed239cases but eight variants failed setup because its minimal installer omitted the already-declared pytest-mock dependency. Add that token only to the consumer job and its exact-list contract; keep the genuine returned-worker spy oracle. The required-token RED failed before the installer correction, then363 whole CI/roster cases and28 unchanged native modal cases passed. No project dependency, assertion waiver or custom spy was needed.
 
 **What to do.** Control the external availability seam that the current consumer actually reads, prove the real work is reached, and retain its negative refusal controls. When local development supplies a test plugin implicitly, provision that existing dependency in every minimal job that selects its fixtures; an installed local plugin alone cannot qualify CI setup.
+
+
+## A child task can inherit a synchronous Console retry scope (TASK-40004)
+
+The first full-render backoff repair captured a retry in a ContextVar callback. A direct render running under a copied context after its parent finished still found the callback and lost its own retry. The correction accepts captured deferrals only from the live issuing task and thread. Exercise both eager child execution and a late copied context when a synchronous callback intercepts scheduling.

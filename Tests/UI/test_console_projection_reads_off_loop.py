@@ -1687,6 +1687,157 @@ async def test_a_refused_full_sync_backs_off_and_renders_once_the_refusal_clears
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["projection", "rail"])
+@private_profile_test
+async def test_a_refused_full_render_backs_off_after_successful_warm_up(
+    request, monkeypatch, phase
+):
+    from tldw_chatbook.Backup_Recovery import storage_admission
+
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            await pilot.pause(1.0)
+            await _fresh_display(console)
+            refusing, _warms, armed, fulls, _during, _delays = _refused_warm_up(
+                monkeypatch, console
+            )
+            refusing[0] = False  # The real warm-up is allowed to succeed.
+            console.run_worker(
+                console._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
+            await until(
+                lambda: any(ok for _at, ok in fulls)
+                and not console._console_sync_in_progress
+                and not console._console_control_bar_sync_scheduled
+                and not console._console_control_bar_replay_whole_sync
+                and console._console_warm_refusals == 0,
+                timeout=30,
+            )
+            armed.clear()
+
+            owner, name = (
+                (console, "_sync_console_rail_and_controls")
+                if phase == "projection"
+                else (config_sync, "sync_console_rail_visibility")
+            )
+            render = getattr(owner, name)
+            blocked = []
+            block = True
+
+            def checked_render(*args, **kwargs):
+                if not block:
+                    return render(*args, **kwargs)
+                held, release = threading.Event(), threading.Event()
+
+                def hold():
+                    with storage_admission._lock:
+                        held.set()
+                        release.wait(3)
+
+                holder = threading.Thread(target=hold)
+                holder.start()
+                try:
+                    assert held.wait(3)
+                    result = render(*args, **kwargs)
+                    blocked.append(result)
+                    return result
+                finally:
+                    release.set()
+                    holder.join(3)
+                    assert not holder.is_alive()
+
+            monkeypatch.setattr(owner, name, checked_render)
+            console.run_worker(
+                console._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
+            await until(lambda: len(armed) >= 3, timeout=20)
+            assert blocked and all(result is False for result in blocked)
+            assert [delay for _at, delay, _timer in armed[:3]] == pytest.approx(
+                [0.2, 0.4, 0.8]
+            )
+
+            block = False
+            asked = asyncio.get_running_loop().time()
+            console.run_worker(
+                console._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
+            )
+            await until(lambda: any(ok for at, ok in fulls if at >= asked), timeout=30)
+            assert console._console_warm_refusals == 0
+            assert not console._console_control_bar_replay_whole_sync
+
+
+@pytest.mark.asyncio
+async def test_a_later_direct_render_keeps_its_own_deferral():
+    from contextvars import copy_context
+    from types import SimpleNamespace
+
+    scheduled = []
+    screen = SimpleNamespace(
+        _console_sync_in_progress=True,
+        _console_sync_maintenance_paused=True,
+        _request_console_control_bar_sync=lambda *, delayed: scheduled.append(delayed),
+    )
+    captured = []
+
+    def direct():
+        return config_sync.run_console_presentation_sync(screen, lambda: None)
+
+    async def child():
+        return direct()
+
+    def render():
+        captured.append(copy_context())
+        with eager_tasks():
+            worker = asyncio.create_task(child())
+        assert worker.done() and worker.result() is False
+        assert scheduled == [True]
+        return True
+
+    assert config_sync._render_full_presentation(screen, render)
+    assert captured[0].run(direct) is False
+    assert scheduled == [True, True]
+
+
+@pytest.mark.parametrize("retry_raises", [False, True])
+@pytest.mark.asyncio
+async def test_a_full_render_error_preserves_a_nested_deferral(retry_raises):
+    from types import SimpleNamespace
+
+    body_error = RuntimeError("full render failed")
+    retry_error = ValueError("retry could not arm")
+    scheduled = []
+
+    def request(*, delayed):
+        scheduled.append(delayed)
+        if retry_raises:
+            raise retry_error
+
+    screen = SimpleNamespace(
+        _console_sync_in_progress=True,
+        _console_sync_maintenance_paused=True,
+        _request_console_control_bar_sync=request,
+    )
+
+    def render():
+        assert config_sync.run_console_presentation_sync(screen, lambda: None) is False
+        raise body_error
+
+    with pytest.raises(RuntimeError) as raised:
+        config_sync._render_full_presentation(screen, render)
+    assert scheduled == [True]
+    assert raised.value is body_error
+    assert raised.value.__cause__ is (retry_error if retry_raises else None)
+
+
+@pytest.mark.asyncio
 @private_profile_test
 async def test_a_successful_readiness_read_during_a_backoff_renders_at_once(
     request, monkeypatch
