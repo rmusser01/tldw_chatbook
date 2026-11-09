@@ -3395,26 +3395,6 @@ class _LegacyTranscriptionBackend:
                 # Additional models can be added here as they become available
             ]
 
-        if LIGHTNING_WHISPER_AVAILABLE:
-            models["lightning-whisper-mlx"] = [
-                "tiny",
-                "tiny.en",
-                "base",
-                "base.en",
-                "small",
-                "small.en",
-                "medium",
-                "medium.en",
-                "large-v1",
-                "large-v2",
-                "large-v3",
-                "large",
-                "distil-large-v2",
-                "distil-medium.en",
-                "distil-small.en",
-                "distil-large-v3",
-            ]
-
         if FASTER_WHISPER_AVAILABLE:
             logger.debug(
                 "FASTER_WHISPER_AVAILABLE is True, adding faster-whisper models"
