@@ -1296,11 +1296,11 @@ def test_capacity_transactions_fail_closed_on_inventory_io_errors(
     )
     existing = store.save("existing", "clip", b"o" * 700_000, extension="mp4")
     existing_bytes = existing.read_bytes()
-    state = _inject_snapshot_failure(store, monkeypatch, existing, seam, error_type)
     stream = io.BytesIO(b"z" * (1024 * 1024 + 1))
     stream.seek(17)
 
-    try:
+    with monkeypatch.context() as fault:
+        state = _inject_snapshot_failure(store, fault, existing, seam, error_type)
         with pytest.raises(video_store_module.VideoStoreSaveError) as caught:
             if operation == "save":
                 store.save("new", "clip", b"n" * 500_000, extension="mp4")
@@ -1312,8 +1312,6 @@ def test_capacity_transactions_fail_closed_on_inventory_io_errors(
                     size_bytes=1024 * 1024 + 1,
                     extension="mp4",
                 )
-    finally:
-        state["active"] = False
 
     assert state["failures"] > 0
     assert "PRIVATE" not in str(caught.value)

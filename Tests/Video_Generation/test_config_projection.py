@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import os
 from contextlib import contextmanager
 from pathlib import Path
+
+from Tests.Backup_Recovery.config_test_support import select_config_source
 
 import tldw_chatbook.config as app_config
 from tldw_chatbook.Video_Generation import adapter_registry, config as video_config
@@ -44,29 +45,19 @@ def _scratch_video_config(tmp_path: Path, monkeypatch):
     config_path.write_text(
         _video_toml("minimax_h3_t2v_spectrum.json"), encoding="utf-8"
     )
-    original_path = os.environ.get("TLDW_CONFIG_PATH")
     try:
-        monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-        yield config_path, cache_state
+        with monkeypatch.context() as selected:
+            source = select_config_source(selected, config_path)
+            yield config_path, cache_state, source
     finally:
-        if original_path is None:
-            monkeypatch.delenv("TLDW_CONFIG_PATH", raising=False)
-        else:
-            monkeypatch.setenv("TLDW_CONFIG_PATH", original_path)
-        app_config._CONFIG_CACHE = cache_state["config_cache"]
-        app_config._CONFIG_CACHE_SOURCE = cache_state["config_cache_source"]
-        app_config._SETTINGS_CACHE = cache_state["settings_cache"]
-        app_config._SETTINGS_CACHE_SOURCE = cache_state["settings_cache_source"]
-        app_config.settings = cache_state["settings"]
-        app_config._CONFIG_GENERATION = cache_state["config_generation"]
         video_config._config_cache = cache_state["video_config_cache"]
         adapter_registry._registry = cache_state["registry"]
 
 
 def test_persisted_video_settings_project_to_runtime_and_refresh(tmp_path, monkeypatch):
     """A profile's global and nested video tables drive fresh runtime instances."""
-    with _scratch_video_config(tmp_path, monkeypatch) as (config_path, cache_state):
-        settings = app_config.load_settings()
+    with _scratch_video_config(tmp_path, monkeypatch) as (config_path, cache_state, source):
+        settings = source.load_settings()
         assert settings["video_generation"] == {
             "default_backend": "comfyui",
             "enabled_backends": ["comfyui"],
@@ -90,7 +81,7 @@ def test_persisted_video_settings_project_to_runtime_and_refresh(tmp_path, monke
         config_path.write_text(
             _video_toml("minimax_h3_t2v_revised.json"), encoding="utf-8"
         )
-        app_config.load_settings(force_reload=True)
+        source.load_settings(force_reload=True)
         reset_video_generation_runtime()
         second_config = get_video_generation_config()
         second_registry = get_registry()
