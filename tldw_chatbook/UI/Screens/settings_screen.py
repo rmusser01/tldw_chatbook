@@ -9527,18 +9527,16 @@ class SettingsScreen(BaseAppScreen):
     async def _save_snapshot_preferences_draft(
         self, raw, expected, provider_dirty
     ) -> None:
-        from tldw_chatbook.LLM_Management import (
-            snapshot_settings as snapshot_preferences,
-        )
+        from tldw_chatbook.Chat.console_preparation_reads import _preparation_handoffs
+        from tldw_chatbook.LLM_Management import snapshot_settings as snapshot_preferences
 
         try:
             value = snapshot_preferences.SnapshotPreferences(
                 enabled=raw[0],
                 keep_count=validate_bounded_integer(raw[1], minimum=1, maximum=1000),
             )
-            saved = await asyncio.to_thread(
-                snapshot_preferences.save_snapshot_preferences, value, expected=expected
-            )
+            save = _preparation_handoffs()(snapshot_preferences.save_snapshot_preferences)
+            saved = await asyncio.to_thread(save, value, expected=expected)
             if not saved:
                 raise ValueError("save failed")
             self._snapshot_preferences_loaded = value

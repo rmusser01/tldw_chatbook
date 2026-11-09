@@ -5,6 +5,37 @@ from __future__ import annotations
 from . import console_interrupt_rounds as host
 
 
+def _captured_approval_choices(payload, round_id, session_id, run_id):
+    from .approval_presentation import ApprovalBatchView
+
+    view = payload.get("view")
+    if type(view) is not ApprovalBatchView or (
+        view.round_id, view.session_id, view.run_id
+    ) != (round_id, session_id, run_id):
+        raise ValueError("Approval review is unavailable.")
+    choices = {row.verdict_key: row.legal_decisions for row in view.rows}
+    seen = set()
+    for call in payload["calls"]:
+        key = call.get("call_id") or call.get("llm_name")
+        if type(key) is not str or key not in choices:
+            raise ValueError("Approval review does not match the native call.")
+        seen.add(key)
+        explicit = call.get("options")
+        if type(explicit) not in (list, tuple) or any(
+            type(value) is not str for value in explicit
+        ):
+            raise ValueError("Malformed native approval choices.")
+        if explicit:
+            choices[key] = tuple(value for value in choices[key] if value in explicit)
+    if (
+        seen != choices.keys()
+        or len(choices) != len(view.rows)
+        or not all(choices.values())
+    ):
+        raise ValueError("Approval review has no complete native choice set.")
+    return choices
+
+
 def remote_rounds(self, session_id: str) -> tuple[dict, ...]:
     """Allowlisted retained decision metadata, independent of mounted cards."""
     import json
@@ -39,7 +70,7 @@ def remote_rounds(self, session_id: str) -> tuple[dict, ...]:
         supported = False
         review = {}
         if kind == "approval" and payload.get("calls"):
-            from .approval_review import approval_options, remote_argument_summary
+            from .approval_review import remote_argument_summary
 
             try:
                 calls = payload["calls"]
@@ -52,6 +83,9 @@ def remote_rounds(self, session_id: str) -> tuple[dict, ...]:
                     for call in calls
                 )
                 if supported:
+                    choices = _captured_approval_choices(
+                        payload, round_id, session_id, state.get("run_id")
+                    )
                     review["calls"] = [
                         {
                             **{
@@ -66,12 +100,9 @@ def remote_rounds(self, session_id: str) -> tuple[dict, ...]:
                                     "path_precheck_failed",
                                 )
                             },
-                            "options": [
-                                value
-                                for _label, value in approval_options(
-                                    call.get("options")
-                                )
-                            ],
+                            "options": list(
+                                choices[call.get("call_id") or call["llm_name"]]
+                            ),
                             "arguments_summary": remote_argument_summary(
                                 call.get("arguments")
                             ),
@@ -237,8 +268,7 @@ def resolve_remote_round(
         if set(answer) != {"decisions"} or type(answer["decisions"]) is not dict:
             raise ValueError("Expected exact approval decisions.")
         allowed = {
-            call.get("call_id") or call["llm_name"]: set(call["options"] or [])
-            | {"deny"}
+            call.get("call_id") or call["llm_name"]: set(call["options"])
             for call in row["calls"]
         }
         if set(answer["decisions"]) != set(allowed) or any(
@@ -383,6 +413,15 @@ def resolve_pending_approval(
             _on_recorded(round_state)
         approval_event = round_state["event"]
     approval_event.set()
+    from .console_approval_feedback import receive_round_observations
+
+    receive_round_observations(
+        round_id,
+        decisions,
+        round_state,
+        read_feedback=self.read_controller_approval_feedback,
+        read_notify=self.read_controller__notify_approval_feedback,
+    )
 
 
 def resolve_pending_question(

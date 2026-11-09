@@ -601,12 +601,21 @@
       if (!supported) { card.append(node("p", round.reason || "This review requires the terminal.")); const link = node("a", "Open terminal"); link.href = "/"; card.append(link); }
       else {
         const answers = [];
+        const callsByVerdict = new Map();
         for (const call of round.calls || []) {
+          const key = call.call_id || call.llm_name;
+          if (!callsByVerdict.has(key)) callsByVerdict.set(key, []);
+          callsByVerdict.get(key).push(call);
+        }
+        for (const [key, calls] of callsByVerdict) {
+          const call = calls[0];
           const label = node("label", call.llm_name || call.tool_name || "Tool");
           const select = node("select"); select.setAttribute("aria-label", "Decision for " + label.textContent);
           for (const option of call.options || []) { const el = node("option", APPROVAL_LABELS[option] || option); el.value = option; select.append(el); }
-          label.append(select); card.append(label, node("pre", call.arguments_summary || "", "approval-args"));
-          answers.push({call, select});
+          label.append(select); card.append(label);
+          if (calls.length > 1) card.append(node("p", "One choice applies to all " + calls.length + " calls."));
+          for (const item of calls) card.append(node("pre", item.arguments_summary || "", "approval-args"));
+          answers.push({key, select});
         }
         for (const question of round.questions || []) {
           const fieldset = node("fieldset"); fieldset.append(node("legend", question.question));
@@ -620,7 +629,7 @@
         }
         const decide = button("Submit decision", async () => {
           if (decide.disabled) return;
-          const answer = round.kind === "approval" ? {decisions: Object.fromEntries(answers.map(({call, select}) => [call.call_id || call.llm_name, select.value]))} :
+          const answer = round.kind === "approval" ? {decisions: Object.fromEntries(answers.map(({key, select}) => [key, select.value]))} :
             {answers: answers.map(({question, options, text}) => ({question: question.question, selected: options.filter(input => input.checked).map(input => input.value), other_text: text.value || null, unanswered: false}))};
           decide.disabled = true;
           try { await submit("decision", target, {kind: round.kind, answer}); await refresh(); }

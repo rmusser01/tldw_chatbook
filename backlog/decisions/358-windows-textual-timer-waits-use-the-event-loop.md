@@ -1,7 +1,8 @@
-# ADR-354: Windows Textual timer waits use the event loop
+# ADR-358: Windows Textual timer waits use the event loop
 
 Status: Accepted
 Date: 2026-11-04
+Renumbered from ADR-354 on 2026-11-09. The older WebAuthn decision keeps 354.
 Amended: 2026-11-05 (integration with dev TASK-38462)
 Related Task: [TASK-38462](../tasks/task-38462%20-%20Keep-Windows-timer-sleeps-from-starving-the-default-thread-pool.md)
 Supersedes: N/A

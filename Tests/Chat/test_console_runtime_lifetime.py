@@ -1371,6 +1371,7 @@ async def test_leave_console_is_idempotent_and_cheap_with_no_work():
     assert time.monotonic() - started < 2.0
 
 
+@pytest.mark.bootstrap_profile
 def test_runtime_holder_is_lazy_and_chat_names_share_execution_fence(tmp_path):
     from tldw_chatbook.Chat.console_execution_owner import (
         ConsoleExecutionBusy,
