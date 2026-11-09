@@ -134,6 +134,84 @@ DEFERRAL_SHIMS = frozenset(
 #   UNREACHABLE   -- the module has no importer anywhere in the repo.
 #
 CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
+    (
+        "tldw_chatbook/UI/Screens/plugins_screen.py",
+        "PluginsScreen._load",
+        "self.query_one('#plugins-detail', Static)",
+    ): (
+        "NOT-PER-TICK: only a changed scope generation starts a reload; accepted auto-sized "
+        "content needs layout."
+    ),
+    (
+        "tldw_chatbook/UI/Screens/plugins_screen.py",
+        "PluginsScreen._load",
+        "self.query_one('#plugins-scope', Static)",
+    ): (
+        "NOT-PER-TICK: only a changed scope generation starts a reload; accepted auto-sized "
+        "content needs layout."
+    ),
+    (
+        "tldw_chatbook/UI/Screens/plugins_screen.py",
+        "PluginsScreen._publish",
+        "self.query_one('#plugins-page', Static)",
+    ): (
+        "NOT-PER-TICK: the poll reloads only for a changed scope generation; a different page "
+        "label can resize."
+    ),
+    (
+        "tldw_chatbook/UI/Screens/plugins_screen.py",
+        "PluginsScreen._render_details",
+        "self.query_one('#plugins-detail', Static)",
+    ): (
+        "NOT-PER-TICK: the poll reaches details only through a changed scope generation; content "
+        "can wrap."
+    ),
+    (
+        "tldw_chatbook/UI/Screens/plugins_screen.py",
+        "PluginsScreen._render_details",
+        "self.query_one('#plugins-readme', Static)",
+    ): (
+        "NOT-PER-TICK: the poll reaches details only through a changed scope generation; content "
+        "can wrap."
+    ),
+    (
+        "tldw_chatbook/UI/Screens/plugins_screen.py",
+        "PluginsScreen._status",
+        "self.query_one('#plugins-status', Static)",
+    ): (
+        "NOT-PER-TICK: the scope clock only reloads on a generation change; changed status copy "
+        "can wrap."
+    ),
+    (
+        "tldw_chatbook/UI/Wizards/first_run_provider_detection.py",
+        "ProviderDetectionStep._refresh_endpoint_status",
+        "status",
+    ): (
+        "NEEDS-LAYOUT: endpoint status may wrap and QuietStatic toggles display as its content "
+        "becomes empty."
+    ),
+    (
+        "tldw_chatbook/Widgets/Console/console_composer_bar.py",
+        "ConsoleComposerBar._sync_raw_cli_state",
+        "status",
+    ): (
+        "NOT-PER-TICK: equality gates the label; a changed label alters the chip display, width "
+        "and height."
+    ),
+    (
+        "tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py",
+        "ProjectIndexBindingCard._feedback",
+        "self.query_one('.project-index-feedback', Static)",
+    ): (
+        "NEEDS-LAYOUT: guidance and error copy may wrap to different heights."
+    ),
+    (
+        "tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py",
+        "ProjectIndexBindingCard._paint",
+        "self.query_one('.project-index-status', Static)",
+    ): (
+        "NEEDS-LAYOUT: the count or index state can change the size of the displayed status."
+    ),
     # -- tldw_chatbook/UI/Screens/backup_restore_screen.py
     (
         "tldw_chatbook/UI/Screens/backup_restore_screen.py",
@@ -284,8 +362,8 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "run tick re-applied the empty label on every 0.2 s poll."
     ),
     (
-        "tldw_chatbook/Widgets/Console/console_composer_bar.py",
-        "ConsoleComposerBar.set_voice_status",
+        "tldw_chatbook/Widgets/Console/console_speech_controls.py",
+        "None.set_composer_voice_status",
         "chip",
     ): (
         "NEEDS-LAYOUT: the voice chip's width is computed and assigned "
@@ -1210,6 +1288,24 @@ CLASSIFIED_ROOTS: dict[tuple[str, str, str], str] = {}
 EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
     {
         # kind, file, class, callback
+        (
+            "set_interval",
+            "tldw_chatbook/UI/Screens/plugins_screen.py",
+            "PluginsScreen",
+            "_check_scope_generation",
+        ),
+        (
+            "set_interval",
+            "tldw_chatbook/UI/Wizards/first_run_provider_detection.py",
+            "ProviderDetectionStep",
+            "_quiet_recheck",
+        ),
+        (
+            "set_interval",
+            "tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py",
+            "ProjectIndexBindingCard",
+            "_poll",
+        ),
         (
             "_create_interval",
             "tldw_chatbook/UI/Console_Modules/fleet.py",

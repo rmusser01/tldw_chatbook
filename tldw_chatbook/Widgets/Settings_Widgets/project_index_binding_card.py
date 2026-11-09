@@ -354,7 +354,7 @@ class ProjectIndexBindingCard(Vertical):
             else:
                 self.status = None
                 self.query_one(".project-index-status", Static).update(
-                    "Keyword index unavailable"
+                    "Keyword index unavailable", layout=True
                 )
                 text = "Could not access the index. Check folder access and storage, then Check status."
                 if action and action.action in {"clear", "disable"}:
@@ -363,7 +363,7 @@ class ProjectIndexBindingCard(Vertical):
             self._paint()
             if error and result is None and self.status is None:
                 self.query_one(".project-index-status", Static).update(
-                    "Keyword index unavailable"
+                    "Keyword index unavailable", layout=True
                 )
 
         self.run_worker(run(), group=f"project-index-{id(self)}", exit_on_error=False)
