@@ -1823,22 +1823,50 @@ def test_automated_interruption_flow_stops_after_first_failed_sample() -> None:
     assert report["trials"]["interruption"]["trials"] == 1
 
 
+def _inject_calibration_prompt_fault(
+    runner: PhysicalVoiceTrialRunner,
+    harness: _LiveHarness,
+    aec: _PromptFailureThenHealthyAec | _PromptErleFailureThenHealthyAec,
+) -> None:
+    async def fail_prompt_metrics(message: str) -> None:
+        await harness.prompt(message)
+        if not message.startswith("Double-talk calibration"):
+            return
+        before = runner._last_processed_capture
+        for _ in range(16):
+            await asyncio.sleep(0)
+            capture = runner._last_processed_capture
+            if (
+                capture is not None
+                and capture is not before
+                and capture.assistant_rendering is False
+                and runner._capture_processing_ok
+            ):
+                break
+        else:
+            pytest.fail("The calibration prompt never processed a new idle capture")
+
+        expected_reads = aec.failure_reads + 2
+        aec.fail_metrics = True
+        try:
+            for _ in range(16):
+                await asyncio.sleep(0)
+                if aec.failure_reads == expected_reads:
+                    break
+            else:
+                pytest.fail("The calibration prompt did not read both metric faults")
+        finally:
+            aec.fail_metrics = False
+
+    runner.prompt = fail_prompt_metrics
+
+
 def test_prompt_time_native_failure_is_latched_after_healthy_recovery() -> None:
     aec = _PromptFailureThenHealthyAec()
     harness = _LiveHarness(aec=aec)
     harness.force_echo = True
     runner = _runner(harness)
-
-    async def fail_one_prompt_capture(message: str) -> None:
-        await harness.prompt(message)
-        if not message.startswith("Double-talk calibration"):
-            return
-        aec.fail_metrics = True
-        while aec.failure_reads < 2:
-            await asyncio.sleep(0)
-        aec.fail_metrics = False
-
-    runner.prompt = fail_one_prompt_capture
+    _inject_calibration_prompt_fault(runner, harness, aec)
 
     observations = asyncio.run(runner.run())
 
@@ -1917,17 +1945,7 @@ def test_prompt_time_out_of_range_erle_failure_is_latched_after_recovery() -> No
     harness = _LiveHarness(aec=aec)
     harness.force_echo = True
     runner = _runner(harness)
-
-    async def fail_one_prompt_capture(message: str) -> None:
-        await harness.prompt(message)
-        if not message.startswith("Double-talk calibration"):
-            return
-        aec.fail_metrics = True
-        while aec.failure_reads < 2:
-            await asyncio.sleep(0)
-        aec.fail_metrics = False
-
-    runner.prompt = fail_one_prompt_capture
+    _inject_calibration_prompt_fault(runner, harness, aec)
 
     observations = asyncio.run(runner.run())
 
