@@ -56,11 +56,11 @@ Interfaces: retain the original entry-point signatures, live dependencies and pu
 
 ## Domain 3: Shared path policy and idle-config attribution
 
-Root owns the canonical lightweight Utils/rag_state_paths.py policy, RAG_Search/state_paths.py compatibility surface, Utils/sensitive_paths.py caller, ADR355 amendment and two stale dependency allowlist removals. Preserve the exact existing environment/config/legacy/default order, coercion, home expansion, live access, logger privacy and RAG public patch seams. No duplicate directory policy.
+Root owns the canonical lightweight Utils/rag_state_paths.py policy, RAG_Search/state_paths.py compatibility surface, Utils/sensitive_paths.py caller, ADR357 amendment and two stale dependency allowlist removals. Preserve the exact existing environment/config/legacy/default order, coercion, home expansion, live access, logger privacy and RAG public patch seams. No duplicate directory policy.
 
 resync_providers owns read-only paired replay of Tests/UI/test_console_projection_reads_off_loop.py::test_an_unparseable_config_leaves_an_idle_console_idle on current193a and exacta0. Keep test/conftest/profile/bootstrap/clock/TTL/timeouts unchanged; preserve genuine child pytest.log/xml, counts/errors and missing attribution. A same-source static comparison alone does not prove inheritance.
 
-- [x] Amend ADR355 before path-policy relocation and add focused compatibility/import guards as needed.
+- [x] Amend ADR357 before path-policy relocation and add focused compatibility/import guards as needed.
 - [x] Run one fresh protected current replay before concurrent source edits, then one exacta0 replay in the owned baseline; no retries without an evidence-based next hypothesis.
 - [x] Relocate the existing path policy into the lower owner with compatible live wrappers/aliases; remove only the two obsolete upward-edge allowlist rows.
 - [x] Verify sensitive paths, configured profile/vector protection, public aliases, optional-import boundary and canonical worker bundle.
@@ -89,3 +89,25 @@ ADR required: no new ADR; existing ADR235 applies. These are additive public ali
 ADR required: no. ADR path: N/A. Reason: bounded performance work in the existing install-free CI checker; no product, authority, storage or runtime boundary changes. TASK-34569 AC4/AC5 and all existing membership, floors, shards, flags and diagnostic contracts remain unchanged.
 
 Share one private fresh UTF-8 parse helper between node and conftest resolution. A dictionary local to each main invocation keeps only each path's latest complete source body and successful AST; every lookup rereads the body, and standalone resolver calls retain uncached defaults. Do not cache errors, fixture results or module values, bind the live parser early, change conftest precedence, or optimize overlap/MCP paths. First demonstrate original-source RED on a small real main parse-reuse count. Add same-path/equal-size/restored-mtime module and conftest changes plus the second-main boundary; prove the freshness cases reject an intentionally stale helper and restore exact candidate bytes before final tests. Use unchanged protected targeted checker/default-consumer tests and one unprofiled older-member measurement, recording actual results rather than a timing threshold. Root retains commit/freeze and App/START ownership.
+
+## Rebase worker and catalog regression verification (pre-code, 2026-11-08)
+
+ADR required: no.
+ADR path: N/A.
+Reason: This adds exact existing test targets to the private launcher for TASK-34569 AC4 and AC7 evidence.
+
+Admit the three write-lock registry nodes and the three existing run-start and catalog suites. Verify that removing the six appended literals recovers the launcher source and AST exactly. Run the existing launcher refusal control and the 28 intended regression cases serially through fresh protected profiles. Record source hashes, commands, outcomes and the pinned Ruff check. Stop after any unexpected setup or assertion failure and retain its output.
+
+## RAG ADR allocation repair (before edits)
+
+ADR required: no new decision. The existing RAG boundary decision keeps its scope and moves to ADR-357. The older Ruff ADR-355 is on dev, and open PR #3480 already claims ADR-356.
+
+Rename the RAG decision and update its heading, provenance, index and live references. Preserve the historical fc1 evidence binding and receipt IDs. Reproduce the collision with the existing uniqueness checker, then verify uniqueness, live links, comment-only test ASTs and identical production/workflow source.
+
+## CI preflight runner compatibility (before edit)
+
+ADR required: no. ADR path: N/A. Reason: restore the existing preflight toolchain on a compatible hosted runner.
+
+The bf2 preflight could not install the exact Python 3.12.11 build on Ubuntu 26.04, then the Mermaid checker refused the fallback Python. PR #3479 changes only the preflight runner and its explanatory comment. The matching upstream head passed Python setup and the Mermaid check on Ubuntu 24.04. [Upstream preflight](https://github.com/rmusser01/tldw_chatbook/actions/runs/42499062382/job/128787619134)
+
+Carry that exact runner hunk into this branch. Keep the existing Python and Mermaid pins, every other job, test membership and deadlines. Verify that reversing only the runner hunk restores the original workflow bytes.

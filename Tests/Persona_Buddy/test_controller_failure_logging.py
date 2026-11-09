@@ -188,7 +188,7 @@ EXCEPTION_TYPE_BIND_SITES = frozenset(
         # TASK-39060: each binds type(<x>).__name__ (owner decision, 2026-11-06).
         ("tldw_chatbook/Agents/mcp_tool_provider.py", "MCPToolProvider._persona_floor"),
         ("tldw_chatbook/Agents/persona_policy.py", "parse_persona_policy_from_rules"),
-        # ADR-355: constant path-read failure site; class name only, no path/message.
+        # ADR-357: constant path-read failure site; class name only, no path/message.
         ("tldw_chatbook/Utils/rag_state_paths.py", "_explicit_rag_setting"),
         (
             "tldw_chatbook/Character_Chat/local_character_persona_service.py",

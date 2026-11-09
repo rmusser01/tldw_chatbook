@@ -26,7 +26,7 @@
     "approval_fixture_workload_v7.py": "ef0b030865070035a0e32258c72adfc5f471646ef76feebe393e4d68e707067b",
     "common_activity_observer.py": "511d1fcc8150dc8492ab1d7da752769f7f6ccb7a2cdf9dc20b2aea27e2563bba",
     "native_bootstrap.py": "fba33556c87bd321c138d6d50bb037ed90d7bb0c4ace59440a74f1689e87ca08",
-    "native_product_child.py": "6723d106cbebb633a4e15926ae52edd6c1aece9efae51008b380d8c737c838a6",
+    "native_product_child.py": "21f74b0f3c8a198529a849e2b3134e3b3ca3db8284dc9513c9edc878a4c4de64",
     "native_product_observer.py": "32a66d9ffa58ed64c660df490fc0e361747ca06d8b1aff04c74994a16925bd0b",
     "native_rehearsal_observation.py": "b59490d5be3a33bfc89b9e80c272f1fa96d91574fc3a66e2e2b4f83be76c14b2",
     "native_series_method.py": "58d89714d85a146ed1f4365b3e6defaf89f5b3621def35d1653e14717e2fcba3",
@@ -370,7 +370,7 @@
     "scope": "QA observations only; no product or live-run change",
     "header_exact_builtin_labels": [
       "Ready",
-      "Ready \u00b7 not tested"
+      "Ready · not tested"
     ],
     "provider": "Unique actual provider span at zero scroll, wholly contained in actual content/widget/compositor clip; other three ROI whole-visibility requirements retained",
     "old_source_controls": {
@@ -394,5 +394,17 @@
     "new_live_run_authorized": false,
     "qualified": false,
     "product_samples": 0
+  },
+  "rail_worker_setup": {
+    "state": "SOURCE_REVIEWED_VALIDATION_PENDING",
+    "predecessor_revision": "bf2de0a34758dd10d0e0a837da3fe563598fead6",
+    "predecessor_manifest_sha256": "2dacbbe068598871a414dc2a61bfb60a2c53d4ac428ddcefe6dfb43dff889a3a",
+    "predecessor_protocol_sha256": "720c0e1d23cd5d5805d4e22f34822199c747530e49ba6f215452863ccf73ea3d",
+    "previous_child_sha256": "6723d106cbebb633a4e15926ae52edd6c1aece9efae51008b380d8c737c838a6",
+    "child_sha256": "21f74b0f3c8a198529a849e2b3134e3b3ca3db8284dc9513c9edc878a4c4de64",
+    "private_lineage_sha256": "4aa3a73023d0a291517714ffbfb23925ab7dea4e91f757c83b594c48c82a457a",
+    "source_controls": "Both extracted predecessors crossed setup with an active matching writer. Both successors completed matching workers before readiness/reply, excluded unrelated workers, propagated wait errors, and allowed an empty snapshot.",
+    "scope": "QA setup only, before sampling. No product guard, setup or sampling deadline, capture, authority, or qualification change.",
+    "qualification": "Pending fresh actual validation; headless comparison was startup-censored. Zero qualified samples."
   }
 }

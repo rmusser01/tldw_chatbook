@@ -340,7 +340,7 @@ FAST_LANE_TARGETS = (
     # (pure AST, whole files). They were red on dev for weeks in no PR lane.
     "Tests/Chat/test_console_fork_transition_census.py",
     "Tests/Chat/test_console_semantic_mutation_inventory.py",
-    # TASK-34564 / ADR-355: real protected RAG paths without optional runtime.
+    # TASK-34564 / ADR-357: real protected RAG paths without optional runtime.
     "Tests/RAG/test_state_paths.py",
     # TASK-34569 AC9: Speech preimport avoids optional meter runtime.
     "Tests/Audio/test_dictation_meter_import_contract.py",

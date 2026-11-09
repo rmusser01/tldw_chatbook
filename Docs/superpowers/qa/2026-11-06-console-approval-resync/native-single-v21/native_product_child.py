@@ -822,7 +822,16 @@ def main():
             common_observer = CommonActivityObserver(
                 fixture
             )  # No feature/ToolActivity imports.
+            rail_screen = app.screen
             await fixture.configure(theme="textual-dark", inspect_open=False)
+            rail_workers = tuple(
+                worker
+                for worker in app.workers
+                if worker.node is rail_screen
+                and worker.name == "_save_console_rail_preferences"
+            )
+            for worker in rail_workers:
+                await worker.wait()
             card = app.screen.query_one("#chat-approval-card")
             card_events = CardEvents(card, fixture, sink, capture_state)
             original_resolve = fixture.controller.resolve_pending_approval

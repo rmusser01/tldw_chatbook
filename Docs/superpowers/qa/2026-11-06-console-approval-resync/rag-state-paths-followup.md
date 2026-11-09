@@ -1,6 +1,6 @@
 # Lightweight protected RAG state paths
 
-ADR-355 moves the existing RAG state-directory selection into one lightweight owner. Console protection and both legacy public getters share it. The change preserves environment/current/legacy priority, value coercion, home expansion, relative paths, live configuration and user-data reads. Sensitive-path memoization, failed-read handling, permission authority and recovery are unchanged. Configuration-read errors use constant text and a controlled exception type rather than raw exception values.
+ADR-357 moves the existing RAG state-directory selection into one lightweight owner. Console protection and both legacy public getters share it. The change preserves environment/current/legacy priority, value coercion, home expansion, relative paths, live configuration and user-data reads. Sensitive-path memoization, failed-read handling, permission authority and recovery are unchanged. Configuration-read errors use constant text and a controlled exception type rather than raw exception values.
 
 A guarded original-helper probe on `f3cfffd9` took 1.5782705 seconds and loaded 570 additional dependency names. This is one diagnostic sample, with its observer overhead included. It does not explain the separate full-app 60-second workspace-binding wait. The optional dependency edge was independently reproduced by invoking the original protected-directory getter with RAG/NumPy imports blocked; it failed before extraction and passes afterward. No after-change runtime probe or Console performance claim is made here.
 

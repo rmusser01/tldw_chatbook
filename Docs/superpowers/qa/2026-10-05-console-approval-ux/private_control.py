@@ -183,6 +183,12 @@ assert target in {
     "Tests/Canvas/test_canvas_kill_switch.py",
     "Tests/Architecture/test_agents_chat_boundary.py",
     "Tests/UI/test_library_reader_console_delete_refresh.py::test_the_settle_wait_reads_flags_the_console_still_sets",
+    "Tests/Tools/test_local_tool_impls.py::test_write_lock_map_stays_bounded_under_distinct_paths",
+    "Tests/Tools/test_local_tool_impls.py::test_write_lock_map_never_evicts_a_held_entry",
+    "Tests/Tools/test_local_tool_impls.py::test_write_lock_mutual_exclusion_survives_eviction_pressure",
+    "Tests/Chat/test_console_run_start_anchor.py",
+    "Tests/MCP/test_run_catalog_fingerprint_off_loop.py",
+    "Tests/UI/test_console_mcp_catalog_anchor.py",
 }
 selection = sys.argv[2:]
 assert not selection or (len(selection) == 2 and selection[0] == "-k")

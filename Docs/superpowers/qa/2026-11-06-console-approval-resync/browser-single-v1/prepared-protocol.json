@@ -1,7 +1,7 @@
 {
   "version": "BrowserConsoleSINGLE-source-v1",
   "status": "COMPLETE_PRIVATE_SOURCE_READY_FOR_WHOLE_REVIEW_NOT_LAUNCHED",
-  "source_manifest_sha256": "12d8716c64a37d7bffbb01573f8fc38f972c7cae7d95d91dc627946f37ec6610",
+  "source_manifest_sha256": "d1612f407fdf4451e33399f0567fc43824d3d78d5b7cb8d76b08b04cb331dc61",
   "source_manifest_files": 33,
   "runtime_files": 19,
   "scope": "CURRENTfeature SINGLE actual120x40 Inspectclosed textual-dark only; validationhard1 thenexplicitfreeze-bound41=cold1+warm40. No baseline/four-shape/matrix claim.",
@@ -126,7 +126,7 @@
     "scope": "QA observations only; no product or live-run change",
     "header_exact_builtin_labels": [
       "Ready",
-      "Ready \u00b7 not tested"
+      "Ready · not tested"
     ],
     "provider": "Unique actual provider span at zero scroll, wholly contained in actual content/widget/compositor clip; other three ROI whole-visibility requirements retained",
     "old_source_controls": {
@@ -150,5 +150,17 @@
     "new_live_run_authorized": false,
     "qualified": false,
     "product_samples": 0
+  },
+  "rail_worker_setup": {
+    "state": "SOURCE_REVIEWED_VALIDATION_PENDING",
+    "predecessor_revision": "bf2de0a34758dd10d0e0a837da3fe563598fead6",
+    "predecessor_manifest_sha256": "12d8716c64a37d7bffbb01573f8fc38f972c7cae7d95d91dc627946f37ec6610",
+    "predecessor_protocol_sha256": "23070879aca1b75956fb52b311db92ba3e0c9ebb56bbede39b6d4c0fd8c5ae61",
+    "previous_child_sha256": "36a0c821fb7f9ec20e820777942daff21e43a35fc9c8dd2821290c8ddfa3f633",
+    "child_sha256": "7f22b5ff61dbca535e4cc5b87ba4971189bd2578279a5b5eb588a9155314a5aa",
+    "private_lineage_sha256": "4aa3a73023d0a291517714ffbfb23925ab7dea4e91f757c83b594c48c82a457a",
+    "source_controls": "Both extracted predecessors crossed setup with an active matching writer. Both successors completed matching workers before readiness/reply, excluded unrelated workers, propagated wait errors, and allowed an empty snapshot.",
+    "scope": "QA setup only, before sampling. No product guard, setup or sampling deadline, capture, authority, or qualification change.",
+    "qualification": "Pending fresh actual validation; headless comparison was startup-censored. Zero qualified samples."
   }
 }

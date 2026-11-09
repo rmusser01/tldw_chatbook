@@ -32,7 +32,7 @@
     "web_write_observer.py": "7aa68003cc7e79b8d1f8602fbe986ed49b9b165a2592f5ccd61e3c394f7d28c3",
     "common_activity_observer.py": "511d1fcc8150dc8492ab1d7da752769f7f6ccb7a2cdf9dc20b2aea27e2563bba",
     "qa_process_guard.py": "bc9f14b65a01355761b298388e69e722b6a6344d5bc26e29ed43a9c9fea41bca",
-    "web_product_child.py": "36a0c821fb7f9ec20e820777942daff21e43a35fc9c8dd2821290c8ddfa3f633",
+    "web_product_child.py": "7f22b5ff61dbca535e4cc5b87ba4971189bd2578279a5b5eb588a9155314a5aa",
     "approval_fixture_workload_v7.py": "ef0b030865070035a0e32258c72adfc5f471646ef76feebe393e4d68e707067b",
     "approval_fixture_driver.py": "39abfcfc93519df330b107cdf632d92cdba0095238322accb5c14a03cda7027d",
     "owned_roi_capture.py": "6670d34570f156976f911fe73e1e9c50d671d3647d313a8030da0dab04433e65",

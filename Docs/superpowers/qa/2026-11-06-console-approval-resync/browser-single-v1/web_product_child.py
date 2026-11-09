@@ -314,7 +314,16 @@ async def command(value):
     elif kind == "collect":
         extra = await driver.collect()
     elif kind == "configure":
+        rail_screen = app.screen
         await driver.configure(theme=value["theme"], inspect_open=value["inspect_open"])
+        rail_workers = tuple(
+            worker
+            for worker in app.workers
+            if worker.node is rail_screen
+            and worker.name == "_save_console_rail_preferences"
+        )
+        for worker in rail_workers:
+            await worker.wait()
     elif kind == "trace_negatives":
         extra = await driver.trace_admission_negatives()
     elif kind == "snapshot":

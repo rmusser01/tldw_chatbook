@@ -1,7 +1,7 @@
 {
   "implementation_base": "c09ad7338577c05b2a1732d975fcb9bdc4c2c69f",
   "baseline": "8b762b52fa9c38be8c978f2b2175d9f070bc829a",
-  "adr": "backlog/decisions/355-lightweight-rag-state-path-resolution.md",
+  "adr": "backlog/decisions/357-lightweight-rag-state-path-resolution.md",
   "source_sha256": {
     "tldw_chatbook/RAG_Search/state_paths.py": "0e51b9634f76a9434c64b78729056c7b60845c2a67fb31d3731684ada7d6e78c",
     "tldw_chatbook/RAG_Search/config_profiles.py": "3422e57ea5a80cd1e5dce20874c71e5e03e266c189c9990eb53b48d640d84849",

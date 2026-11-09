@@ -1,6 +1,8 @@
-# ADR-355: Resolve RAG state paths without importing the RAG runtime
+# ADR-357: Resolve RAG state paths without importing the RAG runtime
 
 Date: 2026-11-07
+
+Renumbered from the RAG draft of ADR-355 on 2026-11-08. The older Ruff lint-gate decision keeps ADR-355. Open PR #3480 claims ADR-356.
 
 ## Status
 

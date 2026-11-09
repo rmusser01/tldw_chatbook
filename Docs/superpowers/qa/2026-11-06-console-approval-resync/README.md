@@ -62,7 +62,7 @@ The [worker-bundle follow-up](artifact-followup.md) records the inherited hosted
 
 [Current-source Windows witness](windows-dispatch-current-head.json) binds `c1833ae9`, all 3,484 frozen files and the actual native gesture. The original stock Console, scripted loopback provider, tool discovery/load, human approval, controller/host and isolated worker completed a harmless 33-byte `fs_read`. Root independently inspected the enabled **Allow once** card and later **Decision accepted** pixels. The main process and worker loaded 1,858 and 18 matching product modules with no source mismatch or profile refusal. All owned processes exited normally. The worker internal duration is not a UI latency. Earlier dispatch evidence above retains its original scope.
 
-The original protected-path helper after ADR355 took 0.6743465 seconds and added two module names, versus the retained original 1.5782705 seconds and 570 names. Each is one isolated diagnostic; neither proves a p95 improvement or explains a full-app setup stall.
+The original protected-path helper after ADR357 took 0.6743465 seconds and added two module names, versus the retained original 1.5782705 seconds and 570 names. Each is one isolated diagnostic; neither proves a p95 improvement or explains a full-app setup stall.
 
 Timing samples remain zero. Repeated old-baseline workspace-setup stalls are retained as censored failures, including missing final source closure after forced cleanup; they are excluded from distributions. Browser capture also remains unqualified. Its latest diagnostic observed an original Windows control-connect refusal before cleanup; the later WebSocket close and child pipe error do not establish the initial cause. Neither trace-admission negative was invoked in these failed browser setups. Passive owned-file setup observation is being prepared without changing production behavior, heartbeat, timeout or capture gates.
 
@@ -85,3 +85,9 @@ On product source `528520e750d005b8eebc42ffc732b973630df4a7`, the next native ru
 
 
 [The browser negative-control witness](browser-negative-controls-v1-evidence.json) records both actual stock trace-admission refusals on `5ada327941`: each kept preparse chat POSTs and consumed scripted turns at zero. Runtime and child exited 0, with all five authenticated owned processes absent and matching source/profile closures. The actual terminal was 133x42 for these nonvisual controls; no 120x40 geometry or presentation result is claimed. Five denied browser background proxy attempts are retained. This historical witness grants no qualification to subsequent source or QA changes.
+
+## Current rebase evidence and physical hold
+
+The current rebase's 28 focused worker/catalog cases produced 25 passes and three failures. Exact dev 36a21dc4d2 reproduced the same three assertions in matched, freshly protected Chat and Console UI runs. These cases remain reported and unchanged.
+
+A private headless run at bf2de0a34 captured the post-read config identity refusal while the fixture's stock Inspector preference writer was publishing. A reviewed setup wait passes the source-extracted ordering controls. The separate live comparison expired at startup before reaching the fixture, so it did not confirm the hypothesis. Fresh native and served validation will exercise the setup correction before sampling; this evidence supplies zero qualified physical samples. The original guard, phase limits and acceptance thresholds still apply.
