@@ -545,7 +545,18 @@ async def test_native_result_refresh_remains_manual_and_imported_json_is_inert(
             rig.app, "handle_screen_navigation", navigate_to_manual_library
         )
         await click(rig, "#recovery-manual-library")
-        await wait_until(rig.pilot, lambda: isinstance(rig.host.screen, LibraryScreen))
+        # The screen is visible before its navigation worker applies the scope.
+        await wait_until(
+            rig.pilot,
+            lambda: (
+                isinstance(rig.host.screen, LibraryScreen)
+                and not any(
+                    worker.group == "archive-recovery-library"
+                    and not worker.is_finished
+                    for worker in rig.host.workers
+                )
+            ),
+        )
         assert rig.host.screen._conversation_recovery().scope == "all"
         assert rig.store.active_session_id == imported.id
 

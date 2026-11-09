@@ -774,40 +774,84 @@ def test_the_credential_poll_defers_a_cold_read_once_and_then_stays_idle(monkeyp
 class _UiLoopStarts:
     """Count starts of named code objects on the UI loop's thread (observed only).
 
-    A coroutine's frame reports "call" again at every resume, so a start is a
-    frame not seen before. Each name maps to ``(code, caller code or None)``.
+    PY_START excludes coroutine resumes. Each name maps to
+    ``(code, caller code or None)``.
     """
 
     def __init__(self, **codes):
         self._codes = codes
-        self._frames: list = []
         self.counts = dict.fromkeys(codes, 0)
 
     def __enter__(self):
-        self._previous = sys.getprofile()
+        thread = threading.get_ident()
+        monitoring = sys.monitoring
+        self._tool_id = next(
+            value for value in range(1, 6) if monitoring.get_tool(value) is None
+        )
+        monitoring.use_tool_id(self._tool_id, "console-ui-loop-starts")
 
-        def observe(frame, event, _argument):
-            if event != "call":
+        def observe(observed_code, _offset):
+            if threading.get_ident() != thread:
                 return
+            frame = sys._getframe(1)
             for name, (code, caller) in self._codes.items():
-                if frame.f_code is not code:
+                if observed_code is not code:
                     continue
                 if caller is not None and frame.f_back.f_code is not caller:
                     continue
-                if not any(frame is seen for seen in self._frames):
-                    self._frames.append(frame)
-                    self.counts[name] += 1
+                self.counts[name] += 1
 
-        sys.setprofile(observe)  # This thread only: the UI loop's.
+        # Profiling every UI call distorts the cold rebuild this test measures.
+        event = monitoring.events.PY_START
+        monitoring.register_callback(self._tool_id, event, observe)
+        for code, _caller in self._codes.values():
+            monitoring.set_local_events(self._tool_id, code, event)
         return self
 
     def __exit__(self, *_exc):
-        sys.setprofile(self._previous)
-        self._frames.clear()
+        monitoring = sys.monitoring
+        for code, _caller in self._codes.values():
+            monitoring.set_local_events(self._tool_id, code, 0)
+        monitoring.register_callback(self._tool_id, monitoring.events.PY_START, None)
+        monitoring.free_tool_id(self._tool_id)
 
     def take(self) -> dict:
         counts, self.counts = self.counts, dict.fromkeys(self.counts, 0)
         return counts
+
+
+@pytest.mark.asyncio
+async def test_ui_loop_starts_counts_fresh_calls_on_only_its_thread_and_caller():
+    def called():
+        pass
+
+    def caller():
+        called()
+
+    async def resumed():
+        await asyncio.sleep(0)
+        called()
+
+    starts = _UiLoopStarts(
+        called=(called.__code__, caller.__code__),
+        coroutine=(resumed.__code__, None),
+    )
+    previous = sys.getprofile()
+    with pytest.raises(RuntimeError, match="observer cleanup"):
+        with starts:
+            assert sys.getprofile() is previous
+            caller()
+            called()
+            await resumed()
+            await resumed()
+            await asyncio.to_thread(caller)
+            assert starts.take() == {"called": 1, "coroutine": 2}
+            raise RuntimeError("observer cleanup")
+    assert sys.getprofile() is previous
+    assert sys.monitoring.get_tool(starts._tool_id) is None
+    caller()
+    await resumed()
+    assert starts.take() == {"called": 0, "coroutine": 0}
 
 
 @pytest.mark.asyncio

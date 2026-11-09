@@ -95,7 +95,9 @@ class _File:
 @dataclass
 class _Stream:
     revision: int = 0
-    submissions: dict[str, tuple[str, SubmissionAck]] = field(default_factory=dict)
+    submissions: dict[str, tuple[str, SubmissionAck, Path]] = field(
+        default_factory=dict
+    )
     local_keys: set[str] = field(default_factory=set)
     run_id: str = ""
     raw_ref: str = field(default_factory=lambda: "raw-" + secrets.token_hex(16))
@@ -918,9 +920,27 @@ class ReviewStore:
             previous = stream.submissions.get(submission_id)
             if previous is not None:
                 if previous[0] != digest:
-                    raise ReviewRefused("submission_conflict")
+                    original = json.loads(self.read_file(context, previous[2]))
+                    refusal = ReviewRefused("submission_conflict")
+                    refusal.submission_revision = stream.revision
+                    refusal.retry = {
+                        "review_id": review_id,
+                        "kind": original["kind"],
+                        "records": original["records"],
+                        "expected_revision": stream.revision,
+                        "submission_id": submission_id,
+                    }
+                    raise refusal
                 if admit_ack is not None:
                     admit_ack(previous[1])
+                key = hashlib.sha256(submission_id.encode()).hexdigest()
+                rejection = stream.rejected.pop(key, None)
+                if (
+                    rejection is not None
+                    and self._host_receipt(context, binding, stream) is None
+                ):
+                    stream.rejected[key] = rejection
+                    raise ReviewRefused("publication_failed")
                 return previous[1]
             if expected_revision != stream.revision:
                 refusal = ReviewRefused("submission_revision_conflict")
@@ -1135,7 +1155,7 @@ class ReviewStore:
                         item.path = context.manifest_path
                         context._files[context.manifest_path] = item
                         reservation._committed = True
-                        stream.submissions[submission_id] = (digest, ack)
+                        stream.submissions[submission_id] = (digest, ack, chunk_path)
                         stream.revision = ack.submission_revision
                         if kind == "dispositions":
                             ledger.dispositions.update(

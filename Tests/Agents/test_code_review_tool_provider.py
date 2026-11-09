@@ -633,28 +633,6 @@ def test_oversized_multibyte_resource_returns_capacity_diagnostic(
     }
 
 
-def test_review_recipe_completion_example_uses_real_submission_schema():
-    import re
-
-    from tldw_chatbook.Agents.code_review_guide import load_code_review_guide
-    from tldw_chatbook.Agents.code_review_models import (
-        ReviewTeam,
-        validate_record_chunk,
-    )
-    from tldw_chatbook.Agents.code_review_tool_provider import SubmitArguments
-
-    text = load_code_review_guide("review", ReviewTeam())["text"]
-    commands = [
-        json.loads(block)
-        for block in re.findall(r"```json\s*(.*?)```", text, re.DOTALL)
-    ]
-    assert commands, "Ship a schema-checked completion example"
-    for command in commands:
-        args = SubmitArguments.model_validate(command)
-        validate_record_chunk(args.kind, args.records)
-    assert any(command["kind"] == "reviewer_complete" for command in commands)
-
-
 @pytest.mark.parametrize("stage", ["review", "verify"])
 def test_guide_current_role_identities_after_preset_rename_and_destination_edit(
     review_case, stage

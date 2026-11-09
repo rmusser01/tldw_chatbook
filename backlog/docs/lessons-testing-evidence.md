@@ -1,5 +1,17 @@
 # Lessons: what counts as evidence a change works
 
+## An empty rejection ledger does not identify a submission failure (TASK-39147, 2026-11-07)
+
+**Incident.** DeepSeek accepted findings, then three dispatched submissions failed
+and its review stopped without coverage or rejection entries. Its retained trace
+omitted arguments and errors. Offline native controls reproduced that same state
+with missing and unknown review IDs; valid completion sealed, while a contradictory
+completion recorded a rejection. The live symptom could not identify which path ran.
+
+**What to do.** Distinguish retained live facts from scripted lookalikes. Do not
+claim a provider/store fix from an empty ledger or HTTP success; identify the first
+refusal with appropriately scoped evidence, or state that its payload is unavailable.
+
 ## A census's "gone" row can be a live producer the scanner stopped seeing (TASK-39053, 2026-11-06)
 
 **Incident.** The backup owner inventory reported 194 gone producer rows, and the task that filed it read them as removed or moved code. But 24 of them were live `os.replace` / `os.unlink` calls. Their modules had switched to `from tldw_chatbook.Utils.platform_files import os`, and the census only bound `os` from `import os`. Other reviewed rows looked gone for the same kind of reason:
@@ -23679,6 +23691,8 @@ failures also failed alone on dev, so they were not order-dependent.
 
 **What to do.** Enumerate and run the aggregate's actual current-tree commands before publishing, rather than treating their unit tests or green runtime lanes as substitutes. Preserve environment preconditions separately: the Canvas builder pins Python3.12.11 and rejects the workstation's3.12.10, so its unchanged assets still need that exact hosted check; do not relax the pin to obtain a local green.
 
+**Follow-up (PR #3473, 2026-11-08).** The same pinned builder exposed a runner-image mismatch: `ubuntu-latest` selected Ubuntu 26.04, but `actions/setup-python` published Python 3.12.11 x64 only for Ubuntu 22.04/24.04. Setup failed first, then the builder rejected the fallback interpreter. Pinning only preflight to Ubuntu 24.04 preserves the byte-generation contract. For an exact runtime pin, verify the runner/version pair against the provider's build manifest; downstream artifact errors can be consequences of failed runtime setup.
+
 
 ### PR #3228: verify the live base ref before calling a PR current
 
@@ -24803,3 +24817,48 @@ Run on its own at load average 34, the resize loop ended 9.3 s after mount. In a
 - For a timing window, act with the action itself (`screen.action_focus_previous()`) and plain `asyncio` polling, not `pilot.press`.
 - Pass a diagnostic as a callable (`message=lambda: ...`), so it reports the state at the timeout.
 - Show each case red on the buggy tree before trusting it green.
+
+## Review handoff needs an authorized structured read path (TASK-39147, 2026-11-07)
+
+A 60-request Console review sealed all three children, but the coordinator could
+not finish: its primary recipe instructed verifier-only calls, and its legal
+report API omitted accepted verdicts that the native UI already displayed. Haiku
+also denied its own submitted decisions after checkpoint projection removed the
+acknowledged rounds. Test guide examples against the receiving role's actual
+schema and test the primary's public readback, not only native UI expansion.
+Checkpoint summaries must distinguish the actor's accepted decisions from host
+capacity gaps. Those host failures explain missing context and illegal guidance;
+they do not prove why a model chose a particular false narrative. Evidence:
+`Docs/superpowers/qa/2026-11-07-review-completion-recovery/README.md`.
+
+## A decorated synthetic event can outlive the state its test meant to exercise
+
+**Incident (PR #3473, 2026-11-08).** The partial-Console resize test removed a
+widget, injected an 80-column event at a real width of 160, checked unchanged
+state, and recomposed. A busy-config control showed the decorator queued that
+event without entering the missing-widget guard. The first assertions passed
+vacuously; replay after recomposition reproduced the hosted visible-left-rail
+failure. Calling the synchronous body for that synthetic guard phase fixed the
+control and all five cases; the later real resize still used the decorator.
+Moving band consumption before the guard still failed the original assertion.
+
+**What to do.** When testing an immediate guard through a deferring decorator,
+prove the body ran while the guarded state existed. Test that synchronous
+boundary directly when appropriate, then retain separate native event coverage.
+An unchanged state after the decorated call can mean the call has not run yet.
+
+## A direct owned capture requires ready sources, even after the Console mounts
+
+**Incident (PR #3473, 2026-11-08).** UI31's temporary-capture voice cancellation
+test called the warm-only configuration capture before custody admission and
+failed `console_capture_source_not_ready`. The isolated case passed. Keeping the
+real App trust service but clearing its local-facade publication reproduced the
+same guard; awaiting the real initializer and reading the original lazy property
+made that control and all eleven file cases pass without changing Cancel checks.
+The hosted log did not identify the exact unready source. Switching to the public
+capture fallback passed Cancel but violated this fixture's native worker drain,
+so that candidate was discarded.
+
+**What to do.** Establish the actual readiness preconditions of a low-level
+fixture call through its original owners. Mount completion alone is not service
+readiness; keep teardown assertions when selecting a different capture route.

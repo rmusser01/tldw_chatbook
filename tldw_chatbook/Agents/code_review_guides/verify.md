@@ -15,98 +15,21 @@ spawns reduce remaining slots; further turns require host-sealed exact-next-slot
 boundaries on the original finite automatic chain. No fresh allowance, fake
 settlement, raised concurrency or silent replacement verifier.
 
-## Verifier evidence and checkpoints
+## Coordinate the live verifier
 
-Read code_review_read({"review_id":"RID","view":"batch"}); follow returned
-cursor only after checkpointing decisions. Batches contain at most eight opaque
-units and 4,096 estimated claim tokens, further limited to HALF remaining
-admissible input. Evidence pages are at most 1,024 estimated tokens, within live
-space. Complete responses also fit the live tool-result cap and 16,000-character
-ceiling. Actual prepared requests still undergo final model-input admission.
-Unknown capacity, oversized units or indivisible continuation state may refuse;
-record gaps instead of dropping private history, increasing budgets or reading
-raw originals. Complete-page transport refusal cannot be bypassed with raw paths.
-
-Use source list/search/resolve queries and direct document_ref reads of captured
-callers/tests. For example code_review_read({"review_id":"RID","view":"source",
-"source_query":{"op":"resolve","relative_path":"pkg/caller.py","side":"head"}}),
-then {"review_id":"RID","view":"source","document_ref":"SOURCE_REF"}.
-Omit source_range initially and follow the bounded page cursor. Explicit ranges
-must fit the captured line_count. On invalid_source_range use the returned retry;
-do not guess larger endpoints. List uses op:"list",
-relative_dir and side; search adds op:"search", text (literal), relative_dir and
-side. Valid sides are base/head/staged/worktree already captured. Continue pages
-with review_id/view/cursor; do not change pinned selection. Nested instruction
-deferrals use normal activation, not history/raw-path workarounds. Uncaptured
-mutable context is a gap or new accepted capture, never newer-code evidence.
-
-Each unit needs its OWN confirmed/refuted/unresolved disposition, even when
-related claims resemble each other. Only exact substantive duplicates were
-coalesced by the host; suggested duplicates cannot transfer verdicts. Confirm
-with direct source evidence establishing the trigger and impact, or an executed
-host check receipt fully delivered to this live verifier. Refute with concrete
-counter-evidence. Non-reproduction alone, model agreement, majority/severity
-votes and proposed commands prove nothing. If necessary evidence is unavailable,
-leave unresolved with the specific next_check. Source-only decisions are valid
-when they independently establish the claim; related check units do not make
-execution mandatory.
-
-Submit code_review_submit({"review_id":"RID","kind":"dispositions",
-"records":[{"schema_version":1,"verification_unit_id":"OPAQUE_UNIT",
-"verdict":"unresolved","reason":"missing decisive evidence","evidence":[],
-"next_check":"specific evidence needed"}],"expected_revision":0,
-"submission_id":"stable-unique-id"}). Evidence is either
-{"kind":"source","source_ref":"REF","start_line":1,"end_line":2,
-"digest":"CAPTURED_SHA256"} or {"kind":"check","receipt_id":"HOST_RECEIPT"}.
-duplicate_unit_id is optional, never substitutes for this unit's own verdict.
-Each record ≤8 KiB UTF-8 JSON, chunks ≤8 records, schema_version exactly 1,
-unknown fields refused. expected_revision uses the caller's submission_revision
-from its page/latest acknowledgment, NOT context-control revision. On
-submission_revision_conflict, reread and retry unchanged records and submission_id
-once with the latest caller revision. Another participant append is independent.
-Correct a rejected record under the SAME submission_id, using returned field/type
-errors. New IDs do not retire earlier rejections. Repair rejected IDs before
-completion, then retry the SAME completion submission_id.
-If a new submission repeats an accepted unit, disposition_conflict preserves the
-accepted decision. Withdraw only that rejected submission using its returned retry
-arguments: kind="dispositions", records=[], the SAME rejected submission_id and
-current expected_revision. This accepts no decisions and clears only that conflict;
-use the acknowledgement revision for subsequent submissions. Empty dispositions
-cannot withdraw fresh IDs, other rejection reasons or accepted submissions. If a
-withdrawal fails, retain that ID and retry after resolving the reported cause.
-
-Accepted submissions checkpoint dispositions/evidence/cursor outside history
-before host request-history reduction. Let the host reduce only recoverable
-completed rounds; retain task, guidance, pending units and protocol state. Do not
-reset history or gain a new child/model budget. Continue the returned batch
-cursor. After each accepted disposition batch, history reduction, cached replay
-or uncertainty, read code_review_read({"review_id":"RID","view":"checkpoint"}).
-This live page supplies current submission_revision and a record with batch_cursor,
-pending_unit_ids, all_units_disposed and pending_check_refs. Cached batch pages intentionally replay
-byte-identically with their original revision. Never resubmit accepted decisions.
-If all_units_disposed is true and pending_check_refs is empty, finish at the current
-checkpoint revision; otherwise handle pending units/check results or follow batch_cursor.
-Submit kind:"verifier_complete", records:[] only when all units have
-independent dispositions, then return after acceptance without rereading or
-resubmitting accepted units; actual terminal receipts still govern completion.
-Unfinished units remain explicitly unresolved rather than disappearing.
+You are the PRIMARY coordinator. The host supplies the verifier's private brief
+and tool schemas. Batch/checkpoint reads, dispositions and verifier_complete
+belong to that child; do not perform them yourself or duplicate its decisions.
+Wait for its actual terminal receipt with wait_agents using its fleet handle.
+A check_requested notice is not completion; handle it as described below, then
+continue waiting for the same live verifier. Do not launch a replacement.
 
 ## Executable checks: same live verifier
 
 Stock Raw CLI has no enforceable aggregate write/file quota boundary: executable
-checks currently return unavailable BEFORE disposable copying or launch. Never
-claim that a proposed command ran. Preserve useful source-based verification.
-When execution is indispensable and unavailable, use unresolved + next_check.
-
-For a threaded verifier with an admitted external executor, submit ONE proposal:
-code_review_submit({"review_id":"RID","kind":"check_proposals","records":
-[{"schema_version":1,"argv":["python","-m","pytest","Tests/test_target.py"],
-"intent":"test the exact trigger","verification_unit_ids":["OPAQUE_UNIT"]}],
-"expected_revision":0,"submission_id":"proposal-stable-id"}). Take proposal_id
-from accepted_ids. At most one proposal may be outstanding. The verifier then
-reads code_review_read({"review_id":"RID","view":"verification_batch",
-"document_ref":"PROPOSAL_ID"}) and follows its evidence cursors to the complete
-host receipt. This is proposal-specific result waiting, not another claim batch.
+checks return unavailable before copying or launch. Proposed commands are not
+execution evidence. The verifier can use source evidence or leave a claim
+unresolved with a specific next_check when execution is indispensable.
 
 The PRIMARY handles check_requested returned by wait_agents, preserving the same
 live verifier: read {"review_id":"RID","view":"summary",
@@ -122,22 +45,33 @@ Resume wait_agents for ACTUAL verifier settlement. Never repeat accepted or
 uncertain execution. Decline/results are host receipts, not fabricated evidence.
 A check_requested notice is NOT child completion; do not collect it as a report.
 
-For an INLINE verifier (max_live_subagents=1), spawn is synchronous and its parent
-cannot handle a threaded check. Proposals resolve unavailable immediately. Read
-the proposal-specific result once if proposed, then use source-based decisions
-or unresolved next_check. Do not wait for the parent, repeat proposals, enable a
-fleet or spend a replacement child allowance. Declined/cancelled/expired/uncertain
-results are not executed evidence; only an executed host receipt fully read in
-this same live attempt qualifies. Post-return checks require new explicit work.
+For an inline verifier, spawn is synchronous; proposals resolve unavailable
+immediately because the parent cannot service a threaded check. Use its actual
+terminal receipt. Never enable a fleet or spend a replacement child allowance.
 
-## Unified report
+## Unified report and completion
 
-After actual verifier settlement, read summary and complete index/cursors. The
-host expands every opaque disposition to every original exactly once, preserving
-individual originals separately. Validate expanded coverage, actual target and
-participants, fallback switches, checked claims, refutations, unresolved minority
-findings and all capture/run/evidence gaps. Native report presentation keeps this
-new unified report separate from originals; your prose summary cannot replace
-original presentation. Console `u` reopens retained native reports; export and
-discard remain explicit native actions. Do not announce complete verification
-when coverage is incomplete. No automatic fixes, comments/publication or merges.
+After actual verifier settlement, fetch fresh pages, starting without a cursor:
+code_review_read({"review_id":"RID","view":"summary"}) for each participant's
+capture, terminal and seal status, then
+code_review_read({"review_id":"RID","view":"report"}) for the complete originals
+and their accepted dispositions. Follow each returned cursor with only review_id,
+view and cursor. Previously read pages are immutable snapshots and can predate
+verification. Each report record identifies original_id, record, disposition and
+verifier_report_status. The host expands an exact duplicate unit's decision to
+each original separately. Do not ask for verifier-only batches or checkpoints.
+
+Require sealed reports and every original's confirmed/refuted/unresolved decision.
+Use accepted structured decisions as the handoff source; raw child prose is
+retained separately and can contradict them after history reduction. State any
+such discrepancy without replacing accepted decisions, repeating verification,
+or calling check_actions with no actual proposal. Report/source gaps and pending
+or incomplete seals must remain explicit; a tool refusal is not permission to
+perform another role's work. A sealed unresolved verdict remains unresolved.
+
+The native reader presents the unified report separately from the original
+reports. Summarize the accepted verdicts and their limits, then RETURN when this
+handoff is complete; no additional source reads or submissions are needed merely
+to repeat the verifier's work. Console `u` reopens retained native reports;
+export/discard remain explicit native actions. Do not claim complete verification
+when mapping or seals are incomplete. No automatic fixes, comments or merges.

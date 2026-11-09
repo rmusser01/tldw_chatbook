@@ -165,6 +165,9 @@ def project_provider_error(exc: BaseException, provider: str) -> ChatAPIError | 
         return ChatConfigurationError(provider=provider, status_code=status)
     if isinstance(exc, ChatRateLimitError):
         return ChatRateLimitError(provider=provider, retry_after=exc.retry_after)
+    if isinstance(exc, ChatProviderError) and status is None:
+        # Preserve local validation failures across the Console worker boundary.
+        return ChatProviderError(provider=provider, status_code=None)
     return None
 
 

@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from .agent_service import AgentConfig, ModelRequest
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from tldw_chatbook.Provider_Contract.provider_continuation import ContinuationOwnerGroup
 
@@ -27,6 +27,7 @@ class ReviewHistoryCheckpoint:
     evidence_refs: tuple[dict, ...] = ()
     check_refs: tuple[str, ...] = ()
     pending_check_refs: tuple[str, ...] = ()
+    disposition_counts: dict[str, int] = field(default_factory=dict)
 
 
 def project_verifier_history(
@@ -111,18 +112,25 @@ def project_verifier_history(
         "content": "Accepted verification checkpoint: "
         + json.dumps(
             {
+                "attempt_id": checkpoint.attempt_id,
+                "target_digest": checkpoint.target_digest,
                 "submission_revision": checkpoint.submission_revision,
                 "cursor": checkpoint.cursor,
                 "pending_unit_ids": checkpoint.pending_unit_ids,
                 "evidence_refs": checkpoint.evidence_refs,
                 "check_refs": checkpoint.check_refs,
+                "disposition_counts": checkpoint.disposition_counts,
             },
             separators=(",", ":"),
         )
-        + '. Accepted decisions are stored. Read code_review_read(view="checkpoint") '
+        + ". The host removed completed tool rounds from this request. These counts describe "
+        "YOUR accepted decisions in this same verifier attempt, not another verifier's work. "
+        "Absence of those rounds is not evidence that you never performed them. "
+        'Read code_review_read(view="checkpoint") '
         "for current submission_revision, batch_cursor and pending_unit_ids. Cached batch pages "
         "retain historical revisions. Do not resubmit accepted decisions; when all units are "
-        "disposed submit verifier_complete at the current revision.",
+        "disposed submit verifier_complete at the current revision. After acceptance, report "
+        "completion using these stored counts; the host retains the detailed decisions and evidence.",
     }
     insertion = next(
         (i for i, row in enumerate(retained) if row.get("role") == "assistant"),
@@ -205,7 +213,9 @@ def review_input_capacity(
         )
         if request.tools:
             used += runtime.estimate_tokens(
-                runtime.json.dumps(list(request.tools), sort_keys=True, separators=(",", ":")),
+                runtime.json.dumps(
+                    list(request.tools), sort_keys=True, separators=(",", ":")
+                ),
                 config.model,
                 provider=api_endpoint,
             )

@@ -688,6 +688,7 @@ def hosted_chat_request(
     allowed_message_keys: frozenset[str] = frozenset(),
     tolerant_top_level_extras: bool = False,
     wire_normalizer: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
+    allowed_tool_call_keys: frozenset[str] = frozenset(),
 ) -> HostedChatTurn | HostedChatStream:
     """Run one hosted Chat-Completions request through the shared boundary."""
     response = owned_json_post(
@@ -714,6 +715,7 @@ def hosted_chat_request(
         allowed_message_keys=allowed_message_keys,
         tolerant_top_level_extras=tolerant_top_level_extras,
         wire_normalizer=wire_normalizer,
+        allowed_tool_call_keys=allowed_tool_call_keys,
     )
 
 

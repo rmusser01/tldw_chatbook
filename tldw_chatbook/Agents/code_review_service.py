@@ -705,6 +705,32 @@ class CodeReviewService:
                 with _access(binding.review_id):
                     pass
 
+    def bound_review_id(self) -> str | None:
+        """Resolve an omitted child ID from live host authority, never model hints."""
+        actor = self._actor()
+        if actor.kind != "subagent":
+            return None
+        with self.store._tab.lock:
+            binding = self.store._tab.runs.get(actor.run_id)
+            if binding is None:
+                raise ReviewRefused("run_not_bound")
+            with self.store.lease(binding.review_id) as context:
+                return self._bound(context).review_id
+
+    def advertised_source_sides(self) -> tuple[str, ...] | None:
+        """Narrow child schema discovery to its host-bound captured target."""
+        from .run_context import use_run_actor
+
+        if self.actor is None or self.actor.kind == "primary":
+            return None
+        with use_run_actor(self.actor), self.store._tab.lock:
+            binding = self.store._tab.runs.get(self.actor.run_id)
+            if binding is None:
+                raise ReviewRefused("run_not_bound")
+            with self.store.lease(binding.review_id) as context:
+                self._bound(context)
+                return context.source_state.manifest.query_sides
+
     def encode(self, result) -> str:
         self._actor()
         text = (
@@ -1196,52 +1222,7 @@ class CodeReviewService:
                         if view != "batch" or binding.role != "verifier"
                         else "batch_unavailable"
                     )
-                # Reports can quote any captured source, including raw output.
-                # Policy callbacks must run outside the publication lock.
-                with self.store._tab.lock:
-                    revision = context.revision
-                    paths = tuple(
-                        sorted(
-                            {
-                                context.source_state.documents[ref].relative_path
-                                for ref in context.sources
-                            }
-                        )
-                    )
-                if (
-                    self.native_coordinator is not None
-                    and self.source_permission is None
-                ):
-                    raise ReviewRefused("source_permission_unavailable")
-                if self.source_permission is not None:
-                    for path in paths:
-                        refusal = self.source_permission(
-                            "fs_read",
-                            {
-                                "root_alias": self.source_authority.admitted.alias,
-                                "path": path,
-                            },
-                        )
-                        if refusal:
-                            raise ReviewRefused(refusal)
-                with self._source_context(review_id) as (current, root, exclusions):
-                    if (
-                        current is not context
-                        or context.revision != revision
-                        or self._bound(context) != binding
-                        or paths
-                        != tuple(
-                            sorted(
-                                {
-                                    context.source_state.documents[ref].relative_path
-                                    for ref in context.sources
-                                }
-                            )
-                        )
-                    ):
-                        raise ReviewRefused("source_authority_changed")
-                    for path in paths:
-                        _safe(root, exclusions, path)
+                with self._report_context(context, binding):
                     return self._read_report(
                         context, binding, view, document_ref, cursor
                     )
@@ -1287,6 +1268,54 @@ class CodeReviewService:
                     self.diagnostic = "review_response_capacity_unavailable"
                     raise ReviewRefused(self.diagnostic) from exc
                 raise
+
+    @contextmanager
+    def _report_context(self, context, binding):
+        """Reauthorize retained report text before exposing it to this actor."""
+        # Reports can quote any captured source, including raw output.
+        # Policy callbacks must run outside the publication lock.
+        with self.store._tab.lock:
+            revision = context.revision
+            paths = tuple(
+                sorted(
+                    {
+                        context.source_state.documents[ref].relative_path
+                        for ref in context.sources
+                    }
+                )
+            )
+        if self.native_coordinator is not None and self.source_permission is None:
+            raise ReviewRefused("source_permission_unavailable")
+        if self.source_permission is not None:
+            for path in paths:
+                refusal = self.source_permission(
+                    "fs_read",
+                    {
+                        "root_alias": self.source_authority.admitted.alias,
+                        "path": path,
+                    },
+                )
+                if refusal:
+                    raise ReviewRefused(refusal)
+        with self._source_context(context.review_id) as (current, root, exclusions):
+            if (
+                current is not context
+                or context.revision != revision
+                or self._bound(context) != binding
+                or paths
+                != tuple(
+                    sorted(
+                        {
+                            context.source_state.documents[ref].relative_path
+                            for ref in context.sources
+                        }
+                    )
+                )
+            ):
+                raise ReviewRefused("source_authority_changed")
+            for path in paths:
+                _safe(root, exclusions, path)
+            yield context
 
     def _submit(
         self,
@@ -1367,7 +1396,7 @@ class CodeReviewService:
     ) -> SubmissionAck:
         with self.store.lease(review_id) as context:
             with self.store._tab.lock:
-                self._bound(context)
+                binding = self._bound(context)
             try:
                 ack = self._submit(
                     review_id, kind, records, expected_revision, submission_id
@@ -1375,6 +1404,9 @@ class CodeReviewService:
                 return ack
             except ReviewRefused as exc:
                 self.store.note_rejection(review_id, submission_id, exc.reason)
+                if exc.reason == "submission_conflict":
+                    with self._report_context(context, binding):
+                        pass
                 raise
 
     def _read_check_page(self, review_id, view, proposal_id, cursor):
@@ -2080,7 +2112,10 @@ class CodeReviewService:
                 attempt_id=binding.attempt_id,
                 target_digest=binding.target_digest,
                 submission_revision=stream.revision,
-                acknowledged_cursors=tuple(ledger.acknowledged_cursors),
+                # A replayed acknowledgment cannot erase unresolved repair instructions.
+                acknowledged_cursors=()
+                if stream.rejected
+                else tuple(ledger.acknowledged_cursors),
                 cursor=ledger.cursor,
                 pending_unit_ids=tuple(
                     sorted(ledger.delivered - ledger.dispositions.keys())
@@ -2095,6 +2130,14 @@ class CodeReviewService:
                     for check in context.checks.values()
                     if check.binding == binding and not check.result_read
                 ),
+                disposition_counts={
+                    verdict: sum(
+                        row["verdict"] == verdict
+                        for unit, row in ledger.dispositions.items()
+                        if unit in ledger.delivered
+                    )
+                    for verdict in ("confirmed", "refuted", "unresolved")
+                },
             )
 
     def expand_dispositions(self, review_id: str) -> tuple[dict, ...]:
@@ -2351,6 +2394,21 @@ class CodeReviewService:
                 }
                 if view == "report":
                     candidate["record"] = chunk["records"][location[1]]
+                    verifier = context.active_attempts.get("V1")
+                    if verifier is not None:
+                        from .code_review_verification import unresolved
+
+                        ledger = self.store.verification_ledger(context, verifier)
+                        unit = ledger.units.original_to_unit.get(ref)
+                        if unit is None:
+                            candidate["gap"] = "original_not_in_verification"
+                        else:
+                            candidate["disposition"] = ledger.dispositions.get(
+                                unit, unresolved(unit, "verification_incomplete")
+                            )
+                        candidate["verifier_report_status"] = self._report_envelope(
+                            context, verifier.slot_id, verifier.attempt_id
+                        )["report_status"]
             records.append(candidate)
             if not _fits(page(next_cursor=next_token), self.result_limit, capacity):
                 records.pop()

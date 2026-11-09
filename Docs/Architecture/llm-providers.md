@@ -104,6 +104,18 @@ The [OpenAI caching guide](https://developers.openai.com/api/docs/guides/prompt-
 
 Retry layers: transport retries inside handlers (idempotent POST, 429/5xx) → semantic retry honoring `Retry-After` in `Agents/model_retry` → cross-provider fallback chain (ADR-110, credit-terminal detection) at the agent layer.
 
+DeepSeek response-validator failures are terminal `ChatProviderError(status_code=None)`
+in both body and streaming paths. The Console preserves that classification and
+the host-owned validation reason; it must not turn a rejected HTTP-200 body into
+a retryable 502. Response values and tool arguments are not included in errors.
+DeepSeek `length`/`content_filter` turns may have no final text; their finish state
+and usage survive normalization. They cannot carry executable tool calls, and an
+empty turn does not itself complete or seal an agent review (TASK-39147).
+Whole-response DeepSeek tool calls may also include `index`. The adapter opts
+into the existing named-tool-metadata allowance through `hosted_chat_request`;
+normalization drops that field while retaining validated IDs, order, function
+arguments and usage. Other providers retain the default strict tool shape.
+
 ## model_capabilities
 
 `ModelCapabilities` resolves per-model facts from `[model_capabilities]`: direct `models` mappings > per-provider `patterns` regex > models.dev gap-fill (opt-in, network-free) > defaults. Explicit model/pattern rows retain precedence. When no explicit row matches an Anthropic Claude4+ family, its vision capability is overlaid on the models.dev result while preserving other metadata, such as the context window; without a catalog row the family rule supplies vision alone. Consumers: vision gating for attachments (`Chat/attachment_core`), context-window-based truncation (`Utils/token_counter`), per-provider tools payload builders, and thinking configuration (Anthropic enabled/disabled/adaptive budgets vs effort-style shapes; thinking budgets auto-grow `max_tokens` when needed; per-family predicates for moonshot/zai/deepseek too).
