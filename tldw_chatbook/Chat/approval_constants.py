@@ -90,7 +90,7 @@ _APPROVING_DECISIONS: tuple[str, ...] = (
 
 APPROVAL_OPTIONS = (
     ("Once", "approve_once"),
-    ("This session", "approve_session"),
+    ("Until Chatbook exits", "approve_session"),
     ("Always · these args", "allow_matching"),
     ("Always", "always_allow"),
     ("Deny", "deny"),

@@ -3,7 +3,7 @@
 (() => {
   const API_BASE = "/api/v1/mobile";
   // Native approval_review.APPROVAL_OPTIONS labels; values travel unchanged.
-  const APPROVAL_LABELS = {approve_once: "Once", approve_session: "This session", allow_matching: "Always · these args", always_allow: "Always", deny: "Deny"};
+  const APPROVAL_LABELS = {approve_once: "Once", approve_session: "Until Chatbook exits", allow_matching: "Always · these args", always_allow: "Always", deny: "Deny"};
   const $ = (id) => document.getElementById(id);
   const csrfToken = document.querySelector('meta[name="chatbook-csrf"]').content;
   const els = {

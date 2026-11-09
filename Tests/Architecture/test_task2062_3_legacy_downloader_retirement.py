@@ -196,6 +196,7 @@ def test_llamacpp_and_llamafile_external_gguf_controls_remain() -> None:
         assert fragment in source
 
 
+@pytest.mark.bootstrap_profile
 def test_remote_acquisition_and_hugging_face_inference_owners_remain() -> None:
     """Preserve managed remote acquisition and Hugging Face inference owners."""
     remote_view = importlib.import_module("tldw_chatbook.UI.Screens.model_remote_view")

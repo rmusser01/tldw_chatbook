@@ -620,16 +620,16 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
             case.console.query_one("#console-send-message", Button).press()
             await _until_set(case.helper_entered, "the /omfg helper's request")
             await case.pilot.pause()
-            await _until(
-                lambda: case.console._console_attach_reconciled
-                and not case.console._console_control_bar_sync_scheduled,
-                "the attach reconcile and its control-bar sync",
-                lambda: case.pilot.pause(0.01),
-            )
-            # Attach readiness precedes its queued full-refresh callback.
-            refreshed = asyncio.Event()
-            case.console.call_after_refresh(refreshed.set)
-            await _until_set(refreshed, "the attach's queued full refresh")
+            async with asyncio.timeout(2):
+                while (
+                    not case.console._console_attach_reconciled
+                    or case.console._console_control_bar_sync_scheduled
+                ):
+                    await asyncio.sleep(0.01)
+                # Attach readiness precedes its queued full-refresh callback.
+                refreshed = asyncio.Event()
+                case.console.call_after_refresh(refreshed.set)
+                await refreshed.wait()
             assert case.console._console_credential_poll_timer is not None
             source = case.rules._sources[case.session_id]
             assert case.rules.acceptance_current(source)

@@ -1008,6 +1008,8 @@ MINIMUM_FILES = 2200
 
 # PR3345 approved upstream retirement retains 2095 survivors plus five incoming cases.
 MINIMUM_FILES = 2100
+# Retain the seven incoming dev entries after the exact 2,100-entry prefix.
+MINIMUM_FILES = 2107
 
 
 def read_census(path: Path) -> list[str]:
