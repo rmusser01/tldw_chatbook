@@ -70,6 +70,7 @@ def deep_env(monkeypatch):
     yield
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_happy_path(deep_env):
     out = web_deep_search("what is love")
     assert "Deep answer [1]." in out
@@ -77,6 +78,7 @@ def test_deep_search_happy_path(deep_env):
     assert "Confidence: 0.78" in out and "Engine: google" in out
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_footer_reads_current_tool_global(deep_env, monkeypatch):
     seen = []
 
@@ -117,6 +119,7 @@ def test_deep_search_no_relevance_llm_fails_before_spend(deep_env, monkeypatch):
     assert calls["n"] == 0  # nothing spent
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_runs_inside_running_event_loop(deep_env):
     async def call_from_loop():
         return web_deep_search("what is love")
@@ -135,6 +138,7 @@ def test_deep_search_invalid_question(deep_env):
         web_deep_search("   ")
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_zero_results_after_search(deep_env, monkeypatch):
     empty_phase1 = {
         "web_search_results_dict": {
@@ -150,6 +154,7 @@ def test_deep_search_zero_results_after_search(deep_env, monkeypatch):
         web_deep_search("q")
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_zero_relevant_is_not_an_error(deep_env, monkeypatch):
     async def fake_aa_none(wsr, sqd, params, cancel_event=None):
         return {
@@ -175,6 +180,7 @@ def test_deep_search_zero_relevant_is_not_an_error(deep_env, monkeypatch):
     assert "Engine: exa (call override)" in oversized
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_deadline_sets_cancel_event(deep_env, monkeypatch):
     observed = {}
 
@@ -197,6 +203,7 @@ def test_deep_search_deadline_sets_cancel_event(deep_env, monkeypatch):
     assert "deadline" in out.lower()
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_answer_byte_capped(deep_env, monkeypatch):
     huge_text = "x" * (web_tool_impls.DEEP_SEARCH_ANSWER_MAX_BYTES + 5000)
 
@@ -218,6 +225,7 @@ def test_deep_search_answer_byte_capped(deep_env, monkeypatch):
     assert "truncated" in out
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_sources_capped_at_max(deep_env, monkeypatch):
     evidence = [
         {"id": i, "url": f"https://e.com/{i}", "title": f"T{i}"}
@@ -238,6 +246,7 @@ def test_deep_search_sources_capped_at_max(deep_env, monkeypatch):
     assert f"[{web_tool_impls.DEEP_SEARCH_SOURCES_MAX + 1}]" not in out
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_footer_fallback_note(deep_env, monkeypatch):
     # "fallback" is a DISTINCT field from "generated" (final review, Important
     # 1): "generated" just means "an LLM produced this summary" -- it is NOT
@@ -294,6 +303,7 @@ _REL_MULTI_CHUNK = {
 }
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_footer_no_fallback_mention_for_healthy_single_chunk_run(
     deep_env, monkeypatch
 ):
@@ -321,6 +331,7 @@ def test_deep_search_footer_no_fallback_mention_for_healthy_single_chunk_run(
     assert "fallback" not in out.lower()
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_footer_counts_exactly_failed_chunks_as_fallback(
     deep_env, monkeypatch
 ):
@@ -360,6 +371,7 @@ def test_deep_search_footer_counts_exactly_failed_chunks_as_fallback(
     assert "1 chunk(s) used a fallback summary" in out
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_footer_warning_note(deep_env, monkeypatch):
     phase1_with_warnings = {
         "web_search_results_dict": {
@@ -375,6 +387,7 @@ def test_deep_search_footer_warning_note(deep_env, monkeypatch):
     assert "warning" in out.lower()
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_footer_surfaces_subquery_generation_failure_warning(
     deep_env, monkeypatch
 ):
@@ -406,6 +419,7 @@ def test_deep_search_footer_surfaces_subquery_generation_failure_warning(
     )  # counted through, like any other provider warning
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_phase1_exception_wrapped(deep_env, monkeypatch):
     def boom(q, p):
         raise RuntimeError("provider exploded")
@@ -417,6 +431,7 @@ def test_deep_search_phase1_exception_wrapped(deep_env, monkeypatch):
         web_deep_search("q")
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_phase2_exception_wrapped(deep_env, monkeypatch):
     async def boom(wsr, sqd, params, cancel_event=None):
         raise RuntimeError("analysis exploded")
@@ -426,6 +441,7 @@ def test_deep_search_phase2_exception_wrapped(deep_env, monkeypatch):
         web_deep_search("q")
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_places_timeouts_into_search_params(deep_env, monkeypatch):
     """CRITICAL handoff: the pipeline reads relevance_llm_timeout_s /
     relevance_scrape_timeout_s from search_params -- the tool must place the
@@ -481,6 +497,7 @@ def test_deep_search_places_respect_robots_txt_false_into_search_params(
     assert seen["search_params"].get("respect_robots_txt") is False
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_places_max_queries_cap_into_search_params(deep_env, monkeypatch):
     """Important 2 (final review): search_default_max_queries is already
     resolved by _deep_search_settings() but was never handed to the
@@ -497,6 +514,7 @@ def test_deep_search_places_max_queries_cap_into_search_params(deep_env, monkeyp
     assert seen["search_params"].get("search_default_max_queries") == 5
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_places_phase1_time_budget_into_search_params(
     deep_env, monkeypatch
 ):
@@ -520,6 +538,7 @@ def test_deep_search_places_phase1_time_budget_into_search_params(
 # --- Fix-round: deadline-before-first-relevant honesty (CRITICAL) -----------
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_deadline_before_first_relevant_is_honest(deep_env, monkeypatch):
     """A watchdog firing before ANY result is scored must not report
     "Analyzed 40 result(s)" (zero were analyzed) or advise rephrasing (the
@@ -622,6 +641,7 @@ def test_deep_search_invalid_config_engine_default_names_config_key(
     assert "search_provider_default" in msg
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_malformed_phase1_result_is_structured_error(deep_env, monkeypatch):
     monkeypatch.setattr(
         WebSearch_APIs, "generate_and_search", lambda q, p: {"oops": True}
@@ -630,6 +650,7 @@ def test_deep_search_malformed_phase1_result_is_structured_error(deep_env, monke
         web_deep_search("q")
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_non_numeric_confidence_does_not_crash(deep_env, monkeypatch):
     async def fake_aa_bad_confidence(wsr, sqd, params, cancel_event=None):
         final = dict(_FINAL, confidence="high")
@@ -644,6 +665,7 @@ def test_deep_search_non_numeric_confidence_does_not_crash(deep_env, monkeypatch
     assert "Confidence: 0.00" in out
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_footer_uses_relevant_scored_wording(deep_env):
     out = web_deep_search("what is love")
     assert "Relevant: 1 of 1 scored" in out
@@ -655,6 +677,7 @@ def test_deep_search_footer_uses_relevant_scored_wording(deep_env):
 # --- Fix round 2: N4 -- a genuine TOTAL budget (answer + sources + footer) --
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_sources_block_is_byte_capped(deep_env, monkeypatch):
     """A genuinely large answer (consuming essentially the whole answer
     cap) PLUS 20 long-titled sources: exercises the real total-budget
@@ -693,6 +716,7 @@ def test_deep_search_sources_block_is_byte_capped(deep_env, monkeypatch):
     assert "truncated" in out.lower()  # the answer was genuinely capped
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_sources_omission_marker_when_budget_exceeded(
     deep_env, monkeypatch
 ):
@@ -730,6 +754,7 @@ def test_deep_search_sources_omission_marker_when_budget_exceeded(
     assert "[1]" in out  # at least the first (newest-relevance) source made it in
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_sources_url_truncated(deep_env, monkeypatch):
     """A pathologically long URL alone (short title, tiny answer -- plenty
     of budget otherwise) must still be truncated per-line (~500B, new in
@@ -752,6 +777,7 @@ def test_deep_search_sources_url_truncated(deep_env, monkeypatch):
     assert "[1] T" in out
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_sources_count_cap_marker(deep_env, monkeypatch):
     """More evidence than DEEP_SEARCH_SOURCES_MAX allows even considering
     must leave an honest count-cap marker -- distinct from the size-cap
@@ -781,6 +807,7 @@ def test_deep_search_sources_count_cap_marker(deep_env, monkeypatch):
     assert "5" in out  # exactly 5 were dropped by the count cap
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_sources_single_oversized_line_still_emits_marker(
     deep_env, monkeypatch
 ):
@@ -815,6 +842,7 @@ def test_deep_search_sources_single_oversized_line_still_emits_marker(
 # --- Fix-round: backstop must hold even when a pipeline call blocks the loop
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_backstop_holds_when_pipeline_blocks_the_loop(
     deep_env, monkeypatch
 ):
@@ -860,6 +888,8 @@ def test_deep_search_empty_string_provider_still_blocks_spend(tmp_path, monkeypa
     default and let a probe call a provider the user never named. Uses the
     real config-loading seam (no wholesale _deep_search_settings monkeypatch)
     so this exercises _str()'s actual coercion, not a test double of it."""
+    from Tests.Backup_Recovery.config_test_support import select_config_source
+
     config_path = tmp_path / "config.toml"
     config_path.write_text(
         "[general]\nusers_name = 'test'\n"
@@ -867,7 +897,8 @@ def test_deep_search_empty_string_provider_still_blocks_spend(tmp_path, monkeypa
         'relevance_analysis_llm = ""\n',
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_path.chmod(0o600)
+    select_config_source(monkeypatch, config_path)
 
     calls = {"n": 0}
 
@@ -885,6 +916,7 @@ def test_deep_search_empty_string_provider_still_blocks_spend(tmp_path, monkeypa
 # --- Fix round 2: N2 -- deadline message must not claim an unknowable count
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_deadline_message_makes_no_scored_count_claim(
     deep_env, monkeypatch
 ):
@@ -927,6 +959,7 @@ def test_deep_search_deadline_message_makes_no_scored_count_claim(
     assert "rephrasing may help" in out.lower()
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_footer_deadline_note_says_may_be_incomplete(deep_env, monkeypatch):
     """A run whose watchdog fires while a call is STILL genuinely in
     progress, yet the call still goes on to complete fully and
@@ -956,6 +989,7 @@ def test_deep_search_footer_deadline_note_says_may_be_incomplete(deep_env, monke
     assert "deadline reached" in out.lower() and "may be incomplete" in out.lower()
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_footer_discloses_gate_fallback(deep_env, monkeypatch):
     final_answer = dict(_FINAL)
     final_answer["gate"] = {"relevant": 3, "raw": 5, "fallback": True}
@@ -987,6 +1021,7 @@ def test_deep_search_footer_discloses_gate_fallback(deep_env, monkeypatch):
 # --- shared pipeline param assembly (task-16484) ----------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_pipeline_params_shape_and_overrides():
     from tldw_chatbook.Tools.web_tool_impls import deep_search_pipeline_params
 

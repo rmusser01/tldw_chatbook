@@ -188,6 +188,7 @@ def _html_page(html: str = _ARTICLE_HTML) -> httpx.Response:
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_extracts_text(fetch_env):
     fetch_env.routes["http://example.com/page"] = _html_page()
     result = web_fetch("http://example.com/page")
@@ -197,6 +198,7 @@ def test_fetch_extracts_text(fetch_env):
     assert fetch_env.calls == ["http://example.com/page"]
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_validates_each_redirect_hop(fetch_env):
     fetch_env.routes["http://example.com/start"] = httpx.Response(
         302, headers={"location": "http://169.254.169.254/latest/meta-data"}
@@ -207,6 +209,7 @@ def test_fetch_validates_each_redirect_hop(fetch_env):
     assert fetch_env.calls == ["http://example.com/start"]
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_redirect_cap(fetch_env):
     # FETCH_MAX_REDIRECTS + 1 chained redirects -> every hop is a redirect.
     for i in range(FETCH_MAX_REDIRECTS + 1):
@@ -218,6 +221,7 @@ def test_fetch_redirect_cap(fetch_env):
     assert len(fetch_env.calls) == FETCH_MAX_REDIRECTS + 1
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_byte_cap_sets_truncated(fetch_env):
     body = b"x" * (FETCH_MAX_BYTES + 5000)
     fetch_env.routes["http://example.com/big"] = _text_page(body)
@@ -226,6 +230,7 @@ def test_fetch_byte_cap_sets_truncated(fetch_env):
     assert len(result) <= FETCH_MAX_BYTES + 200  # body capped + short marker
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_rate_limits_per_domain(fetch_env):
     fetch_env.routes["http://example.com/a"] = _text_page(b"page a")
     fetch_env.routes["http://example.com/b"] = _text_page(b"page b")
@@ -236,6 +241,7 @@ def test_fetch_rate_limits_per_domain(fetch_env):
     assert fetch_env.clock.sleeps == [pytest.approx(0.8)]
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_rate_limited_raises_when_clock_frozen(fetch_env):
     fetch_env.routes["http://example.com/a"] = _text_page(b"page a")
     fetch_env.routes["http://example.com/b"] = _text_page(b"page b")
@@ -247,6 +253,7 @@ def test_fetch_rate_limited_raises_when_clock_frozen(fetch_env):
         web_fetch("http://example.com/b")
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_caches_within_ttl(fetch_env):
     fetch_env.routes["http://example.com/page"] = _text_page(b"cached page")
     first = web_fetch("http://example.com/page")
@@ -255,18 +262,21 @@ def test_fetch_caches_within_ttl(fetch_env):
     assert fetch_env.calls == ["http://example.com/page"]  # transport hit once
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_http_error_status(fetch_env):
     fetch_env.routes["http://example.com/missing"] = _text_page(b"nope", status=404)
     with pytest.raises(LocalToolError, match="http-404"):
         web_fetch("http://example.com/missing")
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_timeout(fetch_env):
     fetch_env.routes["http://example.com/slow"] = httpx.ReadTimeout("too slow")
     with pytest.raises(LocalToolError, match="timeout"):
         web_fetch("http://example.com/slow")
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_invalid_url(fetch_env):
     with pytest.raises(LocalToolError, match="invalid-url"):
         web_fetch("ftp://example.com/x")
@@ -326,6 +336,7 @@ def test_rejects_port_out_of_range():
         validate_outbound_url("http://example.com:99999/")
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_rejects_bad_port(fetch_env):
     with pytest.raises(LocalToolError, match="invalid-url"):
         web_fetch("http://example.com:99999/")
@@ -338,6 +349,7 @@ def test_fetch_rejects_garbage_max_bytes(fetch_env):
         web_fetch("http://example.com/page", max_bytes="10MB")
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_client_disables_trust_env(fetch_env, monkeypatch):
     # With HTTP(S)_PROXY set, trust_env=True would let the proxy do its own
     # DNS and connect anywhere, bypassing the guard. The client must opt out.
@@ -356,6 +368,7 @@ def test_fetch_client_disables_trust_env(fetch_env, monkeypatch):
     assert captured.get("trust_env") is False
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_httpx_invalid_url_becomes_local_tool_error(fetch_env):
     # \x7f in the path passes urlsplit and the guard, but httpx's stricter
     # parser rejects it with httpx.InvalidURL — NOT an HTTPError subclass,
@@ -364,6 +377,7 @@ def test_fetch_httpx_invalid_url_becomes_local_tool_error(fetch_env):
         web_fetch("http://example.com/\x7f")
 
 
+@pytest.mark.bootstrap_profile
 def test_cache_keyed_by_max_bytes(fetch_env):
     """A small-cap fetch must not poison a later full-cap fetch (spec §1)."""
     body = b"y" * 600
@@ -377,6 +391,7 @@ def test_cache_keyed_by_max_bytes(fetch_env):
     assert fetch_env.calls.count("http://example.com/sized") == 2
 
 
+@pytest.mark.bootstrap_profile
 def test_cache_entry_cap_evicts_earliest_expiry(fetch_env):
     from tldw_chatbook.Tools.web_tool_impls import FETCH_CACHE_MAX_ENTRIES
 
@@ -428,6 +443,7 @@ def _pdf_response(body: bytes, content_type: str = "application/pdf") -> httpx.R
     return httpx.Response(200, content=body, headers=headers)
 
 
+@pytest.mark.bootstrap_profile
 @requires_pymupdf
 def test_fetch_extracts_pdf_text(fetch_env):
     body = _make_pdf(["alpha page one text", "beta page two text"])
@@ -437,6 +453,7 @@ def test_fetch_extracts_pdf_text(fetch_env):
     assert "beta page two text" in result
 
 
+@pytest.mark.bootstrap_profile
 @requires_pymupdf
 def test_fetch_pdf_sniff_beats_mislabeled_content_type(fetch_env):
     body = _make_pdf(["sniffed content"])
@@ -447,6 +464,7 @@ def test_fetch_pdf_sniff_beats_mislabeled_content_type(fetch_env):
         assert "sniffed content" in result, f"failed for content-type {ctype!r}"
 
 
+@pytest.mark.bootstrap_profile
 @requires_pymupdf
 def test_fetch_pdf_reads_past_html_cap(fetch_env):
     """Mid-stream cap raise: a >max_bytes PDF must be read in full (spec §1)."""
@@ -458,6 +476,7 @@ def test_fetch_pdf_reads_past_html_cap(fetch_env):
     assert "page 0" in result  # parsed => the full byte stream was read
 
 
+@pytest.mark.bootstrap_profile
 @requires_pymupdf
 def test_fetch_pdf_over_ceiling_refused(fetch_env, monkeypatch):
     monkeypatch.setattr(web_tool_impls, "PDF_MAX_BYTES", 1024)
@@ -468,6 +487,7 @@ def test_fetch_pdf_over_ceiling_refused(fetch_env, monkeypatch):
         web_fetch("http://example.com/huge.pdf")
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_pdf_too_large_message_reflects_configured_ceiling(
     fetch_env, monkeypatch
 ):
@@ -490,6 +510,7 @@ def test_fetch_pdf_too_large_message_reflects_configured_ceiling(
         web_fetch("http://example.com/huge3.pdf")
 
 
+@pytest.mark.bootstrap_profile
 @requires_pymupdf
 def test_fetch_pdf_extracted_text_truncated_with_page_count(fetch_env):
     body = _make_pdf([f"page {i} " + "words " * 200 for i in range(30)])
@@ -501,6 +522,7 @@ def test_fetch_pdf_extracted_text_truncated_with_page_count(fetch_env):
     assert "processed 30 of 30" not in result
 
 
+@pytest.mark.bootstrap_profile
 @requires_pymupdf
 def test_fetch_pdf_encrypted_refused(fetch_env):
     doc = pymupdf.open()
@@ -512,6 +534,7 @@ def test_fetch_pdf_encrypted_refused(fetch_env):
         web_fetch("http://example.com/locked.pdf")
 
 
+@pytest.mark.bootstrap_profile
 @requires_pymupdf
 def test_fetch_pdf_textless_points_at_ocr(fetch_env):
     doc = pymupdf.open()
@@ -523,6 +546,7 @@ def test_fetch_pdf_textless_points_at_ocr(fetch_env):
         web_fetch("http://example.com/scan.pdf")
 
 
+@pytest.mark.bootstrap_profile
 @requires_pymupdf
 def test_fetch_pdf_damaged_bytes_error(fetch_env):
     # pymupdf is sometimes lenient with garbage after a valid header: it may
@@ -535,6 +559,7 @@ def test_fetch_pdf_damaged_bytes_error(fetch_env):
         web_fetch("http://example.com/junk.pdf")
 
 
+@pytest.mark.bootstrap_profile
 @requires_pymupdf
 def test_fetch_pdf_missing_dep_message(fetch_env, monkeypatch):
     import builtins
@@ -552,6 +577,7 @@ def test_fetch_pdf_missing_dep_message(fetch_env, monkeypatch):
         web_fetch("http://example.com/doc.pdf")
 
 
+@pytest.mark.bootstrap_profile
 def test_pymupdf_available_spec_less_stub_returns_false_not_valueerror(
     fetch_env, monkeypatch
 ):
@@ -567,6 +593,7 @@ def test_pymupdf_available_spec_less_stub_returns_false_not_valueerror(
         web_fetch("http://example.com/doc.pdf")
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_pdf_missing_dep_skips_20mb_download(fetch_env, monkeypatch):
     """When pymupdf is absent, web_fetch must decide that BEFORE opening the
     20 MB PDF read ceiling: pass pdf_max_bytes=None so the stream aborts at
@@ -593,6 +620,7 @@ def test_fetch_pdf_missing_dep_skips_20mb_download(fetch_env, monkeypatch):
         web_fetch("http://example.com/huge.pdf")
 
 
+@pytest.mark.bootstrap_profile
 @requires_pymupdf
 def test_fetch_pdf_result_is_cached(fetch_env):
     body = _make_pdf(["cache me"])
@@ -603,6 +631,7 @@ def test_fetch_pdf_result_is_cached(fetch_env):
     assert fetch_env.calls.count("http://example.com/doc.pdf") == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_html_types_unaffected(fetch_env):
     """Regression guard: ordinary HTML still goes through trafilatura/tag-strip."""
     fetch_env.routes["http://example.com/page"] = _html_page()
@@ -616,6 +645,7 @@ def test_fetch_html_types_unaffected(fetch_env):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @requires_pymupdf
 def test_fetch_pdf_dribbled_one_byte_at_a_time_still_sniffed(fetch_env):
     """Spec §1: 'The sniff buffers until at least 5 body bytes have
@@ -633,6 +663,7 @@ def test_fetch_pdf_dribbled_one_byte_at_a_time_still_sniffed(fetch_env):
     assert "dribbled content" in result
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_short_body_under_pdf_magic_length_extracts_as_text(fetch_env):
     """A body shorter than the 12-byte sniff window must fall through
     _fetch_once's post-loop fallback sniff (`kind` never resolves inside
@@ -663,6 +694,7 @@ def _enable_robots(monkeypatch, respect: bool = True) -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_robots_disallowed_path_refused(fetch_env, monkeypatch):
     _enable_robots(monkeypatch)
     fetch_env.routes["http://example.com/robots.txt"] = _text_page(
@@ -679,6 +711,7 @@ def test_fetch_robots_disallowed_path_refused(fetch_env, monkeypatch):
     )  # blocked before the hop
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_robots_allowed_path_proceeds(fetch_env, monkeypatch):
     _enable_robots(monkeypatch)
     fetch_env.routes["http://example.com/robots.txt"] = _text_page(
@@ -688,6 +721,7 @@ def test_fetch_robots_allowed_path_proceeds(fetch_env, monkeypatch):
     assert web_fetch("http://example.com/public") == "hello public"
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_robots_specific_ua_beats_wildcard(fetch_env, monkeypatch):
     """Fixture-authoring caveat (design doc Minor 6): stdlib RobotFileParser
     is first-match-wins in FILE order, not longest-path -- irrelevant here
@@ -712,6 +746,7 @@ def test_fetch_robots_specific_ua_beats_wildcard(fetch_env, monkeypatch):
     assert web_fetch("http://example.com/forbidden") == "actually ours"
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_robots_missing_route_fails_open(fetch_env, monkeypatch):
     _enable_robots(monkeypatch)
     fetch_env.routes["http://example.com/page"] = _text_page(b"hello")
@@ -719,6 +754,7 @@ def test_fetch_robots_missing_route_fails_open(fetch_env, monkeypatch):
     assert web_fetch("http://example.com/page") == "hello"
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_robots_500_fails_open(fetch_env, monkeypatch):
     _enable_robots(monkeypatch)
     fetch_env.routes["http://example.com/robots.txt"] = httpx.Response(500)
@@ -726,6 +762,7 @@ def test_fetch_robots_500_fails_open(fetch_env, monkeypatch):
     assert web_fetch("http://example.com/page") == "hello"
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_robots_garbage_body_fails_open(fetch_env, monkeypatch):
     _enable_robots(monkeypatch)
     fetch_env.routes["http://example.com/robots.txt"] = _text_page(
@@ -735,6 +772,7 @@ def test_fetch_robots_garbage_body_fails_open(fetch_env, monkeypatch):
     assert web_fetch("http://example.com/page") == "hello"
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_robots_truncated_body_fails_open(fetch_env, monkeypatch):
     """A body truncated at ROBOTS_MAX_BYTES must not be trusted (design doc
     Minor 7): a half-file could silently drop trailing Disallow lines. This
@@ -751,6 +789,7 @@ def test_fetch_robots_truncated_body_fails_open(fetch_env, monkeypatch):
     assert web_fetch("http://example.com/page") == "hello"
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_robots_cache_not_refetched_on_second_request(fetch_env, monkeypatch):
     _enable_robots(monkeypatch)
     fetch_env.routes["http://example.com/robots.txt"] = _text_page(
@@ -767,6 +806,7 @@ def test_fetch_robots_cache_not_refetched_on_second_request(fetch_env, monkeypat
     )  # cached, no re-fetch
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_robots_cache_ttl_expiry_refetches(fetch_env, monkeypatch):
     _enable_robots(monkeypatch)
     fetch_env.routes["http://example.com/robots.txt"] = _text_page(
@@ -783,6 +823,7 @@ def test_fetch_robots_cache_ttl_expiry_refetches(fetch_env, monkeypatch):
     )  # TTL expired, re-fetched
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_robots_negative_cache_holds_for_ttl(fetch_env, monkeypatch):
     _enable_robots(monkeypatch)
     # No robots.txt route registered: the fetch fails (KeyError inside the
@@ -799,6 +840,7 @@ def test_fetch_robots_negative_cache_holds_for_ttl(fetch_env, monkeypatch):
     )  # negative cache held
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_robots_redirect_into_disallowed_path_refused_mid_chain(
     fetch_env, monkeypatch
 ):
@@ -816,6 +858,7 @@ def test_fetch_robots_redirect_into_disallowed_path_refused_mid_chain(
     )  # blocked before the hop
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_robots_toggle_off_makes_no_robots_fetch(fetch_env):
     # fetch_env's own fixture default is respect_robots_txt=False; this
     # test proves a PRESENT, disallowing robots.txt is never even fetched
@@ -828,6 +871,7 @@ def test_fetch_robots_toggle_off_makes_no_robots_fetch(fetch_env):
     assert "http://example.com/robots.txt" not in fetch_env.calls
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_robots_cache_hit_rechecks_and_refuses(fetch_env, monkeypatch):
     """Ruling 3: a cache-hit web_fetch re-checks robots the same way it
     re-checks SSRF policy -- a cached body plus a newly-disallowing
@@ -853,6 +897,7 @@ def test_fetch_robots_cache_hit_rechecks_and_refuses(fetch_env, monkeypatch):
     assert fetch_env.calls.count("http://example.com/page") == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_robots_txt_fetch_is_itself_rate_limited(fetch_env, monkeypatch):
     """Ruling 5: the robots.txt fetch goes through the same per-domain rate
     limiter as any other request -- two back-to-back rate-limited requests
@@ -871,6 +916,7 @@ def test_fetch_robots_txt_fetch_is_itself_rate_limited(fetch_env, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_robots_txt_redirect_is_followed_and_enforced(fetch_env, monkeypatch):
     """Important 1: a redirecting robots.txt (e.g. HTTP canonicalization)
     must be FOLLOWED, not treated as an unreachable fetch -- the latter
@@ -892,6 +938,7 @@ def test_fetch_robots_txt_redirect_is_followed_and_enforced(fetch_env, monkeypat
     assert "http://example.com/static/robots.txt" in fetch_env.calls
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_robots_txt_redirect_loop_exhausts_cap_and_fails_open(
     fetch_env, monkeypatch
 ):
@@ -910,7 +957,21 @@ def test_fetch_robots_txt_redirect_loop_exhausts_cap_and_fails_open(
     assert web_fetch("http://example.com/page") == "hello"
 
 
-def test_webfetch_settings_defaults_to_true_with_no_config_override():
+@pytest.fixture
+def webfetch_config_without_override(tmp_path, monkeypatch):
+    from Tests.Backup_Recovery.config_test_support import select_config_source
+    from tldw_chatbook.Utils import tls_trust
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[general]\nusers_name = 'test'\n", encoding="utf-8")
+    config_path.chmod(0o600)
+    source = select_config_source(monkeypatch, config_path, vars(tls_trust))
+    assert source.get_cli_setting("webfetch", "respect_robots_txt", None) is None
+
+
+def test_webfetch_settings_defaults_to_true_with_no_config_override(
+    webfetch_config_without_override,
+):
     """Important 2a: _webfetch_settings() itself is otherwise exercised by
     ZERO tests -- every fixture/helper in this file replaces the whole
     seam, so a section-name typo or a flipped default in the real function
@@ -951,7 +1012,7 @@ def test_webfetch_settings_raw_string_true_uppercase_stays_enabled(monkeypatch):
 
 
 @pytest.fixture
-def fetch_env_default_settings(monkeypatch):
+def fetch_env_default_settings(monkeypatch, webfetch_config_without_override):
     """Like fetch_env, but deliberately does NOT monkeypatch
     _webfetch_settings -- used for the one composition test (Important 2d)
     that proves the REAL, unpatched settings seam defaults robots
@@ -1009,6 +1070,7 @@ def test_webfetch_default_on_end_to_end_refuses_without_patching_seam(
 _IPV6_LITERAL = "2606:4700::1111"
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_robots_ipv6_literal_host_disallowed_refused(fetch_env, monkeypatch):
     """Qodo finding: urlsplit(...).hostname strips the [...] brackets an
     IPv6 literal needs in a URL. Without re-bracketing it for the
@@ -1029,6 +1091,7 @@ def test_fetch_robots_ipv6_literal_host_disallowed_refused(fetch_env, monkeypatc
     assert f"http://[{_IPV6_LITERAL}]/robots.txt" in fetch_env.calls
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_robots_ipv6_literal_host_allowed_proceeds(fetch_env, monkeypatch):
     """Control for the test above: an ALLOWING robots.txt on the same
     IPv6-literal host must let the fetch proceed normally."""
@@ -1115,6 +1178,7 @@ def _binary_response(body: bytes, content_type: str) -> httpx.Response:
 # --- images -----------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_png_returns_image_metadata(fetch_env):
     fetch_env.routes["http://example.com/pic.png"] = _binary_response(
         _png_bytes((16, 32)), "image/png"
@@ -1123,6 +1187,7 @@ def test_fetch_png_returns_image_metadata(fetch_env):
     assert result.startswith("[image] PNG 16×32,")
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_jpeg_returns_image_metadata(fetch_env):
     fetch_env.routes["http://example.com/pic.jpg"] = _binary_response(
         _jpeg_bytes((40, 20)), "image/jpeg"
@@ -1131,6 +1196,7 @@ def test_fetch_jpeg_returns_image_metadata(fetch_env):
     assert result.startswith("[image] JPEG 40×20,")
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_corrupt_image_bytes_refused(fetch_env):
     body = b"\x89PNG\r\n\x1a\n" + b"not a real png payload, just garbage bytes"
     fetch_env.routes["http://example.com/bad.png"] = _binary_response(body, "image/png")
@@ -1138,6 +1204,7 @@ def test_fetch_corrupt_image_bytes_refused(fetch_env):
         web_fetch("http://example.com/bad.png")
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_png_sniff_beats_mislabeled_html_content_type(fetch_env):
     """PNG served with a wrong declared type: the sniff wins over the
     declared type (design doc ruling 3), same shape as the PDF precedent."""
@@ -1148,6 +1215,7 @@ def test_fetch_png_sniff_beats_mislabeled_html_content_type(fetch_env):
     assert result.startswith("[image] PNG 5×5,")
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_image_over_binary_ceiling_refused(fetch_env, monkeypatch):
     monkeypatch.setattr(web_tool_impls, "BINARY_MAX_BYTES", 100)
     body = b"\x89PNG\r\n\x1a\n" + b"x" * 500
@@ -1158,6 +1226,7 @@ def test_fetch_image_over_binary_ceiling_refused(fetch_env, monkeypatch):
         web_fetch("http://example.com/huge.png")
 
 
+@pytest.mark.bootstrap_profile
 @requires_webp
 def test_fetch_webp_dribbled_one_byte_at_a_time_still_sniffed(fetch_env):
     """The 12-byte WEBP two-anchor magic (RIFF....WEBP, size field at [4:8]
@@ -1177,6 +1246,7 @@ def test_fetch_webp_dribbled_one_byte_at_a_time_still_sniffed(fetch_env):
 # --- sniff robustness ---------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_body_shorter_than_sniff_window_still_extracts_as_text(fetch_env):
     """A body shorter than the 12-byte sniff prefix but LONGER than the old
     5-byte %PDF- magic must not crash the WEBP two-anchor index (body[8:12])
@@ -1194,6 +1264,7 @@ def test_fetch_body_shorter_than_sniff_window_still_extracts_as_text(fetch_env):
 # --- ZIP archives -------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_zip_lists_members_with_sizes(fetch_env):
     body = _zip_bytes({"readme.txt": b"hello", "data/nested.bin": b"12345678"})
     fetch_env.routes["http://example.com/archive.zip"] = _binary_response(
@@ -1206,6 +1277,7 @@ def test_fetch_zip_lists_members_with_sizes(fetch_env):
     assert "data/nested.bin —" in result
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_zip_over_list_max_shows_more_marker(fetch_env):
     members = {f"file{i}.txt": b"x" for i in range(25)}
     body = _zip_bytes(members)
@@ -1219,6 +1291,7 @@ def test_fetch_zip_over_list_max_shows_more_marker(fetch_env):
     assert result.count("file") == web_tool_impls.ARCHIVE_LIST_MAX
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_zip_hostile_member_names_flagged_not_verbatim(fetch_env):
     """Traversal screen (design doc ruling 2, mirrors
     chatbook_importer._validated_archive_parts): every shape of hostile
@@ -1269,6 +1342,7 @@ def test_member_display_name_flags_all_hostile_shapes():
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_zip_encrypted_member_annotated_not_refused(fetch_env):
     """Encryption blocks only a member's own .read() -- infolist() works
     fine, so an encrypted-but-well-formed ZIP lists successfully with an
@@ -1284,6 +1358,7 @@ def test_fetch_zip_encrypted_member_annotated_not_refused(fetch_env):
     assert "(encrypted)" in result
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_zip_corrupt_bytes_refused(fetch_env):
     body = b"PK\x03\x04" + b"not a real zip structure at all, just garbage padding"
     fetch_env.routes["http://example.com/broken.zip"] = _binary_response(
@@ -1293,6 +1368,7 @@ def test_fetch_zip_corrupt_bytes_refused(fetch_env):
         web_fetch("http://example.com/broken.zip")
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_zip_sniff_beats_octet_stream_content_type(fetch_env):
     body = _zip_bytes({"a.txt": b"hi"})
     fetch_env.routes["http://example.com/download"] = _binary_response(
@@ -1306,6 +1382,7 @@ def test_fetch_zip_sniff_beats_octet_stream_content_type(fetch_env):
 # --- audio ---------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_audio_returns_metadata_line(fetch_env):
     fetch_env.routes["http://example.com/song.mp3"] = _binary_response(
         b"ID3 fake mp3 payload bytes", "audio/mpeg"
@@ -1314,6 +1391,7 @@ def test_fetch_audio_returns_metadata_line(fetch_env):
     assert result.startswith("[audio] audio/mpeg,")
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_audio_accepts_nonstandard_subtype_variants(fetch_env):
     """Audio has no sniff to rescue mislabels -- declared TOP-LEVEL type
     only (design doc ruling 2), so real-world variants like audio/mp3 and
@@ -1332,6 +1410,7 @@ def test_fetch_audio_accepts_nonstandard_subtype_variants(fetch_env):
 # --- regression pin: unsupported binary types unchanged -------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_unsupported_binary_type_still_refused(fetch_env):
     """Regression pin (design doc, closing the recon gap): a binary type
     NOT on the allowlist keeps the pre-existing refusal, unchanged."""
@@ -1348,6 +1427,7 @@ def test_fetch_unsupported_binary_type_still_refused(fetch_env):
 # --- review fix round 1 (control chars, GIF sniff, cap-ordering, sizes) ---
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_zip_control_char_member_names_flagged_not_verbatim(fetch_env):
     """Review Important 1: a member name is attacker-controlled text
     embedded in a structured listing. A newline can FORGE a listing row,
@@ -1377,6 +1457,7 @@ def test_fetch_zip_control_char_member_names_flagged_not_verbatim(fetch_env):
     assert "\nok.txt\n" not in result
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_zip_printable_unicode_member_names_list_plainly(fetch_env):
     """isprintable() must not overreach: ordinary non-ASCII names are
     legitimate and list verbatim."""
@@ -1399,6 +1480,7 @@ def test_member_display_name_flags_control_and_invisible_chars():
         assert _member_display_name(benign) == benign
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_gif_sniff_beats_wrong_content_type(fetch_env):
     buf = BytesIO()
     Image.new("P", (7, 3)).save(buf, format="GIF")
@@ -1409,6 +1491,7 @@ def test_fetch_gif_sniff_beats_wrong_content_type(fetch_env):
     assert result.startswith("[image] GIF 7×3,")
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_zip_over_binary_ceiling_refused_as_too_large(fetch_env, monkeypatch):
     """Review Minor 8: the ZIP case is the one that could LIE about what
     happened — a truncated central directory would BadZipFile into
@@ -1424,6 +1507,7 @@ def test_fetch_zip_over_binary_ceiling_refused_as_too_large(fetch_env, monkeypat
         web_fetch("http://example.com/big.zip")
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_zip_normal_members_carry_no_encrypted_annotation_and_sizes(fetch_env):
     """Review Minor 8: pin the ABSENCE of "(encrypted)" on ordinary
     members, and pin one _format_size suffix so the size column is not
@@ -1437,6 +1521,7 @@ def test_fetch_zip_normal_members_carry_no_encrypted_annotation_and_sizes(fetch_
     assert "readme.txt — 5 B" in result
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_zip_nonbadzipfile_parse_errors_normalized(fetch_env, monkeypatch):
     """Qodo PR #1442 (2): only LocalToolError may escape web_fetch — a
     hostile central directory raising beyond BadZipFile (struct/Overflow/
@@ -1460,6 +1545,7 @@ def test_fetch_zip_nonbadzipfile_parse_errors_normalized(fetch_env, monkeypatch)
         web_fetch("http://example.com/weird.zip")
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_zip_long_member_names_display_capped(fetch_env):
     """Qodo PR #1442 (3): member names are attacker-controlled (the zip
     format allows 64 KiB per name); the listing must bound each line
@@ -1479,6 +1565,7 @@ def test_fetch_zip_long_member_names_display_capped(fetch_env):
     assert "short.txt — 1 B" in result
 
 
+@pytest.mark.bootstrap_profile
 @requires_pymupdf
 def test_fetch_small_max_bytes_still_fills_sniff_window_for_mislabeled_pdf(fetch_env):
     """Review Minor 3: a caller max_bytes below the 12-byte sniff window
@@ -1528,6 +1615,7 @@ def _patch_search(monkeypatch, fn):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_search_cache_hit_skips_backend(fetch_env, monkeypatch):
     calls = []
     _patch_search(monkeypatch, lambda **kw: (calls.append(kw), _search_payload())[1])
@@ -1538,6 +1626,7 @@ def test_search_cache_hit_skips_backend(fetch_env, monkeypatch):
     assert "R1" in first
 
 
+@pytest.mark.bootstrap_profile
 def test_search_cache_key_normalizes_whitespace_and_case(fetch_env, monkeypatch):
     calls = []
     _patch_search(monkeypatch, lambda **kw: (calls.append(kw), _search_payload())[1])
@@ -1550,6 +1639,7 @@ def test_search_cache_key_normalizes_whitespace_and_case(fetch_env, monkeypatch)
     assert len(calls) == 3
 
 
+@pytest.mark.bootstrap_profile
 def test_search_cache_ttl_expiry_reinvokes_backend(fetch_env, monkeypatch):
     calls = []
     _patch_search(monkeypatch, lambda **kw: (calls.append(kw), _search_payload())[1])
@@ -1559,6 +1649,7 @@ def test_search_cache_ttl_expiry_reinvokes_backend(fetch_env, monkeypatch):
     assert len(calls) == 2
 
 
+@pytest.mark.bootstrap_profile
 def test_search_backend_exception_not_cached(fetch_env, monkeypatch):
     calls = []
 
@@ -1573,6 +1664,7 @@ def test_search_backend_exception_not_cached(fetch_env, monkeypatch):
     assert len(calls) == 2  # second call re-invoked the backend
 
 
+@pytest.mark.bootstrap_profile
 def test_search_error_envelope_and_malformed_not_cached(fetch_env, monkeypatch):
     """Backend and malformed failures must not pin for the cache TTL."""
     payloads = iter(
@@ -1607,6 +1699,7 @@ def test_search_malformed_text_fields_fail_without_caching(
     assert "R1" in web_tool_impls.web_search("recovering", search_engine="bing")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "item", [{}, {"title": None, "url": None, "content": None, "snippet": None}]
 )
@@ -1619,6 +1712,7 @@ def test_search_optional_text_fields_keep_fallbacks(fetch_env, monkeypatch, item
     assert "No description available" in output
 
 
+@pytest.mark.bootstrap_profile
 def test_search_confirmed_empty_not_cached(fetch_env, monkeypatch):
     """Design doc ruling 1 shape (v): a zero-result response is as often a
     broken parser as a true empty (this repo's tavily/searx history) — it
@@ -1631,6 +1725,7 @@ def test_search_confirmed_empty_not_cached(fetch_env, monkeypatch):
     assert len(calls) == 2
 
 
+@pytest.mark.bootstrap_profile
 def test_search_cache_eviction_bounds_size(fetch_env, monkeypatch):
     _patch_search(monkeypatch, lambda **kw: _search_payload())
     for i in range(web_tool_impls.SEARCH_CACHE_MAX_ENTRIES + 5):
@@ -1646,6 +1741,7 @@ def test_search_cache_eviction_bounds_size(fetch_env, monkeypatch):
     assert f"query number {web_tool_impls.SEARCH_CACHE_MAX_ENTRIES + 4}" in remaining
 
 
+@pytest.mark.bootstrap_profile
 def test_search_cache_logs_never_carry_query_text(fetch_env, monkeypatch, capsys):
     """Design doc ruling 6 (scoped to the wrapper layer): across a
     miss/hit/failure cycle, the query text appears in no captured log
@@ -1680,6 +1776,7 @@ def test_search_cache_logs_never_carry_query_text(fetch_env, monkeypatch, capsys
     assert secret not in captured.out
 
 
+@pytest.mark.bootstrap_profile
 def test_deep_search_phase1_bypasses_search_cache(fetch_env, monkeypatch):
     """Design doc ruling 4: web_deep_search's phase-1 fan-out must keep
     hitting the live pipeline even when web_search has a warm entry for
@@ -1715,6 +1812,7 @@ def test_deep_search_phase1_bypasses_search_cache(fetch_env, monkeypatch):
     assert len(web_tool_impls._search_cache) == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_fetch_cache_ttl_expiry_refetches(fetch_env):
     """The _fetch_cache expiry gap the task-2832 spec review found: hit and
     size-eviction were tested, but nothing ever advanced the clock past
@@ -1812,6 +1910,7 @@ def test_cache_put_holds_its_lock_across_the_critical_section(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_robots_allows_for_scrape_disallowed_path_refused(fetch_env):
     fetch_env.routes["http://example.com/robots.txt"] = _text_page(
         b"User-agent: *\nDisallow: /private\n"
@@ -1819,6 +1918,7 @@ def test_robots_allows_for_scrape_disallowed_path_refused(fetch_env):
     assert robots_allows_for_scrape("http://example.com/private/page") is False
 
 
+@pytest.mark.bootstrap_profile
 def test_robots_allows_for_scrape_allowed_path_proceeds(fetch_env):
     fetch_env.routes["http://example.com/robots.txt"] = _text_page(
         b"User-agent: *\nDisallow: /private\n"
@@ -1826,6 +1926,7 @@ def test_robots_allows_for_scrape_allowed_path_proceeds(fetch_env):
     assert robots_allows_for_scrape("http://example.com/public/page") is True
 
 
+@pytest.mark.bootstrap_profile
 def test_robots_allows_for_scrape_client_disables_trust_env(fetch_env, monkeypatch):
     # Same ratchet as test_fetch_client_disables_trust_env above: with
     # HTTP(S)_PROXY set, trust_env=True would let the proxy do its own DNS
@@ -1850,6 +1951,7 @@ def test_robots_allows_for_scrape_client_disables_trust_env(fetch_env, monkeypat
     assert captured.get("trust_env") is False
 
 
+@pytest.mark.bootstrap_profile
 def test_robots_allows_for_scrape_uses_own_truthful_user_agent(fetch_env):
     """Ruling 3: robots.txt is checked with _DEEP_SEARCH_ROBOTS_UA, distinct
     from _USER_AGENT (web_fetch) and _CRAWL_USER_AGENT (web_crawl) -- a
@@ -1864,11 +1966,13 @@ def test_robots_allows_for_scrape_uses_own_truthful_user_agent(fetch_env):
     assert robots_allows_for_scrape("http://example.com/page") is False
 
 
+@pytest.mark.bootstrap_profile
 def test_robots_allows_for_scrape_unreachable_fails_open(fetch_env):
     # No robots.txt route registered at all -> fetch fails -> fail open.
     assert robots_allows_for_scrape("http://example.com/page") is True
 
 
+@pytest.mark.bootstrap_profile
 def test_robots_allows_for_scrape_shares_cache_with_web_fetch(fetch_env, monkeypatch):
     """Ruling 3: robots_allows_for_scrape shares the module robots cache --
     a host already warmed by web_fetch's own robots consult must not cost
