@@ -2074,6 +2074,17 @@ async def test_a_full_sync_asked_for_during_a_pause_runs_once_after_resume(
             assert not backoff_deliveries, "the stopped backoff timer still delivered"
 
 
+def test_a_long_full_render_refusal_streak_stays_at_the_retry_cap():
+    from types import SimpleNamespace
+
+    screen = SimpleNamespace(_console_warm_refusals=5)
+    assert config_sync.full_sync_replay_delay(screen) == pytest.approx(3.2)
+    screen._console_warm_refusals = 6
+    assert config_sync.full_sync_replay_delay(screen) == spend.RETRY_MAX_DELAY
+    screen._console_warm_refusals = 1025
+    assert config_sync.full_sync_replay_delay(screen) == spend.RETRY_MAX_DELAY
+
+
 def test_a_closing_console_arms_no_replay_and_counts_no_refusal():
     """TASK-38696: a closing Console's refused FULL schedules no replay.
 

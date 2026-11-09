@@ -11,7 +11,7 @@ priority: high
 references:
 - Tests/UI/test_console_edge_focus_restyle_scope.py
 - Tests/UI/test_console_native_chat_flow.py
-updated_date: 2026-11-09 07:25
+updated_date: 2026-11-09 08:07
 ---
 
 ## Description
@@ -45,7 +45,7 @@ Reason: The failure is in the mounted test setup. It does not require changing p
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 A controlled late refresh restored the genuine blocking setup modal before the original click was delivered. At the same click point, the original fixture hit the modal and returned False. With the standard send-ready fixture, the production refresh kept the modal hidden and the click hit the Inspector open control. The hosted log recorded the failed click without its hit target.
 
-Both original focus tests passed locally with the 180-second case cap. Their clicks, viewport and assertions are unchanged. The test now uses actual ready setup state, and the production and workflow inputs remain byte-identical. The original browser and mounted UAT carry through the unchanged runtime and unrelated test-only delta. This task remains In Progress until independent review and the repair commit’s own hosted gates pass. No ADR is required for the test setup change.
+Both original focus tests passed the isolated Inspector fixture check with the 180-second case cap. Their clicks, viewport and assertions are unchanged. That fixture correction used actual ready setup state and changed only the test. The combined Console candidate separately changed retry scheduling and passed fresh original browser and mounted UAT. This task remains In Progress until independent review and the repair commit’s own hosted gates pass. No ADR is required for the test setup change.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
