@@ -362,6 +362,116 @@ def test_catalog_failed_native_close_retains_source(tmp_path):
     _run(tmp_path, "catalog-close", "local", script=_CATALOG_CLOSE)
 
 
+_QWEN_PRETRANSFER = _SETUP + r"""
+import requests
+from tldw_chatbook.LLM_Calls import qwencloud, recovery_review
+from tldw_chatbook.Provider_Contract import ChatAuthenticationError, ChatProviderError
+
+mode=sys.argv[1]
+class AttachedResponse(Response):
+ status_code=401
+ def close(self):
+  super().close()
+  if mode=='failed-close':raise OSError('private native close failure')
+response=AttachedResponse()
+class PrivateSession(Session):
+ def mount(self,*args):
+  if mode=='mount':raise RuntimeError('test mount failure')
+ def post(self,*args,**kwargs):
+  effects.append('post')
+  raise requests.HTTPError('test attached response',response=response)
+
+if mode in {'malformed-location','redirect-hop'}:
+ real_factory=qwencloud.create_owned_default_session
+ def tracked_session():
+  session=real_factory()
+  native_close=session.close
+  def close():
+   effects.append('session-close')
+   native_close()
+  session.close=close
+  return session
+ class RedirectResponse(requests.Response):
+  def close(self):
+   effects.append('response-close')
+   super().close()
+ def send(_adapter,request,**kwargs):
+  effects.append('post')
+  reply=RedirectResponse()
+  reply.request=request
+  reply.url=request.url
+  reply._content=b''
+  reply._content_consumed=True
+  reply.status_code=307 if effects.count('post')==1 else 401
+  if reply.status_code==307:
+   reply.headers['Location']='\xff' if mode=='malformed-location' else '/next'
+  return reply
+ requests.adapters.HTTPAdapter.send=send
+ qwencloud.create_owned_default_session=tracked_session
+else:qwencloud.create_owned_default_session=PrivateSession
+before=set(storage._live_leases)
+try:
+ qwencloud.chat_with_qwencloud(message,model='qwen-test',api_key='fixture-key',
+     api_base_url='http://127.0.0.1:9/compatible-mode/v1',streaming=True)
+except Exception as error:
+ if mode=='mount':assert str(error)=='test mount failure',type(error)
+ elif mode in {'attached','redirect-hop'}:assert isinstance(error,ChatAuthenticationError),type(error)
+ elif mode=='malformed-location':assert isinstance(error,ChatProviderError),type(error)
+ else:assert isinstance(error,recovery_review.ProviderReconnectRequired),type(error)
+ assert 'private native close failure' not in str(error)
+else:raise AssertionError('failed streaming setup returned successfully')
+if mode=='mount':assert effects==['session-close']
+elif mode=='redirect-hop':assert effects==['post','response-close','post','response-close','session-close']
+else:assert effects==['post','response-close','session-close'],effects
+if mode=='failed-close':
+ leaked=set(storage._live_leases)-before
+ assert len(leaked)==1
+ lease=leaked.pop()
+ owner=lease._retained_stream_operation
+ assert owner.lease is lease and not owner.closed
+ try:owner.close()
+ except recovery_review.ProviderReconnectRequired:pass
+ else:raise AssertionError('repeat close invented retirement')
+ assert effects==['post','response-close','session-close'] and lease in storage._live_leases
+else:
+ assert set(storage._live_leases)==before
+assert not blocked_attempts()
+print('retired and reopened')
+"""
+
+
+@pytest.mark.parametrize("mode", ["mount", "attached", "failed-close", "malformed-location", "redirect-hop"])
+def test_qwen_private_stream_pretransfer_cleanup_keeps_exact_source(tmp_path, mode):
+    _run(tmp_path, mode, "local", script=_QWEN_PRETRANSFER)
+
+
+@pytest.mark.parametrize("abort_available", [False, True])
+def test_qwen_owned_read_abort_fallback_leaves_actual_close_to_owner(abort_available):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.LLM_Calls.qwencloud_streaming import _OwnedQwenTransport
+
+    events = []
+
+    def failed_shutdown():
+        events.append("abort")
+        raise OSError("shutdown refused")
+
+    owner = _OwnedQwenTransport(SimpleNamespace(close=lambda: events.append("session")))
+    owner.own_response(
+        SimpleNamespace(
+            raw=SimpleNamespace(shutdown=failed_shutdown) if abort_available else object(),
+            close=lambda: events.append("response"),
+        )
+    )
+    owner.request_read_abort()
+    owner.request_read_abort()
+    assert events == (["abort"] if abort_available else [])
+    owner.close()
+    owner.close()
+    assert events == (["abort"] if abort_available else []) + ["response", "session"]
+
+
 _ISOLATED_CHILD = r"""
 import os,sys
 from pathlib import Path

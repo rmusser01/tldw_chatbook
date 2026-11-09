@@ -487,6 +487,8 @@ class _Operation:
         if error is not None:
             raise error  # Native source remains held when actual cleanup fails.
         self.closed = True
+        if getattr(self.lease, "_retained_stream_operation", None) is self:
+            self.lease._retained_stream_operation = None
         self.lease.close()
 
 
@@ -511,6 +513,19 @@ def _using(operation):
         yield operation
     finally:
         _current.reset(token)
+
+
+def _own_ordinary_stream_transport(resource):
+    """Enroll a private transport before native work in an admitted call."""
+    active = _current.get()
+    if active is None or active[1] != _identity():
+        raise ProviderReconnectRequired()
+    operation = active[0]
+    if operation.closed or operation.history:
+        raise ProviderReconnectRequired()
+    operation.own(resource)
+    # The live lease keeps the exact operation reachable if retirement fails.
+    operation.lease._retained_stream_operation = operation
 
 
 class _OpenAIStream(Iterator):
@@ -556,6 +571,9 @@ class _OpenAIStream(Iterator):
         # Console cancellation may race a native next() in another thread.
         # That worker performs the actual close as soon as its I/O settles.
         if not self.lock.acquire(blocking=False):
+            request_abort = getattr(self.iterator, "_request_owned_read_abort", None)
+            if callable(request_abort):
+                request_abort()
             return
         try:
             if self.closed:

@@ -90,7 +90,8 @@ bakes into the session **that the call site relies on**:
   (`reset_provider_session_registry`) calling it so a session cached under
   one test's monkeypatched factory can never leak into the next test —
   and for any future explicit teardown path.
-- Streams own their **response**, never the shared session:
+- Streams own their **response**, never the shared session (see the private
+  Qwen streaming exception below):
   `OwnedSSEStream` / `QwenCloudStream` take an optional session (None from
   the swapped call sites) and close only the response. Closing the
   response releases the connection back to the pool for reuse; closing the
@@ -119,7 +120,7 @@ after a successful call and after a call that exhausts retries.
 
 ### 5. Call sites converted — and the deliberate exclusions
 
-Converted: hosted engine (`hosted_chat.owned_json_post`), qwencloud
+Converted: hosted engine (`hosted_chat.owned_json_post`), Qwen nonstreaming
 (`chat_with_qwencloud`), the summarizer transport
 (`Summarization_General_Lib._post_with_retry`), and in `LLM_API_Calls`:
 OpenAI embeddings, Anthropic, Cohere, Google Gemini, and both HuggingFace
@@ -141,6 +142,12 @@ Excluded, with reasons:
   registry entries.
 
 ## Context
+
+### 0.2.4 Qwen streaming retirement
+
+Qwen nonstreaming retains the shared transport and the existing retry and trust policy. A Qwen streaming invocation uses one private Session for its bounded attempts. The existing ordinary provider source operation owns that Session and each live Response before their cleanup can be deferred; the accepted stream inherits that same owner. The private response hook establishes custody before Requests handles redirects, then observes the actual close of a completed redirect hop. The private pool is necessary because an abort may race final reads or cleanup and must never touch another invocation's connection.
+
+Cancellation fences output first. If the existing guarded iterator is busy, it may request read shutdown through the exact private Response's public urllib3 capability. This request does not retire the stream, perform concurrent generator close, or release the source. Older or unsupported transports keep deferred cleanup and existing timeouts. The original owner retires the Response and Session; an uncertain close retains the exact operation and guarded source. This exception adds no dependency minimum, native socket inspection, retry, deadline or release qualification.
 
 Wave 3 of the non-console performance remediation. Task 5
 (TASK-34417, commit 028c4494bc) removed the per-chunk deepcopy chain in

@@ -2067,10 +2067,17 @@ def test_streaming_transport_transfers_response_and_session_ownership(
         ],
     )
     session = _RecordingSession(response)
+    created: list[_RecordingSession] = []
+
+    def create_owned_session(**_kwargs: Any) -> _RecordingSession:
+        created.append(session)
+        return session
+
+    monkeypatch.setattr(qwencloud, "create_owned_default_session", create_owned_session)
     monkeypatch.setattr(
         qwencloud,
         "create_pooled_default_session",
-        lambda **kwargs: session,
+        lambda **_kwargs: pytest.fail("Streaming must use only its owned session"),
     )
     monkeypatch.setattr(
         qwencloud,
@@ -2094,14 +2101,29 @@ def test_streaming_transport_transfers_response_and_session_ownership(
     )
 
     assert not isinstance(stream, dict)
+    assert created == [session]
+    assert len(session.posts) == 1
+    assert [prefix for prefix, _ in session.mounts] == ["https://", "http://"]
+    for _, adapter in session.mounts:
+        assert isinstance(adapter, requests.adapters.HTTPAdapter)
+        retry = adapter.max_retries
+        assert (
+            retry.total,
+            retry.connect,
+            retry.read,
+            retry.redirect,
+            retry.status,
+            retry.other,
+        ) == (0,) * 6
+        assert retry.allowed_methods == frozenset({"POST"})
+        assert not retry.raise_on_status
     assert session.closed is False
     assert response.closed is False
     assert next(stream)["choices"][0]["delta"]["content"] == "owned"
     assert list(stream) == []
-    # ADR-222: the stream closes its response only; the registry owns the
-    # session, so exhausting/closing the stream leaves it open.
-    assert session.closed is False
+    stream.close()
     assert response.close_calls == 1
+    assert session.close_calls == 1
 
 
 def test_direct_adapter_loads_only_qwencloud_config_when_arguments_are_none(
