@@ -1,7 +1,7 @@
 ---
 id: TASK-40096
 title: Remove repeated staging and verification work from isolated Eval restore
-status: In Progress
+status: Done
 created_date: 2026-11-09 19:37
 labels:
 - backup-recovery
@@ -12,7 +12,7 @@ references:
 - backlog/decisions/126-complete-local-backup-and-recovery.md
 documentation:
 - Docs/Architecture/backup-recovery.md
-updated_date: 2026-11-09 20:06
+updated_date: 2026-11-09 21:12
 ---
 
 ## Description
@@ -23,9 +23,9 @@ PR #3345 head 9332b96 timed out in the original Windows retained-Eval rebackup's
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The existing isolated restore completes without repeated staging-volume resolution or duplicate post-worker verification, with the same per-chunk capacity and identity checks, physical durability, and Settings replacement safeguards.
-- [ ] #2 The original retained-Eval rebackup and relevant capacity, installed-drift, and durability controls pass within their original limits. Fresh original software UAT passes.
-- [ ] #3 Independent exact-commit review and the published head’s own hosted Windows and required checks verify the repair with the original 45-second restore child limit.
+- [x] #1 The existing isolated restore completes without repeated staging-volume resolution or duplicate post-worker verification, with the same per-chunk capacity and identity checks, physical durability, and Settings replacement safeguards.
+- [x] #2 The original retained-Eval rebackup and relevant capacity, installed-drift, and durability controls pass within their original limits. Fresh original software UAT passes.
+- [x] #3 Independent exact-commit review and the published head’s own hosted Windows and required checks verify the repair with the original 45-second restore child limit.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -46,7 +46,7 @@ Windows Eval on 9332b96 passed 137 cases, retained one platform FIFO skip, and f
 
 Staging now retains the first extraction-root capacity binding for every member. Each chunk still checks the named identity and free space before writing. File creation, buffer sizes, cancellation, checksums, DACLs and flushes are unchanged. Installed validation now drops one repeated check on the isolated route. It keeps the checks before and after metadata, and all replacement Settings checks.
 
-The instrumented original local restore child observed 70 staging-volume resolutions and five installed verification passes before the change, then one resolution and four passes after it. The original producer, isolated restore, ordinary reopen and rebackup completed with the repair. The uninstrumented local Eval selection passed all 139 cases. Windows qualification still requires the published commit’s own hosted job.
+The instrumented original local restore child observed 70 staging-volume resolutions and five installed verification passes before the change, then one resolution and four passes after it. The original producer, isolated restore, ordinary reopen and rebackup completed with the repair. The uninstrumented local Eval selection passed all 139 cases. Hosted Windows Eval passed on e1facb0 in job 129417643009. The original rebackup and all 26 policy cases ran, with the original 45-second restore child limit.
 
 The supplementary run passed 32 cases and retained one inherited setup failure. The same directory fixture fails at the Config manifest relation guard on the exact parent, before installed validation. The fixture is outside the bounded PR recovery rosters, and the stricter publication guard is unchanged.
 
