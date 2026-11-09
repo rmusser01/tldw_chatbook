@@ -1432,7 +1432,7 @@ def main():
                 refs["terminal_patches"] = observed["patches"]
             if not all(
                 classify_terminal(
-                    image, frame["semantic_before"], expected_round, refs
+                    image.convert("RGBA"), frame["semantic_before"], expected_round, refs
                 )["settled_pixels"]
                 for _facts, frame, image in pair
             ):

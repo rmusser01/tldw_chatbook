@@ -27,7 +27,7 @@
     "common_activity_observer.py": "511d1fcc8150dc8492ab1d7da752769f7f6ccb7a2cdf9dc20b2aea27e2563bba",
     "native_bootstrap.py": "fba33556c87bd321c138d6d50bb037ed90d7bb0c4ace59440a74f1689e87ca08",
     "native_product_child.py": "21f74b0f3c8a198529a849e2b3134e3b3ca3db8284dc9513c9edc878a4c4de64",
-    "native_product_observer.py": "32a66d9ffa58ed64c660df490fc0e361747ca06d8b1aff04c74994a16925bd0b",
+    "native_product_observer.py": "3743a69a1dd619fdafdbc68d7ed6c5a3a2d607cb281487dd024cb8cac59663ce",
     "native_rehearsal_observation.py": "b59490d5be3a33bfc89b9e80c272f1fa96d91574fc3a66e2e2b4f83be76c14b2",
     "native_series_method.py": "58d89714d85a146ed1f4365b3e6defaf89f5b3621def35d1653e14717e2fcba3",
     "native_window_api.py": "194ef1d9f31b5983e7a50424cfea539ba7a15da5dfdcf47216fd0eb5f1783ee4",
@@ -416,5 +416,11 @@
     "diff": "Only 27 dead Activity Log or orphan widget CSS rules and blank lines were removed. The four other pinned UI source files, retained reference PNGs, and reference provenance match their original hashes.",
     "preflight": "Require all five UI pins to match the already verified source freeze before creating output. The observer still checks actual working-tree bytes before opening a window.",
     "scope": "Native validation setup. Physical qualification and live review remain pending."
+  },
+  "terminal_final_pixel_mode": {
+    "previous_method_revision": "4736841f7b98d8bd309b18a5b9c2786fbfa4bcf9",
+    "failure": "The reviewed live pair was captured as RGB. Initial classification converted to RGBA, but final reference comparison passed RGB to the exact RGBA classifier.",
+    "delta": "Convert to RGBA at the final comparison. Keep the exact pixel, scope, identity, review, timing, and source requirements.",
+    "validation_scope": "Original live run remains invalid with zero qualified samples. Replay evidence uses both original reviewed frames."
   }
 }
