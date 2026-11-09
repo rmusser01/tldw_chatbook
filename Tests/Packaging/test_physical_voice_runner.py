@@ -2216,10 +2216,12 @@ def test_abort_failure_returns_valid_failing_manual_stop_evidence() -> None:
     assert _safe_half_report_with_runner_interruption(observations)["passed"] is False
 
 
-def test_manual_stop_uses_first_callback_boundary_after_abort() -> None:
+def _measure_first_silence_boundary(
+    transport_type: type[DuplexAudioTransport],
+) -> float | None:
     clock = ManualClock()
     backend = FakeDuplexBackend()
-    transport = DuplexAudioTransport(backend=backend, clock=clock)
+    transport = transport_type(backend=backend, clock=clock)
     runner = PhysicalVoiceTrialRunner(device_class="usb", clock=clock)
 
     class PassivePreprocessor:
@@ -2254,7 +2256,71 @@ def test_manual_stop_uses_first_callback_boundary_after_abort() -> None:
         await transport.close()
         return result
 
-    assert asyncio.run(measure()) == 20.0
+    return asyncio.run(measure())
+
+
+def test_manual_stop_uses_first_callback_boundary_after_abort() -> None:
+    assert _measure_first_silence_boundary(DuplexAudioTransport) == 20.0
+
+
+def test_manual_stop_can_match_a_reference_materialized_by_capture_pop() -> None:
+    class ReferenceOnCaptureTransport(DuplexAudioTransport):
+        visible_references = 0
+
+        @property
+        def buffer_occupancy(self):
+            return replace(
+                super().buffer_occupancy,
+                render_reference_frames=self.visible_references,
+            )
+
+        def pop_capture(self):
+            frame = super().pop_capture()
+            if frame is not None:
+                self.visible_references += 1
+            return frame
+
+        def pop_render_reference(self):
+            if not self.visible_references:
+                return None
+            reference = super().pop_render_reference()
+            if reference is not None:
+                self.visible_references -= 1
+            return reference
+
+        def pop_paired_render_reference(self, capture):
+            if not self.visible_references:
+                return None
+            reference = super().pop_paired_render_reference(capture)
+            if reference is not None:
+                self.visible_references -= 1
+            return reference
+
+    assert _measure_first_silence_boundary(ReferenceOnCaptureTransport) == 20.0
+
+
+def test_stop_reference_lookup_leaves_a_future_pair_in_order() -> None:
+    clock = ManualClock()
+    backend = FakeDuplexBackend()
+    transport = DuplexAudioTransport(backend=backend, clock=clock)
+
+    async def check() -> None:
+        await transport.start()
+        try:
+            backend.stream.emit_capture(SILENCE)
+            clock.advance(FRAME_DURATION_NS)
+            backend.stream.emit_capture(SILENCE)
+            capture = transport.pop_capture()
+            assert capture is not None
+            first = transport.pop_render_reference()
+            assert first is not None and first.sequence == capture.render_reference_sequence
+            assert transport.pop_paired_render_reference(capture) is None
+            following = transport.pop_render_reference()
+            assert following is not None and following.sequence == first.sequence + 1
+        finally:
+            await transport.close()
+
+    asyncio.run(check())
 
 
 def test_manual_stop_advances_baseline_across_queued_preabort_callback() -> None:
@@ -2348,6 +2414,45 @@ def test_manual_stop_rejects_discontinuous_callback_timing() -> None:
 
     assert asyncio.run(measure()) is None
     assert runner._manual_interruption_available is False
+
+
+def test_manual_stop_rejects_zero_submitted_after_abort() -> None:
+    clock = ManualClock()
+    backend = FakeDuplexBackend()
+    transport = DuplexAudioTransport(backend=backend, clock=clock)
+    runner = PhysicalVoiceTrialRunner(device_class="usb", clock=clock)
+
+    class PassivePreprocessor:
+        safety = SimpleNamespace(path=AcousticSafetyPath.HALF_DUPLEX, demotion_reason=None)
+
+        async def process_capture(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+    async def submitted_zero(_seconds: float) -> None:
+        clock.advance(FRAME_DURATION_NS)
+        assert transport.queue_render(SILENCE) is not None
+        backend.stream.emit_capture(SILENCE)
+
+    runner._transport = transport
+    runner._preprocessor = PassivePreprocessor()  # type: ignore[assignment]
+    runner.wait = submitted_zero
+
+    async def measure() -> float | None:
+        await transport.start()
+        try:
+            backend.stream.emit_capture(SILENCE)
+            await runner._process_available(rendering=True, measure=False)
+            assert runner._last_processed_capture is not None
+            return await runner._abort_and_measure_silence_boundary(
+                trigger_ns=clock(),
+                last_reference_sequence=runner._last_processed_capture.render_reference_sequence,
+            )
+        finally:
+            await transport.close()
+
+    assert asyncio.run(measure()) is None
+    assert runner._last_processed_capture.committed_render is not None
+    assert not runner._manual_interruption_available
 
 
 def test_route_fences_discard_prior_generation_acoustic_samples() -> None:

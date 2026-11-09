@@ -950,7 +950,8 @@ class PhysicalVoiceTrialRunner:
         rendering: bool,
         measure: bool,
         capture_limit: int | None = None,
-    ) -> None:
+        match_stop_reference: bool = False,
+    ) -> AudioFrame | None:
         transport = self._require_transport()
         occupancy = transport.buffer_occupancy
         capacities = transport.buffer_capacities
@@ -971,6 +972,7 @@ class PhysicalVoiceTrialRunner:
                 pending_overflowed = True
                 continue
             self._pending_references.append(reference)
+        paired_reference = None
         for _ in range(capture_budget):
             capture = transport.pop_capture()
             if capture is None:
@@ -982,6 +984,18 @@ class PhysicalVoiceTrialRunner:
                 and self._pending_references[0].sequence <= boundary
             ):
                 references.append(self._pending_references.popleft())
+            if match_stop_reference:
+                paired_reference = None
+                if references and references[-1].sequence == boundary:
+                    paired_reference = references[-1]
+                elif (
+                    not pending_overflowed
+                    and len(references) < capacities.render_reference_frames
+                ):
+                    # A native capture pop materializes its own output partner.
+                    paired_reference = transport.pop_paired_render_reference(capture)
+                    if paired_reference is not None:
+                        references.append(paired_reference)
             self._last_processed_capture = capture
             self._route_capture_frames += 1
             self._capture_admitted = False
@@ -999,6 +1013,7 @@ class PhysicalVoiceTrialRunner:
                 else:
                     self._silence_frames += 1
                 self._observe_phase_metrics(capture)
+        return paired_reference
 
     def _observe_safety_state(self) -> None:
         preprocessor = self._require_preprocessor()
@@ -1137,6 +1152,7 @@ class PhysicalVoiceTrialRunner:
         last_reference_sequence: int | None,
     ) -> float | None:
         transport = self._require_transport()
+        generation = transport.clock_generation
         self._manual_stop_attempts += 1
         self._manual_interruption_available = False
         try:
@@ -1145,31 +1161,51 @@ class PhysicalVoiceTrialRunner:
             return None
         abort_completed_ns = self.clock()
         reference_baseline = last_reference_sequence
+        silent_frame = bytes(FRAME_BYTES)
         silence_deadline = self.clock() + round(self._trial_seconds() * 1e9)
         while self.clock() < silence_deadline:
             prior_capture = self._last_processed_capture
             await self.wait(0.001)
-            await self._process_available(
+            reference = await self._process_available(
                 rendering=False,
                 measure=True,
                 capture_limit=1,
+                match_stop_reference=True,
             )
+            if transport.clock_generation != generation:
+                return None
             boundary = self._last_processed_capture
             if boundary is prior_capture or boundary is None:
                 continue
+            if boundary.clock_generation != generation:
+                return None
             evidence = boundary.delay_evidence
             if evidence is None:
                 continue
-            if evidence.observed_ns < abort_completed_ns:
-                if boundary.render_reference_sequence is not None:
-                    reference_baseline = boundary.render_reference_sequence
+            sequence = boundary.render_reference_sequence
+            if evidence.observed_ns <= abort_completed_ns:
+                if sequence is not None and (
+                    reference_baseline is None or sequence > reference_baseline
+                ):
+                    reference_baseline = sequence
                 continue
             if (
-                boundary.render_reference_sequence == reference_baseline
-                and evidence.render_dac_ns >= trigger_ns
+                reference is not None
+                and reference.clock_generation == generation
+                and reference.sequence == sequence == boundary.sequence
+                and reference_baseline is not None
+                and reference.sequence > reference_baseline
+                and boundary.committed_render is None
+                and reference.committed_render is None
+                and reference.pcm16 == silent_frame
+                and reference.started_ns == evidence.render_dac_ns
+                and evidence.render_dac_ns >= max(trigger_ns, abort_completed_ns)
+                and not boundary.discontinuity
+                and not reference.discontinuity
                 and evidence.occupancy_bounded
                 and not evidence.timing_discontinuity
                 and not evidence.clock_drift
+                and not evidence.status_flags
             ):
                 latency_ms = max(
                     0.0,
