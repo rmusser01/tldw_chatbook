@@ -833,13 +833,14 @@ class PhysicalVoiceTrialRunner:
                 measure=False,
                 capture_limit=1,
             )
-            if self._last_processed_capture is prior_capture:
+            capture = self._last_processed_capture
+            if capture is None or capture is prior_capture:
                 continue
             if not self._capture_processing_ok:
                 raise PhysicalVoiceRunnerError(
                     "operator quiet recovery could not verify capture processing"
                 )
-            if self._capture_admitted:
+            if self._capture_admitted or capture.assistant_rendering is not False:
                 quiet_frames = 0
                 continue
             quiet_frames += 1
@@ -1003,7 +1004,7 @@ class PhysicalVoiceTrialRunner:
             await self._require_preprocessor().process_capture(
                 capture,
                 render_frames=tuple(references),
-                assistant_rendering=rendering,
+                assistant_rendering=capture.assistant_rendering is not False,
             )
             self._observe_safety_state()
             self._record_admission_onset()
@@ -1056,10 +1057,13 @@ class PhysicalVoiceTrialRunner:
 
     def _on_admitted_frame(self, frame: AudioFrame) -> None:
         self._capture_admitted = True
-        if self._phase in {"speech-calibration", "double-talk"}:
-            self._phase_detected = True
-        elif self._phase == "interruption" and self._first_admitted_ns is None:
-            self._first_admitted_ns = frame.started_ns
+        if self._phase == "speech-calibration":
+            self._phase_detected |= frame.assistant_rendering is False
+        elif frame.assistant_rendering is True and not frame.discontinuity:
+            if self._phase == "double-talk":
+                self._phase_detected = True
+            elif self._phase == "interruption" and self._first_admitted_ns is None:
+                self._first_admitted_ns = frame.started_ns
 
     def _record_admission_onset(self) -> None:
         if self._phase not in {"render-only", "silence"}:

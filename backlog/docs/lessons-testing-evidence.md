@@ -6,6 +6,8 @@
 
 **What to do.** Match the producer's real ordering in the test seam. The stop reader can take its one exact late ring head without draining future entries or growing its snapshot budget. This verifies the software ordering without claiming physical device qualification.
 
+In the follow-up (TASK-39402.80), the 20 ms fake ADC-to-DAC offset made scheduled output start two captures before recorded playback. Using the transport tag restored the 70 ms spoken stop. The same run still demoted when its final synthetic calibration reached silent asset frames: keep a healthy fixture on audible reference and separately verify that the backpressure fixture opens isolation before it demotes on silence.
+
 ## A temporary protected-root replacement must end before pytest cleans tmp_path (TASK-39402.4, 2026-11-08)
 
 **Incident.** The0.2.4 initial full run recorded26 teardown errors in the partition containing real-profile guard tests. Their fake_profile fixture protected a temporary stand-in using the shared monkeypatch fixture; under failed-only tmp retention, pytest deleted a passed test's tmp_path before that shared fixture restored the real roots. The guard therefore refused safe temporary cleanup, and recorded refusals reached later tests. A fixture-owned monkeypatch.context with refusal collection in finally restored the roots first. The unchanged module then exited0 with55passed and2 unavailable-platform xattr skips, no errors and natural process retirement.

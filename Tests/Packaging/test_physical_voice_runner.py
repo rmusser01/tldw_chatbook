@@ -43,6 +43,7 @@ from tldw_chatbook.Audio.duplex_contracts import (
     AcousticSafetyPath,
     AcousticSafetySnapshot,
     AecHealth,
+    AudioFrame,
     DuplexMode,
     NearEndDisposition,
 )
@@ -1237,7 +1238,16 @@ def test_runner_uses_backpressure_and_returns_content_free_measured_observations
     assert observations["reference_overflows"] == 0
     assert observations["control_overflows"] == 0
     assert observations["post_fence_callbacks"] == 0
-    assert observations["safety_path"] == "acoustic-isolation"
+    assert observations["isolation_warmup_duration_ms"] > 0
+    assert observations["demotion_reason_counts"]["inaudible-render"] > 0
+    assert observations["aec_processor_operational"] is True
+    assert observations["playback_speech_admission_closed"] is True
+    assert observations["safety_path"] == "half-duplex", (
+        observations["aec_health_path"],
+        observations["aec_processor_operational"],
+        observations["demotion_reason_counts"],
+        observations["operator_checklist"],
+    )
     assert observations["correlation_samples"]
     assert observations["leakage_db_samples"]
     assert observations["double_talk_trials"] == 1
@@ -1414,9 +1424,17 @@ def test_runner_measures_healthy_aec_path_from_processed_frames() -> None:
     harness = _LiveHarness(aec=_HealthyAec())
     harness.force_echo = True
 
-    observations = asyncio.run(_runner(harness).run())
+    # Keep the final route calibration within the reference's audible lead-in.
+    config = replace(_short_config(), route_round_trips=1)
+    observations = asyncio.run(_runner(harness, config=config).run())
 
-    assert observations["safety_path"] == "aec"
+    assert observations["safety_path"] == "aec", (
+        observations["aec_health_path"],
+        observations["aec_processor_operational"],
+        observations["demotion_reason_counts"],
+        observations["operator_checklist"],
+        observations["stop_latency_samples_ms"],
+    )
     assert observations["aec_health_path"] == "healthy"
     assert observations["aec_processor_operational"] is True
     assert observations["erle_samples_db"]
@@ -1425,6 +1443,34 @@ def test_runner_measures_healthy_aec_path_from_processed_frames() -> None:
     assert observations["stop_latency_samples_ms"] == [70.0]
     assert observations["manual_interruption_available"] is True
     assert observations["unsuppressed_interruption_observed"] is False
+
+
+def test_interruption_requires_capture_during_confirmed_playback() -> None:
+    runner = PhysicalVoiceTrialRunner(device_class="usb")
+    runner._enter_phase("interruption")
+    idle = AudioFrame(1, 0, FRAME_DURATION_NS, SILENCE, assistant_rendering=False)
+    unknown = AudioFrame(2, FRAME_DURATION_NS, 2 * FRAME_DURATION_NS, SILENCE)
+    overlap = AudioFrame(
+        4,
+        3 * FRAME_DURATION_NS,
+        4 * FRAME_DURATION_NS,
+        SILENCE,
+        assistant_rendering=True,
+    )
+    ambiguous = replace(
+        overlap,
+        sequence=3,
+        started_ns=2 * FRAME_DURATION_NS,
+        ended_ns=3 * FRAME_DURATION_NS,
+        discontinuity=True,
+    )
+
+    runner._on_admitted_frame(idle)
+    runner._on_admitted_frame(unknown)
+    runner._on_admitted_frame(ambiguous)
+    assert runner._first_admitted_ns is None
+    runner._on_admitted_frame(overlap)
+    assert runner._first_admitted_ns == overlap.started_ns
 
 
 def test_runner_aborts_before_repeated_trials_when_speech_calibration_is_silent() -> (
