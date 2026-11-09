@@ -9393,57 +9393,6 @@ class ConsoleChatController:
             )
         ):
             return ConsoleSubmitResult(False, False, "Console is shutting down.")
-        from .console_hook_preparation import bind_hook_preparation_session
-
-        mixin_service = None
-        pending = self._prepared_send_continuations.get(_resume_preparation_id)
-        mixin_capture = pending.prompt_mixin_capture if pending is not None else None
-        if (configuration is None and owner_key and origin is ConsoleSubmissionOrigin.MANUAL
-                and _resume_preparation_id is None and _operation is None):
-            mixin_service = self.prompt_mixin_service()
-            witness = self.store.session_input_snapshot(owner_key)
-            mixin_revision = mixin_service.preferences(owner_key).revision
-            mixin_current = mixin_service._capture_currentness(owner_key, expected_revision=mixin_revision)
-            mixins = await mixin_service.capture(owner_key, expected_revision=mixin_revision)
-            mixin_capture = (mixins, witness, mixin_current)
-        with bind_hook_preparation_session(self, owner_key):
-            reason, hook_read = await self._submission_hook_admission(
-                owner_key, _hook_read
-            )
-        if mixin_capture is not None:
-            try:
-                mixin_capture[2]()
-            except (MixinPreferenceConflictError, MixinSourceChangedError):
-                if pending is not None:
-                    preparation = self._preparation_by_id(pending.preparation_id)
-                    if preparation is not None:
-                        if preparation.transient_user_message_id is not None:
-                            self._mark_transient_echo_blocked(preparation.transient_user_message_id)
-                        if preparation.state is ConsoleTurnPreparationState.COMMITTING:
-                            self._rollback_committing_preparation(preparation.preparation_id)
-                        else:
-                            self._abandon_preparation(preparation.preparation_id)
-                raise
-        if reason is not None:
-            if (
-                origin
-                in (
-                    ConsoleSubmissionOrigin.AGENT_WAKE,
-                    ConsoleSubmissionOrigin.GOAL_ITERATION,
-                )
-                and coordinator.authorizes(wake_authorization, owner_key)
-                and not wake_authorization.acceptance_started
-                and not wake_authorization.accepted
-            ):
-                wake_authorization.preflight_refused = True
-            return ConsoleSubmitResult(
-                False,
-                False,
-                reason,
-                session_id=owner_key,
-                origin=origin,
-                queue_entry_id=queue_entry_id,
-            )
         active_task = asyncio.current_task()
         with self._capture_quiescence_lock:
             if owner_key is not None and self.store.capture_quiescent(owner_key):
@@ -9457,129 +9406,164 @@ class ConsoleChatController:
                 )
             if active_task is not None:
                 self._register_submit_task(active_task, owner_key)
-        if active_task is None:
-            if _operation is not None:
-                return await _operation()
-            return await self._submit_draft_inner(
-                draft,
-                session_id=session_id,
-                origin=origin,
-                queue_entry_id=queue_entry_id,
-                queue_authorization=queue_authorization,
-                wake_authorization=wake_authorization,
-                goal_authorization=goal_authorization,
-                chat_start_authorization=chat_start_authorization,
-                preserve_composer=preserve_composer,
-                configuration=configuration,
-                accepted_attachments=accepted_attachments,
-                captured_one_shot_prefill=captured_one_shot_prefill,
-                captured_one_shot_prefill_revision=(captured_one_shot_prefill_revision),
-                staged_evidence_launch=staged_evidence_launch,
-                staged_evidence_capture=staged_evidence_capture,
-                staged_evidence_release=staged_evidence_release,
-                custody_acceptance_hook=custody_acceptance_hook,
-                _resume_preparation_id=_resume_preparation_id,
-                _resume_resolution=_resume_resolution,
-                _hook_read=hook_read,
-                _prompt_mixin_capture=mixin_capture,
-            )
         try:
-            if _operation is not None:
-                return await _operation()
-            return await self._submit_draft_inner(
-                draft,
-                session_id=session_id,
-                origin=origin,
-                queue_entry_id=queue_entry_id,
-                queue_authorization=queue_authorization,
-                wake_authorization=wake_authorization,
-                goal_authorization=goal_authorization,
-                chat_start_authorization=chat_start_authorization,
-                preserve_composer=preserve_composer,
-                configuration=configuration,
-                accepted_attachments=accepted_attachments,
-                captured_one_shot_prefill=captured_one_shot_prefill,
-                captured_one_shot_prefill_revision=(captured_one_shot_prefill_revision),
-                staged_evidence_launch=staged_evidence_launch,
-                staged_evidence_capture=staged_evidence_capture,
-                staged_evidence_release=staged_evidence_release,
-                custody_acceptance_hook=custody_acceptance_hook,
-                _resume_preparation_id=_resume_preparation_id,
-                _resume_resolution=_resume_resolution,
-                _hook_read=hook_read,
-                _prompt_mixin_capture=mixin_capture,
-            )
-        except (MixinPreferenceConflictError, MixinSourceChangedError):
+            from .console_hook_preparation import bind_hook_preparation_session
+
+            mixin_service = None
+            pending = self._prepared_send_continuations.get(_resume_preparation_id)
+            mixin_capture = pending.prompt_mixin_capture if pending is not None else None
+            if (configuration is None and owner_key and origin is ConsoleSubmissionOrigin.MANUAL
+                    and _resume_preparation_id is None and _operation is None):
+                mixin_service = self.prompt_mixin_service()
+                witness = self.store.session_input_snapshot(owner_key)
+                mixin_revision = mixin_service.preferences(owner_key).revision
+                mixin_current = mixin_service._capture_currentness(owner_key, expected_revision=mixin_revision)
+                mixins = await mixin_service.capture(owner_key, expected_revision=mixin_revision)
+                mixin_capture = (mixins, witness, mixin_current)
+            with bind_hook_preparation_session(self, owner_key):
+                reason, hook_read = await self._submission_hook_admission(
+                    owner_key, _hook_read
+                )
             if mixin_capture is not None:
-                witness = mixin_capture[1]
-                if self.store is witness._store_ref() and self.store._sessions.get(owner_key) is witness._session_ref():
-                    with self._active_submit_tasks_lock:
-                        preparation_id = self._active_submit_preparations.get(active_task)
-                    if preparation_id is not None:
-                        preparation = self._preparation_by_id(preparation_id)
-                        if preparation is not None and preparation.transient_user_message_id is not None:
-                            self._mark_transient_echo_blocked(preparation.transient_user_message_id)
-                        if preparation is not None and preparation.state is ConsoleTurnPreparationState.COMMITTING:
-                            self._rollback_committing_preparation(preparation_id)
-                        else:
-                            self._abandon_preparation(preparation_id)
-                    self._set_run_state(ConsoleRunState.blocked("Mix-in preparation changed; draft kept."), session_id=owner_key)
-            raise
-        except asyncio.CancelledError:
-            bound_owner_key = self._submit_task_session(active_task) or owner_key
-            if not self._shutdown_requested.is_set():
-                if bound_owner_key and all(
-                    session.id != bound_owner_key for session in self.store.sessions()
-                ):
-                    return ConsoleSubmitResult(
-                        False,
-                        False,
-                        "Session closed before turn acceptance.",
-                        session_closed=True,
-                        session_id=bound_owner_key,
-                        origin=origin,
-                        queue_entry_id=queue_entry_id,
+                try:
+                    mixin_capture[2]()
+                except (MixinPreferenceConflictError, MixinSourceChangedError):
+                    if pending is not None:
+                        preparation = self._preparation_by_id(pending.preparation_id)
+                        if preparation is not None:
+                            if preparation.transient_user_message_id is not None:
+                                self._mark_transient_echo_blocked(preparation.transient_user_message_id)
+                            if preparation.state is ConsoleTurnPreparationState.COMMITTING:
+                                self._rollback_committing_preparation(preparation.preparation_id)
+                            else:
+                                self._abandon_preparation(preparation.preparation_id)
+                    raise
+            if reason is not None:
+                if (
+                    origin
+                    in (
+                        ConsoleSubmissionOrigin.AGENT_WAKE,
+                        ConsoleSubmissionOrigin.GOAL_ITERATION,
                     )
+                    and coordinator.authorizes(wake_authorization, owner_key)
+                    and not wake_authorization.acceptance_started
+                    and not wake_authorization.accepted
+                ):
+                    wake_authorization.preflight_refused = True
+                return ConsoleSubmitResult(
+                    False,
+                    False,
+                    reason,
+                    session_id=owner_key,
+                    origin=origin,
+                    queue_entry_id=queue_entry_id,
+                )
+            try:
+                if _operation is not None:
+                    return await _operation()
+                return await self._submit_draft_inner(
+                    draft,
+                    session_id=session_id,
+                    origin=origin,
+                    queue_entry_id=queue_entry_id,
+                    queue_authorization=queue_authorization,
+                    wake_authorization=wake_authorization,
+                    goal_authorization=goal_authorization,
+                    chat_start_authorization=chat_start_authorization,
+                    preserve_composer=preserve_composer,
+                    configuration=configuration,
+                    accepted_attachments=accepted_attachments,
+                    captured_one_shot_prefill=captured_one_shot_prefill,
+                    captured_one_shot_prefill_revision=(captured_one_shot_prefill_revision),
+                    staged_evidence_launch=staged_evidence_launch,
+                    staged_evidence_capture=staged_evidence_capture,
+                    staged_evidence_release=staged_evidence_release,
+                    custody_acceptance_hook=custody_acceptance_hook,
+                    _resume_preparation_id=_resume_preparation_id,
+                    _resume_resolution=_resume_resolution,
+                    _hook_read=hook_read,
+                    _prompt_mixin_capture=mixin_capture,
+                )
+            except (MixinPreferenceConflictError, MixinSourceChangedError):
+                if active_task is None:
+                    raise
+                if mixin_capture is not None:
+                    witness = mixin_capture[1]
+                    if self.store is witness._store_ref() and self.store._sessions.get(owner_key) is witness._session_ref():
+                        with self._active_submit_tasks_lock:
+                            preparation_id = self._active_submit_preparations.get(active_task)
+                        if preparation_id is not None:
+                            preparation = self._preparation_by_id(preparation_id)
+                            if preparation is not None and preparation.transient_user_message_id is not None:
+                                self._mark_transient_echo_blocked(preparation.transient_user_message_id)
+                            if preparation is not None and preparation.state is ConsoleTurnPreparationState.COMMITTING:
+                                self._rollback_committing_preparation(preparation_id)
+                            else:
+                                self._abandon_preparation(preparation_id)
+                        self._set_run_state(ConsoleRunState.blocked("Mix-in preparation changed; draft kept."), session_id=owner_key)
                 raise
-            return ConsoleSubmitResult(
-                False,
-                False,
-                "Console shut down before turn acceptance.",
-                session_id=bound_owner_key or None,
-                origin=origin,
-                queue_entry_id=queue_entry_id,
-            )
+            except asyncio.CancelledError:
+                if active_task is None:
+                    raise
+                bound_owner_key = self._submit_task_session(active_task) or owner_key
+                if not self._shutdown_requested.is_set():
+                    if bound_owner_key and all(
+                        session.id != bound_owner_key for session in self.store.sessions()
+                    ):
+                        return ConsoleSubmitResult(
+                            False,
+                            False,
+                            "Session closed before turn acceptance.",
+                            session_closed=True,
+                            session_id=bound_owner_key,
+                            origin=origin,
+                            queue_entry_id=queue_entry_id,
+                        )
+                    raise
+                return ConsoleSubmitResult(
+                    False,
+                    False,
+                    "Console shut down before turn acceptance.",
+                    session_id=bound_owner_key or None,
+                    origin=origin,
+                    queue_entry_id=queue_entry_id,
+                )
         finally:
-            hook_owner = getattr(self, "_hooks_v2_submissions", {}).pop(
-                active_task, None
-            )
-            if hook_owner is not None:
-                lifecycle, scope, session_key = hook_owner
-                if lifecycle is not None:
-                    try:
+            if active_task is not None:
+                try:
+                    hook_owner = getattr(self, "_hooks_v2_submissions", {}).pop(
+                        active_task, None
+                    )
+                    if hook_owner is not None:
+                        lifecycle, scope, session_key = hook_owner
+                        if lifecycle is not None:
+                            try:
+                                if (
+                                    self.run_state_for(session_key).status
+                                    is ConsoleRunStatus.COMPLETED
+                                ):
+                                    await self.prompt_queue_coordinator.settle_hook_parent(
+                                        session_key, scope
+                                    )
+                            finally:
+                                lifecycle.close_scope(scope)
+                                lifecycle.turn_scope = None
                         if (
                             self.run_state_for(session_key).status
-                            is ConsoleRunStatus.COMPLETED
+                            is ConsoleRunStatus.VALIDATING
                         ):
-                            await self.prompt_queue_coordinator.settle_hook_parent(
-                                session_key, scope
+                            self._set_run_state(
+                                ConsoleRunState(ConsoleRunStatus.STOPPED, "Preparation ended."),
+                                session_id=session_key,
                             )
+                finally:
+                    try:
+                        for service, pending_id in getattr(
+                            self, "_plugin_pending_submissions", {}
+                        ).pop(active_task, ()):
+                            await service.retire_pending(pending_id)
                     finally:
-                        lifecycle.close_scope(scope)
-                        lifecycle.turn_scope = None
-                if (
-                    self.run_state_for(session_key).status
-                    is ConsoleRunStatus.VALIDATING
-                ):
-                    self._set_run_state(
-                        ConsoleRunState(ConsoleRunStatus.STOPPED, "Preparation ended."),
-                        session_id=session_key,
-                    )
-            for service, pending_id in getattr(
-                self, "_plugin_pending_submissions", {}
-            ).pop(active_task, ()):
-                await service.retire_pending(pending_id)
-            self._unregister_submit_task(active_task)
+                        self._unregister_submit_task(active_task)
 
     async def _submit_draft_inner(
         self,
