@@ -14,7 +14,7 @@ references:
 - backlog/decisions/236-served-desktop-approval-relay.md
 - tldw_chatbook/Chat/console_remote_rounds.py
 - tldw_chatbook/Web_Server/static/mobile/app.js
-updated_date: 2026-11-09 12:59
+updated_date: 2026-11-09 13:31
 ---
 
 ## Description
@@ -49,6 +49,7 @@ Reason: Compose the existing captured presentation and feedback with the already
 10. Reproduce the native Settings Return stall when saved-default convergence invalidates the first preparation and the existing resume wakeup has already run. Preserve the first refusal. If confirmed, allow one fresh preparation only while the same exact draft, claim, session and mounted visit still own the return. Keep cancellation, supersession, and all original assertions and limits.
 11. Diagnose UI28’s pre-holder readiness wait with an actual unrelated mounted message pump held while the real Console refresh settles. If confirmed, narrow only that fixture wait to its existing owner predicates and Console after-refresh signal, preserving the two-second deadline and all held-REBUILD, phase and Stop assertions.
 12. Reproduce the independent review’s stale second-discovery edge with an actual A-to-B-to-A session selection and the original route. Recheck the retry’s exact native owner at the modal push boundary, while preserving the first attempt and post-transfer ownership.
+13. Retain the exact hosted Perf Guard timeout annotation and all seven passing step logs. Run the original five count-based keystroke census cases on two isolated pytest workers with worker restarts disabled. Keep the job at 15 minutes, every case at its original limit, and the actual latency and compact-setup probes serial. Verify exact commands, same cases and private-profile teardown before independent review and fresh hosted qualification.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -63,6 +64,8 @@ The b498 hosted follow-up repaired four implicit shortest zip sites and two exce
 The canonical approval label now says Until Chatbook exits in the terminal and phone. The Settings Return restores its exact draft after a real saved-default change invalidates the first preparation. The single retry rechecks its exact native owner before modal push. A real A-to-B-to-A selection during the retry rejects the stale modal and retains the pending draft. UI28 polls the original Console readiness conditions under the existing two-second wait. The held-descendant control passed, and the blocked Console control still expired. No runtime limits or original assertions changed.
 
 The final original UI5 shard passed all 119 existing cases and one new stale-owner case. Chromium and WebKit both passed the phone-option control. The final original software UAT passed 15 browser cases and the mounted parent and three children with ordinary reopen and matching retained artifacts. Optional native return diagnostics retain their mixed results. The passive check recorded zero executions of the added retry branch in those eight optional controls. Exact committed-head review and its own hosted gates remain the AC3 evidence.
+
+GitHub cancelled the cf70156 Perf Guard at its existing 15-minute limit after all seven test steps passed. The five count-based keystroke cases now run on two isolated pytest workers with worker restarts disabled. All five passed in the local candidate invocation. Every selector and timeout is preserved, and the latency and compact-setup probes still run serially. The successor’s hosted wall-clock result remains required.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
