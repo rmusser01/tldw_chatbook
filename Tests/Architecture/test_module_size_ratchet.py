@@ -240,14 +240,12 @@ _BUDGETS: dict[str, int] = {
     # closed." again instead of the ownership-changed result.
     # 2026-11-07, TASK-39138 review r12c-rev1 (owner size waiver): +1, the
     # custody-refusal comment moved onto its own line above the check.
-    # 2026-11-09, round-12 restack onto dev 3a6498ae14 (owner size waiver):
-    # dev's 29,167 plus TASK-39138's +4.
     # 2026-11-07, TASK-39119 (owner size waiver): +2, a wake or goal iteration
     # takes no mix-in anchor from an earlier turn's USER row.
     # 2026-11-08, TASK-39119 review (owner size waiver): +3, an anchorless wake or goal iteration saves its reply row first.
-    # 2026-11-08, round-12 restack (owner size waiver): TASK-39138's +4 and
-    # TASK-39119's +5 stacked on dev; exact measurement.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29189,
+    # 2026-11-09, round-12 restack onto dev 3a6498ae14 (owner size waiver):
+    # dev's 29,167 plus TASK-39138's +4 and TASK-39119's +5.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29176,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
