@@ -2888,7 +2888,8 @@ def _validate_installed(journal, candidate, plan, *, session=None):
                     plan,
                     receipt.manifest_digest,
                 ).result()
-            verify()
+            if plan.mode != "isolated":
+                verify()
             _check_preserved_settings(plan, session, candidate, receipt.descriptor)
             verify()
             for row in sorted(

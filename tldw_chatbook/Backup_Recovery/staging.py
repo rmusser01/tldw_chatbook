@@ -621,6 +621,7 @@ def stage_restore(
                 infos = container.infolist()
                 offsets = reader._local_ranges(stream, infos, central)
                 streamed = 0
+                capacity = None
                 for payload in doc.files:
                     reader._check(cancel)
                     target = stage / payload.payload
@@ -632,9 +633,9 @@ def stage_restore(
                         create_private_file(target) as fd,
                         os.fdopen(os.dup(fd), "wb") as output,
                     ):
-                        # Same hoist as `_copy`: one path walk, not one per
-                        # 64 KiB member chunk.
-                        capacity = held_capacity(stage)
+                        # Keep the same extraction root identity across all members.
+                        if capacity is None:
+                            capacity = held_capacity(stage)
                         for chunk in reader._member_chunks(
                             stream, info, offsets[info.filename], cancel
                         ):
