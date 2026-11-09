@@ -14,7 +14,7 @@ references:
 - backlog/decisions/236-served-desktop-approval-relay.md
 - tldw_chatbook/Chat/console_remote_rounds.py
 - tldw_chatbook/Web_Server/static/mobile/app.js
-updated_date: 2026-11-09 14:17
+updated_date: 2026-11-09 14:23
 ---
 
 ## Description
@@ -51,6 +51,7 @@ Reason: Compose the existing captured presentation and feedback with the already
 12. Reproduce the independent review’s stale second-discovery edge with an actual A-to-B-to-A session selection and the original route. Recheck the retry’s exact native owner at the modal push boundary, while preserving the first attempt and post-transfer ownership.
 13. Retain the exact hosted Perf Guard timeout annotation and all seven passing step logs. Run the original five count-based keystroke census cases on two isolated pytest workers with worker restarts disabled. Keep the job at 15 minutes, every case at its original limit, and the actual latency and compact-setup probes serial. Verify exact commands, same cases and private-profile teardown before independent review and fresh hosted qualification.
 14. Preserve the hosted pending-layout picker failure and reproduce its zero-region assertion by recomposing the real Notes canvas after the real click opens the picker. Read the same armed button’s shifted geometry at dispatch before the background widget can retire. Keep the single click, ten-second readiness deadline, modal focus, folder, filter and durable mutation assertions. Verify the same forced recompose and all three picker journeys. ADR required: no, because this changes only when the existing fixture observes geometry.
+15. Reproduce the review finding by replacing the Move button during Pilot’s first yield. Observe the first dispatch of the actual native Button.Pressed through Textual’s existing test message hook. Compare the originating button and its then-current shifted geometry, deduplicate delivery of the same event, and preserve the original one-click helper and deadline. Require the replacement control to fail and the post-click recompose and all original cases to pass.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -69,6 +70,8 @@ The final original UI5 shard passed all 119 existing cases and one new stale-own
 GitHub cancelled the cf70156 Perf Guard at its existing 15-minute limit after all seven test steps passed. The five count-based keystroke cases now run on two isolated pytest workers with worker restarts disabled. All five passed in the local candidate invocation. Every selector and timeout is preserved, and the latency and compact-setup probes still run serially. The successor’s hosted wall-clock result remains required.
 
 On 98596fe, Perf Guard passed all seven original steps in 9 minutes 17 seconds with the original limits. UI16 separately opened the Notes picker but later read a zero region from its old Move button. A native post-click recompose reproduced the same assertion after a successful click. The test now records the exact hit-tested button and its shifted geometry at dispatch, keeping one click and the ten-second readiness deadline. The same forced recompose passed, and all three original picker journeys passed. The next exact head still needs its own hosted gates.
+
+Independent review found a second test race during Pilot’s first yield. The retained control replaced the shifted Move button, and the unshifted replacement emitted the actual press and opened the picker. The prior local observation missed that replacement. The final test uses Textual’s existing message hook to record the actual originating Button.Pressed and its first region, once per message, before the modal changes the background. It rejects the replacement control and passes both the real post-click recompose and all three original picker cases. The original click helper, selectors and limits remain as before. The existing testing-evidence lesson records the distinction.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
