@@ -683,6 +683,24 @@ async def test_actual_send_paints_sending_and_accepts_input_within_100ms(
             _assert_send_budget(record_property, label, start, end, loop_cpu)
 
 
+#: TASK-39166: patience for a released durable turn to settle. At load
+#: 100-110 one took over the 15 s these tests used to allow; the wait ends as
+#: soon as the turn's own task does, so only a stuck turn uses all of it.
+_SETTLE_SECONDS = 60.0
+
+
+async def _turn_settles(case, task):
+    """Wait for the released turn's task, then for its custody to clear."""
+    done, _pending = await asyncio.wait({task}, timeout=_SETTLE_SECONDS)
+    assert done, (
+        f"the released turn's task did not finish within {_SETTLE_SECONDS:g} s: "
+        f"{task!r}; provider calls={len(case.provider_calls)}"
+    )
+    assert await _until(
+        lambda: not case.runtime.has_custodied_turns(case.session.id), _SETTLE_SECONDS
+    ), f"the turn finished ({task!r}) but its custody never cleared"
+
+
 def _install_received_wire_reply(monkeypatch, case):
     def reply(**kwargs):
         case.provider_calls.append(kwargs)
@@ -750,9 +768,7 @@ async def test_pressed_capture_survives_identical_retyping_before_promotion(
             assert case.composer.draft_text() == other_draft
             assert case.store.session_draft(case.session.id) == case.draft
         case.probe.release.set()
-        assert await _until(
-            lambda: not case.runtime.has_custodied_turns(case.session.id), 15
-        )
+        await _turn_settles(case, record.task)
         _assert_pressed_reply(case)
         assert case.store.received_turn_for_session(case.session.id) is None
         assert case.store.session_draft(case.session.id) == case.draft
@@ -788,7 +804,7 @@ async def test_enter_sends_pressed_body_after_clear_and_type_before_paint_dispat
         _install_received_wire_reply(monkeypatch, case)
         try:
             _send(case, "enter")
-            assert await _until(paint_entered.is_set, 10)
+            assert await _until(paint_entered.is_set, 10), "the held ack paint never ran"
             pending = case.console._console_pending_send
             assert pending is not None
             assert pending.session_id == case.session.id
@@ -800,16 +816,14 @@ async def test_enter_sends_pressed_body_after_clear_and_type_before_paint_dispat
             case.composer.insert_text(newer)
             assert await _until(
                 lambda: case.store.session_draft(case.session.id) == newer, 5
-            )
+            ), "the newer typed draft never reached the session's store"
             assert case.composer.draft_text() == newer
             paint_release.set()
             record = await _held_received_record(case)
             assert record.received_intent.inputs.draft == case.draft
             assert case.store.session_draft(case.session.id) == newer
             case.probe.release.set()
-            assert await _until(
-                lambda: not case.runtime.has_custodied_turns(case.session.id), 15
-            )
+            await _turn_settles(case, record.task)
             _assert_pressed_reply(case)
             assert all(
                 newer not in str(row)
@@ -850,7 +864,7 @@ async def test_navigation_after_receipt_keeps_original_turn_and_newer_session_dr
             and not case.console.is_attached
             and case.runtime.view is None,
             5,
-        )
+        ), "the popped Console never detached from the screen stack and runtime"
         case.store.switch_session(successor.id)
         assert case.runtime._turn_custody[record.turn_id] is record
         assert case.store.received_turn_for_session(case.session.id) is claim
@@ -858,9 +872,7 @@ async def test_navigation_after_receipt_keeps_original_turn_and_newer_session_dr
         assert not case.probe.retired()
 
         case.probe.release.set()
-        assert await _until(
-            lambda: not case.runtime.has_custodied_turns(case.session.id), 15
-        )
+        await _turn_settles(case, task)
         task.result()
         assert len(case.provider_calls) == 1
         assert any(
@@ -945,7 +957,8 @@ async def test_send_feedback_survives_preparation_and_provider_wait(route, monke
         def reply(**kwargs):
             case.provider_calls.append(kwargs)
             entered.set()
-            if not release.wait(15):
+            # The test releases in its finally; this only ends a stray thread.
+            if not release.wait(_SETTLE_SECONDS):
                 raise RuntimeError("test provider wait timed out")
             if kwargs.get("streaming"):
                 chunk = {
@@ -965,10 +978,19 @@ async def test_send_feedback_survives_preparation_and_provider_wait(route, monke
         with frames.installed():
             try:
                 _send(case, route)
-                await _held_received_record(case)
-                assert await _until(lambda: ("Sending", selector) in frames.frames, 2)
+                record = await _held_received_record(case)
+                assert await _until(
+                    lambda: ("Sending", selector) in frames.frames, 2
+                ), f"Sending never painted while the read was held: {frames.frames}"
                 case.probe.release.set()
-                assert await _until(entered.is_set, 15)
+                await _until(
+                    lambda: entered.is_set() or record.task.done(), _SETTLE_SECONDS
+                )
+                assert entered.is_set(), (
+                    "the turn never reached the provider: "
+                    + (f"it ended first ({record.task!r})" if record.task.done()
+                       else f"not within {_SETTLE_SECONDS:g} s")
+                )
                 assert await _until(
                     lambda: ("Waiting for reply", selector) in frames.frames, 5
                 ), frames.frames
@@ -979,10 +1001,10 @@ async def test_send_feedback_survives_preparation_and_provider_wait(route, monke
                 assert not release.is_set()
                 assert case.composer.draft_text() == ""
                 release.set()
+                await _turn_settles(case, record.task)
                 assert await _until(
-                    lambda: not case.runtime.has_custodied_turns(case.session.id), 15
-                )
-                assert await _until(lambda: not _run_segment(case.console)[0], 5)
+                    lambda: not _run_segment(case.console)[0], 5
+                ), "the run segment never hid after the turn settled"
                 assert len(case.provider_calls) == 1
                 assert any(
                     message.role.value == "assistant"
