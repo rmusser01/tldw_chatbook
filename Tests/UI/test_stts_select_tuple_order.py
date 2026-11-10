@@ -131,6 +131,7 @@ async def test_the_real_ids_are_legal_select_values():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_initialize_audiobook_defaults_lands_the_default_without_logging_a_swallow():
     app = _Host()

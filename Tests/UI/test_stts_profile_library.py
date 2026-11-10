@@ -1157,6 +1157,7 @@ async def test_voice_profiles_view_mounts_focused_library_without_hiding_other_v
         assert app.query_one("#tts-generate-btn", Button)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_audiobook_kokoro_blend_group_is_not_a_keyboard_select_option(
     monkeypatch: pytest.MonkeyPatch,
