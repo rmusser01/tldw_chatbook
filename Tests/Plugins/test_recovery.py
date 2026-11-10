@@ -888,6 +888,8 @@ def _plugin_rows(config, root):
     return inventory, rows
 
 
+# The plugin root exists only where the runtime owner qualifies (POSIX here).
+@platform_support.package_capture
 def test_backup_preview_captures_plugin_root_except_runtime_lock(tmp_path):
     """AC1/AC2: registry, packages, revisions and every data root are captured,
     staging and acquisition custody too (owner decision Q1); only runtime.lock is
@@ -931,6 +933,8 @@ def test_backup_preview_captures_plugin_root_except_runtime_lock(tmp_path):
     assert not any(item.owner == "unknown" for item in inventory.items if item.path == root)
 
 
+# The plugin root exists only where the runtime owner qualifies (POSIX here).
+@platform_support.package_capture
 def test_plugin_registry_capture_folds_wal_into_its_exact_catalog(tmp_path, monkeypatch):
     """AC3: the frozen catalog matches the installed migrations, and capture copies
     committed WAL frames through the SQLite backup route like the other owners."""
@@ -996,6 +1000,7 @@ def test_plugin_registry_capture_folds_wal_into_its_exact_catalog(tmp_path, monk
         writer.close()
 
 
+@platform_support.package_capture
 @pytest.mark.parametrize("writer", ["process", "lock"])
 def test_live_plugin_writers_refuse_preview_and_capture(tmp_path, monkeypatch, writer):
     """AC4: an unsettled plugin process or a live runtime owner makes the preview
@@ -1048,6 +1053,8 @@ def test_live_plugin_writers_refuse_preview_and_capture(tmp_path, monkeypatch, w
         handle.close()
 
 
+# The plugin root exists only where the runtime owner qualifies (POSIX here).
+@platform_support.package_capture
 def test_restored_registry_must_name_its_own_plugin_root(tmp_path):
     """AC8 defense: a registry whose data roots name another plugin root refuses."""
     from tldw_chatbook.Backup_Recovery.models import FileMetadata, StorageItem
