@@ -2375,6 +2375,11 @@ async def test_a_saved_chat_with_a_remote_schemeless_llamacpp_endpoint_sends_not
                 "sk-proj-abcdefghijklmnopqrstuvwx",
                 "gpu-box.lan",
                 "ftp://gpu-box.lan:8080",
+                # Review r13s-rev2: user info or a query is never told to add
+                # a scheme; the contract refuses it for that, not the scheme.
+                "user:pw@gpu-box.lan:8080",
+                ":secretpw@gpu-box.lan:8080",
+                "gpu-box.lan:8080?key=sk-x",
             )
         ],
     ],
@@ -2483,3 +2488,48 @@ def test_chat_with_llama_refuses_a_remote_endpoint_typed_without_a_scheme(
             messages, api_url=endpoint, model="m", api_key_resolved=True
         )
         assert [call["api_base_url"] for call in calls] == [sent]
+
+
+@pytest.mark.parametrize(
+    "endpoint", ["ftp://user:hunter2@gpu-box.lan:8080", "htp://gpu-box.lan:8080/v1"]
+)
+@pytest.mark.parametrize(
+    "provider", ["llama_cpp", "local_llamacpp", "local_llamafile", "strata", "polystrata"]
+)
+def test_chat_with_llama_refuses_a_non_http_scheme_without_echoing_it(
+    provider, endpoint, monkeypatch
+):
+    """TASK-39151 review r13s-rev2: M5's guard checked only for "://", so an
+    ``ftp://`` or ``htp://`` endpoint reached ``requests`` and failed as a 503
+    whose message echoed the whole URL, user info included. Every provider
+    that dispatches to ``chat_with_llama`` now refuses it as a configuration
+    error that names no part of the value, before anything is sent."""
+    from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local_calls
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+
+    assert API_CALL_HANDLERS[provider] is local_calls.chat_with_llama
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        local_calls,
+        "_chat_with_openai_compatible_local_server",
+        lambda **kwargs: calls.append(kwargs) or "ok",
+    )
+    monkeypatch.setattr(
+        local_calls,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(values={"api_settings": {}}),
+    )
+
+    with pytest.raises(ChatConfigurationError, match=r"http:// or https://") as caught:
+        local_calls.chat_with_llama(
+            [{"role": "user", "content": "x"}],
+            api_url=endpoint,
+            model="m",
+            provider_name=provider,
+            api_key_resolved=True,
+        )
+
+    assert calls == []
+    for part in ("hunter2", "user:", "gpu-box", "ftp", "htp"):
+        assert part not in str(caught.value)
