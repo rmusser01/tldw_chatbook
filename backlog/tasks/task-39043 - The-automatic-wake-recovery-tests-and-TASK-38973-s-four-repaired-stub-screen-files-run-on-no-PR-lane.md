@@ -4,7 +4,7 @@ title: "The automatic wake recovery tests and TASK-38973's four repaired stub-sc
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-06 10:09
-updated_date: 2026-11-08 00:45
+updated_date: 2026-11-10 00:35
 labels:
 - follow-up
 - ci
@@ -94,3 +94,5 @@ Projected for CI: the round-11 notes put the job at about 13.2-16.8 min once rou
 **Files.** `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/CI/test_response_rules_critical_gate.py`, `Tests/CI/test_derived_artifacts_workflow.py`.
 
 **Review r12l-rev1 (2026-11-08).** The two bootstrap_profile Tests/UI files left the recovered-suites step for the UI census (the census does hold bootstrap_profile files: 512 entries already, and TASK-36478 restores the shared bootstrap config after each test; my earlier "may not hold" was wrong). TASK-39124's built-in pixel buddy file joined the step last. The final step, 13 targets, `jobstep.sh fu-r12-lanes "Run the recovered suites"`, 3 runs: 363.3 s (load 38 falling to 21), 742.9 s (load 21-50), 467.1 s (load 50-43); each 715 passed, 1 skipped, 2 failed (TASK-39140's pin, fixed on fu/r12-ctlr), no lease finding. The slowest run plus about 1.5 min of setup is about 13.9 min, 6.1 under the cap.
+
+**After the restack onto dev 3a6498ae14 (2026-11-09).** `Tests/Backup_Recovery/test_console_config_sync_lifetime.py` has 9 red nodes in the recovered-suites step (`test_console_busy_config_locks_defer_both_refresh_callers` x6, `test_console_refresh_retries_after_native_pause_without_stale_state` x2, `test_console_native_retry_uses_one_screen_owned_timer[timer-retry]`): its stub screen lacks `_console_sync_in_progress`, which `config_sync.run_coalesced_control_bar_sync` now reads (dev's 0aa96f8d1b, "give owed Console refreshes one Canvas polling handoff"). With dev's own `config_sync.py` and `chat_screen.py` swapped in, the same 9 fail, so the stack's TASK-39145 changes are not the cause. The step: 9 failed, 724 passed, 1 skipped, in 289.6 s (jobstep.sh, load 13-18) and 471.8 s (full-output rerun). Not fixed here (outside this task).
