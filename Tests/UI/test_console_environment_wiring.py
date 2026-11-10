@@ -120,6 +120,7 @@ async def _until(pilot, predicate) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_suspended_environment_stays_quiet_and_refreshes_on_resume():
     """A covered reusable screen is still displayed but must not collect."""
@@ -157,6 +158,7 @@ async def test_suspended_environment_stays_quiet_and_refreshes_on_resume():
         assert ("net", "/w") in dispatches
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_first_open_without_workspace_paints_empty_state_and_reuses_owner():
     """Lazy first-open must paint even when no gather can produce a landing.
@@ -201,6 +203,7 @@ async def test_first_open_without_workspace_paints_empty_state_and_reuses_owner(
         assert "env-unbound" in _row_ids(section)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_fix_row_inserts_failure_text_into_composer():
     """The failing-checks "Fix" row must reach the real composer draft."""
@@ -227,6 +230,7 @@ async def test_fix_row_inserts_failure_text_into_composer():
         assert "ci-tests" in draft and "https://ci/1" in draft
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pr_add_row_inserts_pr_summary_into_composer():
     """The PR "Add to chat" row inserts the PR summary, not the checks text."""
@@ -253,6 +257,7 @@ async def test_pr_add_row_inserts_pr_summary_into_composer():
         assert "https://x/pull/7" in draft
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tasks_add_row_inserts_branch_task_into_composer():
     """The Tasks section's "Add task to chat" row routes through the SAME handler."""
@@ -281,10 +286,16 @@ async def test_tasks_add_row_inserts_branch_task_into_composer():
         assert "backlog/tasks/task-13.md" in draft
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_row_activation_toggles_expansion_and_rerenders():
     """Activating an expandable row re-projects and re-renders the section."""
     async with _console_screen() as (pilot, screen):
+        # Opening must not race a background landing with our canned snapshots.
+        screen._review_selection._console_change_review_workspace_roots = lambda: None
+        await screen.action_toggle_console_inspector_rail()
+        await pilot.pause()
+        assert _right_rail_open(screen)
         snapshot = _snapshot(
             files=(
                 ChangedFile(path="a.py", status="M", adds=3, dels=1),
@@ -302,13 +313,21 @@ async def test_row_activation_toggles_expansion_and_rerenders():
         screen._handle_console_environment_row("environment", ENV_ROW_CHANGES)
         await pilot.pause()
         assert "env-file-1" in _row_ids(section)
-        assert section.query("#console-inspector-section-environment-row-1")
+        assert any(
+            row.row_id == "env-file-1"
+            for row in section.query(ConsoleInspectorSectionRow)
+        )
 
         screen._handle_console_environment_row("environment", ENV_ROW_CHANGES)
         await pilot.pause()
         assert not any(rid.startswith("env-file-") for rid in _row_ids(section))
+        assert not any(
+            row.row_id.startswith("env-file-")
+            for row in section.query(ConsoleInspectorSectionRow)
+        )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_commit_push_row_opens_change_review_in_current_mode():
     """"Commit or push" must open Change Review straight onto the working tree."""
@@ -327,6 +346,7 @@ async def test_commit_push_row_opens_change_review_in_current_mode():
         assert captured == [{"initial_current_mode": True}]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_both_environment_change_rows_open_the_same_working_tree_view():
     """TASK-31665 AC#8 -- the canonical-opener ruling.
@@ -346,6 +366,7 @@ async def test_both_environment_change_rows_open_the_same_working_tree_view():
         assert captured == [{"initial_current_mode": True}]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pr_open_row_uses_app_open_url_and_never_raises():
     """PR "Open in browser" goes through ``app.open_url`` (never webbrowser)."""
@@ -374,6 +395,7 @@ async def test_pr_open_row_uses_app_open_url_and_never_raises():
         await pilot.pause()  # a failing opener must not escape the handler
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_row_activation_message_routes_through_the_screen_handler():
     """A real ``RowActivated`` for the environment section reaches the handler.
@@ -398,6 +420,7 @@ async def test_row_activation_message_routes_through_the_screen_handler():
         assert "env-file-0" in _row_ids(section)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_expanding_a_row_keeps_focus_on_that_row(monkeypatch):
     """F2: Enter-Enter must collapse the ROW, never the whole section.
@@ -459,6 +482,7 @@ async def test_expanding_a_row_keeps_focus_on_that_row(monkeypatch):
         assert focused.row_id == ENV_ROW_CHANGES
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_expansion_from_an_unfocused_row_does_not_steal_focus():
     """Negative control: a click-driven expansion never grabs the caret."""
@@ -488,6 +512,7 @@ async def test_expansion_from_an_unfocused_row_does_not_steal_focus():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_poll_landing_that_adds_a_row_keeps_focus_on_the_same_row_id():
     """TASK-31661 AC#1: a background sync that ADDS a row must not move focus.
@@ -550,6 +575,7 @@ async def test_poll_landing_that_adds_a_row_keeps_focus_on_the_same_row_id():
         assert focused.row_id == "env-changes-review"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_poll_landing_that_removes_the_focused_row_lands_on_the_nearest_survivor():
     """TASK-31661 AC#1/#2 (round-1 review M4): the fallback is genuinely nearest.
@@ -628,6 +654,7 @@ async def test_poll_landing_that_removes_the_focused_row_lands_on_the_nearest_su
         assert focused.row_id == ENV_ROW_BRANCH
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_poll_landing_with_no_focusable_row_falls_back_to_the_section_toggle():
     """TASK-31661 AC#2 (round-1 review I1): no row at all may be focusable.
@@ -678,6 +705,7 @@ async def test_poll_landing_with_no_focusable_row_falls_back_to_the_section_togg
         assert focused.id == "console-inspector-section-environment-toggle"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_poll_landing_error_state_also_falls_back_to_the_section_toggle():
     """TASK-31661 (round-1 review I1, ERROR variant): same fallback, ERROR tier.
@@ -723,6 +751,7 @@ async def test_poll_landing_error_state_also_falls_back_to_the_section_toggle():
         assert focused.id == "console-inspector-section-environment-toggle"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_poll_landing_that_hides_the_tasks_section_falls_back_to_environment_toggle():
     """TASK-31661 (round-2 review I1, Tasks-section case, probe-reproduced).
@@ -787,6 +816,7 @@ async def test_poll_landing_that_hides_the_tasks_section_falls_back_to_environme
         assert focused.id == "console-inspector-section-environment-toggle"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_poll_landing_never_hijacks_focus_outside_the_rail():
     """TASK-31661 negative control: focus outside the rail is untouched.
@@ -851,6 +881,7 @@ def _pr_removal_setup(*, with_pr):
     ) if with_pr else _snapshot()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_poll_landing_yields_to_a_same_tick_focus_move():
     """TASK-31661 (round-1 review I2, variant 1): a same-tick user move wins.
@@ -908,6 +939,7 @@ async def test_poll_landing_yields_to_a_same_tick_focus_move():
         assert screen.focused is composer
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_poll_landing_yields_to_a_one_tick_later_focus_move():
     """TASK-31661 (round-1 review I2, variant 2): a slightly-later move also wins.
@@ -973,6 +1005,7 @@ async def test_poll_landing_yields_to_a_one_tick_later_focus_move():
         assert screen.focused is composer
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_poll_landing_yields_to_a_move_to_ANOTHER_ROW_in_the_same_rail():
     """Q6: the restore must yield to a user move that stays INSIDE the rail.
@@ -1054,6 +1087,7 @@ async def test_poll_landing_yields_to_a_move_to_ANOTHER_ROW_in_the_same_rail():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_collapse_toggle_persists_via_rail_preferences():
     async with _console_screen() as (pilot, screen):
@@ -1068,6 +1102,7 @@ async def test_collapse_toggle_persists_via_rail_preferences():
         assert captured[0]["notify_on_failure"] is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tasks_collapse_toggle_persists_under_its_own_id():
     async with _console_screen() as (pilot, screen):
@@ -1080,6 +1115,7 @@ async def test_tasks_collapse_toggle_persists_under_its_own_id():
         assert captured and captured[0]["section_updates"] == {"tasks": False}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_refresh_view_all_forces_net_tier():
     async with _console_screen() as (pilot, screen):
@@ -1093,6 +1129,7 @@ async def test_refresh_view_all_forces_net_tier():
         assert captured == [{"include_net": True, "force_net": True}]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_refresh_ack_persists_through_the_slow_net_tier_and_clears_when_it_lands(
     monkeypatch,
@@ -1198,6 +1235,7 @@ async def test_refresh_ack_persists_through_the_slow_net_tier_and_clears_when_it
         assert controller.pending_ack_tiers == frozenset()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_refresh_with_an_unresolvable_root_never_arms_the_acknowledgment():
     """TASK-31664 AC#3, round-1 review I2.
@@ -1230,6 +1268,7 @@ async def test_refresh_with_an_unresolvable_root_never_arms_the_acknowledgment()
         assert screen._console_environment.pending_ack_tiers == frozenset()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_10s_poll_never_shows_the_refresh_acknowledgment():
     """Negative control: only the explicit Refresh tail arms the busy
@@ -1255,6 +1294,7 @@ async def test_the_10s_poll_never_shows_the_refresh_acknowledgment():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_landing_for_stale_root_does_not_touch_sections():
     """No root and no mounted Environment section: land quietly, change nothing.
@@ -1289,6 +1329,7 @@ async def test_landing_for_stale_root_does_not_touch_sections():
         assert tasks_section.rows == ()  # untouched, not half-applied
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unbound_landing_replaces_the_previous_repos_paint():
     """TASK-31660 AC #1/#3 at the SCREEN seam.
@@ -1299,6 +1340,11 @@ async def test_unbound_landing_replaces_the_previous_repos_paint():
     files". Drives the real sections through the real landing path.
     """
     async with _console_screen() as (pilot, screen):
+        # Opening must not race a background landing with our canned snapshots.
+        screen._review_selection._console_change_review_workspace_roots = lambda: None
+        await screen.action_toggle_console_inspector_rail()
+        await pilot.pause()
+        assert _right_rail_open(screen)
         bound = _snapshot(
             files=(ChangedFile(path="a.py", status="M", adds=3, dels=1),),
             branch="feat/previous-repo",
@@ -1319,6 +1365,10 @@ async def test_unbound_landing_replaces_the_previous_repos_paint():
             "#console-tasks-section", ConsoleInspectorSection
         )
         assert ENV_ROW_COMMIT_PUSH in _row_ids(section)
+        assert any(
+            row.row_id == ENV_ROW_COMMIT_PUSH
+            for row in section.query(ConsoleInspectorSectionRow)
+        )
         assert tasks_section.styles.display == "block"
 
         unbound = unbound_snapshot()
@@ -1342,6 +1392,7 @@ async def test_unbound_landing_replaces_the_previous_repos_paint():
         assert tasks_section.styles.display == "none"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cold_start_rail_never_paints_the_no_git_workspace_negative():
     """AC #2 at the screen seam: PENDING, not a claim, before anything lands.
@@ -1378,6 +1429,7 @@ async def test_cold_start_rail_never_paints_the_no_git_workspace_negative():
         assert "No git workspace" not in painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_refresh_while_unbound_re_lands_through_the_real_controller():
     """AC #4: pressing Refresh with no bound folder is not a no-op.
@@ -1408,6 +1460,7 @@ async def test_refresh_while_unbound_re_lands_through_the_real_controller():
         assert _row_ids(section) == [ENV_ROW_UNBOUND, ENV_ROW_UNBOUND_NOTE]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unresolvable_root_reads_as_unknown_not_as_unbound():
     """TASK-31660 round 1: a swallowed exception must not assert "not bound".
@@ -1435,6 +1488,7 @@ async def test_unresolvable_root_reads_as_unknown_not_as_unbound():
         assert screen._console_environment_root() == "/w/one"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unknown_root_never_paints_the_unbound_copy():
     """The on-screen half of the same finding, through the real controller."""
@@ -1482,6 +1536,7 @@ async def test_unknown_root_never_paints_the_unbound_copy():
         assert screen._console_environment.snapshot is bound
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_poll_timer_and_root_accessor_are_wired():
     """The 10s local poll exists and the root accessor reads the review roots."""
@@ -1493,6 +1548,7 @@ async def test_poll_timer_and_root_accessor_are_wired():
         assert screen._console_environment_root() == "/w/one"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_environment_workers_cannot_panic_the_app():
     """Gathers run with ``exit_on_error=False``.
@@ -1510,6 +1566,7 @@ async def test_environment_workers_cannot_panic_the_app():
         assert captured[0]["thread"] is True and captured[0]["exclusive"] is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_fleet_sync_nudges_the_local_tier():
     """The coalesced fleet sync nudges the controller (its guard handles a closed rail)."""
@@ -1553,6 +1610,7 @@ async def _app_focus_screen():
         yield pilot, console
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_terminal_focus_regain_reaches_the_controller_through_the_real_event():
     """`AppFocus` posted for real -- never a direct handler call.
@@ -1594,6 +1652,7 @@ async def test_app_focus_forwarding_tolerates_a_screen_that_does_not_want_it():
         assert pilot.app.is_running  # nothing raised out of the handler
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_opening_the_inspect_rail_refreshes_both_tiers():
     """I1: drive the real accelerator, not the controller method.
@@ -1649,6 +1708,7 @@ async def _real_fleet_sync(pilot, screen) -> None:
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_fleet_rows_drive_the_section_and_rail_auto_open_lifecycle():
     """The whole busy-window cycle, driven through the REAL derivation.
@@ -1699,6 +1759,7 @@ async def test_fleet_rows_drive_the_section_and_rail_auto_open_lifecycle():
         assert fleet_section.open is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_fleet_rows_auto_open_the_inspect_rail_and_refresh_it():
     """Rows appearing while the rail is closed reveal it AND refresh it."""
@@ -1727,6 +1788,7 @@ async def test_fleet_rows_auto_open_the_inspect_rail_and_refresh_it():
         assert screen._current_console_rail_state().right_open is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_other_session_activity_alone_does_not_touch_the_inspect_rail():
     """The other-sessions summary line drives nothing on the right rail.
@@ -1746,6 +1808,7 @@ async def test_other_session_activity_alone_does_not_touch_the_inspect_rail():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_environment_rows_take_one_line_each_at_the_smallest_terminal():
     """AC#1/#2 through the REAL rail, at the size the critique measured.
@@ -1783,6 +1846,7 @@ async def test_environment_rows_take_one_line_each_at_the_smallest_terminal():
         assert section.size.height == 6
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_sections_suppress_their_summary_while_open():
     """Production half of AC#3: the rail composes both sections with the
@@ -1845,6 +1909,7 @@ def _fleet_row(section, row_id):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_fleet_section_sync_keeps_focus_on_the_same_row():
     """AC#13. `_sync_console_agent_section` runs on its own periodic tick and
@@ -1900,6 +1965,7 @@ async def test_fleet_section_sync_keeps_focus_on_the_same_row():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_fleet_section_sync_yields_to_a_focus_move_outside_the_rail():
     """AC#13 reuses TASK-31661's outside-rail guard rather than cloning it:
@@ -1982,6 +2048,7 @@ def test_environment_poll_tick_is_a_no_op_once_the_screen_stack_is_empty():
     assert ChatScreen._is_active_console_screen(fake) is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_environment_poll_tick_survives_app_teardown_through_the_real_screen():
     """task-32297, at the application boundary (Qodo asked for it).
@@ -2015,6 +2082,7 @@ async def test_environment_poll_tick_survives_app_teardown_through_the_real_scre
             stack.extend(saved)  # let the harness tear down normally
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_changed_files_overflow_tail_opens_the_working_tree_view():
     """TASK-32333: activating "... N more — Review opens all" opens Change
