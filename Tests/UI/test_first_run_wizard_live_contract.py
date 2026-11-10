@@ -4167,8 +4167,19 @@ async def test_provider_discovery_failure_keeps_escape_exit_alive(
     request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Real Enter/Enter/Escape walk: discovery fails, Escape still exits."""
+    """The actual wizard keeps Escape available after a rejected listing."""
+    from dataclasses import replace
+
+    from Tests.Wizards.provider_step_harness import pick_provider
+
+    key = "sk-wizard-offline-fixture"
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
+    result = _recorded_auth_failure_result()
+    discover = AsyncMock(
+        return_value=replace(result, error=replace(result.error, category="unauthorized"))
+    )
+    monkeypatch.setattr(app.llm_provider_catalog_scope_service, "discover_models", discover)
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(235, 52)) as pilot:
@@ -4184,20 +4195,17 @@ async def test_provider_discovery_failure_keeps_escape_exit_alive(
                 return step.config is not None and step.config.id == STEP_PROVIDER
 
             await _wait_until(pilot, _on_provider)
-            # The real Enter-driven flow: Enter selects the preselected
-            # provider row, which launches the (failing -- no key, no
-            # server) selected-provider discovery worker for real.
-            await pilot.press("enter")
+            step = container.steps[container.current_step]
+            assert isinstance(step, ProviderStep)
+            monkeypatch.setenv("OPENAI_API_KEY", key)
+            await pick_provider(pilot, step, "openai")
             status = app.screen.query_one("#setup-provider-probe-status", Static)
             await _wait_until(
-                pilot,
-                lambda: "Couldn't discover models" in str(status.renderable),
+                pilot, lambda: "rejected the key in OPENAI_API_KEY" in str(status.renderable)
             )
-            # task-31741 Bug B: this exact state hard-blocks Next on the
-            # missing key, so the failure copy must not promise continuing.
-            assert "continue anyway" not in str(status.renderable).lower(), (
-                f"blocked state still promises continuing: {status.renderable!r}"
-            )
+            assert any(call.kwargs["provider"] == "openai" for call in discover.await_args_list)
+            assert "continue anyway" not in str(status.renderable).lower()
+            assert key not in str(status.renderable)
             focused = app.focused
             assert focused is not None, "focus lost after failed discovery"
             assert focused.is_attached and focused.display, (
