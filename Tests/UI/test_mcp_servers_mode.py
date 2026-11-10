@@ -10,6 +10,10 @@ from textual.app import ComposeResult
 from textual.widgets import Button, Checkbox, DataTable, Static
 
 import tldw_chatbook
+from Tests.UI.background_signals import (
+    BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+    wait_for_background_signal,
+)
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -457,14 +461,23 @@ async def test_overlapping_overview_refreshes_render_only_latest_callout(
 
         monkeypatch.setattr(callouts, "remove_children", hold_first_removal)
         first = asyncio.create_task(canvas.update_overview([snapshot]))
-        await removal_started.wait()
-        second = asyncio.create_task(refresh_latest())
+        tasks = [first]
         try:
-            await second_started.wait()
+            await wait_for_background_signal(
+                removal_started, first, what="first overview refresh removal"
+            )
+            second = asyncio.create_task(refresh_latest())
+            tasks.append(second)
+            await wait_for_background_signal(
+                second_started, second, what="latest overview refresh start"
+            )
             await pilot.pause()
         finally:
             release_removal.set()
-            results = await asyncio.gather(first, second, return_exceptions=True)
+            results = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+            )
 
         assert results == [None, None]
         rendered = list(app.query(".mcp-callout"))
@@ -501,17 +514,29 @@ async def test_cancelled_overview_refresh_does_not_block_next_refresh(
 
         monkeypatch.setattr(callouts, "remove_children", hold_first_removal)
         first = asyncio.create_task(canvas.update_overview([snapshot]))
-        await removal_started.wait()
-        second = asyncio.create_task(refresh_second())
+        tasks = [first]
         try:
-            await second_started.wait()
+            await wait_for_background_signal(
+                removal_started, first, what="first overview refresh removal"
+            )
+            second = asyncio.create_task(refresh_second())
+            tasks.append(second)
+            await wait_for_background_signal(
+                second_started, second, what="second overview refresh start"
+            )
             await pilot.pause()
             target = first if cancelled == "active" else second
             target.cancel()
-            await asyncio.gather(target, return_exceptions=True)
+            await asyncio.wait_for(
+                asyncio.gather(target, return_exceptions=True),
+                timeout=BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+            )
         finally:
             release_removal.set()
-            await asyncio.gather(first, second, return_exceptions=True)
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+            )
 
         assert target.cancelled()
         await canvas.update_overview([replace(snapshot, label="after cancellation")])
