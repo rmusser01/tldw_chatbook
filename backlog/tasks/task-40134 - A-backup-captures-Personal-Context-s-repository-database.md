@@ -57,7 +57,8 @@ Filed in round 13 of the 2026-10-23 burn-down from TASK-39148's owner-approved d
   - The repository's adapter is `activation_required`, and every restore binds all activation-required owners in `finalize_candidate` (`publication.py:592-604`).
   - So Personal Context sync (`app.py:2625-2662`) can stay off until the restored generation is reviewed, through `activation.py:224-227`.
   - This guard holds on its own.
-  - Its review approves Personal Context sync only after a restore that published neither `personal_context.repository` nor `runtime.sync_state`. After one that published either, sync stays off, with a named reason shown to the user, until a review that clears the link state exists.
+  - Its review approves `personal_context.repository` only after a restore that published neither `personal_context.repository` nor `runtime.sync_state`. After one that published either, sync stays off, with a named reason shown to the user, until a review that clears the link state exists.
+  - Personal Context sync also needs the shared owners, which this review never approves (see the separate `runtime.sync_state` investigation). So its copy must not claim that sync resumes.
   - The review approves only `personal_context.repository`. It never approves `config` or `runtime.sync_state`, which every Sync V2 call also needs (`Sync_Interop/server_sync_service.py:85-88`; approval is per owner, `activation.py:351-384`). Those stay with their own review.
 - **First link in flight.** Capture is refused while a `first_link_freeze` or `first_link_rebaseline_commit` row exists (`repository.py:214-226`, `:311-320`).
 - **Device-only records** are included, as **Export recovery copy** already does (decision 8).
@@ -75,7 +76,7 @@ Filed in round 13 of the 2026-10-23 burn-down from TASK-39148's owner-approved d
 - [ ] #7 Capture is refused with a named reason, shown in the preview, while a first-link freeze or rebaseline marker exists
 - [ ] #8 The review of a backup that includes credentials says the device wrapping key, staged integrity keys and dataset staging keys are left out, as it does for skill-trust keys
 - [ ] #9 After any restore, Personal Context sync does not resume until the restored generation is reviewed; this guard holds on its own (red first)
-- [ ] #10 That review approves only `personal_context.repository`, never `config` or `runtime.sync_state`, and only after a restore that published neither `personal_context.repository` nor `runtime.sync_state`; after one that published either, Personal Context sync stays off and the user sees a named reason saying so
+- [ ] #10 That review approves only `personal_context.repository`, never `config` or `runtime.sync_state`, and only after a restore that published neither `personal_context.repository` nor `runtime.sync_state`; its copy does not claim that Personal Context sync resumes; after one that published either, Personal Context sync stays off and the user sees a named reason saying so
 - [ ] #11 A detached source holding the repository is refused by name and never imported without its key
 - [ ] #12 The owner inventory doc's Personal Context rows and the Personal Context User Guide page's backup paragraph describe the new behaviour
 <!-- AC:END -->

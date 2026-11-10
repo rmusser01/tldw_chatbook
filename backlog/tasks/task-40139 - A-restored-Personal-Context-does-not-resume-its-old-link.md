@@ -49,7 +49,7 @@ Filed in round 13 of the 2026-10-23 burn-down from TASK-39148's owner-approved d
   - Approving them here would turn Notes and Chat sync back on with the restored device id.
 - **How the fresh link gets past `_sync_call`.** The link calls (`link_service.py:170`, `:730` → `server_sync_service.py:710-712`, `:811-813`) also need `config` and `runtime.sync_state` approved.
   - This task follows TASK-40137's ruling on who may approve those owners after a restore, and through what review.
-  - If that ruling needs an owner decision not yet recorded, stop and bring it to the owner.
+  - If that ruling needs an owner decision not yet recorded, or requires a guard or review that has not shipped, stop and bring it to the owner.
 - **Fix the cross-machine relink.** A fresh link on a new machine fails today with `personal_context_sync_profile_binding_conflict`.
   - The restored `sync_profile_state.device_id` (`Sync_Interop/recovery.py:39`) still names the old device, and `_seed_sync_profile` refuses a different one (`link_service.py:1014-1028`).
   - That row is shared with Notes and Chat sync (`workspace_scope=None`), and `_seed_sync_profile` carries its `dataset_cursors` forward (`link_service.py:1029`).
@@ -65,6 +65,7 @@ Filed in round 13 of the 2026-10-23 burn-down from TASK-39148's owner-approved d
 - [ ] #3 After that review following a cross-machine restore, Notes and Chat sync (`LocalFirstSyncService.sync_once`) is still refused with `sync_activation_required`; a test pins it
 - [ ] #4 Under TASK-40137's ruling on approving `config` and `runtime.sync_state`, a fresh first link after a cross-machine restore, where the restored sync profile still names the old device, ends bound to the device the server issues for Personal Context instead of failing with `personal_context_sync_profile_binding_conflict`, and the old device id is not kept for Personal Context
 - [ ] #5 After that rebind, Notes and Chat sync state for that profile (device id, dataset cursors, outbox) is unchanged; a test pins it
-- [ ] #6 No link key (device wrapping key, staged integrity key, dataset staging key) is in any archive, in any credential mode; a test inspects an archive that includes credentials
-- [ ] #7 The Settings panel says Personal Context sync is off because the profile was restored, to link again, and to remove the old device on the server if it is lost; the User Guide page says the same
+- [ ] #6 After the fresh first link, Personal Context sync runs, and Notes and Chat sync never sends the old device id (refused, or rebound per TASK-40137's ruling); a test pins both
+- [ ] #7 No link key (device wrapping key, staged integrity key, dataset staging key) is in any archive, in any credential mode; a test inspects an archive that includes credentials
+- [ ] #8 The Settings panel says Personal Context sync is off because the profile was restored, to link again, and to remove the old device on the server if it is lost; the User Guide page says the same
 <!-- AC:END -->

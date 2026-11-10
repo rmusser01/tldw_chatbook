@@ -4,7 +4,7 @@ title: "Personal Context's repository database cannot be captured by a backup, a
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-08 06:54
-updated_date: 2026-11-10 19:36
+updated_date: 2026-11-10 20:07
 labels:
 - follow-up
 - backup
@@ -151,4 +151,9 @@ Follow-ups:
   - The fresh link passes `_sync_call` under TASK-40137's ruling, which is now that task's outcome. If the ruling needs an owner decision, the link task stops and brings it to the owner.
 - **Isolated restores.** They use key-not-in-backup only when no account on this device authenticates the restored database.
 - **This note's wording.** It now names the spec's out-of-scope `runtime.sync_state` item, not F1.
+
+**Review r13k-rev6 fixes (2026-11-10).** The review found one Important and two Minor issues, and all are fixed. The decisions' text is unchanged.
+- **TASK-40139 AC#6 (new).** After the fresh first link, Personal Context sync runs, and Notes and Chat sync never sends the old device id. The stop rule now also covers a ruling that requires a guard or review that has not shipped.
+- **Review wording.** The spec and TASK-40134 now say the review approves `personal_context.repository`, not Personal Context sync. TASK-40134 AC#10's copy does not claim sync resumes.
+- **Filed-task list.** It now says that dependencies, not list order, set the landing order.
 <!-- SECTION:NOTES:END -->

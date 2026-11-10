@@ -233,8 +233,9 @@ The code facts are F6, F7, F8 and F14.
 **Option A: never capture link keys, and never resume a restored link.** (Recommended.)
 - The device wrapping key, staged integrity keys and dataset staging keys stay keyring-only and never enter any archive.
 - **Generic gate.** After every restore, Personal Context sync stays off until the restored generation is reviewed.
-  - That review approves Personal Context sync only after a restore that published neither `personal_context.repository` nor `runtime.sync_state`.
-  - After one that published either, sync stays off with a named reason shown to the user, until the review that clears the link state approves it.
+  - That review approves `personal_context.repository` only after a restore that published neither `personal_context.repository` nor `runtime.sync_state`.
+  - Personal Context sync also needs the shared owners `config` and `runtime.sync_state`. This review never approves them; see the investigation task (TASK-40137). So the review's copy does not claim sync resumes.
+  - After a restore that published either owner, sync stays off with a named reason shown to the user, until the review that clears the link state approves `personal_context.repository`.
   - **The Personal Context review approves only Personal Context's own owner, `personal_context.repository`. It never approves `config` or `runtime.sync_state`.**
     - Approval is per owner and generation (`activation.py:351-384`).
     - Every Sync V2 call also needs those two shared owners approved (`_sync_call`, `server_sync_service.py:85-88`). That includes `LocalFirstSyncService.sync_once`, which syncs Notes, Chat and Personal Context in one call (`local_first_sync_service.py:70-71`), and the link calls (`link_service.py:170`, `:730` → `server_sync_service.py:710-712`, `:811-813`).
@@ -370,7 +371,7 @@ This spec does not design Plugins.
 
 ## Filed implementation tasks
 
-Filed 2026-11-10 after approval, in this order. Each delivers one testable outcome. Two follow-ups are listed after them.
+Filed 2026-11-10 after approval. Each delivers one testable outcome. Two follow-ups are listed after them. Dependencies, not list order, set the landing order; TASK-40139 waits for the TASK-40137 follow-up's ruling.
 
 1. **TASK-40133, "Personal Context's repository names its key's keyring account."**
    - Outcome: the migration adds an empty reference, and the repository writes the path-derived account the first time that account's key authenticates the database; a locked one stays unstamped. The repository uses a key only after it authenticates the database, and opens from the stamped account even after the file moves. New and re-created profiles get a new, unused account. Link and Remove local profile act only on the authenticated account.
