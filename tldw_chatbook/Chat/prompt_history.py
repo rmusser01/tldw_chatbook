@@ -83,6 +83,23 @@ def _same_inputs(kept: tuple, current: tuple) -> bool:
     return kept[0] is current[0] and kept[1] is current[1] and kept[2:] == current[2:]
 
 
+async def _resolve_default_path_off_loop() -> None:
+    """Keep the default path resolved before a file job resolves it on the loop.
+
+    TASK-39166: a file job's source selection calls
+    ``default_prompt_history_path()`` on the UI loop. When the kept path is
+    stale (a config rebuild dropped the cache), that ran ``get_user_data_dir()``
+    there, and the loop waited for the rebuild's lock. The resolution runs on a
+    worker thread instead until the kept path matches the current inputs; a
+    resolution whose inputs moved under it is not kept, so it is retried.
+    """
+    for _ in range(3):
+        memo = _DEFAULT_PATH_MEMO
+        if memo is not None and _same_inputs(memo[0], _default_path_inputs()):
+            return
+        await asyncio.to_thread(default_prompt_history_path)
+
+
 def default_prompt_history_path() -> Path:
     """Return the default per-user prompt history file path.
 
@@ -274,10 +291,16 @@ class PromptHistory:
                 if rewrite:
                     raw.remove_temporary(operation, destination)
 
+    async def _file_job(self) -> FileJob:
+        # Only the exact class is checked against the default path (TASK-39166).
+        if type(self) is PromptHistory:
+            await _resolve_default_path_off_loop()
+        return FileJob(self, "prompt_history")
+
     async def _load_locked(self) -> None:
         if self._loaded:
             return
-        with FileJob(self, "prompt_history") as job:
+        with await self._file_job() as job:
             outcome = await job.run(None)
             if outcome.error is None:
                 self._entries = outcome.value[-self.max_entries :]
@@ -322,7 +345,7 @@ class PromptHistory:
             return False
         try:
             await self._load_locked()
-            with FileJob(self, "prompt_history") as job:
+            with await self._file_job() as job:
                 if self._entries and self._entries[-1]["input"] == text:
                     return False
                 draft_revision = self._draft_revision
