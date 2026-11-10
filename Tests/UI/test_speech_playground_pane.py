@@ -1342,6 +1342,7 @@ def faked_service(monkeypatch: pytest.MonkeyPatch) -> FakeTTSService:
     return service
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_playground_status_keeps_external_provider_and_local_deps_independent(
     faked_service: FakeTTSService,
@@ -1718,6 +1719,7 @@ async def test_openai_probe_result_is_not_attributed_after_fingerprint_changes(
         assert evidence.catalog_state(changed) is SpeechTTSConnectionState.NOT_TESTED
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_refresh_retains_catalog_as_stale_with_model_recovery(
     faked_service: FakeTTSService,
@@ -1757,6 +1759,7 @@ async def test_failed_refresh_retains_catalog_as_stale_with_model_recovery(
         assert status.recovery_action is SpeechTTSNavigationIntent.REFRESH_MODELS
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_initial_service_failure_is_unavailable_not_loading_or_not_checked(
     faked_service: FakeTTSService,
@@ -1789,6 +1792,7 @@ async def test_initial_service_failure_is_unavailable_not_loading_or_not_checked
         assert "private initialization detail" not in provider_copy
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_voice_failure_is_stale_with_voice_recovery(
     faked_service: FakeTTSService,
@@ -1831,6 +1835,7 @@ async def test_voice_failure_is_stale_with_voice_recovery(
         assert status.recovery_action is SpeechTTSNavigationIntent.REFRESH_VOICES
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unverified_exact_voice_blocks_until_server_default_is_selected(
     faked_service: FakeTTSService,
@@ -1989,6 +1994,7 @@ def _controls(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reapplying_same_model_value_refreshes_its_visible_label(
     monkeypatch: pytest.MonkeyPatch,
@@ -2162,6 +2168,7 @@ async def test_a_user_edit_updates_the_marker(
         assert pane.axis_values.get("tts-speed-input") == "1.7"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_profile_test_preset_marks_exact_axes_as_profile_sourced(
     monkeypatch: pytest.MonkeyPatch,
@@ -2221,6 +2228,7 @@ _ADOPTED_PRESET_PROVIDER_CASES = (
 )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider_id", "model_id", "voice_id"),
@@ -2282,6 +2290,7 @@ async def test_adopted_preset_unverified_copy_distinguishes_no_catalog_legacy(
         assert "without fallback" in banner
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider_id", "model_id", "voice_id"),
@@ -2336,6 +2345,7 @@ async def test_reconfiguring_voice_failure_status_distinguishes_no_catalog_legac
         assert "shows a warning" in status
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider_id", "model_id", "voice_id"),
@@ -2396,6 +2406,7 @@ async def test_generic_voice_failure_status_distinguishes_no_catalog_legacy(
 # presentation` for the full trace) and confirmed live below.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider_id", "model_id", "voice_id"),
@@ -2438,6 +2449,7 @@ async def test_adopted_preset_preview_never_shows_a_null_revision_refresh(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider_id", "model_id", "voice_id"),
@@ -2503,6 +2515,7 @@ async def test_adopted_preset_preview_revision_mismatch_refresh_recovers_for_bot
             assert "no catalog check" in banner_after
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_adopted_preset_preview_registry_closed_during_voice_fetch_is_symmetric(
     monkeypatch: pytest.MonkeyPatch,
