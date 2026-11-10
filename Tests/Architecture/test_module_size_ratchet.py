@@ -964,7 +964,10 @@ _BUDGETS: dict[str, int] = {
     # watcher restyles the bar and its draft text, not its subtree: +9 lines.
     # TASK-36511.2 Qodo fold, 2026-11-05 (same waiver): 7198 -> 7202 (+4).
     # The focus watcher's docstring gains its Args section.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7202,
+    # TASK-39156, 2026-11-10 (same waiver): 7202 -> 7213 (+11), exact
+    # measurement. The focus watcher drops the other descendants' cached
+    # visual style when the bar's background moves.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7213,
     # TASK-33628.1 moves tab-close loss projection/copy into shared loss_inventory.
     # PR3303, 2026-10-31: explicit user size waiver; exact integrated measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
