@@ -115,9 +115,10 @@ Appearance.
 A category's pane can take a moment to build, and keys and clicks still work
 meanwhile. Opening a category puts focus on its rail row once the pane is
 ready, and a pane that rebuilds in place (Workspaces' **Show archived**, or a
-click on a workspace row) puts focus back on the control you were using; in
-both cases, if you moved focus yourself in the meantime (**/**, or a click),
-it stays where you put it.
+click on a workspace row) puts focus back on the control you were using, or
+on the category's rail row when that control is gone; in both cases, if you
+moved focus yourself in the meantime (**/**, or a click), it stays where you
+put it.
 
 ## Features & controls
 

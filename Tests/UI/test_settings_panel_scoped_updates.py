@@ -282,6 +282,38 @@ async def test_a_focus_reset_out_of_the_old_panes_keeps_the_landing(request):
 
 
 @private_profile_test
+async def test_a_move_after_a_pick_in_the_old_panes_withdraws_the_landing(request):
+    """TASK-39169 review r13p-rev1 (M1, the TASK-39135 twin): a focus moved into
+    the old detail pane during its held rebuild marks that a reset may follow,
+    and every later move was then ignored. A "/" after that pick, before the
+    pane goes, is the user's own move: the filter keeps focus."""
+    import asyncio
+
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(160, 45)) as pilot:
+        screen = await _open_settings(pilot)
+        screen.query_one("#settings-category-storage", Button).focus()
+        await _settle(pilot)
+        detail = screen.query_one("#settings-detail-pane")
+        old = next(w for w in detail.query("*") if w.focusable and w.id)
+        entered, go = _hold_recompose(detail)
+        try:
+            screen._select_category("appearance", restore_focus=True)
+            await asyncio.wait_for(entered.wait(), timeout=10)
+            old.focus()
+            await pilot.pause()
+            assert host.focused is old
+            await pilot.press("slash")
+            assert getattr(host.focused, "id", None) == "settings-category-search"
+        finally:
+            go.set()
+        await _settle_swap(host, pilot, screen)
+
+        assert screen.active_category == "appearance"
+        assert getattr(host.focused, "id", None) == "settings-category-search"
+
+
+@private_profile_test
 async def test_a_control_chosen_in_the_new_pane_while_the_inspector_rebuilds_is_kept(
     request,
 ):
@@ -392,6 +424,80 @@ async def test_a_focus_the_user_moves_during_a_same_category_rebuild_is_kept(
         assert getattr(host.focused, "id", None) == (
             captured if move == "none" else "settings-category-search"
         )
+
+
+@private_profile_test
+@pytest.mark.parametrize("move", ("old_pane", "old_pane_then_key"))
+async def test_a_pick_in_the_old_inspector_during_a_same_category_rebuild(
+    request, move
+):
+    """TASK-39169 review r13p-rev1 (I1, M1): the detail pane is rebuilt and the
+    inspector's rebuild is held. A click on the old inspector body is a pick
+    the rebuild destroys: Textual's reset then moves focus, and the rebuilt
+    body takes it back. A "/" after that pick, in the same rebuild, is the
+    user's own move and stands."""
+    import asyncio
+
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _open_settings(pilot)
+        screen._select_category("workspaces")
+        await _settle(pilot)
+        screen.query_one("#settings-workspaces-show-archived").focus()
+        await pilot.pause()
+
+        entered, go = _hold_recompose(screen.query_one("#settings-impact-pane"))
+        try:
+            screen._refresh_settings_workspaces_pane()
+            await asyncio.wait_for(entered.wait(), timeout=10)
+            old_body = screen.query_one("#settings-impact-pane-body")
+            await pilot.click("#settings-impact-pane-body")
+            assert host.focused is old_body
+            if move == "old_pane_then_key":
+                await pilot.press("slash")
+                assert getattr(host.focused, "id", None) == "settings-category-search"
+        finally:
+            go.set()
+        await _settle_swap(host, pilot, screen)
+
+        if move == "old_pane":
+            body = screen.query_one("#settings-impact-pane-body")
+            assert body is not old_body
+            assert host.focused is body, getattr(host.focused, "id", None)
+        else:
+            assert getattr(host.focused, "id", None) == "settings-category-search"
+
+
+@private_profile_test
+async def test_a_same_category_rebuild_that_removes_the_control_lands_on_its_rail_row(
+    request,
+):
+    """TASK-39169 review r13p-rev1 (M2): the rebuild removes the focused
+    control and nothing replaces it (an archived workspace's Archive button).
+    A parked rebuild left focus on nothing; it lands on the category's rail
+    row instead."""
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="ws-gone", name="Going workspace")
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _open_settings(pilot)
+        screen._select_category("workspaces")
+        await _settle(pilot)
+        screen._settings_selected_workspace_id = "ws-gone"
+        screen._refresh_settings_workspaces_pane()
+        await _settle(pilot)
+        screen.query_one("#settings-workspace-archive").focus()
+        await pilot.pause()
+        assert getattr(host.focused, "id", None) == "settings-workspace-archive"
+
+        registry.archive_workspace("ws-gone")
+        screen._refresh_settings_workspaces_pane()
+        await _settle_swap(host, pilot, screen)
+        await _settle(pilot)
+
+        assert not screen.query("#settings-workspace-archive")
+        assert getattr(host.focused, "id", None) == "settings-category-workspaces"
 
 
 @private_profile_test

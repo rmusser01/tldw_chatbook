@@ -4,7 +4,7 @@ title: "Settings can take back a focus the user moved: a same-category pane rebu
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-08 06:54
-updated_date: 2026-11-10 17:04
+updated_date: 2026-11-10 19:59
 labels:
 - follow-up
 - settings
@@ -71,4 +71,20 @@ Found in round 12 of the 2026-10-23 burn-down (TASK-39135 and its reviews, round
 **Also:** `Docs/User_Guide/settings.md` gains a short paragraph on where focus goes after a pane builds. `Tests/Architecture/test_module_size_ratchet.py`: settings_screen row 35852 -> 35888 (+36, exact; owner waiver).
 
 **Not covered:** a DescendantFocus for a pick in the old panes is handled on the screen's pump; if it arrives after the swap's post-rebuild check, that pick is treated as Textual's reset target and kept rather than restored by id (the old panes are removed early in the rebuild, so the window is narrow).
+**Review r13p-rev1 fixes (2026-11-10, on 982b101d25).**
+- **I1 / M1: telling Textual's reset from a user's move.** The DescendantFocus-based pick branch (`_parked_pane_focus_id` / `_parked_focus_reset_possible`) is gone. `SettingsRegion.recompose` now records the focused control its removal prunes and where Textual's synchronous reset (`App._prune` -> `Screen._reset_focus`) put focus (`focus_reset`). The swap keeps the last such record:
+  - a parked rebuild restores the removed control's id when focus is still on the reset target, or on nothing;
+  - any other focus is the user's and stands.
+
+  This drops the pick-then-"/" loss, because no reset happens when the pick has already lost focus.
+- **TASK-39135 twin, fixed the same way.** `_pending_focus_reset_possible` is cleared unless a reset happened and focus is still on its target. A "/" after a pick in the old panes now withdraws a category landing.
+- **M2.** `_restore_category_pane_focus` returns whether it focused a control. When a parked rebuild's control is gone with no replacement, the swap lands on `_focus_category(self.active_category)`. Before, focus ended on nothing.
+- **Tests** (`Tests/UI/test_settings_panel_scoped_updates.py`; the 4 nodes are appended to the census tail, floor 1917 -> 1921):
+  - `test_a_pick_in_the_old_inspector_during_a_same_category_rebuild[old_pane]` (I1). The inspector's rebuild is held after the detail pane's and the old body is clicked; the rebuilt body takes focus. With the region's record disabled it is red: focus ends on `settings-workspace-row-workspace-default`.
+  - `[old_pane_then_key]` (M1). Red on 982b101d25 (`'settings-impact-pane-body' == 'settings-category-search'`).
+  - `test_a_same_category_rebuild_that_removes_the_control_lands_on_its_rail_row` (M2). An archived workspace's Archive button is removed. Red on 982b101d25 (`None == 'settings-category-workspaces'`).
+  - `test_a_move_after_a_pick_in_the_old_panes_withdraws_the_landing` (TASK-39135 twin). Red on 982b101d25 (landed on `settings-category-appearance`).
+  - The whole file now passes, 25 tests. Timings for the four new nodes (`-n 4`, load 35-58): 16.6-17.6 s, 21.9-24.5 s and 22.5-23.8 s per node across three runs.
+- **Covering run.** 14 Settings/workspace files plus the wake file: 186 passed, 33 failed. At 982b101d25 the same 33 fail. At base ae9f9e8d21, 31 fail; the other two (`test_folder_actions_keep_feedback_and_recovery_visible[size0-textual-light]` and `test_change_review_unavailable_consent_has_no_toggle`) also fail at base on a rerun, so they are flaky there.
+- `Docs/User_Guide/settings.md` now names the rail-row fallback. Size-ratchet row 35888 -> 35905 (+17, exact; owner waiver).
 <!-- SECTION:NOTES:END -->
