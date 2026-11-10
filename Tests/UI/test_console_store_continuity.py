@@ -55,6 +55,7 @@ from tldw_chatbook.Chat.console_library_destination import (
 )
 from tldw_chatbook.UI.Console_Modules.wiring import _admit_console_turn_to_runtime
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Navigation.screen_state_store import RuntimeIdentity
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
@@ -278,14 +279,17 @@ async def test_reattach_render_failure_retries_before_decisions_and_view_timers(
     ordinary_timer_after_sync: list[bool] = []
 
     async def fail_first_reattach_sync(screen):
-        if inject["armed"]:
+        # Only the attach reconciliation's sync: a fresh view also runs the
+        # ordinary sync paths, which are not what this test isolates.
+        reattach = inject["armed"] and screen._console_attach_reconcile_running
+        if reattach:
             if not inject["failed"]:
                 inject["failed"] = True
                 first_failure.set()
                 raise RuntimeError("injected first reattach render failure")
             await allow_retry.wait()
         await original_sync(screen)
-        if inject["armed"]:
+        if reattach:
             inject["sync_succeeded"] = True
             retry_succeeded.set()
 
@@ -331,8 +335,15 @@ async def test_reattach_render_failure_retries_before_decisions_and_view_timers(
             original_remount()
 
         runtime.remount_pending_approval = record_remount
+        # TASK-39161: the Console route is reused (TASK-31520), so a plain
+        # return resumes the same view. A runtime-identity flip drops the
+        # cached instance, so the return builds a fresh Console view that
+        # re-attaches to the app-owned runtime.
+        flipped = RuntimeIdentity(active_source="server", active_server_id="r13-flip")
+        monkeypatch.setattr(app, "_current_runtime_identity", lambda: flipped)
         inject["armed"] = True
         reopened = await _navigate(app, pilot, "chat", expect="ChatScreen")
+        assert reopened is not chat, "the return resumed the cached Console view"
         await asyncio.wait_for(first_failure.wait(), timeout=2)
 
         assert remount_after_sync == []
@@ -344,7 +355,13 @@ async def test_reattach_render_failure_retries_before_decisions_and_view_timers(
         assert outcome.accepted
         allow_retry.set()
         await asyncio.wait_for(retry_succeeded.wait(), timeout=3)
-        await pilot.pause()
+        # The fresh view finishes its reconciliation and first paint on its
+        # own worker after the sync returns; wait for both, not one pause.
+        await _settle(
+            lambda: remount_after_sync
+            and "REATTACH-RETRY-TERMINAL" in _rendered_text(reopened),
+            10,
+        )
 
         terminal_rows = [
             message
