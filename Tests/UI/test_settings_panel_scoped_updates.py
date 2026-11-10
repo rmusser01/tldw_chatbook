@@ -500,6 +500,177 @@ async def test_a_same_category_rebuild_that_removes_the_control_lands_on_its_rai
         assert getattr(host.focused, "id", None) == "settings-category-workspaces"
 
 
+def _hold_mount(pane):
+    """Hold ``pane``'s remount, after its removal (and any focus reset) ran.
+
+    ``SettingsRegion.recompose`` removes the old children itself and then
+    calls ``Widget.recompose`` to mount the new ones, so holding that call
+    holds the window between Textual's reset and the rebuilt pane.
+
+    Returns:
+        ``(entered, go, undo)``: set when held, set to release, and the
+        callable that restores ``Widget.recompose``.
+    """
+    import asyncio
+
+    from textual.widget import Widget
+
+    entered, go = asyncio.Event(), asyncio.Event()
+    real = Widget.recompose
+
+    async def held(self):
+        if self is pane and not go.is_set():
+            entered.set()
+            await go.wait()
+        return await real(self)
+
+    Widget.recompose = held
+    return entered, go, lambda: setattr(Widget, "recompose", real)
+
+
+@private_profile_test
+async def test_a_move_after_the_reset_in_a_parked_rebuild_stands(request):
+    """TASK-39169 review r13p-rev2 (I1): the old Show archived toggle is
+    clicked during the held rebuild, so its removal resets focus; "/" after
+    that reset, while the pane remounts, is the user's own move and stands.
+    Red with the swap's moved-since-reset check removed (the toggle is
+    restored over the filter)."""
+    import asyncio
+
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _open_settings(pilot)
+        screen._select_category("workspaces")
+        await _settle(pilot)
+        screen.query_one("#settings-workspaces-show-archived").focus()
+        await pilot.pause()
+        detail = screen.query_one("#settings-detail-pane")
+        entered, go = _hold_recompose(detail)
+        mounting, mount, undo = _hold_mount(detail)
+        try:
+            screen._refresh_settings_workspaces_pane()
+            await asyncio.wait_for(entered.wait(), timeout=10)
+            await pilot.click("#settings-workspaces-show-archived")
+            go.set()
+            await asyncio.wait_for(mounting.wait(), timeout=10)
+            await pilot.press("slash")
+            assert getattr(host.focused, "id", None) == "settings-category-search"
+        finally:
+            go.set()
+            mount.set()
+            undo()
+        await _settle_swap(host, pilot, screen)
+        await _settle(pilot)
+
+        assert getattr(host.focused, "id", None) == "settings-category-search"
+
+
+@private_profile_test
+@pytest.mark.parametrize("origin", ("rail_pick", "pane_opener"))
+async def test_a_move_after_the_reset_in_a_category_switch_withdraws_the_landing(
+    request, origin
+):
+    """TASK-39169 review r13p-rev2 (I1, M1): focus that was in the old detail
+    pane is reset by its removal; "/" after that reset, while the new pane
+    mounts, withdraws the switch's landing. ``pane_opener`` starts the switch
+    from Overview's "Open Providers & Models", inside the pane the switch
+    removes, so the switch's origin is gone by the time the move is judged."""
+    import asyncio
+
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(160, 45)) as pilot:
+        screen = await _open_settings(pilot)
+        detail = screen.query_one("#settings-detail-pane")
+        if origin == "rail_pick":
+            screen.query_one("#settings-category-storage", Button).focus()
+            await _settle(pilot)
+            old = next(w for w in detail.query("*") if w.focusable and w.id)
+            target = "appearance"
+        else:
+            screen.query_one("#settings-overview-open-providers-models", Button).focus()
+            await _settle(pilot)
+            target = "providers-models"
+        entered, go = _hold_recompose(detail)
+        mounting, mount, undo = _hold_mount(detail)
+        try:
+            if origin == "rail_pick":
+                screen._select_category(target, restore_focus=True)
+                await asyncio.wait_for(entered.wait(), timeout=10)
+                old.focus()
+                await pilot.pause()
+            else:
+                await pilot.press("enter")
+                await asyncio.wait_for(entered.wait(), timeout=10)
+            go.set()
+            await asyncio.wait_for(mounting.wait(), timeout=10)
+            await pilot.press("slash")
+            assert getattr(host.focused, "id", None) == "settings-category-search"
+        finally:
+            go.set()
+            mount.set()
+            undo()
+        await _settle_swap(host, pilot, screen)
+        await _settle(pilot)
+
+        assert screen.active_category == target
+        assert getattr(host.focused, "id", None) == "settings-category-search"
+
+
+@private_profile_test
+async def test_a_move_while_a_pane_opener_switch_waits_withdraws_the_landing(request):
+    """TASK-39169 review r13p-rev2 (M1): Overview's "Open Providers & Models"
+    sits in the pane its switch removes. "/" while the swap waits on its lock
+    is the user's move, and the filter keeps focus once the pane is built."""
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(160, 45)) as pilot:
+        screen = await _open_settings(pilot)
+        screen.query_one("#settings-overview-open-providers-models", Button).focus()
+        await _settle(pilot)
+        await screen._category_swap_lock.acquire()
+        try:
+            await pilot.press("enter")
+            assert screen._category_pane_swap_pending
+            await pilot.press("slash")
+            assert getattr(host.focused, "id", None) == "settings-category-search"
+        finally:
+            screen._category_swap_lock.release()
+        await _settle_swap(host, pilot, screen)
+
+        assert screen.active_category == "providers-models"
+        assert getattr(host.focused, "id", None) == "settings-category-search"
+
+
+@private_profile_test
+async def test_a_settings_region_rebuild_removes_its_children_inside_a_batch(request):
+    """TASK-39169 review r13p-rev2 (M2): ``SettingsRegion.recompose`` removes
+    the old children itself; like Textual's own recompose it must do so inside
+    the region's batch (its lock and an app batch), or a frame can paint the
+    region empty and overlapping rebuilds are not serialized. Overview's sync
+    rows region rebuilds outside any category swap."""
+    from textual.app import App
+
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(160, 45)) as pilot:
+        screen = await _open_settings(pilot)
+        region = screen.query_one("#settings-overview-manual-sync-rows")
+        batch_counts: list[int] = []
+        real_prune = App._prune
+
+        def prune(app, *nodes, parent=None):
+            if parent is region:
+                batch_counts.append(app._batch_count)
+            return real_prune(app, *nodes, parent=parent)
+
+        App._prune = prune
+        try:
+            region.refresh(recompose=True)
+            await _settle(pilot)
+        finally:
+            App._prune = real_prune
+
+        assert batch_counts and batch_counts[0] > 0, batch_counts
+
+
 @private_profile_test
 async def test_a_click_between_the_landing_and_its_deferred_focus_is_kept(request):
     """TASK-39169: a category switch's landing focuses its rail row with

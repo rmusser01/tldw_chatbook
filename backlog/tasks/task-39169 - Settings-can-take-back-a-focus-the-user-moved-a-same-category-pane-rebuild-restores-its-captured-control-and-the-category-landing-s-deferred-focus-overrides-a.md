@@ -4,7 +4,7 @@ title: "Settings can take back a focus the user moved: a same-category pane rebu
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-08 06:54
-updated_date: 2026-11-10 19:59
+updated_date: 2026-11-10 21:12
 labels:
 - follow-up
 - settings
@@ -70,7 +70,7 @@ Found in round 12 of the 2026-10-23 burn-down (TASK-39135 and its reviews, round
 
 **Also:** `Docs/User_Guide/settings.md` gains a short paragraph on where focus goes after a pane builds. `Tests/Architecture/test_module_size_ratchet.py`: settings_screen row 35852 -> 35888 (+36, exact; owner waiver).
 
-**Not covered:** a DescendantFocus for a pick in the old panes is handled on the screen's pump; if it arrives after the swap's post-rebuild check, that pick is treated as Textual's reset target and kept rather than restored by id (the old panes are removed early in the rebuild, so the window is narrow).
+**Not covered:** a click on Textual's reset target itself, made after the reset while the pane remounts, is read as no move, so the removed control is restored over it. The swap compares focus with the recorded target and cannot see input events. The case is narrow and cosmetic (the user clicked where focus already was); telling it apart would need input-event tracking.
 **Review r13p-rev1 fixes (2026-11-10, on 982b101d25).**
 - **I1 / M1: telling Textual's reset from a user's move.** The DescendantFocus-based pick branch (`_parked_pane_focus_id` / `_parked_focus_reset_possible`) is gone. `SettingsRegion.recompose` now records the focused control its removal prunes and where Textual's synchronous reset (`App._prune` -> `Screen._reset_focus`) put focus (`focus_reset`). The swap keeps the last such record:
   - a parked rebuild restores the removed control's id when focus is still on the reset target, or on nothing;
@@ -87,4 +87,13 @@ Found in round 12 of the 2026-10-23 burn-down (TASK-39135 and its reviews, round
   - The whole file now passes, 25 tests. Timings for the four new nodes (`-n 4`, load 35-58): 16.6-17.6 s, 21.9-24.5 s and 22.5-23.8 s per node across three runs.
 - **Covering run.** 14 Settings/workspace files plus the wake file: 186 passed, 33 failed. At 982b101d25 the same 33 fail. At base ae9f9e8d21, 31 fail; the other two (`test_folder_actions_keep_feedback_and_recovery_visible[size0-textual-light]` and `test_change_review_unavailable_consent_has_no_toggle`) also fail at base on a rerun, so they are flaky there.
 - `Docs/User_Guide/settings.md` now names the rail-row fallback. Size-ratchet row 35888 -> 35905 (+17, exact; owner waiver).
+
+**Review r13p-rev2 fixes (2026-11-10, on a401c9c755).**
+- **I1: pinning the moved-since-reset check.** Two probe-based tests, adapted from the reviewer's: the old control is picked during the held rebuild, `Widget.recompose` is held after the removal reset focus (`_hold_mount`), then "/" is pressed. `test_a_move_after_the_reset_in_a_parked_rebuild_stands` and `test_a_move_after_the_reset_in_a_category_switch_withdraws_the_landing[rail_pick]` both pass. With `moved_since_reset` forced False they are red: `'settings-workspaces-show-archived'` and `'settings-category-appearance'`.
+- **M1: a switch started from inside the detail pane.** Origins include Overview's "Open Providers & Models", Privacy & Security's jump buttons and Advanced Config's guided-path chips. `_focus_left_pending_origin` now returns `origin is not None` instead of requiring `origin.is_attached`, and its docstring bullet is updated: the swap's reset record already rules out Textual's reset. `test_a_move_while_a_pane_opener_switch_waits_withdraws_the_landing` ("/" while the swap waits on its lock) and `[pane_opener]` were red at a401c9c755 (`'settings-category-providers-models'`) and are green now.
+- **M2: removal inside the region's batch.** `SettingsRegion.recompose` now removes inside `async with self.batch()`; the lock is re-entrant, so `super().recompose()` nests. `test_a_settings_region_rebuild_removes_its_children_inside_a_batch` (Overview sync-rows region, batch count at its prune) was red at a401c9c755 (`[0, 1]`) and is green now.
+- **M3:** the "Not covered" note now names the remaining limitation (a click on the reset target itself).
+- **Results.** Five nodes appended at the census tail; floor 1921 -> 1926. The whole file now passes, 30 tests. Timings (`-n 4`, load 32-46): 14.5-22.7 s per node across three runs.
+- **Coverage.** `test_settings_custom_endpoints.py` and `test_settings_advanced_disclosures.py`: 33 passed, 9 failed. The same 9 fail at base ae9f9e8d21 with `RecoveryRequired: raw_source_selection_changed`.
+- Size-ratchet row 35905 -> 35910 (+5, exact; owner waiver).
 <!-- SECTION:NOTES:END -->

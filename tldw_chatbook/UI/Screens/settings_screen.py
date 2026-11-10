@@ -3113,16 +3113,19 @@ class SettingsRegion(Vertical):
 
         Textual resets focus synchronously when a removal prunes the focused
         widget (``App._prune``), and that reset looks exactly like a user's
-        move; the category swap tells the two apart by this record.
+        move; the category swap tells the two apart by this record. Inside
+        the region's batch, as Textual's own recompose removes (its lock is
+        re-entrant, so ``super().recompose()`` nests).
         """
         if not self.is_attached or self._pruning:
             return
-        screen = self.screen
-        focused = screen.focused
-        removal = self.query_children("*").exclude(".-textual-system").remove()
-        self.focus_reset = (focused, screen.focused) if screen.focused is not focused else None
-        await removal
-        await super().recompose()
+        async with self.batch():
+            screen = self.screen
+            focused = screen.focused
+            removal = self.query_children("*").exclude(".-textual-system").remove()
+            self.focus_reset = (focused, screen.focused) if screen.focused is not focused else None
+            await removal
+            await super().recompose()
 
     def on_resize(self, event: Resize) -> None:
         """Stack the action rows while one cannot fit (a Horizontal never wraps).
@@ -4902,7 +4905,9 @@ class SettingsScreen(BaseAppScreen):
           removal looks exactly like a move (reviews r12s-rev2 M-a, rev3).
         - In the panes: only after the detail pane was rebuilt, when an
           attached widget there can only be new content someone chose.
-        - Outside them: a move from an origin that is still attached.
+        - Outside them: any move away from the origin, even one the swap
+          removed (a pane opener); the swap rules out Textual's reset from
+          its own record of it (TASK-39169 review r13p-rev2).
         """
         origin, focused = self._pending_category_focus_from, self.focused
         if (
@@ -4915,7 +4920,7 @@ class SettingsScreen(BaseAppScreen):
             return False
         if self._in_category_panes(focused):
             return self._in_new_detail_pane(focused)
-        return origin is not None and origin.is_attached
+        return origin is not None
 
     def _focused_id_in_category_panes(self) -> str | None:
         """The focused widget's id, if this swap is about to destroy it.
