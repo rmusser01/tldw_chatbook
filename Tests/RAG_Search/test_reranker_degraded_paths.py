@@ -38,6 +38,8 @@ gates the call before the seam.
 """
 
 import inspect
+import sys
+from contextlib import ExitStack
 from typing import Callable, List
 
 import pytest
@@ -52,7 +54,11 @@ from tldw_chatbook.RAG_Search.reranker import (
     RerankingConfig,
 )
 from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig, get_profile_manager
-from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+from tldw_chatbook.RAG_Search.simplified.config import (
+    EmbeddingConfig,
+    RAGConfig,
+    VectorStoreConfig,
+)
 from tldw_chatbook.RAG_Search.simplified.enhanced_rag_service_v2 import (
     EnhancedRAGServiceV2,
     _tag_first_result,
@@ -208,16 +214,17 @@ async def test_degraded_rerank_never_touches_the_callers_cached_objects(
     ), "the disclosure tag leaked onto a cached object"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("strategy", ["pairwise", "listwise"])
 @pytest.mark.asyncio
 async def test_degraded_tag_does_not_poison_the_search_cache(
-    strategy, tmp_path, monkeypatch
+    strategy, make_v2_service, monkeypatch
 ):
     """The same contract end-to-end, through the real service with its base
     search cache ON: a degraded reranked search tags the disclosure, and a
     later identical search with reranking OFF (served from that cache) must
     not see the stale tag."""
-    service = _make_v2_service(tmp_path, strategy, enable_cache=True)
+    service = make_v2_service(strategy, enable_cache=True)
     assert service.reranker is not None
     _install_fake_provider(monkeypatch, _always_fails)
 
@@ -381,9 +388,10 @@ async def test_reranker_keeps_no_cross_call_failure_state(monkeypatch):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_disclosure_survives_a_concurrent_write_in_its_own_window(
-    tmp_path, monkeypatch
+    make_v2_service, monkeypatch
 ):
     """A concurrent search finishing INSIDE this search's window used to
     rewrite the shared counters before this search's tag was built, so the
@@ -392,7 +400,7 @@ async def test_disclosure_survives_a_concurrent_write_in_its_own_window(
     where a second `rerank()` completing would land it (after this call has
     finished counting, before its caller builds the tag). With the counts
     returned rather than stored, that write is inert."""
-    service = _make_v2_service(tmp_path, "pointwise", enable_cache=False)
+    service = make_v2_service("pointwise", enable_cache=False)
     reranker = service.reranker
     _install_fake_provider(monkeypatch, _always_fails)
     await service.index_batch_optimized(_quokka_platypus_docs())
@@ -437,17 +445,32 @@ def _quokka_platypus_docs():
     ]
 
 
+@pytest.fixture
+def make_v2_service(tmp_path, monkeypatch):
+    services = ExitStack()
+
+    def make(strategy, *, enable_cache):
+        return services.enter_context(_make_v2_service(tmp_path, strategy, enable_cache))
+
+    try:
+        yield make
+    finally:
+        # Mock embeddings own no GPU resources, so skip CUDA discovery on close.
+        with monkeypatch.context() as teardown:
+            teardown.setitem(sys.modules, "torch", None)
+            services.close()
+
+
 def _make_v2_service(tmp_path, strategy: str, enable_cache: bool):
     """An `EnhancedRAGServiceV2` whose profile actually carries a reranking
     config of `strategy` -- the construction path `test_reranker_construction`
     pins, parametrized by strategy."""
     manager = get_profile_manager(profiles_dir=tmp_path)
 
-    rag_cfg = RAGConfig()
-    rag_cfg.embedding.model = "mock"  # deterministic bag-of-words, offline
-    rag_cfg.embedding.device = "cpu"
-    rag_cfg.vector_store.type = "memory"
-    rag_cfg.vector_store.persist_directory = None
+    rag_cfg = RAGConfig(
+        embedding=EmbeddingConfig(model="mock", device="cpu"),
+        vector_store=VectorStoreConfig(type="memory"),
+    )
     rag_cfg.chunking.chunk_size = 60
     rag_cfg.chunking.chunk_overlap = 10
     rag_cfg.search.enable_cache = enable_cache
