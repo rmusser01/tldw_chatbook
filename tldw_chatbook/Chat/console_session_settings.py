@@ -343,7 +343,9 @@ def normalize_llamacpp_base_url(api_url: str | None) -> str:
     if not raw_url:
         return DEFAULT_LLAMACPP_BASE_URL
 
-    candidate = raw_url if "://" in raw_url else f"http://{raw_url}"
+    # TASK-39151: only a loopback spelling typed without a scheme is read as
+    # http://, the contract's rule; any other stays schemeless and invalid.
+    candidate = read_schemeless_loopback(raw_url)
     try:
         parsed = urlparse(candidate)
     except ValueError:
@@ -1976,10 +1978,19 @@ def build_console_settings_readiness(
 
     provider_supported = provider_key in supported_keys
     execution_supported = provider_key in send_capable_keys
+    # TASK-39151: with no session endpoint, llama.cpp sends to its fallback
+    # chain's endpoint (environment, Console override, config), so check it.
+    checked_url = base_url or (
+        _console_endpoint_restart_fallback(
+            provider_key, provider_settings, app_config, environ
+        )
+        if entry is None and provider_key in {"llama_cpp", "local_llamacpp"}
+        else None
+    )
     endpoint_invalid = bool(
-        base_url
+        checked_url
         and _is_url_based_provider(provider_key, provider_settings)
-        and not _valid_base_url(provider_key, base_url)
+        and not _valid_base_url(provider_key, checked_url)
     )
     endpoint_not_saved = bool(
         base_url
@@ -3398,6 +3409,14 @@ def _format_endpoint_summary_row(
     settings: ConsoleSessionSettings,
     readiness: ConsoleSettingsReadiness,
 ) -> str:
+    typed = _string_value(settings.base_url)
+    if (
+        readiness.blocker == "endpoint_invalid"
+        and typed
+        and "://" not in read_schemeless_loopback(typed)
+    ):
+        # TASK-39151: say what to change; the value itself is never shown.
+        return "Endpoint: Invalid (a remote address needs http:// or https://)"
     if (
         readiness.blocker
         in {

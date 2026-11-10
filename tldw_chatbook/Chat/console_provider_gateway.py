@@ -1875,7 +1875,9 @@ def normalize_llamacpp_base_url(api_url: str | None) -> str:
     if not raw_url:
         return DEFAULT_LLAMACPP_BASE_URL
 
-    candidate = raw_url if "://" in raw_url else f"http://{raw_url}"
+    # TASK-39151: only a loopback spelling typed without a scheme is read as
+    # http://, the contract's rule; any other stays schemeless and invalid.
+    candidate = read_schemeless_loopback(raw_url)
     parsed = urlparse(candidate)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return raw_url.rstrip("/")

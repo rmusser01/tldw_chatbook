@@ -1900,11 +1900,12 @@ def test_llamacpp_readiness_refuses_a_remote_endpoint_typed_without_a_scheme(
     assert _saved_endpoint("llama_cpp", endpoint) is None
     assert readiness.label != "Ready", readiness
     assert readiness.blocker == "endpoint_invalid", readiness
-    # AC#3: the Chat settings Endpoint row never names the value.
+    # AC#3: the Chat settings Endpoint row never names the value. Rewritten on
+    # purpose by TASK-39151 AC#3: it says what to change, not "Not configured".
     row = build_console_settings_summary_state(
         settings, ConsoleSettingsContextEstimate(None, None, ""), readiness
     ).endpoint_row
-    assert row == "Endpoint: Not configured"
+    assert row == "Endpoint: Invalid (a remote address needs http:// or https://)"
 
 
 @pytest.mark.parametrize("endpoint", _DOTTED_KEY_ENDPOINTS)
@@ -2201,3 +2202,173 @@ async def test_a_hand_edited_schemeless_loopback_endpoint_is_sent_as_readiness_r
     assert resolution.ready, resolution.visible_copy
     [chunk async for chunk in gateway.stream_chat(resolution, [{"role": "user", "content": "x"}])]
     assert calls[0].get("api_base_url") == sent
+
+
+#: TASK-39151: remote llama.cpp endpoints typed without a scheme (save refuses).
+_REMOTE_SCHEMELESS_LLAMACPP = ("gpu-box.lan:8080", "192.168.1.20:8080")
+
+
+def _llamacpp_source(source, endpoint):
+    """Session settings and config holding ``endpoint`` in one llama.cpp place."""
+    config = {"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}}
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="m")
+    if source == "session":
+        settings = ConsoleSessionSettings(provider="llama_cpp", model="m", base_url=endpoint)
+    elif source == "config":
+        config["api_settings"]["llama_cpp"]["api_url"] = endpoint
+    else:
+        config["custom_endpoints"] = {
+            "gpu": {"display_name": "GPU box", "family": "llama_cpp", "base_url": endpoint}
+        }
+        settings = ConsoleSessionSettings(provider="custom-ep:gpu", model="m")
+    return settings, config
+
+
+async def _resolve_llamacpp_send(settings, config, seen):
+    """Resolve a send as Console does, through a transport that records URLs."""
+    from tldw_chatbook.Chat.console_chat_controller import (
+        build_console_provider_selection_from_settings,
+    )
+
+    def handler(request):
+        seen.append(str(request.url))
+        if request.url.path == "/v1/models":
+            return httpx.Response(200, json=_openai_models_payload("m"))
+        return httpx.Response(200, json={"status": "ok"})
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: config,
+        environ={},
+        http_client=_client(handler),
+    )
+    selection = build_console_provider_selection_from_settings(
+        settings, app_config=config, workspace_context=None
+    )
+    return await gateway.resolve_for_send(selection)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", _REMOTE_SCHEMELESS_LLAMACPP)
+@pytest.mark.parametrize("source", ["session", "config", "custom_entry"])
+async def test_llamacpp_never_probes_a_remote_endpoint_typed_without_a_scheme(
+    source, endpoint, monkeypatch
+):
+    """TASK-39151 AC#1: both ``normalize_llamacpp_base_url`` copies added
+    ``http://`` to any value without a scheme, so the send-time resolution
+    probed ``http://gpu-box.lan:8080/health`` and read Ready, whether the value
+    came from the session, the config or a custom endpoint entry."""
+    monkeypatch.delenv("TLDW_CONSOLE_LLAMA_CPP_BASE_URL", raising=False)
+    settings, config = _llamacpp_source(source, endpoint)
+    seen: list[str] = []
+
+    resolution = await _resolve_llamacpp_send(settings, config, seen)
+
+    assert seen == []
+    assert resolution.ready is False
+
+
+@pytest.mark.parametrize("endpoint", _REMOTE_SCHEMELESS_LLAMACPP)
+@pytest.mark.parametrize("place", ["api_settings", "console_override", "environment"])
+def test_llamacpp_readiness_refuses_a_held_endpoint_typed_without_a_scheme(
+    place, endpoint
+):
+    """TASK-39151 AC#2: with no session endpoint, readiness never looked at the
+    endpoint the send would use, so a hand-edited ``gpu-box.lan:8080`` read
+    Ready."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+
+    config = {"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}}
+    environ = {}
+    if place == "api_settings":
+        config["api_settings"]["llama_cpp"]["api_url"] = endpoint
+    elif place == "console_override":
+        config["console"] = {"llama_cpp_base_url_override": endpoint}
+    else:
+        environ["TLDW_CONSOLE_LLAMA_CPP_BASE_URL"] = endpoint
+
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="llama_cpp", model="m"),
+        app_config=config,
+        environ=environ,
+    )
+
+    assert readiness.label != "Ready", readiness
+    assert readiness.blocker == "endpoint_invalid", readiness
+
+
+@pytest.mark.asyncio
+async def test_a_saved_chat_with_a_remote_schemeless_llamacpp_endpoint_sends_nothing(
+    monkeypatch,
+):
+    """TASK-39151 AC#3: a chat saved before TASK-39042 can hold
+    ``gpu-box.lan:8080`` as its session endpoint. Its next send probed that
+    host as ``http://``, and its Endpoint row read "Not configured"."""
+    import json
+    from dataclasses import asdict
+
+    from tldw_chatbook.Chat.console_provider_endpoints import (
+        INVALID_LLAMACPP_BASE_URL_COPY,
+    )
+    from tldw_chatbook.Chat.console_session_settings import (
+        ConsoleSettingsContextEstimate,
+        build_console_settings_readiness,
+        build_console_settings_summary_state,
+        parse_persisted_console_session_settings,
+    )
+
+    monkeypatch.delenv("TLDW_CONSOLE_LLAMA_CPP_BASE_URL", raising=False)
+    stored = ConsoleSessionSettings(
+        provider="llama_cpp", model="m", base_url="gpu-box.lan:8080"
+    )
+    settings = parse_persisted_console_session_settings(
+        json.dumps({"console_session_settings": {"version": 1, **asdict(stored)}})
+    )
+    assert settings == stored
+    config = {"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}}
+    seen: list[str] = []
+
+    resolution = await _resolve_llamacpp_send(settings, config, seen)
+
+    assert seen == []
+    assert resolution.ready is False
+    assert resolution.visible_copy == INVALID_LLAMACPP_BASE_URL_COPY
+    readiness = build_console_settings_readiness(settings, app_config=config, environ={})
+    row = build_console_settings_summary_state(
+        settings, ConsoleSettingsContextEstimate(None, None, ""), readiness
+    ).endpoint_row
+    assert row == "Endpoint: Invalid (a remote address needs http:// or https://)"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("typed", "base"),
+    [
+        ("localhost:8080", "http://localhost:8080"),
+        ("127.0.0.1:8080/v1", "http://127.0.0.1:8080"),
+        ("[::1]:8080", "http://[::1]:8080"),
+        ("http://gpu-box.lan:8080", "http://gpu-box.lan:8080"),
+        ("https://gpu-box.lan:8443/v1", "https://gpu-box.lan:8443"),
+    ],
+)
+@pytest.mark.parametrize("source", ["session", "config", "custom_entry"])
+async def test_llamacpp_loopback_or_schemed_endpoints_resolve_as_before(
+    source, typed, base, monkeypatch
+):
+    """TASK-39151 AC#4: only a remote value without a scheme changed."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+
+    monkeypatch.delenv("TLDW_CONSOLE_LLAMA_CPP_BASE_URL", raising=False)
+    settings, config = _llamacpp_source(source, typed)
+    seen: list[str] = []
+
+    resolution = await _resolve_llamacpp_send(settings, config, seen)
+
+    assert seen == [f"{base}/health"]
+    assert resolution.ready is True, resolution.visible_copy
+    assert resolution.base_url == base
+    readiness = build_console_settings_readiness(settings, app_config=config, environ={})
+    assert readiness.blocker is None, readiness
