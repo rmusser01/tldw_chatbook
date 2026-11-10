@@ -375,38 +375,38 @@ def test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners()
 
 #: Roots this node skips: the package (preflight's profile census parses it),
 #: Tests/ (pytest collection parses each file a lane runs) and Docs/ (not
-#: runtime). Hidden directories other than .github/ are local state (.venv,
-#: worktrees), not repository source.
-PARSED_ELSEWHERE_ROOTS = ("tldw_chatbook", "Tests", "Docs")
+#: runtime). Only git-tracked files count: a local build/, venv/ or
+#: node_modules/ is not repository source.
+PARSED_ELSEWHERE_ROOTS = ("tldw_chatbook/", "Tests/", "Docs/")
 
 
 def test_python_outside_the_package_and_tests_parses() -> None:
-    """Every other repository ``.py`` file parses (TASK-39126).
+    """Every other tracked ``.py`` file parses (TASK-39126).
 
     The runtime-policy node above used to parse every file, so an unparseable
     script failed it as a side effect. It now parses only files that name its
     constants; this node keeps that side effect for the roots no other check
     parses (scripts/, Helper_Scripts/, Packaging/, packages/, .github/,
-    native/, top-level files, ...).
+    native/, top-level files, ...). ``git ls-files`` reads the index, so it
+    works in CI's shallow checkout. Bytes are parsed, so a BOM or a PEP 263
+    cookie is honoured as Python honours it.
     """
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z", "--", "*.py"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        check=True,
+    ).stdout.decode("utf-8", "surrogateescape")
     unparseable: list[str] = []
-    for entry in sorted(REPO_ROOT.iterdir()):
-        if entry.name in PARSED_ELSEWHERE_ROOTS or (
-            entry.name.startswith(".") and entry.name != ".github"
-        ):
+    for relative_path in tracked.split("\0"):
+        if not relative_path or relative_path.startswith(PARSED_ELSEWHERE_ROOTS):
             continue
-        if entry.is_dir():
-            paths = sorted(entry.rglob("*.py"))
-        else:
-            paths = [entry] if entry.suffix == ".py" else []
-        for path in paths:
-            relative_path = path.relative_to(REPO_ROOT).as_posix()
-            try:
-                ast.parse(path.read_text(encoding="utf-8"), relative_path)
-            except SyntaxError as error:
-                unparseable.append(f"{relative_path}:{error.lineno}: {error.msg}")
+        try:
+            ast.parse((REPO_ROOT / relative_path).read_bytes(), filename=relative_path)
+        except SyntaxError as error:
+            unparseable.append(f"{relative_path}:{error.lineno}: {error.msg}")
 
-    assert unparseable == []
+    assert not unparseable, "\n".join(unparseable)
 
 
 def test_cli_prints_the_real_source_census_and_enforces_it() -> None:
