@@ -20,6 +20,7 @@ from tldw_chatbook.UI.Screens.scheduling.conflicts_tab import _conflict_type_lab
 from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import ReminderForm
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
 from tldw_chatbook.UI.Screens.scheduling.sync_status_widget import SyncStatusWidget
+from tldw_chatbook.UI.Screens.scheduling.task_detail import TaskDetail, TaskInspector
 
 # ADR-299: keys screens must never bind for app actions.
 _FORBIDDEN_KEYS = {
@@ -154,3 +155,24 @@ async def test_future_one_time_run_passes_validation() -> None:
         await pilot.pause()
         # Valid form dismisses with form_data; an invalid one stays on screen.
         assert results and results[0]["title"] == "Test task"
+
+
+class _PanesBeforeFirstTaskHarness(ConsolidatedCSSApp):
+    def compose(self) -> ComposeResult:
+        yield TaskDetail()
+        yield TaskInspector()
+
+
+@pytest.mark.asyncio
+async def test_detail_and_inspector_open_in_their_empty_state_before_any_task() -> None:
+    """TASK-39170 (review r13c-rev1): before the queue's first ``set_task``,
+    both panes show the empty state ``set_task(None)`` paints, not a blank
+    form ("-" rows and a "No conflict" card) for a task nobody selected."""
+    app = _PanesBeforeFirstTaskHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.query_one("#scheduling-task-detail-empty-state").display
+        assert not app.query_one("#scheduling-task-detail-metadata").display
+        assert app.query_one("#scheduling-task-inspector-empty-state").display
+        assert not app.query_one("#scheduling-inspector-metadata").display
+        assert not app.query_one("#scheduling-conflict-card").display

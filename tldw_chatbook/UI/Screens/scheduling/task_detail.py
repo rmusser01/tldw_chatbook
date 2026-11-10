@@ -1779,7 +1779,11 @@ class TaskInspector(Vertical):
             "Select a task to see sync, conflict, and run details.",
             id="scheduling-task-inspector-empty-state",
         )
-        with Vertical(id="scheduling-inspector-metadata"):
+        # TASK-39170: compose in the empty state `set_task(None)` paints, as
+        # TaskDetail does; a "-" form and "No conflict" before the first
+        # task described a task nobody selected.
+        with Vertical(id="scheduling-inspector-metadata") as metadata:
+            metadata.display = False
             yield Horizontal(
                 Static("Sync:", classes="scheduling-inspector-label"),
                 Static(
@@ -1804,10 +1808,12 @@ class TaskInspector(Vertical):
                     classes="scheduling-inspector-value",
                 ),
             )
-        yield Vertical(
+        conflict_card = Vertical(
             Static("No conflict", id="scheduling-conflict-text"),
             id="scheduling-conflict-card",
         )
+        conflict_card.display = False
+        yield conflict_card
 
     def set_task(self, task: ReminderTask | ScheduledTask | None) -> None:
         """Update the inspector view for the given task (or clear it)."""
