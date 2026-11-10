@@ -24,6 +24,13 @@ ends (a refusal before the echo). The paint is for the Enter's own tab: if
 another tab is shown by the time it runs, nothing is painted (the send is
 refused for its changed tab).
 
+TASK-38948 (owner ruling 2026-11-10): the status line, composer, header and
+tabs are pushed first and painted in a frame of their own; the row mounts
+after that frame, and the hand-off still waits until the row is laid out.
+One frame with everything was a full first-message reflow and render:
+"Sending…" painted after 56 ms of loop CPU at the median, 30 ms with the
+row a frame later.
+
 TASK-33620.15: the Send button and the Workbench's send now start here too
 (``request_visible_send``), and the send runs as its own task: awaited from
 the app pump's callback, as it was, every await of it held key delivery.
@@ -784,10 +791,31 @@ async def _paint_then(
             type(exc).__name__,
         )
     finally:
-        if not screen.call_after_refresh(
-            _dispatch_once_laid_out, screen, session_id, dispatch, 0
+        # TASK-38948: queued on the status line behind the row's mount (see
+        # ``paint_acknowledgement``), so the send never starts before the row.
+        hand_off = partial(_dispatch_once_laid_out, screen, session_id, dispatch, 0)
+        anchor = _row_anchor(screen)
+        if not (
+            (anchor is not None and anchor.call_after_refresh(hand_off))
+            or screen.call_after_refresh(hand_off)
         ):
             dispatch()
+
+
+def _row_anchor(screen: Any) -> Any | None:
+    """The status line the user row's mount and the hand-off queue behind.
+
+    TASK-38948: a callback the line posts runs only after the line's own
+    pending repaint has reached the screen, so it follows the "Sending…"
+    frame. A screen-level ``call_after_refresh`` can run before the child
+    widgets post their repaints, which painted the row in the same frame.
+    """
+    try:
+        return screen.query_one("#console-status-chips").query_one(
+            "#console-status-text"
+        )
+    except NoMatches:
+        return None
 
 
 def _dispatch_once_laid_out(
@@ -808,7 +836,8 @@ def _dispatch_once_laid_out(
     admission with one hop). The tabs are relabelled before the row mounts:
     relabelled last, a warm 80x24 send still lost the dot with these hops.
     Final build, live: 9 of 9 sends had the whole acknowledgement on screen
-    before admission.
+    before admission. TASK-38948: this hand-off is queued behind the row's
+    mount (``_row_anchor``), which follows the "Sending…" frame.
     """
     if hops < _PAINT_HOPS and not _acknowledgement_laid_out(screen, session_id):
         try:
@@ -889,7 +918,14 @@ async def paint_acknowledgement(screen: Any, session_id: str) -> None:
     # and the hand-off waits only for the mounted row (live warm send, tabs
     # last: the dot first appeared after admission).
     await screen._sync_console_native_session_tabs()
-    await widget.refresh_messages()
+    # TASK-38948 (owner ruling 2026-11-10): "Sending…" leads the row by one
+    # frame. Mounting the row with the rest made the Sending frame a full
+    # first-message reflow and render (Sending loop CPU median 56 ms against
+    # 30 ms). The row mounts once the status line's repaint is out; the
+    # hand-off to the send is queued behind it on the same line.
+    anchor = _row_anchor(screen)
+    if anchor is None or not anchor.call_after_refresh(widget.refresh_messages):
+        await widget.refresh_messages()
 
 
 def _session_message_ids(screen: Any, session_id: str) -> tuple[str, ...]:
