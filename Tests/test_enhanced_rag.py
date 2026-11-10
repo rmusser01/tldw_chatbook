@@ -23,8 +23,8 @@ import logging
 # Import optional dependency checker
 from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
 
-# Skip all tests in this module if embeddings dependencies are not available
-pytestmark = pytest.mark.skipif(
+# Retrieval cases keep their dependency gate until their offline fixtures are owned.
+_requires_embeddings = pytest.mark.skipif(
     not DEPENDENCIES_AVAILABLE.get("embeddings_rag", False),
     reason="RAG tests require embeddings dependencies: pip install tldw_chatbook[embeddings_rag]",
 )
@@ -124,6 +124,7 @@ success in 2025 and beyond.
 """
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_enhanced_chunking():
     """Test enhanced chunking features."""
@@ -147,6 +148,7 @@ async def test_enhanced_chunking():
         clean_artifacts=True,
     )
 
+    assert chunks
     logger.info(f"Created {len(chunks)} hierarchical chunks")
     for i, chunk in enumerate(chunks[:3]):  # Show first 3 chunks
         logger.info(f"\nChunk {i}:")
@@ -163,6 +165,8 @@ async def test_enhanced_chunking():
         content, chunk_size=150, chunk_overlap=30, parent_size_multiplier=3
     )
 
+    assert parent_result["chunks"] and parent_result["parent_chunks"]
+    assert all(child["parent_id"] is not None for child in parent_result["chunks"])
     logger.info(f"Created {parent_result['metadata']['total_chunks']} retrieval chunks")
     logger.info(
         f"Created {parent_result['metadata']['total_parent_chunks']} parent chunks"
@@ -178,6 +182,7 @@ async def test_enhanced_chunking():
             logger.info(f"  Parent text: {parent_text[:150]}...")
 
 
+@_requires_embeddings
 @pytest.mark.asyncio
 async def test_enhanced_rag_service():
     """Test the enhanced RAG service."""
@@ -246,6 +251,7 @@ async def test_enhanced_rag_service():
                 logger.info("✓ Context successfully expanded to parent chunk")
 
 
+@_requires_embeddings
 @pytest.mark.asyncio
 async def test_v2_full_features():
     """Test V2 service with all features enabled."""
@@ -299,6 +305,7 @@ async def test_v2_full_features():
             logger.info(f"    Preview: {result.document[:100]}...")
 
 
+@_requires_embeddings
 @pytest.mark.asyncio
 async def test_profile_switching():
     """Test switching between different profiles."""
