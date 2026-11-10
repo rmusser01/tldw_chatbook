@@ -139,3 +139,22 @@ existing restricted authorizer; validation compares the complete resulting SQL
 catalog and foreign keys. Runtime constructors and source files are not used as
 restore candidates. Existing restored-profile admission and activation gates
 remain authoritative.
+
+## Plugins owner (TASK-40132)
+
+`Plugins/backup.py` installs the `plugins` owner: one tree over `<user data>/plugins`
+in the `tools` group, shaped like `recovered.media` (`inventory.sqlite_tree_member`
+names each mixed tree's single SQLite member for sidecar declaration and capture
+dispatch). `registry.sqlite3` is captured through the `recovery.plugins.registry`
+SQLite owner (backup route, WAL folded) against the frozen v5 catalog
+`REGISTRY_SCHEMAS`; everything else is raw bytes, and only `runtime.lock` is
+excluded. Capture refuses rather than waits: an unsettled `processes` row or a held
+runtime lock marks every plugin item unavailable with the inventory issue
+`plugin_writers_active`, and each item's copy holds the lock. Restore is in place
+only: `staging._config_targets` refuses the owner for a different profile and
+`relocate_restore` refuses a registry whose data-root paths name another root
+(`owner_relocation_unverified:plugins`). The owner is activation-required:
+`PluginAdmission.capture` refuses `plugin_restore_review_required` while a restored
+generation that lists `plugins` is unapproved, and `PluginService` approves it once
+its authority recovery completes. The keyring generation marker is never captured,
+so a restored profile without it reports `recovery_required`.

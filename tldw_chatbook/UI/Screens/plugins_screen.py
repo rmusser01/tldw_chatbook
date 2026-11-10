@@ -638,6 +638,11 @@ class PluginsScreen(BaseAppScreen):
                         "Authority recovered; saved-data recovery remains separately reviewed."
                     )
                     self._reload()
+                elif posture == "recovery_required":
+                    # TASK-40132: a backup never holds the keyring marker.
+                    self._status(
+                        "Plugin authority needs recovery: its protected marker is missing or does not match, as after a profile is restored from a backup. Plugins stay off until then. Choose Reset authority…, set up plugin authority again, then review your plugins; their files and data stay on disk."
+                    )
                 else:
                     self._status(
                         f"Authority: {posture}. Restore the protected backend or wait for the owning instance; no automatic reset or takeover."

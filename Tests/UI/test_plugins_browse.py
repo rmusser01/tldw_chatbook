@@ -515,3 +515,30 @@ async def test_navigation_during_child_prune_settles_original_load(
         finally:
             gate.release.set()
             hold.release.set()
+
+
+@private_profile_test
+@pytest.mark.asyncio
+async def test_authority_recovery_names_restore_and_reset(request, native_console):
+    """TASK-40132 (owner decision Q2): recovery_required says what happened after a
+    restore and what to do, naming Reset authority."""
+    rig = native_console
+
+    async def recovery_required():
+        return "recovery_required"
+
+    rig.service.authority_status = recovery_required
+    app = BrowseApp(rig)
+    async with app.run_test(size=(120, 35)) as pilot:
+        screen = app.screen
+        await settled(pilot, screen)
+        screen.query_one("#plugins-authority", Button).focus()
+        await pilot.press("enter")
+        for _ in range(100):
+            await pilot.pause(0.02)
+            status = str(screen.query_one("#plugins-status", Static).render())
+            if "Reset authority" in status:
+                break
+        assert "restored" in status and "Reset authority" in status
+        assert "Plugins stay off" in status
+        assert "data stay on disk" in status

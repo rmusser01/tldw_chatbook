@@ -94,6 +94,27 @@ replaying execution. Credential refresh within the same authorized binding does
 not authorize replay of an uncertain call. Changed account, endpoint, scope or
 binding reference requires reviewed current authority.
 
+### After restoring a backup
+
+A backup holds the plugin root (registry, package bytes, saved data, staging and
+acquisition records) and the plugin authority files, but never the protected
+marker kept in the OS keyring. After a restore, plugins stay off until plugin
+authority recovery completes; a successful recovery from **Authority…** (or the
+recovery that runs when you unlock) also records that review, and plugins can
+run again.
+
+On the computer and profile the backup came from, with plugins unchanged since
+the backup, **Authority…** asks you to unlock as usual. Otherwise, Plugins shows
+"Plugin authority needs recovery: its protected marker is missing or does not
+match, as after a profile is restored from a backup. Plugins stay off until then.
+Choose Reset authority…, set up plugin authority again, then review your plugins;
+their files and data stay on disk." Restored saved-data folders and fetch records
+also have new file identities: saved data may report recovery reasons, and a
+plugin installed from a repository may fail authority recovery on its fetch
+record, which also leaves Reset authority… as the way back. Plugins restore only
+onto the profile they came from; see
+[Local backup and recovery](../Backup-and-Recovery.md).
+
 See [compatibility](compatibility.md) for unqualified environments and
 [authoring](authoring.md) for component and resource contracts.
 

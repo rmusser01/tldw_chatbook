@@ -257,5 +257,43 @@ class _Plugins(_Definition):
                 )
 
 
+def _restored_generations(plugins_root: Path, *, approve: bool = False):
+    """Restored generations still requiring plugin review; optionally approve them.
+
+    Only generations that list this owner count: a profile restored before the
+    owner existed has nothing for plugin recovery to approve.
+    """
+    from tldw_chatbook.Backup_Recovery.activation import ActivationStore
+    from tldw_chatbook.Backup_Recovery.generation_witnesses import _witnesses
+    from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
+    pending = []
+    with acquire_storage(plugins_root) as lease:
+        for witness in _witnesses(plugins_root, lease):
+            store = ActivationStore(Path(witness["store_root"]))
+            if OWNER not in witness["owners"] or store.allowed(
+                witness["generation"], OWNER
+            ):
+                continue
+            if approve:
+                store.approve(witness["generation"], OWNER)
+            else:
+                pending.append(witness["generation"])
+    return tuple(pending)
+
+
+def restore_review_required(plugins_root: Path) -> bool:
+    """Whether restored plugins must wait for authority recovery; fails closed."""
+    try:
+        return bool(_restored_generations(plugins_root))
+    except (OSError, ValueError, RuntimeError):
+        return True
+
+
+def approve_restore(plugins_root: Path) -> None:
+    """Record completed plugin authority recovery for the restored generation."""
+    _restored_generations(plugins_root, approve=True)
+
+
 def recovery_adapters() -> tuple[OwnerAdapter, ...]:
     return (_Plugins("plugins", leaf="plugins", tree=True),)

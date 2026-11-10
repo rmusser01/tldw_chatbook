@@ -76,13 +76,14 @@ def _config_targets(data, profile, config_target, doc, plan, owners, *, derive=F
     from tldw_chatbook.MCP.recovery import _Store
     from tldw_chatbook.Model_Artifacts.recovery import _Artifacts, managed_artifact_root
     from tldw_chatbook.Persona_Visual.recovery import _Assets
+    from tldw_chatbook.Plugins.backup import _Plugins
     from tldw_chatbook.runtime_policy.recovery import _SourceState
     from tldw_chatbook.Subscriptions.recovery import _BriefingAudio
     from tldw_chatbook.Widgets.Tamagotchi.recovery import _ConfiguredPets
     from tldw_chatbook.Workspaces.recovery import _ChangeTracking
 
     from .config_adapter import _Definition, _Diagnostics, _Generated
-    from .profile_paths import DATABASE_PATHS, database_path, user_data_dir
+    from .profile_paths import DATABASE_PATHS, database_path, lexical_path, user_data_dir
     from .rag_inventory import _Definitions as _RAGDefinitions
     from .rag_inventory import _Projections
     from .recovered_media import _RecoveredAdapter
@@ -215,6 +216,14 @@ def _config_targets(data, profile, config_target, doc, plan, owners, *, derive=F
                 and selected[payload.logical_id] != expected / relative
             ):
                 raise ValueError("owner_relocation_unverified:generation.assets")
+        elif type(owner) is _Plugins:
+            # TASK-40132: the registry and the authenticated plugin authority
+            # bind absolute plugin-root paths, so plugins restore only onto the
+            # profile they came from until a relocation design exists.
+            selector = str(lexical_path(config_target))
+            if hashlib.sha256(selector.encode()).hexdigest()[:24] != profile:
+                raise ValueError("owner_relocation_unverified:" + payload.owner_id)
+            expected = owner._definition_path(configured)
         elif isinstance(owner, _Definition):
             expected = owner._definition_path(configured)
         elif type(owner) is _Artifacts:

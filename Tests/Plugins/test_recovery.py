@@ -1046,3 +1046,221 @@ def test_live_plugin_writers_refuse_preview_and_capture(tmp_path, monkeypatch, w
             assert destination.read_bytes() == b"made by the plugin"
     finally:
         handle.close()
+
+
+def test_restored_registry_must_name_its_own_plugin_root(tmp_path):
+    """AC8 defense: a registry whose data roots name another plugin root refuses."""
+    from tldw_chatbook.Backup_Recovery.models import FileMetadata, StorageItem
+    from tldw_chatbook.Backup_Recovery.storage_admission import _preview_reads
+    from tldw_chatbook.Plugins.backup import recovery_adapters
+
+    _, root = _plugin_root(tmp_path)
+    (adapter,) = recovery_adapters()
+    metadata = FileMetadata(
+        1, "profile:p:plugins", "registry.sqlite3", "profile:p:plugins",
+        "file", 0o600, 0, "private",
+    )
+    candidate = root / "registry.sqlite3"
+    for destination, refused in ((root, False), (tmp_path / "elsewhere" / "plugins", True)):
+        item = StorageItem(
+            "plugins", "profile:p:plugins:registry", destination / "registry.sqlite3",
+            "included", (), metadata=metadata,
+        )
+        with _preview_reads():
+            if refused:
+                with pytest.raises(ValueError, match="owner_relocation_unverified:plugins"):
+                    adapter.relocate_restore(item, candidate, {})
+            else:
+                adapter.relocate_restore(item, candidate, {})
+
+_RESTORE_PRIVATE = r"""
+import asyncio,hashlib,json,os,shutil,sqlite3,sys,threading
+from pathlib import Path
+from tldw_chatbook.Backup_Recovery.storage_admission import admit_startup
+admit_startup()
+from Tests.network_guard import install
+install()
+for name in ('sounddevice','pyaudio'):sys.modules[name]=None
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+from tldw_chatbook.config import get_user_data_dir
+from tldw_chatbook.Plugins import authority_store
+from tldw_chatbook.Plugins.service import PluginService
+home=Path.home();root=get_user_data_dir()/'plugins'
+trust=get_user_data_dir()/'skills'/'trust'/'plugins'
+class FileKeyring:
+ # The OS keyring's role: it outlives the profile and no backup holds it.
+ def __init__(self,path):self.path=path
+ def _values(self):return json.loads(self.path.read_text()) if self.path.exists() else {}
+ def get_password(self,service,account):return self._values().get(service+'|'+account)
+ def set_password(self,service,account,value):
+  values=self._values();values[service+'|'+account]=value;self.path.write_text(json.dumps(values))
+ def delete_password(self,service,account):
+  values=self._values();del values[service+'|'+account];self.path.write_text(json.dumps(values))
+authority_store.is_secure_keyring_backend=lambda candidate:isinstance(candidate,FileKeyring)
+def marker(name='keyring.json'):
+ return lambda store:authority_store.KeyringPluginMarkerStore(store,keyring_backend=FileKeyring(home/name))
+def service():
+ return PluginService(get_user_data_dir(),workspace_lookup=lambda _:None,marker_store_factory=marker())
+def state():
+ files={p.relative_to(root).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file() and not p.name.startswith(('registry.sqlite3','runtime.lock'))}
+ with sqlite3.connect(f"file:{root/'registry.sqlite3'}?mode=ro",uri=True) as connection:registry=list(connection.iterdump())
+ return {'files':files,'registry':registry}
+"""
+
+_PLUGIN_SEED = (
+    r"""
+import json,os
+from pathlib import Path
+selector=Path(os.environ['TLDW_CONFIG_PATH']);selector.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
+data=Path.home()/'data';data.mkdir(mode=0o700,exist_ok=True)
+selector.write_text('[general]\nusers_name="default_user"\n[first_run]\nsetup_completed=true\n[paths]\ndata_dir='+json.dumps(str(data))+'\n')
+selector.chmod(0o600)
+"""
+    + _RESTORE_PRIVATE
+    + r"""
+async def main():
+ package=home/'package';shutil.copytree(Path('Tests/Plugins/fixtures/native'),package)
+ manifest=json.loads((package/'plugin.json').read_text())
+ manifest['extensions']['io.github.rmusser01.chatbook']={'version':1}
+ (package/'plugin.json').write_text(json.dumps(manifest))
+ plugins=service()
+ try:
+  await plugins.bootstrap('test passphrase')
+  review=await plugins.review_install(package,selection=('skill:review',),workspace_id=None)
+  await plugins.commit(review,review.operation_id)
+  trust_review=await plugins.review_trust(review.installation_id)
+  await plugins.commit(trust_review,trust_review.operation_id)
+  enable=await plugins.review_activation(review.installation_id,workspace_id=None,intent='enabled')
+  await plugins.commit(enable,enable.operation_id)
+  assert plugins.capture_maximum('global')['available_skills']
+ finally:
+  await plugins.aclose()
+ return review.installation_id
+# The core stores every profile's preview depends on, as the selective-restore tests build them.
+from Tests.Backup_Recovery.test_capture_service import _populate_required_dependencies
+from tldw_chatbook.Backup_Recovery.capture_service import preview_capture
+_populate_required_dependencies(preview_capture((selector,),options={'allow_partial':True}))
+installation=asyncio.run(main())
+data=root/'data'/'kept-root'
+for path in (root/'data',data):path.mkdir(mode=0o700,exist_ok=True)
+(data/'notes.txt').write_bytes(b'made by the plugin');(data/'notes.txt').chmod(0o600)
+(home/'plugin-seed.json').write_text(json.dumps({'installation':installation,**state()}))
+print('PLUGIN_SEED_COMPLETE',flush=True)
+"""
+)
+
+# Only the Tools group (MCP, skills and plugins): whole-profile replacement is
+# far slower and adds nothing to the plugin owner's evidence.
+_PLUGIN_BACKUP_RESTORE = r"""
+import json,os,threading
+from pathlib import Path
+from Tests.network_guard import install
+install()
+os.environ['PYTHON_KEYRING_BACKEND']='keyring.backends.null.Keyring'
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+from tldw_chatbook.Backup_Recovery import credentials
+from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+from tldw_chatbook.runtime_policy.server_credentials import KeyringServerCredentialStore
+store=KeyringServerCredentialStore(keyring_backend=Keyring());credentials._credential_store=lambda:store
+source=Path(os.environ['TLDW_CONFIG_PATH']);home=Path.home()
+options={'data_groups':('tools',)}
+def done(service,operation):
+ result=service.wait(operation);assert result['state']=='succeeded',dict(result);return result
+service=RecoveryService(home/'recovery-control')
+try:
+ preview=service.preview_backup((source,),options=options)
+ assert preview.complete,preview.issues
+ plugin={item.path.name:item for item in preview.items if item.owner=='plugins' and item.path is not None}
+ assert {name:plugin[name].status for name in ('registry.sqlite3','notes.txt','runtime.lock')}=={'registry.sqlite3':'included','notes.txt':'included','runtime.lock':'intentionally_excluded'}
+ destination=home/'tools.tldw-backup.zip'
+ done(service,service.start_backup((source,),preview.scope_digest,destination,options=options,password=None))
+ inspection=service.start_inspection(destination,password=None);done(service,inspection)
+ profile=service.summary(inspection)['profile_ids'][0]
+ # AC8: a separate profile cannot take the plugin root's absolute paths.
+ isolated=home/'isolated-parent';isolated.mkdir(mode=0o700)
+ try:
+  service.preview_restore(inspection,mode='isolated',profile_bases={profile:isolated/'restored'},target_configs={},external_destinations={},profile_names={profile:'Restored elsewhere'},target=None,data_groups=('tools',))
+ except ValueError as error:
+  assert str(error)=='owner_relocation_unverified:plugins',str(error)
+ else:raise AssertionError('separate-profile plugin restore was planned')
+ plugin['notes.txt'].path.write_bytes(b'changed after the backup')
+ def restore(**review):
+  target=service.preview_backup((source,),options={})
+  plan=service.preview_restore(inspection,mode='replace',profile_bases={},target_configs={profile:source},external_destinations={},profile_names={},target=target,data_groups=('tools',),**review)
+  return service.wait(service.start_restore(inspection,plan,rollback_password=b'rollback-test-password'))
+ result=restore()
+ if result['state']=='recovery_required' and result.get('review_issues'):
+  issues=tuple(result['review_issues'])
+  assert all(code.startswith('credential_') for code in issues),issues
+  done(service,service.start_recovery(result['result']['journal_operation_id'],action='abort'))
+  result=restore(acknowledged_credential_issues=issues)
+ assert result['state']=='succeeded',dict(result)
+finally:
+ service.close()
+print('PLUGIN_REPLACEMENT_COMPLETE',flush=True)
+"""
+
+_PLUGIN_REOPEN = _RESTORE_PRIVATE + r"""
+from tldw_chatbook.Plugins.backup import restore_review_required
+from tldw_chatbook.Plugins.admission import PluginUnavailable
+seed=json.loads((home/'plugin-seed.json').read_text())
+# AC5: registry rows, package bytes and plugin data are back, byte for byte.
+assert state()==({key:seed[key] for key in ('files','registry')}),'restored plugin root differs'
+assert (root/'data'/'kept-root'/'notes.txt').read_bytes()==b'made by the plugin'
+# AC5: without its keyring marker the restored authority asks for recovery.
+assert authority_store.PluginAuthorityStore(trust,marker('other-computer.json')(trust)).posture()=='recovery_required'
+# AC7: the restored generation keeps plugins from running until recovery.
+assert restore_review_required(root) is True
+async def main():
+ plugins=service()
+ try:
+  async def capture():
+   return await plugins._call(lambda:plugins._admission.capture(seed['installation'],None,'restored-run'))
+  async def refused(reason):
+   try:await capture()
+   except PluginUnavailable as error:assert reason in {None,str(error)},str(error)
+   else:raise AssertionError('restored plugin ran before authority recovery')
+  await refused(None)  # locked authority refuses on its own as well
+  posture=await plugins.authority_status()
+  assert posture=='locked',posture
+  # Authority unlocked and reconciled outside the service's recovery is not
+  # the review: the restored generation still keeps plugins from running.
+  await plugins._call(lambda:plugins._coordinator.authority.unlock('test passphrase'))
+  await plugins._call(lambda:plugins._coordinator.recover())
+  assert await plugins.authority_status()=='ready'
+  await refused('plugin_restore_review_required')
+  await plugins.recover()
+  assert restore_review_required(root) is False
+  assert (await capture()).installation_id==seed['installation']
+  assert plugins.capture_maximum('global')['available_skills']
+ finally:
+  await plugins.aclose()
+asyncio.run(main())
+assert (root/'data'/'kept-root'/'notes.txt').read_bytes()==b'made by the plugin'
+print('PLUGIN_RESTORE_REVIEW_COMPLETE',flush=True)
+"""
+
+
+@platform_support.managed_runtime
+@pytest.mark.timeout(900)
+def test_plugin_backup_restores_in_place_and_waits_for_authority_recovery(tmp_path):
+    """AC5/AC7/AC8 through actual capture, archive and same-profile replacement."""
+    from Tests.Backup_Recovery.test_config_sibling_capture import _child
+
+    home = tmp_path / "home"
+    home.mkdir(mode=0o700)
+    # A selector outside the default config folder, which holds recovery control,
+    # as the selective-restore tests use: first binding proves its own container.
+    selector = tmp_path / "profile-config" / "config.toml"
+    seed = _child(home, _PLUGIN_SEED, "plugins", timeout=120, selector=selector)
+    assert "PLUGIN_SEED_COMPLETE" in seed
+    assert "PLUGIN_REPLACEMENT_COMPLETE" in _child(
+        home, _PLUGIN_BACKUP_RESTORE, "restore", timeout=300, selector=selector
+    )
+    assert "PLUGIN_RESTORE_REVIEW_COMPLETE" in _child(
+        home, _PLUGIN_REOPEN, "reopen", timeout=120, selector=selector
+    )

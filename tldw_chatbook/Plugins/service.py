@@ -133,6 +133,8 @@ class PluginService:
         self._closing = False
         self._ordinary_calls = set()
         self._ready = Future()
+        # Set on the storage worker: a restored generation awaits authority recovery.
+        self._restore_review = True
         self._catalog = {}
         self._catalog_constraint_failures: frozenset[tuple[str, str | None]] | None = (
             frozenset()
@@ -208,8 +210,14 @@ class PluginService:
                 model_mapping_owner=self._model_mapping_owner,
             )
             self._coordinator.on_data_change = self._refresh
+            from .backup import restore_review_required
+
+            self._restore_review = restore_review_required(owner.root)
             self._admission = PluginAdmission(
-                self._coordinator, self.workspace_lookup, fences=self.fences
+                self._coordinator,
+                self.workspace_lookup,
+                fences=self.fences,
+                restore_review=lambda: self._restore_review,
             )
             self._loop = loop
             self._ready.set_result(loop)
@@ -283,10 +291,24 @@ class PluginService:
     async def unlock(self, passphrase: str) -> None:
         async def operation():
             self._coordinator.authority.unlock(passphrase)
-            await self._coordinator.recover()
+            self._finish_restore_review(await self._coordinator.recover())
             self._refresh()
 
         await self._call(operation)
+
+    def _finish_restore_review(self, receipts) -> None:
+        """Completed authority recovery approves a restored plugin generation."""
+        if not self._restore_review or any(
+            receipt.phase == "recovery_required" for receipt in receipts
+        ):
+            return
+        if self._coordinator.authority.posture() not in {"ready", "ready_reduced"}:
+            return
+        from .backup import approve_restore, restore_review_required
+
+        root = self._coordinator.owner.root
+        approve_restore(root)
+        self._restore_review = restore_review_required(root)
 
     async def authority_status(self) -> str:
         """Expose the existing authority posture without retrieving secrets."""
@@ -300,6 +322,7 @@ class PluginService:
     async def recover(self) -> tuple[OperationReceipt, ...]:
         async def operation():
             receipts = await self._coordinator.recover()
+            self._finish_restore_review(receipts)
             self._refresh()
             return receipts
 

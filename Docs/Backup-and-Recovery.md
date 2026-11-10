@@ -41,6 +41,18 @@ archive **Partial**, even when every selected file is included. Review and expli
 acknowledge Partial creation. Partial archives support validated isolated recovery
 and file extraction; they cannot replace existing installation data.
 
+**Plugins** belong to the **Tools and skills** group. A backup holds the whole
+plugin folder: the plugin registry, installed package bytes, every plugin's saved
+data, and staging and fetch records. Staging also keeps the copies of your git and
+SSH settings that a plugin fetch used, so prefer an encrypted archive when plugins
+were installed from a repository. Only the plugin runtime lock file is left out.
+Plugins in use are not copied: while a plugin process may still be running, or
+Chatbook's plugin service is active, the review lists `plugin_writers_active`
+with an explanation, and only a partial backup without plugins is possible.
+Chatbook keeps its plugin service running from the first plugin use until you
+quit, so for a complete backup after using plugins, quit Chatbook, reopen it and
+back up before opening Plugins.
+
 Keep the password separately. Chatbook does not retain it, and a lost password
 cannot be recovered. Encryption does not eliminate plaintext working files:
 capture, decryption, validation, and restore use private local staging with
@@ -227,6 +239,17 @@ sync, schedules, MCP, skill scripts, model processes, downloads, or automatic
 refresh. Use the owning feature's explicit recovery review when available; one
 feature's approval does not approve another. Unavailable review controls leave the
 corresponding capability inactive.
+
+Plugins restore only onto the profile they came from: their registry and authority
+record that profile's folder paths, so restoring them into a separate profile is
+refused with `owner_relocation_unverified`. Choose groups without **Tools and
+skills** to restore the rest of such a backup elsewhere. After a restore, plugins
+stay off until plugin authority recovery completes in **Plugins → Authority…**.
+The protected marker lives in the OS keyring and is never in a backup, so on
+another computer or profile Plugins reports that authority needs recovery: choose
+**Reset authority…**, set up plugin authority again, then review your plugins.
+Their files and saved data stay on disk. See
+[Managed plugin operations](Plugins/operations.md#after-restoring-a-backup).
 
 Re-enter missing credentials, review external-folder bindings against their current
 local contents, and explicitly rebuild derived indexes when required. Missing model
