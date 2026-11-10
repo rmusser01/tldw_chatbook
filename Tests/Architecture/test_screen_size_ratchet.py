@@ -1336,7 +1336,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: ``get_focusable_widget_at``, before Textual focuses its target, so the
     #: first click after a resize is not read as programmatic: 38149 -> 38161
     #: lines, 1375 -> 1376 methods.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38161, 1376),
+    #: 2026-11-10, TASK-39130: Select all and Clear get portable Notes focus
+    #: roles, so their own canvas rebuild no longer drops focus into the
+    #: filter: 38161 -> 38164 lines, 1376 methods.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38164, 1376),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

@@ -1951,6 +1951,8 @@ class LibraryNotesController:
             "filter": "#library-notes-filter",
             "new-note": "#library-notes-new",
             "select-toggle": "#library-notes-select-toggle",
+            "select-all": "#library-notes-select-all",  # TASK-39130
+            "select-clear": "#library-notes-select-clear",
             "title": "#library-note-title",
             "body": "#library-note-body",
             "preview-body": "#library-note-preview-region",
