@@ -35,6 +35,8 @@ grid/cell inspector back.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 from textual.widgets import Checkbox, DataTable
 
@@ -127,8 +129,12 @@ class _PerCellContinuationCaptureClient:
 
 
 @pytest.fixture
-def evals_db() -> EvalsDB:
-    return EvalsDB(db_path=":memory:", client_id="test")
+def evals_db() -> Iterator[EvalsDB]:
+    db = EvalsDB(db_path=":memory:", client_id="test")
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 @pytest.fixture
@@ -170,6 +176,7 @@ async def _focus_cell(
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_continuation_captured_per_cell_and_survives_reload(
     cell_continuation_app, evals_db, tmp_path
@@ -305,6 +312,7 @@ async def test_continuation_captured_per_cell_and_survives_reload(
         assert "␣" in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_flag_off_run_renders_no_continuation_for_the_same_cell(
     cell_continuation_app, evals_db, tmp_path

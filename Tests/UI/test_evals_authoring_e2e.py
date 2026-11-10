@@ -25,6 +25,7 @@ nothing about whether the grid tells the columns apart at all.
 from __future__ import annotations
 
 import math
+from collections.abc import Iterator
 
 import pytest
 from textual.widgets import DataTable, Input, Select, TextArea
@@ -94,8 +95,12 @@ class _TwoTargetFakeCaptureClient:
 
 
 @pytest.fixture
-def evals_db() -> EvalsDB:
-    return EvalsDB(db_path=":memory:", client_id="test")
+def evals_db() -> Iterator[EvalsDB]:
+    db = EvalsDB(db_path=":memory:", client_id="test")
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 @pytest.fixture
@@ -123,6 +128,7 @@ async def _wait_until(
     raise AssertionError("condition never became true")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_authoring_loop_lights_up_both_cross_target_lenses(
     authoring_app, evals_db, tmp_path
