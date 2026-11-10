@@ -609,6 +609,7 @@ def test_model_tool_guard_rejects_a_realistic_terminal_registration() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_app_owned_terminal_session_leaves_live_console_boundaries_free(
     tmp_path: Path,
