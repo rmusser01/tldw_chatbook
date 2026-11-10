@@ -404,10 +404,11 @@ async def test_focus_paint_clears_when_focus_becomes_none(
         _assert_edge_owned_workbench(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_native_widget_blur_repaints_the_actual_focus_successor() -> None:
-    """Widget.blur advances focus; paint must follow rather than clear blindly."""
-    async with make_console_pilot(size=(160, 45)) as pilot:
+    """Native blur retains the owning cue until focus crosses into Transcript."""
+    async with _make_console_pilot_without_onboarding(size=(160, 45)) as pilot:
         screen = pilot.app.screen
         reveal = screen.query_one("#console-inspector-rail-open")
         handle = screen.query_one("#console-inspector-rail-handle")
@@ -419,10 +420,25 @@ async def test_native_widget_blur_repaints_the_actual_focus_successor() -> None:
 
         reveal.focus()
         await pilot.pause()
+        assert pilot.app.focused is reveal
+        assert handle.has_class("console-edge-region-focused")
+
         reveal.blur()
         await pilot.pause()
+        assert pilot.app.focused is handle
+        assert not reveal.has_focus
+        assert handle.has_class("console-edge-region-focused")
+        assert reveal.styles.text_style.bold
+        assert reveal.styles.text_style.underline
+        assert not transcript_region.has_class("console-transcript-region-focused")
 
-        assert pilot.app.focused is transcript
+        # The empty transcript's recovery button is its last stop when present.
+        recovery = transcript.query("#console-empty-provider-action")
+        transcript_target = recovery.first() if recovery else transcript
+        handle.blur()
+        await pilot.pause()
+
+        assert pilot.app.focused is transcript_target
         assert not handle.has_class("console-edge-region-focused")
         assert not reveal.styles.text_style.bold
         assert not reveal.styles.text_style.underline
