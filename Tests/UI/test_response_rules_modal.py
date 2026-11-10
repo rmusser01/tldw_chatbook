@@ -10,6 +10,11 @@ from textual.widgets import Button, Input
 
 from Tests.Chat.test_response_rules_runtime import activate, seed
 from Tests.Chat.test_response_rules_runtime import native as _native_fixture
+from Tests.UI.background_signals import (
+    BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+    await_background_task,
+    wait_for_background_signal,
+)
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from tldw_chatbook.Widgets.Console.response_rules_modal import ResponseRulesModal
 
@@ -611,19 +616,20 @@ async def test_manager_detached_subtree_callbacks_do_not_read_widgets(native, ac
 
         rules.run_db_call = held
         task = asyncio.create_task(modal._reload()) if action == "reload" else None
-        if task:
-            await entered.wait()
-        await modal.query_one("#rr-body").remove()
         try:
-            if task:
-                release.set()
-                await task
-            else:
+            if task is not None:
+                await wait_for_background_signal(
+                    entered, task, what="the detached manager's draft read"
+                )
+            await modal.query_one("#rr-body").remove()
+            if task is None:
                 await modal._action("promote")
-            assert len(rules.store.list_bindings(rules.scopes(session.id)[0])) == 1
         finally:
             release.set()
             rules.run_db_call = original
+            if task is not None:
+                await await_background_task(task, what="the detached manager reload")
+        assert len(rules.store.list_bindings(rules.scopes(session.id)[0])) == 1
 
 
 @pytest.mark.asyncio
@@ -650,17 +656,18 @@ async def test_manager_superseded_reload_cannot_replace_current_scope_rows(nativ
         rules.run_db_call = held
         task = asyncio.create_task(modal._reload())
         try:
-            await entered.wait()
+            await wait_for_background_signal(
+                entered, task, what="the superseded Chat draft read"
+            )
             modal.scope = global_scope
-            await modal._reload()
+            async with asyncio.timeout(BACKGROUND_SIGNAL_TIMEOUT_SECONDS):
+                await modal._reload()
             assert modal._rows == []
-            release.set()
-            await task
-            assert modal._rows == [], "old Chat results must not repaint Global"
         finally:
             release.set()
-            await task
             rules.run_db_call = original
+            await await_background_task(task, what="the superseded Chat reload")
+        assert modal._rows == [], "old Chat results must not repaint Global"
 
 
 @pytest.mark.asyncio
@@ -686,13 +693,13 @@ async def test_manager_reload_preserves_edits_made_while_db_is_pending(native):
         rules.run_db_call = held
         task = asyncio.create_task(modal._reload())
         try:
-            await entered.wait()
+            await wait_for_background_signal(
+                entered, task, what="the manager's pending draft read"
+            )
             modal.query_one("#rr-title", Input).value = "Unsaved while loading"
-            release.set()
-            await task
-            assert modal.query_one("#rr-title", Input).value == "Unsaved while loading"
-            assert modal._has_unsaved()
         finally:
             release.set()
-            await task
             rules.run_db_call = original
+            await await_background_task(task, what="the pending manager reload")
+        assert modal.query_one("#rr-title", Input).value == "Unsaved while loading"
+        assert modal._has_unsaved()

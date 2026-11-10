@@ -1027,6 +1027,7 @@ async def test_navigation_commit_reports_success_but_propagates_cancellation(
     app._initial_screen_pushed = True
     outcomes: list[bool] = []
     mount_started = asyncio.Event()
+    mounting_future = asyncio.get_running_loop().create_future()
 
     class FakeTargetScreen:
         screen_name = "chat"
@@ -1042,7 +1043,7 @@ async def test_navigation_commit_reports_success_but_propagates_cancellation(
 
         async def mounting_forever():
             mount_started.set()
-            await asyncio.Future()
+            await mounting_future
 
         return mounting_forever()
 
@@ -1059,11 +1060,19 @@ async def test_navigation_commit_reports_success_but_propagates_cancellation(
             NavigateToScreen("chat", on_completion=outcomes.append)
         )
     )
-    await mount_started.wait()
-    task.cancel()
-
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    try:
+        await _wait_for_background_signal(mount_started, task, what="navigation mount")
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await _await_background_task(task, what="committed navigation")
+    finally:
+        mounting_future.cancel()
+        if not task.done():
+            task.cancel()
+            try:
+                await _await_background_task(task, what="navigation cleanup")
+            except asyncio.CancelledError:
+                pass
 
     assert outcomes == [True]
     assert app._screen_stacks["_default"][-1].screen_name == "chat"
