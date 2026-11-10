@@ -220,7 +220,7 @@ to the linked source module and the cohorts above; unresolved mappings remain bl
 ## Exact persistence producer symbols
 
 A row is a reviewed **source candidate**, not a claim its entire module is durable.
-The census contains 1702 rows (TASK-39053 reconciliation; TASK-38605 deleted four dead producers; TASK-39111, TASK-39112 and TASK-39115 added 98). Its qualified symbol is the locator-consumer
+The census contains 1703 rows (TASK-39053 reconciliation; TASK-38605 deleted four dead producers; TASK-39111, TASK-39112 and TASK-39115 added 99). Its qualified symbol is the locator-consumer
 evidence; where canonical root selection is not yet extracted, the cohort table explicitly records that resolver
 blocker. New calls in an existing symbol also change the expected count and fail.
 
@@ -2972,7 +2972,7 @@ which admission re-verifies on each run. The app has no rebind for either yet
 ## Census vocabulary extension (TASK-39111, TASK-39112, TASK-39115)
 
 Recomputed at dev ae9f9e8d21 (2026-11-10) with the test's own helpers, the scanner
-changes below add 98 producer rows and change or remove none:
+changes below add 99 producer rows and change or remove none:
 
 - tempfile creation (`NamedTemporaryFile`, `TemporaryFile`, `SpooledTemporaryFile`,
   `TemporaryDirectory`, `mkstemp`, `mkdtemp`): 86 rows, 22 of them in symbols that
@@ -2988,6 +2988,15 @@ changes below add 98 producer rows and change or remove none:
   a local name bound to string constants. New rows: `TTS/profile_migration_namespace._rename_noreplace`,
   `Backup_Recovery/native_platform.rename_noreplace` and both names in
   `Notes/sync_paths._rename_with_flags`.
+- pydub `export` is counted as `pydub.export`, but only in a module that imports
+  pydub, so the Prompts, Evals, OPML, meetings and STTS-profile exporters of the same
+  name stay out. An export whose target (first argument or `out_f=`) is a
+  `BytesIO(...)`, or a name bound to one in the same lexical scope, writes no file
+  and is not counted. Three modules import pydub (`TTS/audio_service`,
+  `TTS/audio_stitch`, `TTS/audiobook_generator`) with seven `export` calls; the
+  five BytesIO exports stay out, and the one new row is
+  `AudioService.create_m4b_with_chapters` `pydub.export` 2: the temporary `.m4a`
+  and, when ffmpeg fails, the chapterless M4B written straight to `output_path`.
 
 The rows apply the rules in the TASK-39053 reconciliation below, in order. Rule 2 (a
 new call in a reviewed symbol takes that symbol's disposition) covers 74 rows; the
@@ -3009,11 +3018,26 @@ other row, and each call was read in source:
   that symbol's `unsupported` / `miscellaneous` disposition until the Plugins
   capture (TASK-40132) classifies it.
 
-Still outside the vocabulary: third-party writers such as pydub
-`AudioSegment.export` and the outputs of subprocesses such as ffmpeg and yt-dlp.
-`AudioService.create_m4b_with_chapters` now has a row for its temporary `.m4a`, but
-its pydub export and ffmpeg output are not counted. Whether those writers get rows
-or are listed as accepted limits is the owner's decision (TASK-39111).
+The `pydub.export` row is `unsupported` / `tts`: its symbol's only other row is the
+system-temp `.m4a` (`process_artifact`), but the fallback export writes the M4B that
+`AudioBookGenerator._add_metadata` asks for, and the generator's reviewed rows are
+`unsupported` / `tts`.
+
+**Accepted limit: subprocess outputs** (owner decision 2026-11-10, TASK-39111: "pydub
+rows, subprocess as limit (Recommended)"). Files a child process writes are not
+counted. On ae9f9e8d21 production has 71 `subprocess.run` / `Popen` / `call` /
+`check_call` / `check_output` and `asyncio.create_subprocess_exec` / `_shell` calls
+in 58 files; the census cannot tell from the call which of them write a file or
+where. Writers found in review: ffmpeg in `AudioService.create_m4b_with_chapters`
+(the M4B at `output_path`), in `STT/parakeet_onnx._prepared_wav` and
+`STT/transcribe_cpp._pcm_16k_mono` (temporary WAVs) and in `stts_events` (:2641, a
+converted file next to its input); the stable-diffusion.cpp binary's image in
+`StableDiffusionCppAdapter.generate`'s temporary directory. yt-dlp runs as a
+subprocess only in `Media_Playback/stream_resolve`, to resolve a stream URL on
+stdout; the Local_Ingestion downloads use the yt-dlp library, an in-process
+third-party writer that is likewise not counted. A process's own scratch, created
+with tempfile in the calling symbol, is counted at that call. Reviewing a new
+subprocess writer is the owner review's job, not the census's.
 
 | Module | Producer symbol | Call | Count | Classification | Resolver / adapter cohort |
 | --- | --- | --- | --- | --- | --- |
@@ -3075,6 +3099,7 @@ or are listed as accepted limits is the owner's decision (TASK-39111).
 | tldw_chatbook/Skills_Interop/local_skills_service.py | LocalSkillsService.seed_builtin_skills | TemporaryDirectory | 1 | process_artifact | process |
 | tldw_chatbook/Skills_Interop/skill_script_runner.py | run_script_subprocess | mkdtemp | 1 | process_artifact | process |
 | tldw_chatbook/TTS/audio_service.py | AudioService.create_m4b_with_chapters | NamedTemporaryFile | 1 | process_artifact | process |
+| tldw_chatbook/TTS/audio_service.py | AudioService.create_m4b_with_chapters | pydub.export | 2 | unsupported | tts |
 | tldw_chatbook/TTS/audio_service.py | write_ffmetadata_file | NamedTemporaryFile | 1 | unsupported | tts |
 | tldw_chatbook/TTS/audiobook_generator.py | AudioBookGenerator._combine_chapters | NamedTemporaryFile | 1 | unsupported | tts |
 | tldw_chatbook/TTS/audiobook_generator.py | AudioBookGenerator._generate_chapter_audio | NamedTemporaryFile | 1 | unsupported | tts |
@@ -3203,7 +3228,8 @@ run nothing. `tempfile`
 creation (86 rows if counted), third-party writers such as pydub `AudioSegment.export`,
 subprocess outputs and dynamic bindings such as `Tools/local_tool_impls`'
 `file_os` are outside the vocabulary. (Since TASK-39111, TASK-39112 and TASK-39115,
-tempfile creation, `file_os` and `renameat2` are counted: see the census vocabulary
+tempfile creation, `file_os`, `renameat2` and pydub `export` are counted, and subprocess
+outputs are an accepted limit: see the census vocabulary
 extension above.)
 
 With these forms counted, the drift is 714 added, 166 gone and 13 changed

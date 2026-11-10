@@ -126,6 +126,27 @@ def census(source: str) -> Counter:
         )
     }
 
+    # pydub writers (TASK-39111 AC#2): `.export` counts as `pydub.export` only in
+    # a module that imports pydub, unless its target is a BytesIO (bound in scope
+    # or built inline), which writes no file.
+    imports_pydub = "pydub" in source and any(
+        name.split(".")[0] == "pydub"
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for name in (
+            [alias.name for alias in node.names]
+            if isinstance(node, ast.Import)
+            else [node.module or ""]
+        )
+    )
+    buffers = {}  # names bound to BytesIO(...), per lexical scope
+
+    def is_bytes_io(value):
+        return isinstance(value, ast.Call) and "BytesIO" in (
+            getattr(value.func, "id", None),
+            getattr(value.func, "attr", None),
+        )
+
     def scoped(table, owners, name):
         return {
             value for owner in owners for value in table.get(owner, {}).get(name, ())
@@ -214,6 +235,8 @@ def census(source: str) -> Counter:
                             getattr(value.func, "id", None) in os_helpers
                         ):
                             os_aliases.setdefault(owners[-1], set()).add(name.id)
+                        if imports_pydub and is_bytes_io(value):
+                            buffers.setdefault(owners[-1], {})[name.id] = {"BytesIO"}
             collect_assignments(child, owners)
 
     collect_assignments(tree, (None,))
@@ -269,6 +292,20 @@ def census(source: str) -> Counter:
             # assignments and other ordinary bindings can change their meaning.
             for candidate in self.candidates_for(node.func):
                 result[(symbol, candidate)] += 1
+            if imports_pydub and getattr(node.func, "attr", None) == "export":
+                target = next(
+                    iter(
+                        node.args[:1]
+                        or [k.value for k in node.keywords if k.arg == "out_f"]
+                    ),
+                    None,
+                )
+                if not (
+                    is_bytes_io(target)
+                    or isinstance(target, ast.Name)
+                    and scoped(buffers, self.functions, target.id)
+                ):
+                    result[(symbol, "pydub.export")] += 1
             # A producer passed by reference runs elsewhere, for example
             # `asyncio.to_thread(path.write_bytes, data)` (TASK-39053 review).
             # `x.open` / `x.connect` values are not counted here: in this tree they
@@ -763,6 +800,28 @@ def probe():
     assert result[("by_name", "renameatx_np")] == 1
     assert result[("literal", "renameat2")] == 1
     assert not any(symbol == "probe" for symbol, _ in result)
+
+
+def test_census_counts_pydub_export_only_where_pydub_is_imported():
+    # TASK-39111 AC#2 (owner decision 2026-11-10): pydub `export` is counted in
+    # modules that import pydub; an export into a BytesIO writes no file.
+    importing = """
+import io
+from pydub import AudioSegment
+
+def save(segment, path):
+    segment.export(path, format="mp4")
+    segment.export(out_f=path)
+
+def encode(segment):
+    buffer = io.BytesIO()
+    segment.export(buffer, format="wav")
+    segment.export(io.BytesIO())
+"""
+    result = census(importing)
+    assert result[("save", "pydub.export")] == 2
+    assert not any(symbol == "encode" for symbol, _ in result)
+    assert census("def save(exporter, path):\n    exporter.export(path)\n") == Counter()
 
 
 def test_actor_pack_persona_images_preview_and_validate_with_persona_artwork(
