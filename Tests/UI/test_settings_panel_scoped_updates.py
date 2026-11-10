@@ -351,6 +351,89 @@ async def test_a_tab_into_the_panes_the_swap_destroys_keeps_the_landing(request)
 
 
 @private_profile_test
+@pytest.mark.parametrize("move", ("none", "key", "click"))
+async def test_a_focus_the_user_moves_during_a_same_category_rebuild_is_kept(
+    request, move
+):
+    """TASK-39169: a same-category rebuild (Workspaces' show-archived toggle,
+    a row click, `_refresh_settings_workspaces_pane`) captures the focused pane
+    control and restores it afterwards. Input keeps running while the panes
+    rebuild, and a focus the user moved meanwhile, with "/" or a click on the
+    rail filter, was taken back to the captured control. The detail pane's
+    rebuild is held so the input lands in that window on every run; with no
+    input the control is still restored."""
+    import asyncio
+
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        screen = await _open_settings(pilot)
+        screen._select_category("workspaces")
+        await _settle(pilot)
+        captured = "settings-workspaces-show-archived"
+        screen.query_one(f"#{captured}").focus()
+        await pilot.pause()
+        assert getattr(host.focused, "id", None) == captured
+
+        entered, go = _hold_recompose(screen.query_one("#settings-detail-pane"))
+        try:
+            screen._refresh_settings_workspaces_pane()
+            await asyncio.wait_for(entered.wait(), timeout=10)
+            if move == "key":
+                await pilot.press("slash")
+            elif move == "click":
+                await pilot.click("#settings-category-search")
+            if move != "none":
+                assert getattr(host.focused, "id", None) == "settings-category-search"
+        finally:
+            go.set()
+        await _settle_swap(host, pilot, screen)
+
+        assert screen.active_category == "workspaces"
+        assert getattr(host.focused, "id", None) == (
+            captured if move == "none" else "settings-category-search"
+        )
+
+
+@private_profile_test
+async def test_a_click_between_the_landing_and_its_deferred_focus_is_kept(request):
+    """TASK-39169: a category switch's landing focuses its rail row with
+    `Button.focus()`, which Textual 8.2.8 defers to an app `call_later`. A
+    click handled in between moved focus, and the deferred `set_focus` then
+    took it back. The click goes through the screen exactly as `Pilot.click`
+    sends it, right after the landing's own call."""
+    from textual import events
+    from textual.geometry import Offset
+    from textual.pilot import _get_mouse_message_arguments
+
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(160, 45)) as pilot:
+        screen = await _open_settings(pilot)
+        screen.query_one("#settings-category-storage", Button).focus()
+        await _settle(pilot)
+        search = screen.query_one("#settings-category-search")
+        land = screen._focus_category
+        clicked = []
+
+        def land_then_click(category_value: str) -> None:
+            land(category_value)
+            arguments = _get_mouse_message_arguments(search, (1, 0))
+            host.mouse_position = Offset(arguments["x"], arguments["y"])
+            for event_type in (events.MouseDown, events.MouseUp, events.Click):
+                extra = {"chain": 1} if event_type is events.Click else {}
+                screen._forward_event(event_type(**arguments, **extra))
+            clicked.append(host.focused)
+
+        screen._focus_category = land_then_click
+        screen._select_category("appearance", restore_focus=True)
+        await _settle_swap(host, pilot, screen)
+        await _settle(pilot)
+
+        assert clicked == [search], "the click did not focus the rail filter"
+        assert screen.active_category == "appearance"
+        assert host.focused is search
+
+
+@private_profile_test
 async def test_category_switch_keeps_compact_pane_classes_at_a_compact_size(request):
     """Compact geometry is only measured at a compact size.
 

@@ -2778,3 +2778,8 @@ Tests/UI/test_approval_details.py::test_paged_details_escape_unicode_controls_in
 Tests/UI/test_approval_details.py::test_mounted_details_keep_unicode_separators_literal_across_pages
 # TASK-34569: actual compatibility MessagePump dispatch after first-use boot deferral.
 Tests/UI/test_approval_feedback.py::test_feedback_message_compatibility_alias_reaches_current_screen_handler
+# TASK-39169: a focus the user moves during a same-category rebuild, or between a landing and its deferred focus, is kept.
+Tests/UI/test_settings_panel_scoped_updates.py::test_a_focus_the_user_moves_during_a_same_category_rebuild_is_kept[none]
+Tests/UI/test_settings_panel_scoped_updates.py::test_a_focus_the_user_moves_during_a_same_category_rebuild_is_kept[key]
+Tests/UI/test_settings_panel_scoped_updates.py::test_a_focus_the_user_moves_during_a_same_category_rebuild_is_kept[click]
+Tests/UI/test_settings_panel_scoped_updates.py::test_a_click_between_the_landing_and_its_deferred_focus_is_kept
