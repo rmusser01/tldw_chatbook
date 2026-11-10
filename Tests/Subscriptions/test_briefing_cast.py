@@ -96,6 +96,15 @@ def _db(tmp_path) -> SubscriptionsDB:
     return SubscriptionsDB(tmp_path / "subs.db", "test")
 
 
+@pytest.fixture
+def db(tmp_path):
+    database = _db(tmp_path)
+    try:
+        yield database
+    finally:
+        database.close()
+
+
 def _complete_briefing(
     db, watchlist_id, *, body: str = "## This week\n\nSomething happened.\n"
 ) -> int:
@@ -299,8 +308,8 @@ def test_build_cast_prompt_includes_roster_style_notes_and_output_contract():
 
 
 @pytest.mark.asyncio
-async def test_generate_script_happy_path_writes_everything(tmp_path):
-    db = _db(tmp_path)
+@pytest.mark.bootstrap_profile
+async def test_generate_script_happy_path_writes_everything(db):
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(
         db, watchlist, body="## Body\n\nAcme shipped a thing."
@@ -331,8 +340,8 @@ async def test_generate_script_happy_path_writes_everything(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_generate_script_snapshot_embeds_the_resolved_character_name(tmp_path):
-    db = _db(tmp_path)
+@pytest.mark.bootstrap_profile
+async def test_generate_script_snapshot_embeds_the_resolved_character_name(db):
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
     roster = [{"name": "Host", "role_prompt": "Warm.", "character_card_id": 7}]
@@ -449,18 +458,18 @@ async def test_explicit_provider_and_model_win_over_the_presets_own(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_no_preset_provider_or_model_falls_back_to_the_app_default(
-    tmp_path, monkeypatch
+    db,
 ):
     """A preset with no provider/model of its own (and no explicit
     override) must reach the app's configured default endpoint -- the
     third leg of the fallback chain `_default_provider`'s own docstring
     names.
     """
-    monkeypatch.setattr(
-        app_config, "default_api_endpoint", "local-llama", raising=False
+    assert app_config.save_settings_to_cli_config(
+        {"chat_defaults": {"provider": "llama_cpp", "model": "briefing-test-model"}}
     )
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
     preset_id = _preset(db)  # no provider/model set
@@ -468,17 +477,17 @@ async def test_no_preset_provider_or_model_falls_back_to_the_app_default(
     chat = _FakeChat()
     row = await generate_script(db, briefing_id, preset_id=preset_id, chat=chat)
 
-    assert chat.calls[0]["api_endpoint"] == "local-llama"
+    assert chat.calls[0]["api_endpoint"] == "llama_cpp"
     assert chat.calls[0].get("model") is None
-    assert row["model_used"] == "local-llama"
+    assert row["model_used"] == "llama_cpp"
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_generate_script_fails_naming_the_card_when_load_character_returns_none(
-    tmp_path,
+    db,
 ):
     """Spec: "fails the cast at that point, naming the card"."""
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
     roster = [{"name": "Host", "role_prompt": "Warm.", "character_card_id": 7}]
@@ -498,11 +507,11 @@ async def test_generate_script_fails_naming_the_card_when_load_character_returns
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_generate_script_fails_naming_the_card_when_load_character_is_none(
-    tmp_path,
+    db,
 ):
     """Same failed-naming path when no character lookup is available at all."""
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
     roster = [{"name": "Host", "role_prompt": "Warm.", "character_card_id": 7}]
@@ -515,10 +524,10 @@ async def test_generate_script_fails_naming_the_card_when_load_character_is_none
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_generate_script_chat_failure_is_a_failed_row_and_leaves_the_briefing_untouched(
-    tmp_path,
+    db,
 ):
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
     preset_id = _preset(db)
@@ -536,10 +545,10 @@ async def test_generate_script_chat_failure_is_a_failed_row_and_leaves_the_brief
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_generate_script_parse_failure_is_a_failed_row_naming_the_defect(
-    tmp_path,
+    db,
 ):
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
     preset_id = _preset(db)
@@ -622,7 +631,8 @@ async def test_generate_script_propagates_a_real_db_error(tmp_path, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_generate_script_db_work_runs_off_the_event_loop_thread(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_generate_script_db_work_runs_off_the_event_loop_thread(db):
     """Mirrors `test_the_db_work_runs_off_the_event_loop_thread` (phase 1):
     `generate_script` is dispatched from a Textual worker in the real
     caller (Task 5), so its DB work must not run directly on the event
@@ -641,7 +651,6 @@ async def test_generate_script_db_work_runs_off_the_event_loop_thread(tmp_path):
     not just the DB writes above, is what catches a regression back to the
     direct (unthreaded) call.
     """
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
     roster = [{"name": "Host", "role_prompt": "Warm.", "character_card_id": 7}]
@@ -792,8 +801,8 @@ async def test_a_second_cast_for_a_claimed_briefing_raises_before_any_row_insert
 
 
 @pytest.mark.asyncio
-async def test_the_cast_claim_is_released_after_a_successful_cast(tmp_path):
-    db = _db(tmp_path)
+@pytest.mark.bootstrap_profile
+async def test_the_cast_claim_is_released_after_a_successful_cast(db):
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
     preset_id = _preset(db)
@@ -805,8 +814,8 @@ async def test_the_cast_claim_is_released_after_a_successful_cast(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_the_cast_claim_is_released_after_a_cast_failure(tmp_path):
-    db = _db(tmp_path)
+@pytest.mark.bootstrap_profile
+async def test_the_cast_claim_is_released_after_a_cast_failure(db):
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     briefing_id = _complete_briefing(db, watchlist)
     preset_id = _preset(db)
