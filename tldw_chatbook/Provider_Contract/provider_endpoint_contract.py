@@ -110,6 +110,11 @@ _SCHEME_HINT = (
     "Start the address with http:// or https:// (for example http://127.0.0.1:8080)."
 )
 _REMOTE_HTTP_WARNING = "Remote HTTP endpoints are not encrypted."
+#: The refusal of a remote endpoint typed without a scheme; Console's Endpoint
+#: line reads it to say what to add (TASK-39151).
+REMOTE_ENDPOINT_SCHEME_REQUIRED = (
+    "Remote endpoint URLs must include an HTTP or HTTPS scheme."
+)
 _PROVIDER_KEY = re.compile(r"[a-z0-9_]+")
 _UNSAFE_UNICODE_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
@@ -276,10 +281,7 @@ def _resolve_provider_endpoint(
             provider_key, "Endpoint URL must include a valid host and port."
         )
     if not has_explicit_scheme and not is_exact_schemeless_host(parsed.netloc):
-        return _invalid_resolution(
-            provider_key,
-            "Remote endpoint URLs must include an HTTP or HTTPS scheme.",
-        )
+        return _invalid_resolution(provider_key, REMOTE_ENDPOINT_SCHEME_REQUIRED)
 
     original_path = parsed.path
     if "//" in original_path or "\\" in original_path:

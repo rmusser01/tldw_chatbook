@@ -1873,11 +1873,21 @@ def test_chat_settings_reads_a_schemeless_loopback_endpoint_as_the_save_does(
     assert validate_console_session_settings(settings, app_config=app_config) == []
 
 
+#: TASK-39151 review: the Endpoint line's copy for an invalid endpoint.
+_ADD_SCHEME_ROW = "Endpoint: Invalid (add http:// or https://)"
+_INVALID_ROW = "Endpoint: Invalid"
+
+
 @pytest.mark.parametrize(
-    "endpoint", ["gpu-box.lan:8080", "192.168.1.20:8080", *_DOTTED_KEY_ENDPOINTS]
+    ("endpoint", "row"),
+    [
+        ("gpu-box.lan:8080", _ADD_SCHEME_ROW),
+        ("192.168.1.20:8080", _ADD_SCHEME_ROW),
+        *[(key, _INVALID_ROW) for key in _DOTTED_KEY_ENDPOINTS],
+    ],
 )
 def test_llamacpp_readiness_refuses_a_remote_endpoint_typed_without_a_scheme(
-    endpoint,
+    endpoint, row
 ):
     """TASK-39042 AC#2: llama.cpp's ``normalize_llamacpp_base_url`` added
     ``http://`` first, so readiness read Ready for a remote host the save
@@ -1901,11 +1911,11 @@ def test_llamacpp_readiness_refuses_a_remote_endpoint_typed_without_a_scheme(
     assert readiness.label != "Ready", readiness
     assert readiness.blocker == "endpoint_invalid", readiness
     # AC#3: the Chat settings Endpoint row never names the value. Rewritten on
-    # purpose by TASK-39151 AC#3: it says what to change, not "Not configured".
-    row = build_console_settings_summary_state(
+    # purpose by TASK-39151 AC#3: an address is told to add its scheme and a
+    # key-shaped value reads plain "Invalid", not "Not configured".
+    assert build_console_settings_summary_state(
         settings, ConsoleSettingsContextEstimate(None, None, ""), readiness
-    ).endpoint_row
-    assert row == "Endpoint: Invalid (a remote address needs http:// or https://)"
+    ).endpoint_row == row
 
 
 @pytest.mark.parametrize("endpoint", _DOTTED_KEY_ENDPOINTS)
@@ -2205,7 +2215,7 @@ async def test_a_hand_edited_schemeless_loopback_endpoint_is_sent_as_readiness_r
 
 
 #: TASK-39151: remote llama.cpp endpoints typed without a scheme (save refuses).
-_REMOTE_SCHEMELESS_LLAMACPP = ("gpu-box.lan:8080", "192.168.1.20:8080")
+_REMOTE_SCHEMELESS_LLAMACPP = ("gpu-box.lan:8080", "192.168.1.20:8080", "llama:8080")
 
 
 def _llamacpp_source(source, endpoint):
@@ -2276,7 +2286,9 @@ def test_llamacpp_readiness_refuses_a_held_endpoint_typed_without_a_scheme(
     endpoint the send would use, so a hand-edited ``gpu-box.lan:8080`` read
     Ready."""
     from tldw_chatbook.Chat.console_session_settings import (
+        ConsoleSettingsContextEstimate,
         build_console_settings_readiness,
+        build_console_settings_summary_state,
     )
 
     config = {"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}}
@@ -2288,14 +2300,17 @@ def test_llamacpp_readiness_refuses_a_held_endpoint_typed_without_a_scheme(
     else:
         environ["TLDW_CONSOLE_LLAMA_CPP_BASE_URL"] = endpoint
 
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="m")
     readiness = build_console_settings_readiness(
-        ConsoleSessionSettings(provider="llama_cpp", model="m"),
-        app_config=config,
-        environ=environ,
+        settings, app_config=config, environ=environ
     )
 
     assert readiness.label != "Ready", readiness
     assert readiness.blocker == "endpoint_invalid", readiness
+    # Review r13s-rev1: the Endpoint line agrees, not "Not configured".
+    assert build_console_settings_summary_state(
+        settings, ConsoleSettingsContextEstimate(None, None, ""), readiness
+    ).endpoint_row == _ADD_SCHEME_ROW
 
 
 @pytest.mark.asyncio
@@ -2338,7 +2353,58 @@ async def test_a_saved_chat_with_a_remote_schemeless_llamacpp_endpoint_sends_not
     row = build_console_settings_summary_state(
         settings, ConsoleSettingsContextEstimate(None, None, ""), readiness
     ).endpoint_row
-    assert row == "Endpoint: Invalid (a remote address needs http:// or https://)"
+    assert row == _ADD_SCHEME_ROW
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "row"),
+    [
+        *[
+            (address, _ADD_SCHEME_ROW)
+            for address in (
+                "gpu-box.lan:8080/v1",
+                "192.168.1.20",
+                "[fd12::9]:8080",
+                "LOCALHOST:8080",
+                "127.0.0.2:8080",
+            )
+        ],
+        *[
+            (value, _INVALID_ROW)
+            for value in (
+                "sk-proj-abcdefghijklmnopqrstuvwx",
+                "gpu-box.lan",
+                "ftp://gpu-box.lan:8080",
+            )
+        ],
+    ],
+)
+def test_the_endpoint_line_tells_only_an_address_to_add_a_scheme(endpoint, row):
+    """TASK-39151 review r13s-rev1: the Endpoint line told any value without a
+    scheme to add one, a pasted key included, which would then read Ready and
+    be probed as a host. Only a host and port, or an IP literal, that the
+    contract refuses for lacking a scheme is told to add one, and adding it is
+    then enough (``LOCALHOST:8080`` and ``127.0.0.2:8080`` too: only the exact
+    loopback spellings may leave it out)."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        ConsoleSettingsContextEstimate,
+        build_console_settings_readiness,
+        build_console_settings_summary_state,
+    )
+
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="m", base_url=endpoint)
+    readiness = build_console_settings_readiness(
+        settings,
+        app_config={"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}},
+        environ={},
+    )
+
+    assert readiness.blocker == "endpoint_invalid", readiness
+    assert build_console_settings_summary_state(
+        settings, ConsoleSettingsContextEstimate(None, None, ""), readiness
+    ).endpoint_row == row
+    if row == _ADD_SCHEME_ROW:
+        assert resolve_provider_endpoint("llama_cpp", f"http://{endpoint}").errors == ()
 
 
 @pytest.mark.asyncio
@@ -2372,3 +2438,48 @@ async def test_llamacpp_loopback_or_schemed_endpoints_resolve_as_before(
     assert resolution.base_url == base
     readiness = build_console_settings_readiness(settings, app_config=config, environ={})
     assert readiness.blocker is None, readiness
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "sent"),
+    [
+        *[(address, None) for address in _REMOTE_SCHEMELESS_LLAMACPP],
+        ("localhost:8080/v1", "http://localhost:8080"),
+        ("http://gpu-box.lan:8080/v1", "http://gpu-box.lan:8080"),
+    ],
+)
+def test_chat_with_llama_refuses_a_remote_endpoint_typed_without_a_scheme(
+    endpoint, sent, monkeypatch
+):
+    """TASK-39151 review r13s-rev1: outside Console, ``chat_with_llama`` kept
+    a hand-edited ``gpu-box.lan:8080`` schemeless and ``requests`` failed it as
+    a network error ("No connection adapters were found"). It is a
+    configuration error, raised before anything is sent."""
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local_calls
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        local_calls,
+        "_chat_with_openai_compatible_local_server",
+        lambda **kwargs: calls.append(kwargs) or "ok",
+    )
+    # No config read: the endpoint comes from the argument.
+    monkeypatch.setattr(
+        local_calls,
+        "get_runtime_config_snapshot",
+        lambda: SimpleNamespace(values={"api_settings": {}}),
+    )
+    messages = [{"role": "user", "content": "x"}]
+
+    if sent is None:
+        with pytest.raises(ChatConfigurationError, match=r"http:// or https://"):
+            local_calls.chat_with_llama(
+                messages, api_url=endpoint, model="m", api_key_resolved=True
+            )
+        assert calls == []
+    else:
+        local_calls.chat_with_llama(
+            messages, api_url=endpoint, model="m", api_key_resolved=True
+        )
+        assert [call["api_base_url"] for call in calls] == [sent]

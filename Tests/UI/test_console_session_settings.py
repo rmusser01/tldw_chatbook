@@ -14771,9 +14771,11 @@ def test_summary_builder_reports_only_genuine_provider_endpoint_inheritance() ->
         ).endpoint_row
         == "Endpoint: Provider default"
     )
+    # Rewritten on purpose (TASK-39151 review r13s-rev1): a typed endpoint that
+    # is invalid reads "Invalid", not "Not configured"; no endpoint still does.
     assert (
         build_console_settings_summary_state(invalid, estimate, invalid_readiness).endpoint_row
-        == "Endpoint: Not configured"
+        == "Endpoint: Invalid"
     )
     assert (
         build_console_settings_summary_state(absent, estimate, absent_readiness).endpoint_row

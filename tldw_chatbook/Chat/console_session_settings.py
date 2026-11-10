@@ -10,6 +10,7 @@ import re
 from dataclasses import dataclass, field, fields, replace
 from datetime import datetime
 from enum import Enum
+from ipaddress import ip_address
 from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
@@ -49,8 +50,10 @@ from tldw_chatbook.Chat.provider_catalog import (
     provider_display_name,
 )
 from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+    REMOTE_ENDPOINT_SCHEME_REQUIRED,
     canonical_connection_identity,
     read_schemeless_loopback,
+    resolve_provider_endpoint,
 )
 from tldw_chatbook.Chat.provider_readiness import (
     KEYLESS_PROVIDER_KEYS,
@@ -540,6 +543,10 @@ class ConsoleSettingsReadiness:
     evidence: ProviderTestEvidence | None = field(
         default=None, compare=False, repr=False
     )
+    #: TASK-39151 review: why the endpoint the send would use is invalid, for
+    #: the Endpoint line: "needs_scheme" (an address the contract refuses only
+    #: for lacking http:// or https://) or "invalid"; ``None`` when it is not.
+    invalid_endpoint: Literal["needs_scheme", "invalid"] | None = None
 
     def __post_init__(self) -> None:
         """Normalize legacy construction and reject contradictory typed states."""
@@ -1992,6 +1999,9 @@ def build_console_settings_readiness(
         and _is_url_based_provider(provider_key, provider_settings)
         and not _valid_base_url(provider_key, checked_url)
     )
+    invalid_endpoint = (
+        _invalid_endpoint_kind(provider_key, checked_url) if endpoint_invalid else None
+    )
     endpoint_not_saved = bool(
         base_url
         and not identity.uses_direct_llama_path
@@ -2118,7 +2128,31 @@ def build_console_settings_readiness(
         observed_at=evidence.observed_at if evidence_is_current and evidence else None,
         generation_observed_at=generation_at,
         evidence=evidence if evidence_is_current else None,
+        invalid_endpoint=invalid_endpoint,
     )
+
+
+def _invalid_endpoint_kind(
+    provider_key: str, value: str
+) -> Literal["needs_scheme", "invalid"]:
+    """Whether an invalid endpoint only lacks its scheme (TASK-39151 review).
+
+    A host and port, or an IP literal, that the contract refuses only because
+    it was typed without http:// or https://. A value without a port that is
+    not an IP literal could be a pasted key, which must never be told to add
+    a scheme (TASK-39042), so it is just "invalid".
+    """
+    if resolve_provider_endpoint(provider_key, value).errors != (
+        REMOTE_ENDPOINT_SCHEME_REQUIRED,
+    ):
+        return "invalid"
+    if safe_endpoint_display(value) != "invalid endpoint":
+        return "needs_scheme"
+    try:
+        ip_address(urlparse(f"http://{value.strip()}").hostname or "")
+    except ValueError:
+        return "invalid"
+    return "needs_scheme"
 
 
 def _default_supported_readiness_keys() -> frozenset[str]:
@@ -3409,14 +3443,14 @@ def _format_endpoint_summary_row(
     settings: ConsoleSessionSettings,
     readiness: ConsoleSettingsReadiness,
 ) -> str:
-    typed = _string_value(settings.base_url)
-    if (
-        readiness.blocker == "endpoint_invalid"
-        and typed
-        and "://" not in read_schemeless_loopback(typed)
-    ):
-        # TASK-39151: say what to change; the value itself is never shown.
-        return "Endpoint: Invalid (a remote address needs http:// or https://)"
+    if readiness.blocker == "endpoint_invalid" and readiness.invalid_endpoint:
+        # TASK-39151: the session's or the config's value is invalid; say
+        # what to change when that is safe. The value itself is never shown.
+        return (
+            "Endpoint: Invalid (add http:// or https://)"
+            if readiness.invalid_endpoint == "needs_scheme"
+            else "Endpoint: Invalid"
+        )
     if (
         readiness.blocker
         in {
