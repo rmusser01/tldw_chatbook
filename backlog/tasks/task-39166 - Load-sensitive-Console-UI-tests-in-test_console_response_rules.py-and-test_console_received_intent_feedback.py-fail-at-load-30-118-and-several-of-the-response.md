@@ -1,11 +1,11 @@
 ---
 id: TASK-39166
 title: "Load-sensitive Console UI tests in test_console_response_rules.py and test_console_received_intent_feedback.py fail at load 30-118, and several of the response-rules nodes are UI census entries"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-08 06:54
-updated_date: 2026-11-10 21:03
+updated_date: 2026-11-10 22:04
 labels:
 - follow-up
 - tests
@@ -53,7 +53,7 @@ Found in round 12 of the 2026-10-23 burn-down (TASK-38977 and TASK-38948 on roun
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 For each listed node, the step that misses under load is named from its own failure: which wait, and which state it was waiting for
+- [x] #1 For each listed node, the step that misses under load is named from its own failure: which wait, and which state it was waiting for, or, for a node that did not fail in at least 30 whole-file runs at load 40 or more, every candidate wait is converted to a bounded wait on its state that fails naming that state
 - [x] #2 Each node waits on the state it reads, with a bound that fails naming that state; no latency budget is loosened to make it pass
 - [x] #3 Both files pass 10 of 10 whole-file runs at `-n 4`, with load recorded, at least five of them at a one-minute load of 40 or more
 <!-- AC:END -->
@@ -134,7 +134,22 @@ Base dev ae9f9e8d21, 2026-11-10. Test-only changes in both files. One listed nod
 
 **AC#3 (met, final head).** `test_console_response_rules.py`: 10 of 10 whole-file runs at `-n 4`, two streams at once, every run at load 41-57. `test_console_received_intent_feedback.py`: 10 of 10 at load 38-68 (plus round 1's 11 of 11).
 
-**AC#1 (not met for one node).** Every listed node's missing step is named above or in round 1, except `test_send_feedback_survives_preparation_and_provider_wait`. It never failed here (20 runs in round 1, 13 in round 2), and TASK-38948 recorded only that it failed "on its own 15 s bounded wait", which in that test was either the provider-entry wait or the custody-clear wait. Both are now state-bounded. `test_enter_sends_…` and `test_navigation_after_receipt_…` had one 15 s bounded wait each, the custody-clear wait, so TASK-38948's record names theirs.
+**AC#1 (amended by coordinator ruling, 2026-11-10; met).** The coordinator amended AC#1 because `test_send_feedback_survives_preparation_and_provider_wait` never failed here: a node that did not fail in at least 30 whole-file runs at load 40 or more may instead have every candidate wait converted to a bounded wait on its state that fails naming that state. Its whole-file runs without a failure of this node:
+- round 1 (fork B): 11 runs of a base copy at load 59-99, and 11 runs after the change at load 44-91 (every run started and ended at load 44 or more); 9 more before the change at load 25-110;
+- round 2: 11 runs that started and ended at load 40 or more (41-68), and 2 more that started or ended below 40 (31.8 and 37.9).
+
+That is 33 runs at load 40 or more. TASK-38948 recorded only that it failed "on its own 15 s bounded wait". The base file (ae9f9e8d21) had three candidate waits, and each is now bounded on its state:
+- `:939`, the provider's `release.wait(15)`, which raised "test provider wait timed out": now `release.wait(_SETTLE_SECONDS)` (60 s). It is the provider double's patience for the test's own release, which the test sets right after the run segment shows and again in its `finally`; it still raises naming itself, and no longer ends a run that would pass.
+- `:962`, `_until(entered.is_set, 15)`: now waits up to 60 s for the provider's entry or the turn's end, then asserts `entered.is_set()` with a message naming which: "the turn never reached the provider: it ended first (<task>)" or "not within 60 s".
+- `:974`, the custody `_until(lambda: not ...has_custodied_turns(...), 15)`: now `_turn_settles(case, record.task)`, which waits for the released turn's own task ("the released turn's task did not finish within 60 s: <task>; provider calls=N"), then for its custody to clear ("the turn finished (<task>) but its custody never cleared").
+
+`test_enter_sends_…` and `test_navigation_after_receipt_…` had one 15 s bounded wait each, the custody-clear wait, so TASK-38948's record names theirs; both now use `_turn_settles` too. Every other listed node's missed step is named above.
 
 **Files (round 2).** `tldw_chatbook/Chat/prompt_history.py`, `tldw_chatbook/UI/Screens/chat_screen.py`, `Tests/Backup_Recovery/test_prompt_history_path_memo.py`, `Tests/UI/test_console_response_rules.py`. Preflight passed; the chat_screen line, method and projection ceilings pass (24605 of 24608 lines).
+
+**Review r13d-rev1 fixes (2026-11-10).**
+- The deferred coach-mark show now rechecks `_console_fleet_coachmark_seen()` first and reads `screen.console_session_surface` at show time; `_maybe_show_fleet_coachmark` drops its unused `surface` parameter. New case `test_console_syncs_never_wait_for_a_config_rebuild[coachmark-dismissed]` dismisses while the show is pending: red before ("the dismissed coach-mark reappeared"), green after.
+- `_resolve_default_path_off_loop`'s docstring now states the three-attempt limit and the on-loop fallback.
+- Root fix: `PromptHistory(path=None)` takes the default path lazily; `_file_job()` resolves it off the loop on first use, and `ConsoleRuntime.ensure_prompt_history()` and the prompts controller now build `PromptHistory()`. New test `test_a_history_first_built_during_a_config_rebuild_never_waits` (path-memo file, pr-fast-lane) builds through `ConsoleRuntime.ensure_prompt_history` and loads inside a held rebuild: red before ("building and loading the history waited on the UI loop for the rebuild"), green after. The three composer-history tests that patched `prompts.default_prompt_history_path` now use the app's `console_prompt_history_factory` seam; 22 of 22 under a temporary `bootstrap_profile` marker (plain, they hit the local RecoveryRequired trap, as on base).
+- Covering after the fixes: response rules 5 of 5 whole-file runs (26 tests), intent feedback 4 of 5, load 18-30. The one failure is `test_actual_send_paints_sending_and_accepts_input_within_100ms[send-button]` (TASK-38948's budget, untouched here). Interleaved runs of that node at load 13-24 failed in 5 of 10 runs with base product files and 6 of 10 with this branch's, and a probe showed the coach-mark show never runs in it.
 <!-- SECTION:NOTES:END -->
