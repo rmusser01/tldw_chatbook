@@ -122,19 +122,23 @@ def test_no_builtin_profile_asks_for_reasoning_it_cannot_fit_or_read(tmp_path):
 
 
 @pytest.fixture
-def make_v2_service(tmp_path, monkeypatch):
+def own_rag_service(monkeypatch):
     services = ExitStack()
-
-    def make(**kwargs):
-        return services.enter_context(_make_v2_service_with_reranking(tmp_path, **kwargs))
-
     try:
-        yield make
+        yield services.enter_context
     finally:
         # Mock embeddings own no GPU resources, so skip CUDA discovery on close.
         with monkeypatch.context() as teardown:
             teardown.setitem(sys.modules, "torch", None)
             services.close()
+
+
+@pytest.fixture
+def make_v2_service(tmp_path, own_rag_service):
+    def make(**kwargs):
+        return own_rag_service(_make_v2_service_with_reranking(tmp_path, **kwargs))
+
+    return make
 
 
 def _make_v2_service_with_reranking(
@@ -693,7 +697,8 @@ async def test_raising_reranker_degrades_to_unreranked_results(make_v2_service):
     )
 
 
-def test_from_profile_construction_path_populates_reranker(tmp_path):
+@pytest.mark.bootstrap_profile
+def test_from_profile_construction_path_populates_reranker(tmp_path, own_rag_service):
     """The `elif isinstance(config, ProfileConfig)` branch in
     `EnhancedRAGServiceV2.__init__` -- the path `from_profile()` /
     `create_rag_from_profile()` use -- used to reassign the local `config`
@@ -707,11 +712,10 @@ def test_from_profile_construction_path_populates_reranker(tmp_path):
     """
     manager = get_profile_manager(profiles_dir=tmp_path)
 
-    rag_cfg = RAGConfig()
-    rag_cfg.embedding.model = "mock"
-    rag_cfg.embedding.device = "cpu"
-    rag_cfg.vector_store.type = "memory"
-    rag_cfg.vector_store.persist_directory = None
+    rag_cfg = RAGConfig(
+        embedding=EmbeddingConfig(model="mock", device="cpu"),
+        vector_store=VectorStoreConfig(type="memory"),
+    )
     rag_cfg.chunking.chunk_size = 60
     rag_cfg.chunking.chunk_overlap = 10
     rag_cfg.search.enable_cache = False
@@ -724,19 +728,22 @@ def test_from_profile_construction_path_populates_reranker(tmp_path):
         reranking_config=RerankingConfig(strategy="pointwise", top_k_to_rerank=5),
     )
 
-    service = EnhancedRAGServiceV2(
-        config=profile,  # a ProfileConfig instance, not a name string
-        profile_manager=manager,
-        enable_parent_retrieval=False,
-        enable_reranking=True,
-        enable_parallel_processing=False,
+    service = own_rag_service(
+        EnhancedRAGServiceV2(
+            config=profile,  # a ProfileConfig instance, not a name string
+            profile_manager=manager,
+            enable_parent_retrieval=False,
+            enable_reranking=True,
+            enable_parallel_processing=False,
+        )
     )
 
     assert service.reranker is not None
     assert service.reranking_config is profile.reranking_config
 
 
-def test_create_rag_service_threads_reranking_config_for_hybrid_full():
+@pytest.mark.bootstrap_profile
+def test_create_rag_service_threads_reranking_config_for_hybrid_full(own_rag_service):
     """The app's real RAG-service entry point (`search_service.py` ->
     `rag_factory.create_rag_service()`) computed `enable_reranking =
     profile.reranking_config is not None` but passed a bare `RAGConfig` into
@@ -749,38 +756,43 @@ def test_create_rag_service_threads_reranking_config_for_hybrid_full():
     """
     from tldw_chatbook.RAG_Search.simplified.rag_factory import create_rag_service
 
-    mock_cfg = RAGConfig()
-    mock_cfg.embedding.model = "mock"
-    mock_cfg.embedding.device = "cpu"
-    mock_cfg.vector_store.type = "memory"
-    mock_cfg.vector_store.persist_directory = None
+    mock_cfg = RAGConfig(
+        embedding=EmbeddingConfig(model="mock", device="cpu"),
+        vector_store=VectorStoreConfig(type="memory"),
+    )
     mock_cfg.chunking.chunk_size = 5
     mock_cfg.chunking.chunk_overlap = 1
     mock_cfg.search.enable_cache = False
 
-    service = create_rag_service(profile_name="hybrid_full", config=mock_cfg)
+    service = own_rag_service(
+        create_rag_service(profile_name="hybrid_full", config=mock_cfg)
+    )
 
     assert service.enable_reranking is True
     assert service.reranker is not None
 
 
-def test_create_rag_service_no_reranker_for_profile_without_reranking_config():
+@pytest.mark.bootstrap_profile
+def test_create_rag_service_no_reranker_for_profile_without_reranking_config(
+    own_rag_service,
+):
     """Counterpart to the hybrid_full test: a profile with no
     reranking_config (hybrid_basic) must NOT get a reranker -- confirms the
     fix threads the profile's actual config through rather than switching
     reranking on unconditionally."""
     from tldw_chatbook.RAG_Search.simplified.rag_factory import create_rag_service
 
-    mock_cfg = RAGConfig()
-    mock_cfg.embedding.model = "mock"
-    mock_cfg.embedding.device = "cpu"
-    mock_cfg.vector_store.type = "memory"
-    mock_cfg.vector_store.persist_directory = None
+    mock_cfg = RAGConfig(
+        embedding=EmbeddingConfig(model="mock", device="cpu"),
+        vector_store=VectorStoreConfig(type="memory"),
+    )
     mock_cfg.chunking.chunk_size = 60
     mock_cfg.chunking.chunk_overlap = 10
     mock_cfg.search.enable_cache = False
 
-    service = create_rag_service(profile_name="hybrid_basic", config=mock_cfg)
+    service = own_rag_service(
+        create_rag_service(profile_name="hybrid_basic", config=mock_cfg)
+    )
 
     assert service.reranker is None
 
