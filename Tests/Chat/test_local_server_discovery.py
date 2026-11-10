@@ -1066,6 +1066,168 @@ def test_an_underscore_host_gets_a_project_instruction_key_and_its_origin_label(
         )
 
 
+#: TASK-39150: bracketed zone ids, ``%25``-encoded and raw.
+_PROJECT_ZONE_ID_ENDPOINTS = (
+    "http://[fe80::1%25en0]:5001",
+    "http://[fe80::1%en0]:5001",
+    "http://[fe80::1%25en0]:5001/v1",
+    "https://[fe80::1%25eth0]/v1",
+)
+
+
+def _project_instruction_endpoint_callers(endpoint):
+    """What each project-instruction identity caller makes of ``endpoint``."""
+    from tldw_chatbook.Chat import console_exchange_export
+    from tldw_chatbook.Chat.console_chat_controller import (
+        build_project_instruction_dispatch_notice,
+    )
+    from tldw_chatbook.Chat.console_exchange_capture import build_request_capture
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderStreamSignals,
+    )
+    from tldw_chatbook.Chat.console_trace_final_values import (
+        verify_provider_request_shadow,
+    )
+    from tldw_chatbook.Chat.console_trace_models import new_opaque_id
+    from tldw_chatbook.Chat.console_trace_provenance import (
+        ProviderRequestProvenance,
+        SavedRevisionTraceProvenance,
+    )
+
+    seen = {}
+    locator = fingerprint_canonical_locator("workspace:/39150")
+    for name, call in (
+        ("identity", lambda: canonical_provider_endpoint_identity(endpoint)),
+        ("notice_key", lambda: project_instruction_notice_key(locator, "vllm", endpoint)),
+    ):
+        try:
+            seen[name] = call()
+        except ValueError as error:
+            seen[name] = f"ValueError: {error}"
+    seen["label"] = sanitized_destination_label("vLLM", endpoint)
+    notice = build_project_instruction_dispatch_notice(
+        SimpleNamespace(
+            startup_source_metadata=None,
+            startup_source=None,
+            primary_delivery=SimpleNamespace(outcomes=()),
+            warning_codes=(),
+        ),
+        session_id="session-39150",
+        resolution=SimpleNamespace(provider="vLLM", execution_key="vllm", base_url=endpoint),
+    )
+    seen["controller_label"] = notice.destination_label
+    signals = ConsoleProviderStreamSignals(exchange_capture_enabled=True)
+    call = signals.new_usage_call()
+    call.begin_exchange(
+        provider="vllm", model="m", endpoint=endpoint, request={}, omitted_keys=()
+    )
+    call.close_exchange()
+    seen["gateway_capture"] = signals.exchange_captures()[0].endpoint
+    seen["exchange_capture"] = build_request_capture({"api_base_url": endpoint})[0][
+        "api_base_url"
+    ]
+    seen["exchange_export"] = console_exchange_export._endpoint(endpoint)
+    saved = SavedRevisionTraceProvenance(new_opaque_id())
+    values = {
+        "api_endpoint": "vllm",
+        "messages_payload": [{"role": "user", "content": "safe"}],
+        "model": "m",
+    }
+    shadow = verify_provider_request_shadow(
+        actual_kwargs=values,
+        expected_kwargs=dict(values),
+        provenance=ProviderRequestProvenance(messages=(saved,), messages_payload=(saved,)),
+        project_handler_kwargs=lambda projected: {
+            "input_data": projected["messages_payload"],
+            "model": projected["model"],
+        },
+        endpoint_identity=endpoint,
+    )
+    seen["trace_final_values"] = (
+        shadow.endpoint_identity if shadow.available else shadow.as_content_free_record()
+    )
+    return seen
+
+
+@pytest.mark.parametrize("endpoint", _PROJECT_ZONE_ID_ENDPOINTS)
+def test_a_zone_id_endpoint_is_refused_by_project_instructions_like_a_refused_host(
+    endpoint,
+):
+    """TASK-39150 AC#1/AC#2: the project-instruction parser accepted any IP
+    literal first, so a zone id kept its zone in the destination label and the
+    canonical identity, against the 2026-11-06 refuse-everywhere ruling. Every
+    caller now treats it exactly as it treats ``-bad.corp``."""
+    refused = _project_instruction_endpoint_callers("http://-bad.corp:5001/v1")
+    assert refused == {
+        "identity": "ValueError: invalid provider endpoint",
+        "notice_key": "ValueError: invalid provider endpoint",
+        "label": "vLLM (invalid endpoint)",
+        "controller_label": "vLLM (invalid endpoint)",
+        "gateway_capture": "[invalid endpoint]",
+        "exchange_capture": "[invalid endpoint]",
+        "exchange_export": "[invalid endpoint]",
+        "trace_final_values": {"available": False, "omission_reason": "sanitizer_failed"},
+    }
+
+    assert _project_instruction_endpoint_callers(endpoint) == refused
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "identity", "label", "key"),
+    [
+        (
+            "http://[fe80::1]:5001",
+            "http://[fe80::1]:5001",
+            "vLLM (http://[fe80::1]:5001)",
+            "f8df26aa2ff15278ae691e9b5c26d32013a8a05f398a04ef6221f9c82008cee4",
+        ),
+        (
+            "http://[FE80::0001]:5001/v1/",
+            "http://[fe80::1]:5001/v1",
+            "vLLM (http://[fe80::1]:5001)",
+            "6a7b4bac3614846f43292b135a1c0f9f2b69b585a7cf85a366a4e0dbd4964210",
+        ),
+        (
+            "http://[fd12:3456::9]:8080/v1",
+            "http://[fd12:3456::9]:8080/v1",
+            "vLLM (http://[fd12:3456::9]:8080)",
+            "0c71cec0889e1901ae14d66b056cdd9fbaca61e45c9ed7f27e6ea55032dd16c6",
+        ),
+    ],
+)
+def test_zone_less_link_local_and_ula_literals_keep_their_project_identity(
+    endpoint, identity, label, key
+):
+    """TASK-39150 AC#3: only the zone is refused. Keys measured at ae9f9e8d21."""
+    seen = _project_instruction_endpoint_callers(endpoint)
+
+    assert seen["identity"] == identity
+    assert seen["label"] == seen["controller_label"] == label
+    assert seen["notice_key"] == key
+    assert seen["gateway_capture"] == seen["exchange_export"] == identity
+    assert seen["trace_final_values"] == identity
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "identity"),
+    [
+        ("http://127.1:5001", "http://127.1:5001"),
+        ("https://bücher.example/v1", "https://xn--bcher-kva.example/v1"),
+        ("http://localhost..:5001", "http://localhost:5001"),
+    ],
+)
+def test_hosts_the_contract_refuses_but_the_send_accepts_keep_their_identity(
+    endpoint, identity
+):
+    """TASK-39150 AC#4, deliberate: the save refuses these hosts, but Console's
+    send still resolves them from a hand-edited config, so refusing them here
+    would only turn such a send with project instructions into a cancelled run
+    and drop its stored consent."""
+    seen = _project_instruction_endpoint_callers(endpoint)
+
+    assert seen["identity"] == identity
+    assert len(seen["notice_key"]) == 64
+
 
 #: TASK-38963: single-label hosts, the Docker Compose service-name shape.
 _SINGLE_LABEL_HOSTS = ("kobold", "kobold_cpp")
