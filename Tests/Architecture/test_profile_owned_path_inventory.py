@@ -394,15 +394,18 @@ def test_python_outside_the_package_and_tests_parses() -> None:
     tracked = subprocess.run(
         ["git", "ls-files", "-z", "--", "*.py"],
         cwd=REPO_ROOT,
-        capture_output=True,
+        stdout=subprocess.PIPE,
         check=True,
     ).stdout.decode("utf-8", "surrogateescape")
     unparseable: list[str] = []
     for relative_path in tracked.split("\0"):
         if not relative_path or relative_path.startswith(PARSED_ELSEWHERE_ROOTS):
             continue
+        path = REPO_ROOT / relative_path
+        if not path.is_file():  # tracked, but deleted on disk and not yet staged
+            continue
         try:
-            ast.parse((REPO_ROOT / relative_path).read_bytes(), filename=relative_path)
+            ast.parse(path.read_bytes(), filename=relative_path)
         except SyntaxError as error:
             unparseable.append(f"{relative_path}:{error.lineno}: {error.msg}")
 
