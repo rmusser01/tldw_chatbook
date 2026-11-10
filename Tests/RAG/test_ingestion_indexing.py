@@ -1748,9 +1748,7 @@ class TestBackfillCliStorage:
     @staticmethod
     def _run(tmp_path, monkeypatch, argv, seen, *, fail=False):
         import tldw_chatbook.config as config
-        from tldw_chatbook.Chat.console_library_policy import (
-            ConsoleLibraryMigrationSeed,
-        )
+        from tldw_chatbook.DB.ChaChaNotes_DB import ConsoleLibraryMigrationSeed
         from tldw_chatbook.RAG_Search import backfill
 
         async def fake_backfill(**kwargs):
