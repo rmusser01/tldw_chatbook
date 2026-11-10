@@ -976,7 +976,9 @@ _BUDGETS: dict[str, int] = {
     # runtime's dispose closes every thread's idle AgentRunsDB handle.
     # 2026-11-09, round-12 restack onto dev 3a6498ae14 (owner size waiver):
     # dev's 7,046 plus TASK-39117's +3.
-    "tldw_chatbook/Chat/console_runtime.py": 7049,
+    # 2026-11-10, restack onto dev e78b62f0e7 (owner size waiver): dev's 7,040
+    # plus TASK-39117's +3; exact measurement.
+    "tldw_chatbook/Chat/console_runtime.py": 7043,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-337 amendment 2026-10-27). The proof itself lives in
