@@ -183,11 +183,29 @@ ADR required: no new decision. ADR path: backlog/decisions/235-console-approval-
 
 ADR required: no new ADR. ADR paths are backlog/decisions/235-console-approval-interaction-and-feedback.md, backlog/decisions/098-visible-bounded-console-prompt-queue.md and backlog/decisions/231-console-polling-and-full-state-reconciliation.md. The repair preserves the established permission, queue and timing boundaries.
 
+### Reconcile the final transcript badge and qualify matched presentation
+
+- Reproduce the stale Streaming badge at composer settlement with a mounted transcript and an unchanged final assistant body.
+- Preserve live streaming and bring the terminal transcript into the composer settlement before its Ready presentation.
+- Freeze the same harmless fixture for the reviewed pre-feature baseline and integrated dev. Preserve a distinct presented assistant text delta before the actionable card.
+- Validate both presentation chains in closed single runs, then collect the cold and separate warm series on native and Edge. Report failed slots, clock bounds, and the existing performance budgets and functional matrix.
+
+ADR required: no. ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md. This work uses the existing presentation and approval boundaries.
+
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+
+### Terminal transcript and composer settlement
+
+The Windows Edge validation on dev 3a6498ae14 captured two ordered frames with a Ready composer and the final assistant body under a Streaming badge. The saved message was already complete. A mounted regression reproduced the mismatch when the composer restored Send. A second reproduction forced an obsolete change-review marker read, which could leave the transcript stale while controls advanced.
+
+The terminal full sync now reconciles the mounted transcript before it settles the controls. An obsolete read or changed store or session returns to the existing coalesced whole-sync replay. The test observes the still-mounted assistant label at composer settlement after an actual active Streaming presentation. The queue-release and poll-stop controls pass. A separate transcript cache case hit the same Windows raw-source bootstrap refusal on both the candidate and exact dev.
+
+The earlier cold evidence has no prior presented assistant output or qualified timing sample. The matched capture still needs the same pre-request text fixture in both revisions, independent native and Edge frame evidence, and the complete warm series and functional matrix.
+
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Required CI follow-up (AC12/AC13, 2026-11-07): retained all original ordered fast/admission targets and appended only five remembering nodes, the entire pure Canvas policy-test file, and three guarded policy-worker nodes in the proper isolated lanes (169 to 175 / 42 to 45). Actual missing-membership and comment-only REDs precede the final 125 passing metadata contracts; independent CI source review is clear. No flags, limits, job topology, dependencies or aggregation changed. Public evidence/source bindings: Docs/superpowers/qa/2026-11-06-console-approval-resync/staged-handoff-ci-followup.md. Functional/original idle and physical qualification gates remain open; status stays In Progress. Existing ADR121/235 apply.
 
