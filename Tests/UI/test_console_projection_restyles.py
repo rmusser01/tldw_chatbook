@@ -868,6 +868,7 @@ async def test_a_compact_flip_restyles_only_what_its_rules_style(monkeypatch):
         assert styled and len(styled) * 20 < total, (len(styled), total)
         applied = _spy_restyles(host, monkeypatch)
         for height, crosses in ((38, False), (34, True), (30, False), (36, True)):
+            classes = {id(node): set(node.classes) for node in shell.walk_children()}
             applied.clear()
             await console._on_message(
                 events.Resize(Size(160, height), Size(160, height))
@@ -875,9 +876,20 @@ async def test_a_compact_flip_restyles_only_what_its_rules_style(monkeypatch):
             assert shell.has_class("-console-compact") is (height < 35)
             nodes = {id(node) for node in shell.walk_children(with_self=True)}
             restyled = {id(node) for node in applied if id(node) in nodes}
-            assert restyled == (styled if crosses else set()), (
+            # A reader that answers the flip with its own class (the approval
+            # card's ``approval-compact``, its buttons' compact) restyles its
+            # own subtree; the shell's flip itself is never excused.
+            reaction = {
+                id(node)
+                for reader in shell.walk_children()
+                if classes.get(id(reader), set(reader.classes)) != set(reader.classes)
+                for node in reader.walk_children(with_self=True)
+            }
+            assert crosses or not reaction, f"40->{height} moved a reader's classes"
+            assert restyled == ((styled if crosses else set()) | reaction), (
                 f"40->{height}: restyled {len(restyled)} of {total} shell nodes; "
-                f"the compact rules style {len(styled)}"
+                f"the compact rules style {len(styled)} and readers' "
+                f"reactions {len(reaction)}"
             )
             flipped = _styles(console)
             host.update_styles(console)

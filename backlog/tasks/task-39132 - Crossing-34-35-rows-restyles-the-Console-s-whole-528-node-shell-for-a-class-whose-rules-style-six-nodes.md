@@ -69,4 +69,10 @@ Reused TASK-38950's `apply_scoped_breakpoints` (`UI/Console_Modules/frame.py`); 
 - Green on head.
 - Under the mutant that never fills `deep`: red, `507 descendants kept a stale style`.
 
+**Red on dev after merge (2026-11-10).**
+- What failed: `test_a_compact_flip_restyles_only_what_its_rules_style` failed on the PR head c89193d850 and on every dev merge through ae9f9e8d21: `40->34: restyled 28 of 540 shell nodes; the compact rules style 6`. Because that test is in the required check, every PR's required check was red.
+- Where the 22 extra restyles come from: the approval card, a reader of the class (AC #3). `ChatScreen` calls `_sync_control_layout` after the flip; it sets the card's own `approval-compact` class (which `_console_approvals.tcss` styles) and switches its buttons to compact. Each of those class changes restyles its own subtree, 22 nodes in all.
+- The fix, in the test only: the expected set now also includes the subtree of each node other than the shell whose classes changed during the flip, and that set must be empty when the height does not cross the line. The shell's own flip is never excused.
+- Verification: green on the fix head (18 passed in the file). Under the plain `set_class` mutant it is red: `restyled 540 of 540 shell nodes; the compact rules style 6 and readers' reactions 22`.
+
 Files: `tldw_chatbook/UI/Console_Modules/frame.py`, `tldw_chatbook/UI/Screens/chat_screen.py`, `Tests/UI/test_console_projection_restyles.py`, `backlog/docs/lessons-textual.md` (the 38950 entry's "same shape elsewhere" line).
