@@ -114,11 +114,13 @@ What does not work yet, and what Plugins says:
   files that are missing, as when plugins changed after a restored backup was
   made. Chatbook cannot recover these plugins yet. They stay off, and their files
   and saved data stay on disk."
-- On another computer or profile, **Authority…** reports "Plugin authority needs
-  recovery: its protected marker is missing or does not match the plugin files
-  here, as after restoring a backup on another computer or profile. Chatbook
-  cannot recover these plugins yet. They stay off, and their files and saved data
-  stay on disk."
+- On another computer at the same paths, or after the OS keyring was reset,
+  **Authority…** reports "Plugin authority needs recovery: its protected marker
+  is missing or does not match the plugin files here, as after restoring a backup
+  on another computer at the same paths, or after the OS keyring was reset.
+  Chatbook cannot recover these plugins yet. They stay off, and their files and
+  saved data stay on disk." (A separate profile cannot occur: a restore there
+  refuses plugins.)
 
 Resetting plugin authority does not help in either case: setting it up again
 refuses while the restored registry still lists installed plugins.

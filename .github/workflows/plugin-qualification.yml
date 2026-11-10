@@ -5,9 +5,21 @@ on:
   pull_request:
     paths:
       - "tldw_chatbook/Plugins/**"
-      # TASK-40132: the plugin backup owner's tests in Tests/Plugins/test_recovery.py
-      # also guard the backup pipeline they run through.
-      - "tldw_chatbook/Backup_Recovery/**"
+      # TASK-40132: Tests/Plugins/test_recovery.py's backup owner tests guard the
+      # Backup_Recovery files that dispatch on the plugins owner or that only it
+      # uses (the never-listed excluded subtree), and import these test helpers.
+      # Not the whole directory: most backup merges never touch plugins.
+      - "tldw_chatbook/Backup_Recovery/capture.py"
+      - "tldw_chatbook/Backup_Recovery/data_groups.py"
+      - "tldw_chatbook/Backup_Recovery/file_inventory.py"
+      - "tldw_chatbook/Backup_Recovery/inventory.py"
+      - "tldw_chatbook/Backup_Recovery/owner_registry.py"
+      - "tldw_chatbook/Backup_Recovery/recovery_files.py"
+      - "tldw_chatbook/Backup_Recovery/staging.py"
+      - "Tests/Backup_Recovery/test_capture_service.py"
+      - "Tests/Backup_Recovery/test_config_sibling_capture.py"
+      - "Tests/Backup_Recovery/test_core_owners.py"
+      - "Tests/Backup_Recovery/test_operational_owners.py"
       - "tldw_chatbook/Agents/hooks_v2/**"
       - "Tests/Plugins/**"
       - "Tests/Agents/test_hooks_v2_*.py"

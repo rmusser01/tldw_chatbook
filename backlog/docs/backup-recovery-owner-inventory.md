@@ -2899,9 +2899,8 @@ the plugin authority under `skills/trust/plugins/`.
 | `runtime.lock` | intentionally excluded | refused: the live runtime owner's lock, no data |
 | `packages/`, `packages-revisions/`, `data/<root_id>/` | included | raw bytes |
 | `staging/<name>/snapshot/`, `acquisition-custody/*.json` | included | raw bytes. Plugin recovery (`acquisition.verify_reference`) re-verifies git-installed packages from exactly the custody record and the snapshot. |
-| `staging/<name>/host-git-config`, `host-ssh-*` | intentionally excluded | refused (`plugin_staging_member_excluded`): copies of the host git/SSH configuration a fetch used, which can hold credential helpers and SSH config (D1) |
-| `staging/<name>/repository.git/`, `content/` | intentionally excluded | refused: the fetch's git object store (for a local source, the user's whole objects and refs, up to 500 MB) and working copy; recovery needs neither (D1) |
-| anything else (`cache/`, unknown names) | included | raw bytes |
+| every other member of `staging/<name>/` | intentionally excluded, one row each, never listed | refused (`plugin_staging_member_excluded`). An allow-list (D1's "Capture snapshot/ and the custody records", review ruling I1): known members are the host git/SSH configuration copies a fetch used (`host-git-config`, `host-ssh-*`, which can hold credential helpers and SSH config), the git object store `repository.git/` (for a local source, the user's whole objects and refs: tens of thousands of files, up to 500 MB) and the working copy `content/`; unknown ones (a lockfile residue such as `host-git-config.lock`, a future member) are excluded the same way. The tree walk's `prune` hook keeps each as one row, so none counts toward the tree's entry limit, and replace restore preserves it whole. |
+| anything else (`cache/`, unknown names outside `staging/<name>/`) | included | raw bytes |
 
 **Live writers.** Capture refuses rather than waits. When any registry `processes`
 row is not `settled` (a plugin process may still run, including unresolved rows
@@ -2915,11 +2914,17 @@ issue. Capture creates `runtime.lock` if absent and holds it while it copies eac
 plugin item. Accepted ceiling: the app's plugin service holds the lock from its
 first use until quit, so a complete in-app backup after plugin use needs a
 restart; a plugin service that found the lock held by a capture retries on its
-next use.
+next use. The preview copy gives the way out of a process row left by an earlier
+session: open Plugins → Authority… to unlock or recover plugin authority, whose
+runtime recovery settles the row (with a clean checkpoint, else after the plugin's
+reboot reconciliation review), then quit and reopen before backing up. It also
+names Console plugin use, which starts the service too.
 
 **Restore.** The registry restores through the restricted SQLite route, other
 files through the raw route, back to the same plugin root only: the registry and
-the authenticated authority snapshot bind absolute plugin-root paths. A restore
+the authenticated authority snapshot bind absolute plugin-root paths, which the
+check compares with the destination root resolved as the runtime owner names it
+(so a linked data folder is still in place). A restore
 into a separate profile refuses the owner (`owner_relocation_unverified:plugins`);
 a registry whose data-root paths, or installed and fetched package paths
 (`materialized_identity` in `revisions.inspection_json`), name another root is
@@ -2931,8 +2936,9 @@ which approves it.
 
 What then works (review decision D2, 2026-11-10): an in-place restore with plugins
 unchanged since the backup needs only Unlock. What does not yet: the OS-keyring
-generation marker is never captured, so on another computer or profile the
-posture is `recovery_required`; after plugins changed since the backup the posture
+generation marker is never captured, so on another computer at the same paths, or
+after the OS keyring was reset, the posture is `recovery_required` (another profile
+cannot occur: the restore refuses plugins there); after plugins changed since the backup the posture
 is `locked` and unlock fails with `FileNotFoundError` (the marker names a snapshot
 the restored trust files lack). Both keep plugins off with files and data on disk;
 Reset authority does not help, because bootstrap refuses while the registry lists
@@ -2951,7 +2957,7 @@ which admission re-verifies on each run. The app has no rebind for either yet
 | --- | --- | --- | --- | --- | --- |
 | tldw_chatbook/Plugins/backup.py | _Plugins._inspect | connect_private_sqlite | 1 | qualified | plugins; read-only registry validation and process check |
 | tldw_chatbook/Plugins/backup.py | _Plugins.capture | copy_private_sqlite | 1 | qualified | plugins |
-| tldw_chatbook/Plugins/backup.py | _runtime_lock | open | 1 | qualified | plugins; read-only runtime.lock probe, never creates it |
+| tldw_chatbook/Plugins/backup.py | _runtime_lock | open | 1 | qualified | plugins; runtime.lock probe: preview never creates it, capture creates and holds it |
 
 ## Census reconciliation (TASK-39053)
 

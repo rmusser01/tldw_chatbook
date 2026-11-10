@@ -2,6 +2,7 @@
 
 import shutil
 import sqlite3
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -1486,7 +1487,7 @@ def service():
  return PluginService(get_user_data_dir(),workspace_lookup=lambda _:None,marker_store_factory=marker())
 def excluded(path):
  parts=path.relative_to(root).parts
- return parts[0]=='runtime.lock' or parts[0].startswith('registry.sqlite3') or (len(parts)>2 and parts[0]=='staging' and (parts[2] in {'host-git-config','repository.git','content'} or parts[2].startswith('host-ssh-')))
+ return parts[0]=='runtime.lock' or parts[0].startswith('registry.sqlite3') or (len(parts)>2 and parts[0]=='staging' and parts[2]!='snapshot')
 def state():
  files={p.relative_to(root).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file() and not excluded(p)}
  with sqlite3.connect(f"file:{root/'registry.sqlite3'}?mode=ro",uri=True) as connection:registry=list(connection.iterdump())
@@ -1549,8 +1550,10 @@ print('PLUGIN_SEED_COMPLETE',flush=True)
 # Only the Tools group (MCP, skills and plugins): whole-profile replacement is
 # far slower and adds nothing to the plugin owner's evidence.
 _PLUGIN_BACKUP_RESTORE = r"""
-import json,os,sys,threading,zipfile
+import json,os,sys,threading,time,zipfile
 from pathlib import Path
+started=time.monotonic()
+def phase(name):print('PHASE',name,round(time.monotonic()-started),flush=True)
 from Tests.network_guard import install
 install()
 os.environ['PYTHON_KEYRING_BACKEND']='keyring.backends.null.Keyring'
@@ -1578,8 +1581,10 @@ try:
   assert status['registry.sqlite3']=='included' and status['runtime.lock']=='intentionally_excluded'
   assert status[staged+'/snapshot/plugin.json']=='included'
   assert {status[staged+'/'+name] for name in ('host-git-config','host-ssh-input','host-ssh-config','repository.git','content')}=={'intentionally_excluded'}
+  assert not [key for key in status if key.startswith((staged+'/repository.git/',staged+'/content/'))],status
   assert any(key.startswith('acquisition-custody/') and value=='included' for key,value in status.items()),status
   done(service,service.start_backup((source,),preview.scope_digest,destination,options=options,password=None))
+  phase('backup')
   # D1: the fetch's host configuration and git working copies never reach the archive.
   with zipfile.ZipFile(destination) as archive:
    manifest=json.loads(archive.read('manifest.json'))
@@ -1589,6 +1594,7 @@ try:
    assert not [row for row in manifest['files'] if b'secret-token' in archive.read(row['payload'])]
  inspection=service.start_inspection(destination,password=None);done(service,inspection)
  profile=service.summary(inspection)['profile_ids'][0]
+ phase('inspection')
  if first:
   # AC8: a separate profile cannot take the plugin root's absolute paths.
   isolated=home/'isolated-parent';isolated.mkdir(mode=0o700)
@@ -1597,6 +1603,7 @@ try:
   except ValueError as error:
    assert str(error)=='owner_relocation_unverified:plugins',str(error)
   else:raise AssertionError('separate-profile plugin restore was planned')
+  phase('isolated refused')
  def restore(**review):
   target=service.preview_backup((source,),options={})
   plan=service.preview_restore(inspection,mode='replace',profile_bases={},target_configs={profile:source},external_destinations={},profile_names={},target=target,data_groups=('tools',),**review)
@@ -1615,14 +1622,21 @@ try:
   else:assert result['state']!='succeeded' and 'owner_relocation_unverified' in result['issues'],dict(result)
   assert not (moved/'default_user'/'plugins'/'registry.sqlite3').exists()
   source.write_bytes(original)
+  phase('moved data refused')
   next(item.path for item in preview.items if item.owner=='plugins' and item.path is not None and item.path.name=='notes.txt').write_bytes(b'changed after the backup')
+ # The first attempt stops at the rollback snapshot's credential review (about
+ # 10 s) for the restored skill trust; the user acknowledges and restores again.
  result=restore()
+ phase('restore '+result['state'])
  if result['state']=='recovery_required' and result.get('review_issues'):
   issues=tuple(result['review_issues'])
+  phase('credential review of %d skill trust items'%len(issues))
   assert all(code.startswith('credential_') for code in issues),issues
   done(service,service.start_recovery(result['result']['journal_operation_id'],action='abort'))
+  phase('aborted')
   result=restore(acknowledged_credential_issues=issues)
  assert result['state']=='succeeded',dict(result)
+ phase('restored')
 finally:
  service.close()
 print('PLUGIN_REPLACEMENT_COMPLETE',flush=True)
@@ -1649,7 +1663,8 @@ async def main():
    try:await capture()
    except PluginUnavailable as error:assert reason in {None,str(error)},str(error)
    else:raise AssertionError('restored plugin ran before authority recovery')
-  await refused(None)  # locked authority refuses on its own as well
+  # AC7: the restore gate refuses first, whatever the authority's state.
+  await refused('plugin_restore_review_required')
   posture=await plugins.authority_status()
   assert posture=='locked',posture
   if not unchanged:
@@ -1661,13 +1676,9 @@ async def main():
    assert 'cannot recover these plugins yet' in message and 'stay on disk' in message,message
    await refused('plugin_restore_review_required')
    return
-  # Authority unlocked and reconciled outside the service's recovery is not
-  # the review: the restored generation still keeps plugins from running.
-  await plugins._call(lambda:plugins._coordinator.authority.unlock('test passphrase'))
-  await plugins._call(lambda:plugins._coordinator.recover())
+  # M5: the authority dialog's own call. Unlocking recovers and approves.
+  await plugins.unlock('test passphrase')
   assert await plugins.authority_status()=='ready'
-  await refused('plugin_restore_review_required')
-  await plugins.recover()
   assert restore_review_required(root) is False
   # The git-installed plugin re-verifies its retained fetch after the restore.
   assert (await capture()).installation_id==seed['installation']
@@ -1677,6 +1688,15 @@ async def main():
   await plugins.commit(disable,disable.operation_id)
  finally:
   await plugins.aclose()
+if unchanged:
+ # M4 (D1): recovery needs only snapshot/ and the custody record. Whatever else
+ # the fetch folder holds here is not from the archive; remove it all first.
+ staged=Path(seed['staged'])
+ for path in staged.iterdir():
+  if path.name!='snapshot':
+   print('REMOVED',path.name,flush=True)
+   shutil.rmtree(path) if path.is_dir() and not path.is_symlink() else path.unlink()
+ assert [path.name for path in staged.iterdir()]==['snapshot']
 asyncio.run(main())
 assert (root/'data'/'kept-root'/'notes.txt').read_bytes()==b'made by the plugin'
 print('PLUGIN_RESTORE_REVIEW_COMPLETE',flush=True)
@@ -1684,7 +1704,12 @@ print('PLUGIN_RESTORE_REVIEW_COMPLETE',flush=True)
 
 
 @platform_support.managed_runtime
-@pytest.mark.timeout(3600)
+# M12: the macOS lane's pytest step already takes ~19 of its 30 minutes, so a hang
+# here must fail (with JUnit output, signal method) within 8 minutes. Measured on
+# a shared 18-core host: 4.0 min at load 15-20, 5.4-6.9 min at load 25-40. Two
+# Tools-group restores take 1.7-3.4 min each (mostly the restore journal's
+# per-record revalidation); everything else is under 30 s.
+@pytest.mark.timeout(480)
 def test_plugin_backup_restores_in_place_and_waits_for_authority_recovery(tmp_path):
     """AC5/AC7/AC8/D1/D2 through the app's repository install path, actual
     capture, archive and same-profile replacement, twice: with plugins unchanged
@@ -1698,11 +1723,26 @@ def test_plugin_backup_restores_in_place_and_waits_for_authority_recovery(tmp_pa
     # as the selective-restore tests use: first binding proves its own container.
     selector = tmp_path / "profile-config" / "config.toml"
 
-    def run(script, *arguments, timeout=900):
-        return _child(home, script, *arguments, timeout=timeout, selector=selector)
+    durations = {}
 
-    assert "PLUGIN_SEED_COMPLETE" in run(_PLUGIN_SEED, "plugins", timeout=180)
-    assert "PLUGIN_REPLACEMENT_COMPLETE" in run(_PLUGIN_BACKUP_RESTORE, "first")
-    assert "PLUGIN_RESTORE_REVIEW_COMPLETE" in run(_PLUGIN_REOPEN, "unchanged")
-    assert "PLUGIN_REPLACEMENT_COMPLETE" in run(_PLUGIN_BACKUP_RESTORE, "again")
-    assert "PLUGIN_RESTORE_REVIEW_COMPLETE" in run(_PLUGIN_REOPEN, "changed")
+    def run(script, *arguments, timeout):
+        started = time.monotonic()
+        try:
+            output = _child(home, script, *arguments, timeout=timeout, selector=selector)
+        finally:
+            durations["-".join(arguments)] = round(time.monotonic() - started)
+            print("child seconds:", durations, flush=True)
+        print(*(line for line in output.splitlines() if line.startswith("PHASE")), sep="\n")
+        return output
+
+    # A child's limit names the child that hung; the test's limit bounds the sum.
+    assert "PLUGIN_SEED_COMPLETE" in run(_PLUGIN_SEED, "plugins", timeout=60)
+    assert "PLUGIN_REPLACEMENT_COMPLETE" in run(_PLUGIN_BACKUP_RESTORE, "first", timeout=300)
+    unchanged = run(_PLUGIN_REOPEN, "unchanged", timeout=60)
+    assert "PLUGIN_RESTORE_REVIEW_COMPLETE" in unchanged
+    # M4: the excluded fetch members survived the in-place restore (preserved,
+    # not archived) and were deleted before the plugin re-verified and ran.
+    for name in ("repository.git", "content", "host-git-config", "host-ssh-input"):
+        assert f"REMOVED {name}\n" in unchanged, name
+    assert "PLUGIN_REPLACEMENT_COMPLETE" in run(_PLUGIN_BACKUP_RESTORE, "again", timeout=300)
+    assert "PLUGIN_RESTORE_REVIEW_COMPLETE" in run(_PLUGIN_REOPEN, "changed", timeout=60)

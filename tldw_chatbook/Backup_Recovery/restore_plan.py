@@ -1308,9 +1308,13 @@ def plan_restore(
             if path.exists() and path not in declared:
                 raise ValueError("target_unverified")
         # Unknown children are never inferred garbage inside a managed directory.
+        # A preserved directory (an owner's whole excluded subtree, never listed:
+        # TASK-40132) is left as it is, so its children are left with it.
+        kept = {path for _, path in preserve}
         for item in target.items:
             if (
                 item.path
+                and item.path not in kept
                 and item.path.is_dir()
                 and (item.logical_id in absent_ids or any(
                     not roots[key].synthetic
