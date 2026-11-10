@@ -475,6 +475,39 @@ def replay_whole_console_sync(screen) -> bool:
     return False
 
 
+def terminal_projection_owner(screen: Any) -> tuple[Any, str | None] | None:
+    """Capture the owner of controls that settle after the terminal transcript."""
+    from ...Chat.console_chat_models import ConsoleRunStatus
+
+    if screen._current_console_run_status_value() not in (
+        ConsoleRunStatus.COMPLETED.value,
+        ConsoleRunStatus.FAILED.value,
+        ConsoleRunStatus.STOPPED.value,
+    ):
+        return None
+    store = screen._console_chat_store
+    return store, getattr(store, "active_session_id", None)
+
+
+def settle_terminal_projection(
+    screen: Any,
+    owner: tuple[Any, str | None],
+    transcript_synced: bool | None,
+    torn_down: Callable[[Any], bool],
+) -> bool:
+    """Publish the terminal controls after the current transcript settles."""
+    if torn_down(screen):
+        return False
+    store, session_id = owner
+    if (
+        transcript_synced is False
+        or screen._console_chat_store is not store
+        or getattr(store, "active_session_id", None) != session_id
+    ):
+        return replay_whole_console_sync(screen)
+    return project_console_tick(screen)
+
+
 def sync_console_core_state(screen) -> None:
     """Push the live provider selection only when that read is warm and ours.
 

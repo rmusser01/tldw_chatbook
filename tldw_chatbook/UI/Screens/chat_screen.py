@@ -17729,16 +17729,11 @@ class ChatScreen(BaseAppScreen):
                     delay = config_sync.full_sync_replay_delay(self)  # TASK-38696
                     self._request_console_control_bar_sync(delayed=delay)
                     return False
-            terminal_run = self._current_console_run_status_value() in (
-                ConsoleRunStatus.COMPLETED.value,
-                ConsoleRunStatus.FAILED.value,
-                ConsoleRunStatus.STOPPED.value,
-            )
-            transcript_store = self._console_chat_store
-            transcript_session = getattr(transcript_store, "active_session_id", None)
+            terminal_owner = config_sync.terminal_projection_owner(self)
             with self._workspace.tick_workspace_build_scope():
-                if not terminal_run and config_sync.project_console_tick(self) is False:
-                    return False  # Replay owns it.
+                if terminal_owner is None:
+                    if config_sync.project_console_tick(self) is False:
+                        return False  # Replay owns it.
                 # Settings failures may arrive after Apply has returned:
                 # ordinary first persistence and temporary-chat promotion
                 # both update the session ledger on their own later path.
@@ -17759,19 +17754,14 @@ class ChatScreen(BaseAppScreen):
                 transcript_synced = await self._sync_native_console_transcript()
                 if not poll_is_current():
                     return False
-                if terminal_run:
-                    if _console_screen_is_torn_down(self):
+                if terminal_owner is not None:
+                    if config_sync.settle_terminal_projection(
+                        self,
+                        terminal_owner,
+                        transcript_synced,
+                        _console_screen_is_torn_down,
+                    ) is False:
                         return False
-                    # Settle the mounted row before removing the run controls.
-                    if (
-                        transcript_synced is False
-                        or self._console_chat_store is not transcript_store
-                        or getattr(transcript_store, "active_session_id", None)
-                        != transcript_session
-                    ):
-                        return config_sync.replay_whole_console_sync(self)
-                    if config_sync.project_console_tick(self) is False:
-                        return False  # Replay owns it.
                 app = self.app_instance
                 try:
                     ui_ready = app._ui_ready

@@ -192,11 +192,21 @@ ADR required: no new ADR. ADR paths are backlog/decisions/235-console-approval-i
 
 ADR required: no. ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md. This work uses the existing presentation and approval boundaries.
 
+### Keep terminal settlement within the Console projection ceiling
+
+Reproduce the two Architecture guard failures from PR #3482. Put the terminal projection owner and replay checks in the existing configuration sync module. Keep transcript and composer ordering, ownership, and the reviewed line and method ceilings. Re-run both guards and the mounted terminal settlement checks.
+
+ADR required: no. ADR path: backlog/decisions/231-console-polling-and-full-state-reconciliation.md. Reason: the extraction follows the existing sync ownership and preserves the timing and permission contracts.
+
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+
+### Architecture guard repair for PR #3482
+
+Hosted Architecture guard contracts reproduced the same line-budget failure in two tests. The badge patch raised `ChatScreen` from 24,592 to 24,617 lines against the 24,608 ceiling. The existing configuration sync module now captures the terminal projection owner and decides whether to replay or publish the controls after transcript reconciliation. Both guards and six targeted Console tests passed locally. Independent review verified 24,607 lines and the same 741 direct methods. The physical timing criteria still need live evidence. [Hosted guard job](https://github.com/rmusser01/tldw_chatbook/actions/runs/42733632354/job/129586578318)
 
 ### Terminal transcript and composer settlement
 
