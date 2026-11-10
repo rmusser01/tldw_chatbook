@@ -48,7 +48,7 @@ driving it).
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
 import pytest
@@ -135,8 +135,12 @@ async def _click_after_scroll(pilot, selector: str) -> None:
 
 
 @pytest.fixture
-def evals_db() -> EvalsDB:
-    return EvalsDB(db_path=":memory:", client_id="test")
+def evals_db() -> Iterator[EvalsDB]:
+    db = EvalsDB(db_path=":memory:", client_id="test")
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 @pytest.fixture
@@ -179,6 +183,7 @@ def saved_bench_id(evals_db: EvalsDB) -> str:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_editor_renders_the_stored_bench(character_app, saved_bench_id):
     async with character_app.run_test(size=_REALISTIC_SIZE) as pilot:
@@ -192,6 +197,7 @@ async def test_editor_renders_the_stored_bench(character_app, saved_bench_id):
         assert screen.query_one("#evals-cb-max-tokens", Input).value == "512"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_probe_set_line_and_target_listing_render_read_only_state(
     character_app, saved_bench_id
@@ -217,6 +223,7 @@ async def test_probe_set_line_and_target_listing_render_read_only_state(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_saving_persists_every_edited_field(
     character_app, saved_bench_id, evals_db
@@ -264,6 +271,7 @@ async def test_saving_persists_every_edited_field(
         assert stored.max_tokens == 64
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_invalid_samples_value_renders_the_error_and_keeps_typed_state(
     character_app, saved_bench_id
@@ -292,6 +300,7 @@ async def test_an_invalid_samples_value_renders_the_error_and_keeps_typed_state(
         assert screen.query_one("#evals-cb-name", Input).value == "typed-but-not-saved"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_invalid_seed_value_renders_the_pinned_error(
     character_app, saved_bench_id
@@ -314,6 +323,7 @@ async def test_an_invalid_seed_value_renders_the_pinned_error(
         assert SEED_ERROR_TEXT in str(error.render())
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_negative_temperature_renders_the_pinned_error(
     character_app, saved_bench_id
@@ -336,6 +346,7 @@ async def test_a_negative_temperature_renders_the_pinned_error(
         assert TEMPERATURE_ERROR_TEXT in str(error.render())
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_negative_max_tokens_renders_the_pinned_error(
     character_app, saved_bench_id
@@ -358,6 +369,7 @@ async def test_a_negative_max_tokens_renders_the_pinned_error(
         assert MAX_TOKENS_ERROR_TEXT in str(error.render())
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_saving_with_a_taken_name_renders_the_conflict_callout(
     character_app, saved_bench_id, evals_db
@@ -397,6 +409,7 @@ async def test_saving_with_a_taken_name_renders_the_conflict_callout(
         assert stored.name == "villain probes"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_saving_carries_concurrency_and_extra_tags_through_verbatim(
     character_app, evals_db
@@ -437,6 +450,7 @@ async def test_saving_carries_concurrency_and_extra_tags_through_verbatim(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selecting_cards_in_the_picker_persists_on_save(
     character_app, saved_bench_id, evals_db
@@ -452,6 +466,7 @@ async def test_selecting_cards_in_the_picker_persists_on_save(
         assert all(isinstance(cid, int) for cid in stored.character_ids)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_deselecting_every_card_renders_the_construction_error(
     character_app, saved_bench_id
@@ -477,6 +492,7 @@ async def test_deselecting_every_card_renders_the_construction_error(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_probe_listing_shows_whitespace_markers(
     character_app, saved_bench_id
@@ -489,6 +505,7 @@ async def test_the_probe_listing_shows_whitespace_markers(
         assert "␣" in str(listing)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_missing_probe_set_degrades_inline_without_crashing(
     character_app, evals_db
@@ -520,6 +537,7 @@ async def test_a_missing_probe_set_degrades_inline_without_crashing(
         assert screen.query_one("#evals-cb-save") is not None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_deleted_target_renders_unresolvable_without_crashing(
     character_app, evals_db
@@ -551,6 +569,7 @@ async def test_a_deleted_target_renders_unresolvable_without_crashing(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_prefix_steered_target_renders_as_unusable(character_app, evals_db):
     target_id = evals_db.create_model(
@@ -577,6 +596,7 @@ async def test_a_prefix_steered_target_renders_as_unusable(character_app, evals_
         assert "unusable" in rendered.lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_system_prompt_steered_target_renders_its_steering(
     character_app, evals_db
@@ -604,6 +624,7 @@ async def test_a_system_prompt_steered_target_renders_its_steering(
         assert "system prompt" in rendered.lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_unsteered_target_renders_with_no_steering_suffix(
     character_app, saved_bench_id
@@ -619,6 +640,7 @@ async def test_an_unsteered_target_renders_with_no_steering_suffix(
         assert "·" not in rendered
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_target_with_corrupt_steering_is_flagged_not_silently_bare(
     character_app, evals_db
@@ -663,6 +685,7 @@ async def test_a_target_with_corrupt_steering_is_flagged_not_silently_bare(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_revert_asks_the_screen_to_reselect_this_bench(
     character_app, saved_bench_id
@@ -698,6 +721,7 @@ async def test_revert_asks_the_screen_to_reselect_this_bench(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [_REALISTIC_SIZE, _WIDE_SIZE])
 async def test_save_stays_hit_testable_at_realistic_sizes(
@@ -717,6 +741,7 @@ async def test_save_stays_hit_testable_at_realistic_sizes(
         assert hit is save or save in hit.ancestors
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [_REALISTIC_SIZE, _WIDE_SIZE])
 async def test_a_card_past_the_row_cap_is_reachable_inside_the_editors_own_scroll(
@@ -768,6 +793,7 @@ async def test_a_card_past_the_row_cap_is_reachable_inside_the_editors_own_scrol
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_is_dirty_flips_true_independently_for_each_scalar_field(
     character_app, saved_bench_id
@@ -829,6 +855,7 @@ async def test_is_dirty_flips_true_independently_for_each_scalar_field(
         assert pilot.app.screen.query_one(CharacterBenchEditor).is_dirty() is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_is_dirty_flips_true_when_a_card_selection_changes(
     character_app, saved_bench_id
@@ -846,6 +873,7 @@ async def test_is_dirty_flips_true_when_a_card_selection_changes(
         assert pilot.app.screen.query_one(CharacterBenchEditor).is_dirty() is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_is_dirty_treats_a_reordered_but_unchanged_character_selection_as_clean(
     character_app, evals_db
@@ -879,6 +907,7 @@ async def test_is_dirty_treats_a_reordered_but_unchanged_character_selection_as_
         assert editor.is_dirty() is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_is_dirty_is_false_again_after_save(character_app, saved_bench_id):
     """Save -> ``Saved`` -> the screen's own re-selection (via ``select_
