@@ -3627,44 +3627,59 @@ async def test_enter_in_model_fallback_input_advances(
 
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
+@private_profile_test
 async def test_local_provider_probe_feedback_is_visible_and_adjacent(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
-    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
-        async with app.run_test(size=(140, 45)) as pilot:
-            await _wait_until(
-                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
-            )
-            container = app.screen.query_one(SetupWizardContainer)
-            await _wait_until(pilot, lambda: container.can_proceed)
-            _press(app.screen, "#wizard-next")
-            await _wait_until(
-                pilot, lambda: _current_step_id(container) == STEP_PROVIDER
-            )
-            provider = next(s for s in container.steps if isinstance(s, ProviderStep))
-            provider.select_provider("llama_cpp")
-            status = provider.query_one("#setup-provider-probe-status", Static)
-            # P-7: selection alone produces reachability feedback (nothing
-            # listens on the endpoint in this environment).
-            await _wait_until(pilot, lambda: str(status.renderable) != "")
-            # P-6: Test always ends in a visible verdict.
-            provider.query_one("#setup-provider-test", Button).press()
-            await _wait_until(
-                pilot,
-                lambda: str(status.renderable).startswith(("✗", "✓")),
-            )
-            # Adjacency: the status renders above the auth collapsible, next
-            # to the connection controls — not at the panel's bottom.
-            auth = provider.query_one("#setup-provider-auth-toggle")
-            test_button = provider.query_one("#setup-provider-test", Button)
-            assert status.region.y >= test_button.region.y
-            assert status.region.y <= auth.region.y or not auth.display
-            # P-8: buttons are labeled by outcome.
-            assert str(provider.query_one("#setup-provider-detect", Button).label) == (
-                "Find local servers"
-            )
-            assert str(test_button.label) == "Test connection"
+    with _RecordingModelsServer(["test-model"]) as server:
+        app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
+        with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
+            async with app.run_test(size=(140, 45)) as pilot:
+                await _wait_until(
+                    pilot,
+                    lambda: (
+                        type(app.screen).__name__ == "FirstRunSetupWizard"
+                        and app.screen.is_mounted
+                    ),
+                )
+                container = app.screen.query_one(SetupWizardContainer)
+                await _wait_until(pilot, lambda: container.can_proceed)
+                _press(app.screen, "#wizard-next")
+                await _wait_until(
+                    pilot, lambda: _current_step_id(container) == STEP_PROVIDER
+                )
+                provider = next(s for s in container.steps if isinstance(s, ProviderStep))
+                app.app_config.setdefault("api_settings", {})["llama_cpp"] = {
+                    "api_url": server.base_url,
+                }
+                provider.select_provider("llama_cpp")
+                status = provider.query_one("#setup-provider-probe-status", Static)
+                assert provider.query_one("#setup-provider-endpoint", Input).value == server.base_url
+                # P-7: selection alone provides reachability feedback.
+                await _wait_until(pilot, lambda: str(status.renderable) != "")
+                prior_requests = len(server.accept_encodings)
+                # P-6: Test starts a fresh check and shows its verdict.
+                provider.query_one("#setup-provider-test", Button).press()
+                await _wait_until(
+                    pilot,
+                    lambda: (
+                        len(server.accept_encodings) > prior_requests
+                        and str(status.renderable).startswith("✓")
+                    ),
+                )
+                # Adjacency: the status renders above the auth collapsible, next
+                # to the connection controls — not at the panel's bottom.
+                auth = provider.query_one("#setup-provider-auth-toggle")
+                test_button = provider.query_one("#setup-provider-test", Button)
+                assert status.region.y >= test_button.region.y
+                assert status.region.y <= auth.region.y or not auth.display
+                # P-8: buttons are labeled by outcome.
+                assert str(provider.query_one("#setup-provider-detect", Button).label) == (
+                    "Find local servers"
+                )
+                assert str(test_button.label) == "Test connection"
 
 
 # ---------------------------------------------------------------------------
@@ -3765,8 +3780,11 @@ class _RecordingModelsServer:
 
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
+@private_profile_test
 async def test_provider_test_button_requests_identity_encoding_from_a_real_peer(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """Pressing Test must not advertise gzip to a content-negotiating peer.
 
@@ -3785,11 +3803,15 @@ async def test_provider_test_button_requests_identity_encoding_from_a_real_peer(
             the fresh wizard app is built against.
     """
     with _RecordingModelsServer([f"model-{index}" for index in range(128)]) as server:
-        app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+        app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
         with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
             async with app.run_test(size=(140, 45)) as pilot:
                 await _wait_until(
-                    pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+                    pilot,
+                    lambda: (
+                        type(app.screen).__name__ == "FirstRunSetupWizard"
+                        and app.screen.is_mounted
+                    ),
                 )
                 container = app.screen.query_one(SetupWizardContainer)
                 await _wait_until(pilot, lambda: container.can_proceed)
@@ -3801,12 +3823,15 @@ async def test_provider_test_button_requests_identity_encoding_from_a_real_peer(
                 provider = next(
                     s for s in container.steps if isinstance(s, ProviderStep)
                 )
+                app.app_config.setdefault("api_settings", {})["llama_cpp"] = {
+                    "api_url": server.base_url,
+                }
                 provider.select_provider("llama_cpp")
-                await pilot.pause(0.3)
-                provider.query_one(
-                    "#setup-provider-endpoint", Input
-                ).value = server.base_url
-                await pilot.pause(0.3)
+                endpoint = provider.query_one("#setup-provider-endpoint", Input)
+                assert endpoint.value == server.base_url
+                await _wait_until(
+                    pilot, lambda: not provider.query_one("#setup-provider-test", Button).disabled
+                )
 
                 status = provider.query_one("#setup-provider-probe-status", Static)
                 provider.query_one("#setup-provider-test", Button).press()
