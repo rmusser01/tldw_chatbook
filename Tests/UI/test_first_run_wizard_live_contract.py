@@ -2485,15 +2485,10 @@ async def test_provider_key_input_visible_at_120x40_without_scrolling(
     request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """TASK-1495 AC #1: the Provider step's API-key field must be visible
-    at 120x40 with NO scrolling -- not merely reachable by scrolling (that
-    weaker guarantee is covered by the ".setup-step" scroll region itself,
-    exercised by the 80x24/100x30 tests below). Capping the provider
-    RadioSet ("setup-choice-list", max-height: 5) and trimming this step's
-    own padding/margins (see _wizards.tcss's "First-run setup wizard"
-    section) reclaims just enough of the step's fixed ~15-row viewport for
-    the Input to fit un-scrolled alongside it.
-    """
+    """A keyboard pick reveals the 120x40 key field without manual scrolling."""
+    from Tests.Wizards.provider_step_harness import pick_provider
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
@@ -2509,10 +2504,16 @@ async def test_provider_key_input_visible_at_120x40_without_scrolling(
             assert container.steps[container.current_step].config.id == STEP_PROVIDER
             provider_step = container.steps[container.current_step]
             assert isinstance(provider_step, ProviderStep)
-            provider_step.select_provider("openai")
-            await pilot.pause(0.2)
+            await pick_provider(pilot, provider_step, "openai")
 
             key_input = app.screen.query_one("#setup-provider-api-key", Input)
+            await _wait_until(
+                pilot,
+                lambda: (
+                    app.focused is key_input
+                    and key_input in app.screen._compositor.visible_widgets
+                ),
+            )
             region = key_input.region
             assert region.width > 0 and region.height > 0, (
                 f"key Input has an empty region at 120x40: {region}"
@@ -3575,8 +3576,9 @@ async def test_tab_from_step_content_reaches_next_before_cancel(
             app.screen.query_one("#setup-track-choice").focus()
             await pilot.pause()
             await pilot.press("tab")
-            await pilot.pause()
-            assert app.focused is not None and app.focused.id == "wizard-next", (
+            assert app.focused is app.screen.query_one("#setup-backup-restore", Button)
+            await pilot.press("tab")
+            assert app.focused is next_button, (
                 f"Tab landed on {app.focused!r} — the abandon action must not "
                 "be the first stop after step content (UAT N-2)"
             )
@@ -4266,9 +4268,8 @@ async def test_enter_on_an_empty_provider_key_advances_with_a_visible_skip(
 
     Live (critique #3, persona Jordan): pick a cloud provider, Tab into the
     key field, press Enter -- nothing happened, no message, no advance. The
-    key field's own hint now says Enter skips, an empty Enter clears the
-    provider choice and advances, and the Summary reports the provider as
-    not configured (the honest "skipped" -- nothing was staged).
+    hint names the current Skip action. Empty Enter still advances without
+    staging a provider, and Summary reports that it is not configured.
     """
     app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
 
@@ -4294,7 +4295,9 @@ async def test_enter_on_an_empty_provider_key_advances_with_a_visible_skip(
             hint = str(
                 app.screen.query_one("#setup-provider-key-status", Static).renderable
             )
-            assert "Enter skips this step" in hint, hint
+            skip = app.screen.query_one("#setup-provider-skip", Button)
+            assert skip.display and str(skip.label) == "Skip — connect later"
+            assert str(skip.label) in hint and "press Next" in hint, hint
 
             key_input = app.screen.query_one("#setup-provider-api-key", Input)
             key_input.focus()
