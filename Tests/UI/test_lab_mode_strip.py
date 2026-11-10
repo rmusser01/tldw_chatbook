@@ -10,7 +10,6 @@ inline workbench was unreachable from the rest of the shell.
 from __future__ import annotations
 
 import time
-from importlib import import_module
 from pathlib import Path
 from typing import Callable
 
@@ -37,42 +36,6 @@ _LAB_SCREENS = (
     ("evals", "EvalsScreen", "tldw_chatbook.UI.Screens.evals_screen", "lab-mode-evals"),
 )
 
-# Subset of _LAB_SCREENS whose compose_content() is still the flat pattern
-# (DestinationHeader/LabModeStrip yielded directly, callable via
-# list(screen.compose_content()) with no running app). "evals" is excluded
-# here (PR3a Task 3): it now wraps its content in
-# with Vertical(id="evals-shell"): ..., a three-pane workbench shell, and
-# entering that context manager requires an active Textual app --
-# test_lab_screen_composes_mode_strip_under_destination_header below would
-# raise NoActiveAppError for it. See
-# test_evals_composes_mode_strip_under_destination_header_via_real_app for
-# the equivalent coverage through a real running app.
-#
-# "llm" is excluded for the same reason as of the Lab-frame PR2 adoption
-# (Task 6): LLMScreen now extends LabScreen, whose compose_content() only
-# enters `with Horizontal(id="lab-status-row"): ...` when lab_status_chips()
-# is non-empty -- and Models' status chip (running-server count) always is.
-# Entering that context manager needs an active Textual app for the same
-# reason evals' does. See
-# test_llm_composes_mode_strip_under_destination_header_via_real_app.
-#
-# The other three async tests below (_StripHarness-based, or exercising the
-# real shell) still parametrize/exercise all of _LAB_SCREENS including evals
-# and llm -- they never call compose_content() directly.
-#
-# "stts" joins them with the Speech adoption: STTSScreen now extends
-# LabScreen too, so its compose_content() is the frame's -- which always
-# enters `with Horizontal(id="lab-header-row"): ...`, and Speech's own
-# capability chip is composed inside it. Same NoActiveAppError, same
-# remedy. That leaves this subset EMPTY, which is the honest outcome: all
-# three Lab modes are on the frame now, and no Lab screen composes flat any
-# more. Kept rather than deleted so the next flat-composing mode (if one is
-# ever added) lands here instead of silently skipping the check.
-_LAB_SCREENS_FLAT_COMPOSE = tuple(
-    entry for entry in _LAB_SCREENS if entry[0] not in ("evals", "llm", "stts")
-)
-
-
 class _StripHarness(ConsolidatedCSSApp):
     """Bare harness mounting only the strip; records navigation requests."""
 
@@ -89,32 +52,28 @@ class _StripHarness(ConsolidatedCSSApp):
         self.navigated.append(message.screen_name)
 
 
-@pytest.mark.parametrize(
-    ("route", "class_name", "module", "active_chip"), _LAB_SCREENS_FLAT_COMPOSE
-)
-def test_lab_screen_composes_mode_strip_under_destination_header(
-    route, class_name, module, active_chip
-):
-    app = _build_test_app()
-    screen = getattr(import_module(module), class_name)(app)
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_lab_screen_composes_mode_strip_under_destination_header():
+    """Speech's shared Lab frame mounts the header before its mode strip."""
+    from Tests.UI.test_stts_capability_state import _SpeechHarness
 
-    widgets = list(screen.compose_content())
-
-    assert isinstance(widgets[0], DestinationHeader), route
-    strip = widgets[1]
-    assert isinstance(strip, LabModeStrip), route
-    assert strip.id == "lab-mode-strip"
-    assert strip.active_route == route
+    app = _SpeechHarness(_build_test_app())
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause(0.1)
+        screen = app.screen
+        header = screen.query_one("#lab-destination-header", DestinationHeader)
+        strip = screen.query_one("#lab-mode-strip", LabModeStrip)
+        assert strip.active_route == "stts"
+        assert strip.query_one("#lab-mode-speech", Button).has_class("is-active")
+        children = list(screen.walk_children())
+        assert children.index(header) < children.index(strip)
 
 
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_evals_composes_mode_strip_under_destination_header_via_real_app():
-    """Equivalent of test_lab_screen_composes_mode_strip_under_destination_header
-    for Evals, whose compose_content() now wraps content in
-    with Vertical(id="evals-shell"): ... (see _LAB_SCREENS_FLAT_COMPOSE's
-    comment) and so cannot be driven via a bare list(compose_content())
-    call outside a running app."""
+    """Evals mounts its DestinationHeader before the real mode strip."""
     from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
 
     class _EvalsHarness(ConsolidatedCSSApp):
@@ -146,11 +105,7 @@ async def test_evals_composes_mode_strip_under_destination_header_via_real_app()
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_llm_composes_mode_strip_under_destination_header_via_real_app():
-    """Equivalent of test_lab_screen_composes_mode_strip_under_destination_header
-    for Models (llm), whose compose_content() is now LabScreen's -- see
-    _LAB_SCREENS_FLAT_COMPOSE's comment -- and so cannot be driven via a bare
-    list(compose_content()) call outside a running app once a status row is
-    present."""
+    """Models mounts its DestinationHeader before the real mode strip."""
     from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
 
     class _LLMHarness(ConsolidatedCSSApp):
