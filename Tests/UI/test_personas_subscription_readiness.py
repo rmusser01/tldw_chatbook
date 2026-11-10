@@ -222,13 +222,21 @@ async def test_handoff_readiness_refreshes_expiry_and_stale_snapshot_without_edi
         assert credential_io.cache.revision == completed_revision
 
         # An idle mounted screen starts and observes the next bounded refresh.
+        # TASK-38948 (owner ruling 2026-11-10): the lapsed snapshot is re-read
+        # while the handoff keeps its last state; it never flickers back to
+        # "Checking Claude" for a credential that was already read.
         credential_io.release.clear()
         credential_io.entered.clear()
         credential_io.expires_at_ms = 2000000
         credential_io.monotonic = subscription._KEYCHAIN_TTL_S + 1
-        await _wait_for_text(screen, "Checking Claude")
-        assert credential_io.entered.is_set()
-        assert len(credential_io.readers) == 2
+        async with asyncio.timeout(3):
+            while len(credential_io.readers) < 2:
+                await asyncio.sleep(0.01)
+        await asyncio.sleep(0.3)  # More than one 0.25 s readiness poll.
+        text = _readiness_text(screen)
+        assert "credential is expired" in text and "Checking Claude" not in text, text
+        assert screen.query_one("#personas-start-chat", Button).disabled
+        assert len(credential_io.readers) == 2 and not credential_io.release.is_set()
         credential_io.release.set()
         await _wait_for_text(screen, "Ready to chat")
         assert not screen.query_one("#personas-start-chat", Button).disabled

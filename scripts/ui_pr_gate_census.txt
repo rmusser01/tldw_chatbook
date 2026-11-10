@@ -2911,3 +2911,11 @@ Tests/UI/test_plugin_review.py::test_unlock_mismatch_shows_restore_copy_not_pass
 # superseded discovery never publishes over a newer one.
 Tests/UI/test_console_skill_controller.py::test_a_superseded_refresh_never_publishes_over_a_newer_one
 Tests/UI/test_console_skill_context_worker.py::test_mounted_discovery_builds_and_reads_off_the_loop_under_the_eager_factory
+# TASK-38948 review r13n-rev1 (2026-11-10): the four subscription pins that a
+# stale snapshot keeps its last state while re-read (no "Checking" flicker),
+# and the eager-factory discovery closing while its trust build is held.
+Tests/UI/test_console_subscription_readiness.py::test_modal_refreshes_expiry_and_renews_stale_snapshot_without_edits
+Tests/UI/test_console_subscription_readiness.py::test_console_send_refreshes_expiry_and_renews_stale_snapshot_without_edits
+Tests/UI/test_settings_subscription_readiness.py::test_settings_mount_and_overview_refresh_without_another_edit
+Tests/UI/test_settings_subscription_readiness.py::test_settings_provider_check_refreshes_and_preserves_unsaved_fields
+Tests/UI/test_console_skill_context_worker.py::test_eager_mount_discovery_closing_during_held_trust_build_publishes_nothing

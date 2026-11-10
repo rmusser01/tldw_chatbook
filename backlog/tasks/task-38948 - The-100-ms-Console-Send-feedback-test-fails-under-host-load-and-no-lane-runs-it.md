@@ -185,6 +185,24 @@ Also changed: the held provider read waited only 0.5 s for the paints. At load 1
 
 **AC#1 is still not met.** Every run in this round was at load 23-46 on 18 CPUs.
 
+**Review r13n-rev1 fixes (2026-11-10).**
+- **I1: one more test pinned the flicker.** `Tests/UI/test_personas_subscription_readiness.py::test_handoff_readiness_refreshes_expiry_and_stale_snapshot_without_edits` waited for "Checking Claude" after a TTL lapse.
+  - Locally it was hidden: the whole file fails under the plain command with RecoveryRequired, on base and head alike (the known local trap).
+  - Re-pinned the same way as the other four: wait for the second reader, hold it past a 0.25 s poll tick, assert "credential is expired" stays with no "Checking Claude" and Start chat still disabled, then release and wait for "Ready to chat".
+  - Verified under a temporary `@private_profile_test` marker, removed before the commit: green 3 of 3 at load 37-50. Red with base `anthropic_subscription.py`: "Chat now blocked: … Checking Claude subscription credential …".
+  - Not added to the census. Under the plain command it still hits RecoveryRequired here, so I cannot check it under its lane's profile.
+- **M2: the eager trust-setup lifecycle now has a test.** New `Tests/UI/test_console_skill_context_worker.py::test_eager_mount_discovery_closing_during_held_trust_build_publishes_nothing[app_closing|runtime_dispose]`.
+  - A real `TldwCli` runs under the eager factory, and the test holds the mount discovery's off-loop trust build. It then closes the app (`on_shutdown_request`) or disposes the Console runtime.
+  - It asserts that the close waits for the held build, the runtime ends disposed, no skill is read, and neither the trust service nor any candidates are published.
+  - Green 3 of 3 runs (both cases) at load 50-54.
+  - Negative control, a temporary edit of `ensure_local_skill_trust_service` (no source refusal, no owner check after the build): `[runtime_dispose]` fails with "closed owner published trust". `[app_closing]` still passes, because shutdown refuses the build elsewhere.
+- **M3: lanes for fix 1's tests.**
+  - The UI census tail gains 5 nodes: the four subscription stale-snapshot pins and the new M2 node. The floor is now 1920. Serially, all of round 13's census nodes take about 2.6 min together at load about 55, the largest 27 s.
+  - `Tests/Chat/test_subscription_background_readiness.py` joins the recovered-suites job in `.github/workflows/derived-artifacts.yml`, in its sandboxed group. Its pin is in `Tests/CI/test_ci_queue_pressure_contract.py::RECOVERED_SUITES_TARGETS`.
+  - That file alone, serial with `--storage-lease-guard`: 11 passed in 5.7 s. The job's whole invocation run locally: 744 passed, 1 skipped (16 min serial at load about 55). Tests/CI: 1240 passed, 1 skipped.
+- **Covering run, 6 files at `-n 4`:** 42 passed, 8 failed. The 8 are the Personas file's RecoveryRequired failures, the same 8 as on base. Preflight passes.
+- **Files:** `Tests/UI/test_personas_subscription_readiness.py`, `Tests/UI/test_console_skill_context_worker.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`.
+
 **Off the PR gate (2026-11-10, owner decision; AC#4 unticked).** On CI runners the test failed intermittently in the required UI lane after round 12 merged: PR run 42841511400 (branch fu/r12-lanes), job 129933421436 shard 16 `[send-button]` "the event loop spent 112 ms of CPU against 100 ms (123 ms wall)", job 129933421583 shard 15 `[enter]` 119 ms / 128 ms. Owner decision 2026-11-10 (AskUserQuestion): "Off the gate, reorder next (Recommended)", option text: "Move it out of the required PR lane now (it keeps running in the dev-push job), and implement the paint reorder: 'Sending…' paints one frame before the user row, which measured Sending CPU median 56→30 ms. Re-gate it once it passes on CI." Both census entries were removed in the hotfix branch fu/hotfix-restyle (floor 1913 → 1911); the subagent's attempt was refused by the permission system as a CI bypass, and the owner then authorized the coordinator to make this one edit. The paint reorder and the dev-push watch follow on the round-13 send branch; re-gating waits for CI evidence.
 
 **Mounted-ready qualification on the merged PR #3480 tree (November 12, 2026 UTC).**
