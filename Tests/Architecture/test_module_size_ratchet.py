@@ -258,7 +258,11 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-08, TASK-39119 review (owner size waiver): +3, an anchorless wake or goal iteration saves its reply row first.
     # 2026-11-09, round-12 restack onto dev 3a6498ae14 (owner size waiver):
     # dev's 29,167 plus TASK-39138's +4 and TASK-39119's +5.
-    "tldw_chatbook/Chat/console_chat_controller.py": 28734,
+    # 2026-11-10, TASK-39159 (owner size waiver): 29176 -> 29183 (+7, exact),
+    # a wake or goal iteration whose chat moved during its reply save is refused.
+    # 2026-11-12, restack onto dev e0186fa10a (owner size waiver): dev's
+    # 28,734 plus TASK-39159's +8, measured.
+    "tldw_chatbook/Chat/console_chat_controller.py": 28742,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
