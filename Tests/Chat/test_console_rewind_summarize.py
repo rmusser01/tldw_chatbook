@@ -67,6 +67,12 @@ from tldw_chatbook.Chat.thinking_blocks import (
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.console_provider_doubles import provider_resolution
 
+# TASK-39154: the controller's summary and dispatch paths read provider and
+# context settings through the guarded config loader, which the per-test
+# TLDW_CONFIG_PATH redirect refuses (RecoveryRequired
+# raw_source_selection_changed).
+pytestmark = pytest.mark.bootstrap_profile
+
 
 class SummaryGateway:
     """Fake gateway that returns a fixed summary and captures the sent payload."""
