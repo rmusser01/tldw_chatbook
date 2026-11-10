@@ -7,7 +7,6 @@ labels:
 - architecture
 - tests
 - follow-up
-dependencies: []
 priority: low
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/3490#issuecomment-6777451323
@@ -15,6 +14,7 @@ references:
 - Tests/Architecture/app_lookup_census.tsv
 - Tests/Architecture/app_private_attrs.txt
 - tldw_chatbook/UI/Screens/settings_screen.py
+dependencies: []
 updated_date: 2026-11-10 20:40
 ---
 
