@@ -12,6 +12,8 @@ identical, which is what the server matches on).
 import json
 from unittest.mock import Mock, patch
 
+import pytest
+
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 from tldw_chatbook.LLM_Calls.LLM_API_Calls import _without_cache_control
 
@@ -52,6 +54,8 @@ TURN_2 = TURN_1 + [
 ]
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_system_bytes_identical_across_consecutive_builds(mock_post):
     body_1 = _sent_body(mock_post, TURN_1)
@@ -61,6 +65,8 @@ def test_system_bytes_identical_across_consecutive_builds(mock_post):
     )
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_history_prefix_content_identical_across_builds(mock_post):
     """Build 2's earlier messages == build 1's messages, modulo the moved
@@ -72,6 +78,8 @@ def test_history_prefix_content_identical_across_builds(mock_post):
     assert prefix_2 == stripped_1
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_marker_sits_only_on_newest_message_each_build(mock_post):
     body_2 = _sent_body(mock_post, TURN_2)
@@ -82,6 +90,8 @@ def test_marker_sits_only_on_newest_message_each_build(mock_post):
     }
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_no_volatile_keys_reach_the_wire(mock_post):
     """No timestamps/uuids/internal annotations in the request body."""

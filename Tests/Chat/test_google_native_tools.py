@@ -91,6 +91,8 @@ def _todo_tool(name):
     }
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_openai_tools_wrap_as_function_declarations(mock_post):
     sent = _call_google(
@@ -111,6 +113,8 @@ def test_openai_tools_wrap_as_function_declarations(mock_post):
     ]
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_gemini_shaped_tools_pass_through_untouched(mock_post):
     native = [{"functionDeclarations": [{"name": "t", "parameters": {}}]}]
@@ -122,6 +126,8 @@ def test_gemini_shaped_tools_pass_through_untouched(mock_post):
     assert sent["tools"] == native
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_blank_name_openai_tool_dropped_locally(mock_post):
     """Gemini rejects empty tool names — an OpenAI tool entry with a blank
@@ -184,6 +190,8 @@ def test_openai_tool_without_parameters_uses_full_json_object_schema():
     assert "parameters" not in declaration
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_openai_tool_history_converts_to_gemini_parts(mock_post):
     messages = [
@@ -231,6 +239,8 @@ def test_openai_tool_history_converts_to_gemini_parts(mock_post):
     assert len(contents) == 3
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_project_context_follows_gemini_function_responses_as_separate_turn(mock_post):
     messages = [
@@ -261,6 +271,8 @@ def test_project_context_follows_gemini_function_responses_as_separate_turn(mock
     }
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_nested_context_follows_all_parallel_gemini_results_in_distinct_turn(mock_post):
     messages = [
@@ -298,6 +310,8 @@ def test_nested_context_follows_all_parallel_gemini_results_in_distinct_turn(moc
     assert "NESTED_CONTEXT" not in str(contents[-2])
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_tool_result_with_json_object_content_passes_object(mock_post):
     """Dict-parseable tool-result content is used directly as the
@@ -341,6 +355,8 @@ def test_tool_result_with_json_object_content_passes_object(mock_post):
     ]
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_assistant_text_plus_tool_calls_keeps_text_part_first(mock_post):
     messages = [
@@ -370,6 +386,8 @@ def test_assistant_text_plus_tool_calls_keeps_text_part_first(mock_post):
     ]
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_all_junk_tool_calls_fall_back_to_plain_content(mock_post):
     """When every tool_calls entry is junk, the assistant turn must be sent
@@ -390,6 +408,8 @@ def test_all_junk_tool_calls_fall_back_to_plain_content(mock_post):
     assert contents[1]["parts"] == [{"text": "hello"}]
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_unknown_tool_call_id_uses_positional_fallback(mock_post):
     """Gemini has no call ids of its own; when the OpenAI tool_call_id isn't
@@ -422,6 +442,8 @@ def test_unknown_tool_call_id_uses_positional_fallback(mock_post):
     ]
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_plain_chat_payload_unchanged(mock_post):
     messages = [
@@ -437,6 +459,8 @@ def test_plain_chat_payload_unchanged(mock_post):
     ]
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_list_content_with_tool_calls_keeps_text_parts(mock_post):
     """T1 review Important: list-form (multimodal) assistant content
@@ -514,6 +538,8 @@ def _call_google_get_result(mock_post, response_json, messages, **extra):
     )
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_non_streaming_function_call_normalizes_to_tool_calls(mock_post):
     """PIN of EXISTING behavior (scout: lines ~1868-1884): functionCall
@@ -574,6 +600,8 @@ def _decode_sse_chunks(sse_lines):
     return chunks
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_streaming_function_call_chunk_emits_whole_openai_fragment(mock_post):
     # SSE lines: a text chunk, then a chunk whose parts carry a complete
@@ -642,6 +670,8 @@ def test_streaming_function_call_chunk_emits_whole_openai_fragment(mock_post):
     assert "stop" in finishes
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_streaming_two_function_calls_get_distinct_indexes(mock_post):
     # one chunk carrying two functionCall parts -> fragments with index 0
@@ -697,6 +727,8 @@ def test_streaming_two_function_calls_get_distinct_indexes(mock_post):
     )
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_streaming_fragments_reassemble_via_gateway_accumulator(mock_post):
     """Cross-layer contract pin: feed this handler's yielded SSE strings
@@ -754,6 +786,8 @@ def test_streaming_fragments_reassemble_via_gateway_accumulator(mock_post):
     assert len(accumulator.calls()) == 1
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_streaming_malformed_function_call_is_skipped_not_fatal(mock_post):
     """T2 review Important: a non-dict functionCall part must be skipped
@@ -799,6 +833,8 @@ def test_streaming_malformed_function_call_is_skipped_not_fatal(mock_post):
     assert not any("error" in c for c in parsed)
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_streaming_index_continues_across_chunks_and_blank_names_skip(mock_post):
     """T2 review Minors: the tool position runs across the WHOLE stream
@@ -868,6 +904,8 @@ def test_streaming_index_continues_across_chunks_and_blank_names_skip(mock_post)
     ]
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_thought_signature_round_trips_response_to_request(mock_post):
     """task-266 live gate: Gemini 3 models 400 unless the response part's
@@ -913,6 +951,8 @@ def test_thought_signature_round_trips_response_to_request(mock_post):
     assert model_part["functionCall"]["name"] == "calculator"
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_streaming_fragment_carries_thought_signature(mock_post):
     """Streaming parity: a streamed functionCall part's thoughtSignature
@@ -960,6 +1000,8 @@ def test_streaming_fragment_carries_thought_signature(mock_post):
     assert fragments[0]["google_thought_signature"] == "sig-str"
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_non_streaming_malformed_function_call_part_is_skipped(mock_post):
     """PR #662 review (Gemini): a non-dict functionCall in a NON-streaming
@@ -994,6 +1036,8 @@ def test_non_streaming_malformed_function_call_part_is_skipped(mock_post):
     assert entries[0]["function"]["name"] == "calculator"
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_unpairable_tool_result_is_skipped_not_empty_named(mock_post):
     """PR #662 review (Qodo): a role=tool result whose id misses the map AND
@@ -1045,6 +1089,8 @@ def _redirect_response(status_code=302, location="https://evil.example/collect")
     return mock_response
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_post_always_passes_allow_redirects_false(mock_post):
     """Pin the transport-level guard itself: `requests` cannot silently
@@ -1055,6 +1101,8 @@ def test_post_always_passes_allow_redirects_false(mock_post):
     assert mock_post.call_args[1]["headers"]["x-goog-api-key"] == "test-key"
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @pytest.mark.parametrize("status_code", [301, 302, 303, 307, 308])
 @patch("requests.Session.post")
 def test_non_streaming_redirect_refused_not_followed(mock_post, status_code):
@@ -1079,6 +1127,8 @@ def test_non_streaming_redirect_refused_not_followed(mock_post, status_code):
     mock_post.return_value.close.assert_called_once()
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_streaming_redirect_refused_not_followed(mock_post):
     """The streaming call shape (`stream=True`) must get the same refusal
@@ -1099,6 +1149,8 @@ def test_streaming_redirect_refused_not_followed(mock_post):
     mock_post.return_value.close.assert_called_once()
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_normal_200_response_unaffected_by_redirect_guard(mock_post):
     """Normal happy path: allow_redirects=False changes nothing about a
@@ -1109,6 +1161,8 @@ def test_normal_200_response_unaffected_by_redirect_guard(mock_post):
     mock_post.return_value.raise_for_status.assert_called_once()
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_google_api_key_comes_from_the_api_settings_google_table(mock_post):
     """PR-T2 review round 3, finding I4: with no explicit `api_key`
@@ -1182,6 +1236,8 @@ def test_shipped_placeholder_google_key_raises_instead_of_reaching_the_wire(mock
     mock_post.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_whitespace_padded_google_key_is_stripped_before_the_wire(mock_post):
     """N1's other half, matching the credential bridge's own contract
@@ -1209,6 +1265,8 @@ def test_whitespace_padded_google_key_is_stripped_before_the_wire(mock_post):
     assert mock_post.call_args[1]["headers"]["x-goog-api-key"] == "google-padded-key"
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_stream_forwards_token_usage_from_usage_metadata(mock_post):
     """task-32805.2: Gemini reports usageMetadata on the stream; the translator

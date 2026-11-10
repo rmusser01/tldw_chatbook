@@ -22,6 +22,19 @@ from Tests.console_provider_doubles import (
 )
 
 
+@pytest.fixture
+def owned_mocked_provider_pool(monkeypatch):
+    """Retire the pooled sessions created by one synchronous mocked POST test."""
+    from tldw_chatbook.Utils import egress
+
+    with monkeypatch.context() as patches:
+        patches.setattr(egress, "_SESSION_POOL", {})
+        try:
+            yield
+        finally:
+            egress.close_pooled_default_sessions()
+
+
 @pytest_asyncio.fixture
 async def owned_console_databases():
     """Retire explicitly registered test owners after supported shutdown.
