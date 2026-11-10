@@ -49,6 +49,10 @@ from tldw_chatbook.Widgets.Console.console_rewind_modal import (
 from Tests.UI.app_factory import attach_chachanotes_db
 
 
+# Every Rewind case constructs the real App with its guarded config profile.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 CONSOLE_RUN_ALREADY_RUNNING_COPY = "A run is already running in this tab."
 KIND_SUMMARIZE_UP_TO = "summarize-up-to"
 KIND_SUMMARIZE_FROM = "summarize-from"
@@ -1236,7 +1240,6 @@ async def test_console_rewind_memory_lookup_error_warns_conservatively_without_l
 
 
 @pytest.mark.asyncio
-@pytest.mark.bootstrap_profile
 async def test_keyboard_rewind_cancel_consumes_command_and_preserves_late_draft():
     app = _build_test_app()
     attach_chachanotes_db(app)
