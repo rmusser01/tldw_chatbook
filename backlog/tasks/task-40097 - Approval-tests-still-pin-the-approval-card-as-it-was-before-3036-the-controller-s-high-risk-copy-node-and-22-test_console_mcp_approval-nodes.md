@@ -4,7 +4,7 @@ title: "Approval tests still pin the approval card as it was before #3036: the c
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-10 20:35'
+updated_date: '2026-11-10 21:57'
 created_date: 2026-11-09 23:55
 labels:
 - follow-up
@@ -108,4 +108,12 @@ Two more failed in one run each: `test_stale_generation_fast_button_press_is_a_n
 - **Runs.** `git grep` finds no reference outside history. The approval files (`test_console_mcp_approval.py`, `test_chat_approval_card.py`, `Tests/UI/test_approval*.py`, `test_console_approval*.py`) at `-n 4` gave 363 passed, 2 failed:
   - `test_the_longest_decision_label_paints_on_one_line` passed 2 of 2 on rerun.
   - `test_first_open_paints_an_answerable_card_nav_away_path` fails "screens are never cached" with the pre-deletion card too, so this change did not cause it.
+
+**Review r13c-rev2.**
+- **M1.** `ChatApprovalCard._batch_rows` was write-only after the needs-decision deletion. It is removed with its three assignments; the index-parallel comments now anchor on `_batch_selects`. The local `rows` list used for mounting stays.
+- **M2.** `test_bulk_approve_and_deny_all_are_row_aware_and_never_raise`'s docstring now states what it asserts: nothing commits, no row falls back, every row keeps its default.
+- **Census flake.** `Tests/UI/test_approval_interaction.py::test_bulk_once_cannot_fall_back_to_temporary_scope` read the bulk button right after `set_batch`, before a41da77591's readiness enables decisions.
+  - It now waits, bounded at 5 s, with `_wait_for_actionable_card`.
+  - Before: 3 of 5 runs red (`assert (not True)`, load 25-29). After: 5 of 5 green (load 24-27).
+- **Covering run** (approval files plus `test_schedules_ux_fixes.py`, `-n 4`): 374 passed and 1 failed. The failure is `test_first_open_paints_an_answerable_card_nav_away_path`, red at base ae9f9e8d21 too.
 <!-- SECTION:NOTES:END -->

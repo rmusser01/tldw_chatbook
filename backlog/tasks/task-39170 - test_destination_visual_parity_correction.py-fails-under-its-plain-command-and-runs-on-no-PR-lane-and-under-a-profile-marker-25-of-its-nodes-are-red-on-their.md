@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-08 06:54
-updated_date: '2026-11-10 20:35'
+updated_date: '2026-11-10 21:57'
 labels:
 - follow-up
 - tests
@@ -108,3 +108,11 @@ The covering run for the Settings change (137 census entries that touch the Scop
   - `test_runs_on_dropdown_confirm_dialog_lists_warnings` is intermittent on both.
   - `test_at_the_floor_the_queue_is_full_width_and_the_rows_paint` paints only chrome when it fails. In interleaved runs: head 2/8 vs TaskDetail-only 3/8, then head 0/12 vs base 2/12 (load 39-53), so it is a pre-existing load flake.
 - **M5.** The User Guide sentence now says the Boundary note (where this page's responsibility ends) comes "ahead of the ownership rows". It no longer promises a view without scrolling.
+
+**Review r13c-rev2.**
+- **I1.** The empty-state test now also selects a task on both panes. It asserts both empty states hide, and that the TaskDetail metadata, the inspector metadata and the conflict card are displayed with a non-empty region.
+  - Red first, in a scratch fu-* copy of the tree with `metadata.display = True` / `conflict_card.display = True` removed from `TaskInspector.set_task`: it fails on `#scheduling-inspector-metadata`.
+  - Green here.
+- **M3.** `_visible_static_text` now counts a Static only if every ancestor is displayed. The empty-Schedules test expects the inspector's empty-state copy and asserts "No conflict" is not visible.
+  - Red with the old helper: `assert 'No conflict' not in ...`.
+  - The whole file: 116 passed at `-n 4`.
