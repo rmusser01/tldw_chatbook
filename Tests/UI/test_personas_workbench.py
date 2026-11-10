@@ -24,7 +24,11 @@ from textual.screen import Screen
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Checkbox, Input, ListView, Select, Static, TextArea
 
-from Tests.UI.background_signals import wait_for_background_signal, wait_for_signal
+from Tests.UI.background_signals import (
+    await_background_task,
+    wait_for_background_signal,
+    wait_for_signal,
+)
 
 # Roleplay frame B1: the delegating harness apps moved to
 # Tests/UI/roleplay_frame_harness.py (spec 5.7.1); these names stay importable
@@ -3900,12 +3904,16 @@ async def test_app_preflight_keeps_roleplay_current_until_caller_cancels() -> No
             host, request, cancellation, phases.append
         )
     )
-    await started.wait()
-    assert host.pushes == 0
-    cancellation.set()
-
-    result = await task
-    release.set()
+    try:
+        await wait_for_background_signal(started, task, what="Roleplay activation preflight")
+        assert host.pushes == 0
+        cancellation.set()
+        result = await await_background_task(task, what="cancelled Roleplay preflight")
+    finally:
+        cancellation.set()
+        release.set()
+        if not task.done():
+            await await_background_task(task, what="Roleplay preflight cleanup")
     assert result.kind is ConsoleActivationResultKind.CANCELLED_PRECOMMIT
     assert host.pushes == 0
     assert phases == []
@@ -4537,14 +4545,23 @@ async def test_app_owner_cancellation_after_commit_waits_for_atomic_settlement(
             host, request, asyncio.Event(), lambda _phase: None
         )
     )
-    await stage_started.wait()
-
-    activation.cancel()
-    await asyncio.sleep(0)
-    assert not activation.done()
-    stage_release.set()
-    with pytest.raises(asyncio.CancelledError):
-        await activation
+    try:
+        await wait_for_background_signal(
+            stage_started, activation, what=f"Roleplay activation {held_stage} stage"
+        )
+        activation.cancel()
+        await asyncio.sleep(0)
+        assert not activation.done()
+        stage_release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await await_background_task(activation, what="cancelled Roleplay activation")
+    finally:
+        stage_release.set()
+        if not activation.done():
+            try:
+                await await_background_task(activation, what="Roleplay activation cleanup")
+            except asyncio.CancelledError:
+                pass
 
     assert host.stack == [roleplay]
     assert store.active_session_id == prior.id
@@ -4626,16 +4643,23 @@ async def test_app_serializes_two_targets_before_touching_screen_stack() -> None
             host, first_request, asyncio.Event(), lambda _phase: None
         )
     )
-    await first_started.wait()
-    second = asyncio.create_task(
-        TldwCli.activate_character_conversation_from_roleplay(
-            host, second_request, asyncio.Event(), lambda _phase: None
+    second = None
+    try:
+        await wait_for_background_signal(first_started, first, what="first Roleplay target")
+        second = asyncio.create_task(
+            TldwCli.activate_character_conversation_from_roleplay(
+                host, second_request, asyncio.Event(), lambda _phase: None
+            )
         )
-    )
-    await asyncio.sleep(0)
-    assert len(host.stack) == 1
-    release_first.set()
-    await asyncio.gather(first, second)
+        await asyncio.sleep(0)
+        assert len(host.stack) == 1
+    finally:
+        release_first.set()
+        try:
+            await await_background_task(first, what="first Roleplay activation")
+        finally:
+            if second is not None:
+                await await_background_task(second, what="second Roleplay activation")
     assert host.max_depth == 1
 
 

@@ -9,6 +9,11 @@ from collections.abc import Awaitable
 import pytest
 from textual.widgets import Button, RadioButton, RadioSet, Static
 
+from Tests.UI.background_signals import (
+    BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+    await_background_task,
+    wait_for_background_signal,
+)
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleLibraryPolicyDisplayState,
@@ -272,13 +277,16 @@ async def test_compare_retry_is_single_flight_while_reload_is_pending() -> None:
         await pilot.pause()
         await pilot.click("#library-agent-allowed")
         first = asyncio.create_task(modal._reload(preserve_candidate=True))
-        await entered.wait()
-
-        await modal._reload(preserve_candidate=True)
-        assert reload_calls == 1
-
-        release.set()
-        await first
+        try:
+            await wait_for_background_signal(
+                entered, first, what="first compare-and-retry reload"
+            )
+            async with asyncio.timeout(BACKGROUND_SIGNAL_TIMEOUT_SECONDS):
+                await modal._reload(preserve_candidate=True)
+            assert reload_calls == 1
+        finally:
+            release.set()
+            await await_background_task(first, what="first compare-and-retry reload")
         assert reload_calls == 1
 
 

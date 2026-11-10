@@ -10,6 +10,7 @@ from textual.widgets import Button, Checkbox, ListItem, ListView, Static
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.background_signals import await_background_task, wait_for_background_signal
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 from tldw_chatbook import Constants as constants
@@ -1251,23 +1252,26 @@ async def test_append_completion_preserves_interaction_during_real_mount(
         append_task = asyncio.create_task(
             pane.append_conversations((("conv-3", "Closed file"),), has_more=False)
         )
-        await mount_settled.wait()
-        assert append_task.done() is False
-        assert loading_tail.highlighted is True
-        assert loading_tail.has_class("-highlight") is True
+        try:
+            await wait_for_background_signal(
+                mount_settled, append_task, what="mounted Personas conversation rows"
+            )
+            assert append_task.done() is False
+            assert loading_tail.highlighted is True
+            assert loading_tail.has_class("-highlight") is True
 
-        if interaction == "cursor":
-            list_view.index = 0
-            expected_highlight = list_view.children[0]
-            expected_focus = list_view
-        else:
-            expected_focus = app.query_one("#personas-inspector-rail-collapse", Button)
-            expected_focus.focus()
-            expected_highlight = loading_tail
-        await pilot.pause()
-
-        release_mount.set()
-        await append_task
+            if interaction == "cursor":
+                list_view.index = 0
+                expected_highlight = list_view.children[0]
+                expected_focus = list_view
+            else:
+                expected_focus = app.query_one("#personas-inspector-rail-collapse", Button)
+                expected_focus.focus()
+                expected_highlight = loading_tail
+            await pilot.pause()
+        finally:
+            release_mount.set()
+            await await_background_task(append_task, what="Personas conversation append")
         await pilot.pause()
 
         new_row = app.query_one("#personas-conversation-row-conv-3", ListItem)

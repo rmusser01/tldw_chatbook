@@ -9,6 +9,11 @@ from types import SimpleNamespace
 import pytest
 from textual.worker_manager import WorkerManager
 
+from Tests.UI.background_signals import (
+    BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+    await_background_task,
+    wait_for_background_signal,
+)
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleLifecycleImpact,
@@ -536,11 +541,21 @@ async def test_quit_worker_cancellation_exact_token_aborts_promotion_fence():
     impact = ConsoleLifecycleImpact(1, 0, 0, 0, 0)
     app = _AppLevelQuitHarness(screen, [impact], [])
     worker = asyncio.create_task(app._confirm_and_quit())
-    await screen.started.wait()
-
-    worker.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await worker
+    try:
+        await wait_for_background_signal(
+            screen.started, worker, what="quit preparation start"
+        )
+        worker.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await await_background_task(worker, what="cancelled quit")
+    finally:
+        if not worker.done():
+            worker.cancel()
+        screen.release.set()
+        await asyncio.wait_for(
+            asyncio.gather(worker, return_exceptions=True),
+            timeout=BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+        )
 
     owner = app.console_runtime.voice_promotion_owner
     assert owner.calls[-1] == ("abort", owner.permit)
@@ -555,11 +570,10 @@ async def test_quit_worker_cancellation_exact_token_aborts_promotion_fence():
         return task
 
     app.run_worker = run_worker
-    screen.release.set()
     TldwCli.action_quit(app)
 
     assert len(admitted) == 1
-    await admitted[0]
+    await await_background_task(admitted[0], what="retried quit")
     assert app.console_runtime.disposed is True
     assert app._quit_in_progress is True
 
