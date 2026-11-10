@@ -15,6 +15,7 @@ from textual.widgets import Button, Collapsible, Input, Select, Static
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.background_signals import (
+    BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
     await_background_task,
     wait_for_background_signal,
     wait_for_signal,
@@ -689,6 +690,7 @@ async def test_generation_honors_studio_auto_play_and_keyboard_recovery(
             assert app.query_one("#audio-play-btn", Button).has_focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_new_result_stops_active_playback_before_replacing_controls(
     tmp_path: Path,
@@ -774,6 +776,7 @@ async def test_new_result_stops_active_playback_before_replacing_controls(
         assert not save_profile.has_class("hidden")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_auto_play_new_result_cancels_prior_start_worker_before_takeover(
     tmp_path: Path,
@@ -791,6 +794,7 @@ async def test_auto_play_new_result_cancels_prior_start_worker_before_takeover(
         def __init__(self) -> None:
             self.state = PlaybackState.IDLE
             self.first_get_state_started = asyncio.Event()
+            self.release_first_get_state = asyncio.Event()
             self.get_state_calls = 0
             self.played: list[Path] = []
 
@@ -798,7 +802,7 @@ async def test_auto_play_new_result_cancels_prior_start_worker_before_takeover(
             self.get_state_calls += 1
             if self.get_state_calls == 1:
                 self.first_get_state_started.set()
-                await asyncio.Event().wait()
+                await self.release_first_get_state.wait()
             return self.state
 
         async def stop(self) -> bool:
@@ -851,18 +855,22 @@ async def test_auto_play_new_result_cancels_prior_start_worker_before_takeover(
         await pilot.pause()
         pane = app.query_one(SpeechPlaygroundPane)
         pane._store_delivered_artifact(old_artifact, announce=False)
-        pane._play_audio()
-        await wait_for_signal(
-            player.first_get_state_started, what="the first playback get_state"
-        )
+        try:
+            pane._play_audio()
+            await wait_for_signal(
+                player.first_get_state_started, what="the first playback get_state"
+            )
 
-        pane._generation_complete(new_artifact)
-        await _wait_until(pilot, lambda: player.played == [new_path])
+            pane._generation_complete(new_artifact)
+            await _wait_until(pilot, lambda: player.played == [new_path])
 
-        assert type(pane.current_audio_artifact) is STTSPlaygroundResultProjection
-        assert pane.current_audio_artifact.operation_id == new_artifact.operation_id
+            assert type(pane.current_audio_artifact) is STTSPlaygroundResultProjection
+            assert pane.current_audio_artifact.operation_id == new_artifact.operation_id
+        finally:
+            player.release_first_get_state.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_profile_navigation_fences_result_waiting_for_playback_stop(
     tmp_path: Path,
@@ -928,27 +936,33 @@ async def test_profile_navigation_fences_result_waiting_for_playback_stop(
         await pilot.pause()
         pane = app.query_one(SpeechPlaygroundPane)
         pane._store_delivered_artifact(old_artifact, announce=False)
-        pane._play_audio()
-        await _wait_until(
-            pilot,
-            lambda: (
-                player.state is PlaybackState.PLAYING and pane._play_worker_task is None
-            ),
-        )
+        try:
+            pane._play_audio()
+            await _wait_until(
+                pilot,
+                lambda: (
+                    player.state is PlaybackState.PLAYING
+                    and pane._play_worker_task is None
+                ),
+            )
 
-        pane._generation_complete(new_artifact)
-        await wait_for_signal(
-            player.replacement_stop_started, what="the replacement playback stop"
+            pane._generation_complete(new_artifact)
+            await wait_for_signal(
+                player.replacement_stop_started, what="the replacement playback stop"
+            )
+            pane.apply_profile_preset(_profile_preset(model_id="new-profile-model"))
+        finally:
+            player.release_replacement_stop.set()
+        await asyncio.wait_for(
+            app.workers.wait_for_complete(), timeout=BACKGROUND_SIGNAL_TIMEOUT_SECONDS
         )
-        pane.apply_profile_preset(_profile_preset(model_id="new-profile-model"))
-        player.release_replacement_stop.set()
-        await app.workers.wait_for_complete()
 
         assert type(pane.current_audio_artifact) is STTSPlaygroundResultProjection
         assert pane.current_audio_artifact.operation_id == old_artifact.operation_id
         assert pane.current_audio_file == old_artifact.path
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_play_is_blocked_while_new_result_waits_for_playback_stop(
     tmp_path: Path,
@@ -1016,19 +1030,20 @@ async def test_play_is_blocked_while_new_result_waits_for_playback_stop(
         await pilot.pause()
         pane = app.query_one(SpeechPlaygroundPane)
         pane._store_delivered_artifact(old_artifact, announce=False)
-        pane._play_audio()
-        await _wait_until(
-            pilot,
-            lambda: (
-                player.state is PlaybackState.PLAYING and pane._play_worker_task is None
-            ),
-        )
-
-        pane._generation_complete(new_artifact)
-        await wait_for_signal(
-            player.replacement_stop_started, what="the replacement playback stop"
-        )
         try:
+            pane._play_audio()
+            await _wait_until(
+                pilot,
+                lambda: (
+                    player.state is PlaybackState.PLAYING
+                    and pane._play_worker_task is None
+                ),
+            )
+
+            pane._generation_complete(new_artifact)
+            await wait_for_signal(
+                player.replacement_stop_started, what="the replacement playback stop"
+            )
             play = app.query_one("#audio-play-btn", Button)
             stop = app.query_one("#stop-audio-btn", Button)
             assert play.disabled is True
@@ -1039,7 +1054,9 @@ async def test_play_is_blocked_while_new_result_waits_for_playback_stop(
             assert player.get_state_calls == get_state_calls
         finally:
             player.release_replacement_stop.set()
-        await app.workers.wait_for_complete()
+        await asyncio.wait_for(
+            app.workers.wait_for_complete(), timeout=BACKGROUND_SIGNAL_TIMEOUT_SECONDS
+        )
 
         assert type(pane.current_audio_artifact) is STTSPlaygroundResultProjection
         assert pane.current_audio_artifact.operation_id == new_artifact.operation_id
@@ -1395,6 +1412,7 @@ async def test_playground_status_keeps_external_provider_and_local_deps_independ
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cancelled_old_catalog_worker_cannot_clear_new_checking_state(
     faked_service: FakeTTSService,
@@ -1410,6 +1428,7 @@ async def test_cancelled_old_catalog_worker_cannot_clear_new_checking_state(
         pane = app.query_one(SpeechPlaygroundPane)
         first_started = asyncio.Event()
         first_cancelled = asyncio.Event()
+        release_first = asyncio.Event()
         second_started = asyncio.Event()
         release_second = asyncio.Event()
         call_count = 0
@@ -1425,7 +1444,7 @@ async def test_cancelled_old_catalog_worker_cannot_clear_new_checking_state(
             if call_count == 1:
                 first_started.set()
                 try:
-                    await asyncio.Event().wait()
+                    await release_first.wait()
                 except asyncio.CancelledError:
                     first_cancelled.set()
                     raise
@@ -1435,17 +1454,22 @@ async def test_cancelled_old_catalog_worker_cannot_clear_new_checking_state(
 
         monkeypatch.setattr(faked_service, "get_catalog", get_catalog)
 
-        pane._load_provider_catalog("audio_cpp", refresh=True)
-        await wait_for_signal(first_started, what="the first catalog worker starting")
-        pane._load_provider_catalog("audio_cpp", refresh=True)
-        await wait_for_signal(
-            first_cancelled, what="the first catalog worker's cancellation"
-        )
-        await wait_for_signal(second_started, what="the second catalog worker starting")
+        try:
+            pane._load_provider_catalog("audio_cpp", refresh=True)
+            await wait_for_signal(first_started, what="the first catalog worker starting")
+            pane._load_provider_catalog("audio_cpp", refresh=True)
+            await wait_for_signal(
+                first_cancelled, what="the first catalog worker's cancellation"
+            )
+            await wait_for_signal(
+                second_started, what="the second catalog worker starting"
+            )
 
-        assert "audio_cpp" in pane._catalog_checking_providers
+            assert "audio_cpp" in pane._catalog_checking_providers
+        finally:
+            release_first.set()
+            release_second.set()
 
-        release_second.set()
         await _wait_until(
             pilot,
             lambda: "audio_cpp" not in pane._catalog_checking_providers,
