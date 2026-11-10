@@ -459,7 +459,8 @@ def test_summarize_step_does_not_escape_markup_brackets():
     assert "\\[" not in text
 
 
-def test_spawn_subagent_summary_does_not_escape_markup_brackets(tmp_path):
+@pytest.mark.bootstrap_profile
+def test_spawn_subagent_summary_does_not_escape_markup_brackets(tmp_path, request):
     import json
 
     from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
@@ -488,6 +489,7 @@ def test_spawn_subagent_summary_does_not_escape_markup_brackets(tmp_path):
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    request.addfinalizer(db.close)
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
@@ -1492,8 +1494,9 @@ async def test_full_log_slow_probe_is_off_thread_and_rejects_stale_target(monkey
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_negative_availability_retries_after_real_first_record_append(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, request
 ):
     from tldw_chatbook.Agents import run_log
     from tldw_chatbook.UI.Console_Modules import agent as agent_module
@@ -1502,6 +1505,7 @@ async def test_negative_availability_retries_after_real_first_record_append(
     clock = [100.0]
     monkeypatch.setattr(agent_module, "_run_log_clock", lambda: clock[0], raising=False)
     db = AgentRunsDB(tmp_path / "append.db", client_id="t")
+    request.addfinalizer(db.close)
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     host = ConsoleHarness(_build_test_app())
     async with host.run_test(size=(180, 48)) as pilot:
