@@ -850,7 +850,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-09, round-12 restack onto dev 3a6498ae14 (owner size waiver):
     # dev's 8,983 plus TASK-38987's +20 (the write's scope, the lock wait's
     # release and the interval constant, with their comments).
-    "tldw_chatbook/config.py": 9003,
+    # 2026-11-10, restack onto dev e78b62f0e7 (owner size waiver): dev's 8,842
+    # plus TASK-38987's +20; exact measurement.
+    "tldw_chatbook/config.py": 8862,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
