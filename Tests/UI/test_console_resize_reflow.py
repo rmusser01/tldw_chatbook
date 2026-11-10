@@ -57,6 +57,7 @@ from tldw_chatbook.UI.Console_Modules.right_rail import ConsoleInspectorRail
 from tldw_chatbook.Widgets.Console.console_bounded_section import ConsoleBoundedSection
 from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
 from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
+from tldw_chatbook.Widgets.Console.portrait_radio import PortraitRadio
 
 _PANES = (
     "#console-left-rail",
@@ -1259,6 +1260,7 @@ async def test_model_summary_sync_invalidates_mounted_context_allocation(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_height_resize_requests_one_coalesced_context_reconcile(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1305,6 +1307,14 @@ async def test_height_resize_requests_one_coalesced_context_reconcile(
             helper_spy,
         )
         monkeypatch.setattr(rail, "_run_allocation_reconcile", reconcile_spy)
+        compact_flips: list[bool] = []
+        original_set_compact = PortraitRadio.set_compact
+
+        def set_compact_spy(radio: PortraitRadio, compact: bool) -> None:
+            compact_flips.append(compact)
+            original_set_compact(radio, compact)
+
+        monkeypatch.setattr(PortraitRadio, "set_compact", set_compact_spy)
         await pilot.resize_terminal(160, 30)
         await _wait_for_context_condition(
             pilot,
@@ -1318,7 +1328,12 @@ async def test_height_resize_requests_one_coalesced_context_reconcile(
         cue = rail.query_one("#console-left-rail-outer-hint", Static)
         assert console.query_one("#console-shell").has_class("-console-compact")
         assert helper_calls >= 1
-        assert reconcile_runs == 1
+        # Every request the resize makes coalesces into one pass. Since
+        # b333cebdfe that pass flips the Character radio's voice meter to
+        # compact (it no longer fits in 30 rows), which changes the body's
+        # height, so the radio asks for exactly one follow-up pass (TASK-39158).
+        assert compact_flips == [True]
+        assert reconcile_runs == 1 + len(compact_flips)
         assert outer.content_region.height < before_viewport_height
         assert (
             before_allocations
@@ -1341,7 +1356,12 @@ async def test_height_resize_requests_one_coalesced_context_reconcile(
         assert str(outer.styles.overflow_y) == "auto"
         assert outer.max_scroll_y > 0
         assert cue.display is True
-        last_header = rail.query_one("#console-rail-section-header-character")
+        # 96f24f0efa moved Character from the last section to the third, so the
+        # header scroll_end must reveal is the last descriptor's (TASK-39158).
+        last_header = rail.query_one(
+            "#console-rail-section-header-"
+            f"{CONTEXT_SECTION_DESCRIPTORS[-1].section_id}"
+        )
         outer.scroll_end(animate=False, immediate=True)
         await pilot.pause()
         assert last_header.region.overlaps(outer.content_region)
