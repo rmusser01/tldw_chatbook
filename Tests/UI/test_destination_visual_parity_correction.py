@@ -711,7 +711,14 @@ async def test_library_source_browser_collections_action_switches_to_collections
         await _wait_for_selector(library, pilot, "#library-row-browse-collections")
 
         library.query_one("#library-row-browse-collections", Button).press()
-        await _wait_for_selector(library, pilot, "#library-collections-reader-shell")
+        # TASK-39170 review r13c-rev1: the shell mounted in 2.5-2.8 s in six
+        # timed runs at load ~46, past the helper's 2 s default (it had failed
+        # 3 of 5 whole-file runs). The factory app has no ChaChaNotes DB, so
+        # the source snapshot fails in passing and failing runs alike; it is
+        # not what delays the shell.
+        await _wait_for_selector(
+            library, pilot, "#library-collections-reader-shell", timeout=15.0
+        )
 
         active_row = library.query_one("#library-row-browse-collections", Button)
         selected_row_id = getattr(library, "_library_selected_row_id")

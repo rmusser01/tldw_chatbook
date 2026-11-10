@@ -2869,3 +2869,5 @@ Tests/UI/test_destination_visual_parity_correction.py::test_watchlists_tree_chev
 Tests/UI/test_destination_visual_parity_correction.py::test_watchlists_first_run_replaces_empty_cards_with_guidance
 Tests/UI/test_destination_visual_parity_correction.py::test_watchlists_populated_overview_and_inspector_are_unchanged
 Tests/UI/test_destination_visual_parity_correction.py::test_watchlists_overview_cards_paint_their_labels_and_numbers
+# TASK-39170 review r13c-rev1: the Collections action node, now that its shell wait outlasts a loaded mount (10 of 10 at load 42-53).
+Tests/UI/test_destination_visual_parity_correction.py::test_library_source_browser_collections_action_switches_to_collections_mode

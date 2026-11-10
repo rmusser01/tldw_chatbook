@@ -962,6 +962,9 @@ MINIMUM_FILES = 1924
 # node and 69 of TASK-39170's destination visual-parity functions join the
 # tail. The floor is the measured entry count.
 MINIMUM_FILES = 1995
+# Review r13c-rev1 (2026-11-10): TASK-39170's Collections action node joins
+# the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1996
 
 
 def read_census(path: Path) -> list[str]:
