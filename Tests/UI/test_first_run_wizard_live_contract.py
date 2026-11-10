@@ -171,6 +171,12 @@ def _select_radio(screen, selector: str) -> None:
     screen.query_one(selector, RadioButton).value = True
 
 
+def _isolate_wizard_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    cache = tmp_path / "xdg-cache"
+    cache.mkdir()
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
+
+
 def _build_fresh_wizard_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """A truly fresh config: no provider configured, no first_run state at
     all -- the exact condition ``should_offer_wizard`` auto-offers under.
@@ -948,10 +954,12 @@ async def test_recovery_later_performs_no_mutation_or_push(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("first_failure", [False, RuntimeError("save-failed")])
+@private_profile_test
 async def test_recovery_save_failure_reprompts_then_succeeds_once(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, first_failure
 ):
-    _prepare_clean_environment(monkeypatch, tmp_path)
+    _isolate_wizard_cache(monkeypatch, tmp_path)
     app = _build_test_app(first_run_setup_completed=False)
     app.app_config = _attempted_model_resume_config()
     app.app_config["first_run"]["resume_attempted"] = False
@@ -972,12 +980,22 @@ async def test_recovery_save_failure_reprompts_then_succeeds_once(
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(120, 40)) as pilot:
             await _wait_until(
-                pilot, lambda: type(app.screen).__name__ == "SetupRecoveryDialog"
+                pilot,
+                lambda: (
+                    type(app.screen).__name__ == "SetupRecoveryDialog"
+                    and app.screen.is_mounted
+                ),
             )
-            _press(app.screen, "#setup-recovery-resume")
+            first_dialog = app.screen
+            _press(first_dialog, "#setup-recovery-resume")
             await _wait_until(pilot, lambda: save_attempts == 1)
             await _wait_until(
-                pilot, lambda: type(app.screen).__name__ == "SetupRecoveryDialog"
+                pilot,
+                lambda: (
+                    type(app.screen).__name__ == "SetupRecoveryDialog"
+                    and app.screen is not first_dialog
+                    and app.screen.is_mounted
+                ),
             )
             assert save_attempts == 1
             assert (
@@ -1055,12 +1073,14 @@ def _attempted_full_appearance_resume_config():
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_sparse_model_resume_preserves_persisted_prefill(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
 
-    _prepare_clean_environment(monkeypatch, tmp_path)
+    _isolate_wizard_cache(monkeypatch, tmp_path)
     app = _build_test_app(first_run_setup_completed=False)
     app.app_config = _attempted_model_resume_config()
     app.app_config["chat_defaults"] = {
@@ -1098,12 +1118,14 @@ async def test_sparse_model_resume_preserves_persisted_prefill(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_sparse_appearance_resume_preserves_persisted_theme(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
 
-    _prepare_clean_environment(monkeypatch, tmp_path)
+    _isolate_wizard_cache(monkeypatch, tmp_path)
     app = _build_test_app(first_run_setup_completed=False)
     app.app_config = _attempted_full_appearance_resume_config()
     app.app_config["first_run"]["draft_values"].pop(STEP_APPEARANCE)
@@ -1140,13 +1162,15 @@ async def test_sparse_appearance_resume_preserves_persisted_theme(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_partial_appearance_restore_preserves_absent_splash_sibling(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     from dataclasses import replace
     from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
 
-    _prepare_clean_environment(monkeypatch, tmp_path)
+    _isolate_wizard_cache(monkeypatch, tmp_path)
     app = _build_test_app(first_run_setup_completed=False)
     app.app_config = _attempted_full_appearance_resume_config()
     draft = read_setup_draft(app.app_config)
@@ -1313,12 +1337,14 @@ async def test_resumed_target_restores_then_clears_attempt_after_mount(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_resume_control_restore_failure_keeps_attempt_marker(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
 
-    _prepare_clean_environment(monkeypatch, tmp_path)
+    _isolate_wizard_cache(monkeypatch, tmp_path)
     app = _build_test_app(first_run_setup_completed=False)
     app.app_config = _attempted_model_resume_config()
     draft = read_setup_draft(app.app_config)
@@ -1386,12 +1412,14 @@ def test_resume_target_mount_failure_log_is_value_free_and_does_not_clear(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_resume_target_change_before_after_refresh_keeps_attempt_marker(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
 
-    _prepare_clean_environment(monkeypatch, tmp_path)
+    _isolate_wizard_cache(monkeypatch, tmp_path)
     app = _build_test_app(first_run_setup_completed=False)
     app.app_config = _attempted_model_resume_config()
     draft = read_setup_draft(app.app_config)
@@ -1434,7 +1462,9 @@ async def test_resume_target_change_before_after_refresh_keeps_attempt_marker(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_failed_resumed_mount_leaves_attempt_and_next_launch_on_home(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     from tldw_chatbook.UI.Wizards.first_run_setup_state import (
@@ -1442,7 +1472,7 @@ async def test_failed_resumed_mount_leaves_attempt_and_next_launch_on_home(
         setup_recovery_action,
     )
 
-    _prepare_clean_environment(monkeypatch, tmp_path)
+    _isolate_wizard_cache(monkeypatch, tmp_path)
     app = _build_test_app(first_run_setup_completed=False)
     app.app_config = _attempted_model_resume_config()
     app._initial_tab_value = "chat"
@@ -1547,7 +1577,9 @@ async def test_required_provider_failure_manual_setup_routes_with_checkpoint(
     ((ToolsStep, STEP_TOOLS), (NotesSyncStep, STEP_NOTES)),
 )
 @pytest.mark.asyncio
+@private_profile_test
 async def test_tools_notes_failure_manual_setup_routes_to_advanced_config(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     step_type,
@@ -1555,7 +1587,7 @@ async def test_tools_notes_failure_manual_setup_routes_to_advanced_config(
 ) -> None:
     from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
 
-    _prepare_clean_environment(monkeypatch, tmp_path)
+    _isolate_wizard_cache(monkeypatch, tmp_path)
     app = _build_test_app(first_run_setup_completed=True)
     app._initial_tab_value = "home"
     monkeypatch.setattr(step_type, "compose_step", _raising_compose_step)
@@ -1943,10 +1975,12 @@ async def _seed_live_console_user_draft(console: ChatScreen, pilot):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_rerun_over_settings_review_settings_returns_to_settings(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    _prepare_clean_environment(monkeypatch, tmp_path)
+    _isolate_wizard_cache(monkeypatch, tmp_path)
     # Already-completed config: no auto-offer noise for this test.
     app = _build_test_app(first_run_setup_completed=True)
     app._initial_tab_value = "chat"
@@ -2214,12 +2248,14 @@ async def test_mounted_wizard_saved_pair_change_retires_intent_without_touching_
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_palette_setup_wizard_action_wires_result_callback(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from tldw_chatbook.app import SetupWizardProvider
 
-    _prepare_clean_environment(monkeypatch, tmp_path)
+    _isolate_wizard_cache(monkeypatch, tmp_path)
     app = _build_test_app(first_run_setup_completed=True)
     app._initial_tab_value = "chat"
 
@@ -3592,10 +3628,12 @@ async def test_local_provider_probe_feedback_is_visible_and_adjacent(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_run_setup_wizard_action_opens_once(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    _prepare_clean_environment(monkeypatch, tmp_path)
+    _isolate_wizard_cache(monkeypatch, tmp_path)
     app = _build_test_app(first_run_setup_completed=True)
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
