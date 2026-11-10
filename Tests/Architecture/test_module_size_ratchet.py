@@ -247,7 +247,8 @@ _BUDGETS: dict[str, int] = {
     # the chat's previous ordinary outcome id at acceptance.
     "tldw_chatbook/Chat/console_chat_controller.py": 29125,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
-    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
+    # 2026-11-09, TASK-36947.4: 6298 -> 6285, the exact measurement (host reads).
+    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6285,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
     # 2026-10-31 PR3295 R1: user-waived cap; exact remembered-prompt-delta measurement.
     "tldw_chatbook/Chat/console_context_compaction.py": 4217,
