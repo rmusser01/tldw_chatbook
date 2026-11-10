@@ -274,8 +274,11 @@ async def _open_settings_diagnostics(pilot) -> None:
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_fresh_config_splash_disabled_wizard_auto_offers(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """Checklist item 3: with splash pre-seeded OFF, the wizard must still
     auto-offer on a truly fresh config -- the auto-offer path does not run
@@ -283,12 +286,21 @@ async def test_fresh_config_splash_disabled_wizard_auto_offers(
     no-splash boot path (``_run_no_splash_post_mount_setup``) wires the
     same ``_maybe_offer_first_run_wizard`` call as the splash path.
     """
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    cache = tmp_path / "xdg-cache"
+    cache.mkdir()
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
+    app = _build_test_app(first_run_setup_completed=False)
+    app.app_config["_first_run"] = True
+    app._initial_tab_value = "chat"
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
-                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+                pilot,
+                lambda: (
+                    type(app.screen).__name__ == "FirstRunSetupWizard"
+                    and app.screen.is_mounted
+                ),
             )
             assert type(app.screen).__name__ == "FirstRunSetupWizard"
             assert app.current_tab == "home"  # wizard is pushed ON TOP, not swapped in
@@ -1961,8 +1973,11 @@ async def test_rerun_over_settings_review_settings_returns_to_settings(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_rerun_over_settings_start_chatting_navigates_to_chat(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """Final-review finding 2: before the fix, both re-entry pushes
     (Settings' button and the command palette) omitted the result
@@ -1973,7 +1988,9 @@ async def test_rerun_over_settings_start_chatting_navigates_to_chat(
     navigate to Chat, exactly like the auto-offer path already does in
     test_full_track_skip_everything_leaves_app_usable above.
     """
-    _prepare_clean_environment(monkeypatch, tmp_path)
+    cache = tmp_path / "xdg-cache"
+    cache.mkdir()
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
     _persist_complete_custom_provider_setup()
     app = _build_test_app(first_run_setup_completed=True)
     app._initial_tab_value = "chat"
