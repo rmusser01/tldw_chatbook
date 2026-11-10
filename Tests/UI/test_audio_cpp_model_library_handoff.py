@@ -14,6 +14,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from Tests.app_module_patches import set_app_global
+from Tests.UI.background_signals import (
+    BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+    wait_for_background_signal,
+)
 from tldw_chatbook.UI.Navigation.audio_cpp_model_handoff import (
     AudioCppModelInstallOwner,
     AudioCppModelLibraryRequest,
@@ -250,48 +254,57 @@ async def test_guided_save_holds_before_after_managed_union_without_activation(
     app = _StyledPanelHarness(state=state, configure_provider="audio_cpp")
     owner = AudioCppModelInstallOwner()
     app.audio_cpp_model_install_owner = owner
-    async with app.run_test(size=(170, 80)) as pilot:
-        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
-        panel.state.providers["audio_cpp"]["guided_packages"] = [
-            packages[1].model_dump(mode="json")
-        ]
-        panel.state.providers["audio_cpp"]["guided_default_model_id"] = packages[
-            1
-        ].public_model_id
-        panel.refresh(recompose=True)
-        await pilot.pause()
+    publication = None
+    try:
+        async with app.run_test(size=(170, 80)) as pilot:
+            panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+            panel.state.providers["audio_cpp"]["guided_packages"] = [
+                packages[1].model_dump(mode="json")
+            ]
+            panel.state.providers["audio_cpp"]["guided_default_model_id"] = packages[
+                1
+            ].public_model_id
+            panel.refresh(recompose=True)
+            await pilot.pause()
 
-        request_id = panel.request_save()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
+            request_id = panel.request_save()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
 
-        assert request_id is not None
-        assert len(app.events) == 1
-        assert all(active.values())
-        assert close_calls == {}
-        assert acquire_calls == sorted(active)
-        save_event = app.events[0]
-        assert panel._managed_lease_hold is None
-        assert save_event.publication_lease is not None
+            assert request_id is not None
+            assert len(app.events) == 1
+            assert all(active.values())
+            assert close_calls == {}
+            assert acquire_calls == sorted(active)
+            save_event = app.events[0]
+            assert panel._managed_lease_hold is None
+            assert save_event.publication_lease is not None
 
-        save_event.publication_lease.adopt()
-        await save_event.publication_lease.release()
+            publication = save_event.publication_lease
+            publication.adopt()
+            await publication.release()
+            publication = None
 
-        panel.receive_stts_settings_save_result(
-            STTSSettingsSaveResult(
-                request_id=request_id,
-                persisted=persisted,
-                provider_statuses={"audio_cpp": "pending"},
-                provider_configuration_revisions={"audio_cpp": 2},
-                provider_runtime_revisions={"audio_cpp": 1},
-                staged_provider_ids=frozenset({"audio_cpp"}),
+            panel.receive_stts_settings_save_result(
+                STTSSettingsSaveResult(
+                    request_id=request_id,
+                    persisted=persisted,
+                    provider_statuses={"audio_cpp": "pending"},
+                    provider_configuration_revisions={"audio_cpp": 2},
+                    provider_runtime_revisions={"audio_cpp": 1},
+                    staged_provider_ids=frozenset({"audio_cpp"}),
+                )
             )
-        )
-        await owner.wait_until_idle()
+            await owner.wait_until_idle()
 
-        assert not any(active.values())
-        assert set(close_calls.values()) == {1}
-
+            assert not any(active.values())
+            assert set(close_calls.values()) == {1}
+    finally:
+        try:
+            if publication is not None:
+                await publication.release()
+        finally:
+            await owner.shutdown()
 
 def test_save_post_failure_abandons_transferred_publication_hold() -> None:
     """A synchronous event handoff failure returns the token to app cleanup."""
@@ -418,50 +431,52 @@ async def test_identity_changing_draft_action_holds_managed_union(
     app = _StyledPanelHarness(state=state)
     owner = AudioCppModelInstallOwner()
     app.audio_cpp_model_install_owner = owner
-    async with app.run_test(size=(150, 55)) as pilot:
-        panel = app.query_one("#panel")
-        await pilot.pause()
-        if action == "revert":
-            panel.original_state.providers["audio_cpp"].update(
-                {
-                    "mode": "managed",
-                    "managed_setup_source": "guided",
-                    "guided_packages": [before.model_dump(mode="json")],
-                    "guided_default_model_id": before.public_model_id,
-                }
-            )
-        real_recompose = panel.recompose
-        recomposed = 0
+    try:
+        async with app.run_test(size=(150, 55)) as pilot:
+            panel = app.query_one("#panel")
+            await pilot.pause()
+            if action == "revert":
+                panel.original_state.providers["audio_cpp"].update(
+                    {
+                        "mode": "managed",
+                        "managed_setup_source": "guided",
+                        "guided_packages": [before.model_dump(mode="json")],
+                        "guided_default_model_id": before.public_model_id,
+                    }
+                )
+            real_recompose = panel.recompose
+            recomposed = 0
 
-        async def checked_recompose() -> None:
-            nonlocal recomposed
-            recomposed += 1
-            assert len(active) == (2 if action == "revert" else 1)
-            await real_recompose()
+            async def checked_recompose() -> None:
+                nonlocal recomposed
+                recomposed += 1
+                assert len(active) == (2 if action == "revert" else 1)
+                await real_recompose()
 
-        monkeypatch.setattr(panel, "recompose", checked_recompose)
-        if action == "remove":
-            event = SimpleNamespace(
-                button=SimpleNamespace(
-                    id=(
-                        "settings-speech-audio-cpp-guided-package-remove-"
-                        f"{before.package_uuid}"
-                    )
-                ),
-                stop=lambda: None,
-            )
-            await panel.handle_audio_cpp_remove_package(event)
-        elif action == "revert":
-            await panel.revert_to_saved()
-        else:
-            event = SimpleNamespace(stop=lambda: None)
-            await panel.handle_restore_defaults(event)
+            monkeypatch.setattr(panel, "recompose", checked_recompose)
+            if action == "remove":
+                event = SimpleNamespace(
+                    button=SimpleNamespace(
+                        id=(
+                            "settings-speech-audio-cpp-guided-package-remove-"
+                            f"{before.package_uuid}"
+                        )
+                    ),
+                    stop=lambda: None,
+                )
+                await panel.handle_audio_cpp_remove_package(event)
+            elif action == "revert":
+                await panel.revert_to_saved()
+            else:
+                event = SimpleNamespace(stop=lambda: None)
+                await panel.handle_restore_defaults(event)
 
-        await owner.wait_until_idle()
-        assert recomposed == 1
-        assert len(acquired) == (2 if action == "revert" else 1)
-        assert not active
-
+            await owner.wait_until_idle()
+            assert recomposed == 1
+            assert len(acquired) == (2 if action == "revert" else 1)
+            assert not active
+    finally:
+        await owner.shutdown()
 
 @pytest.mark.parametrize(
     "hostile",
@@ -1210,27 +1225,31 @@ async def test_panel_unmount_transfers_hold_and_replacement_mount_retries(
             raise AssertionError("Lease fencing must not activate a package")
 
     monkeypatch.setattr(panel_module, "managed_service", Service)
-    first_app = _StyledPanelHarness(state=_audio_cpp_state(saved_provider=True))
-    first_app.audio_cpp_model_install_owner = owner
-    async with first_app.run_test(size=(150, 55)):
-        panel = first_app.query_one("#panel", SpeechTTSSettingsPanel)
-        assert await panel._acquire_managed_refs({reference})
-        assert owner.cleanup_pending
+    try:
+        first_app = _StyledPanelHarness(state=_audio_cpp_state(saved_provider=True))
+        first_app.audio_cpp_model_install_owner = owner
+        async with first_app.run_test(size=(150, 55)):
+            panel = first_app.query_one("#panel", SpeechTTSSettingsPanel)
+            assert await panel._acquire_managed_refs({reference})
+            assert owner.cleanup_pending
 
-    await owner.wait_until_idle()
-    assert owner.cleanup_pending
-    assert len(close_threads) == 1
-
-    replacement_app = _StyledPanelHarness(state=_audio_cpp_state(saved_provider=True))
-    replacement_app.audio_cpp_model_install_owner = owner
-    async with replacement_app.run_test(size=(150, 55)) as pilot:
-        await pilot.pause()
         await owner.wait_until_idle()
-        assert not owner.cleanup_pending
+        assert owner.cleanup_pending
+        assert len(close_threads) == 1
 
-    assert len(close_threads) == 2
-    assert all(thread_id != ui_thread for thread_id in close_threads)
+        replacement_app = _StyledPanelHarness(
+            state=_audio_cpp_state(saved_provider=True)
+        )
+        replacement_app.audio_cpp_model_install_owner = owner
+        async with replacement_app.run_test(size=(150, 55)) as pilot:
+            await pilot.pause()
+            await owner.wait_until_idle()
+            assert not owner.cleanup_pending
 
+        assert len(close_threads) == 2
+        assert all(thread_id != ui_thread for thread_id in close_threads)
+    finally:
+        await owner.shutdown()
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ("save", "remove"))
@@ -1289,57 +1308,69 @@ async def test_cancelled_settings_identity_worker_releases_app_owned_hold(
     app.audio_cpp_model_install_owner = owner
     blocked = asyncio.Event()
     entered = asyncio.Event()
-    async with app.run_test(size=(150, 55)):
-        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
-        if operation == "save":
+    try:
+        async with app.run_test(size=(150, 55)):
+            panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+            if operation == "save":
 
-            async def wait_for_cancel(_packages: object) -> tuple[()]:
-                entered.set()
-                await blocked.wait()
-                return ()
+                async def wait_for_cancel(_packages: object) -> tuple[()]:
+                    entered.set()
+                    await blocked.wait()
+                    return ()
 
-            monkeypatch.setattr(
-                panel_module,
-                "revalidate_audio_cpp_guided_packages",
-                wait_for_cancel,
-            )
-            panel._latest_request_id = 1
-            task = asyncio.create_task(
-                panel._revalidate_guided_save(
-                    request_id=1,
-                    packages=(package,),
-                    lease_refs={reference},
-                    proposal=MagicMock(),
-                    realtime_payload=None,
+                monkeypatch.setattr(
+                    panel_module,
+                    "revalidate_audio_cpp_guided_packages",
+                    wait_for_cancel,
                 )
-            )
-        else:
-
-            async def wait_for_cancel() -> None:
-                entered.set()
-                await blocked.wait()
-
-            monkeypatch.setattr(panel, "recompose", wait_for_cancel)
-            event = SimpleNamespace(
-                button=SimpleNamespace(
-                    id=(
-                        "settings-speech-audio-cpp-guided-package-remove-"
-                        f"{package.package_uuid}"
+                panel._latest_request_id = 1
+                task = asyncio.create_task(
+                    panel._revalidate_guided_save(
+                        request_id=1,
+                        packages=(package,),
+                        lease_refs={reference},
+                        proposal=MagicMock(),
+                        realtime_payload=None,
                     )
-                ),
-                stop=lambda: None,
-            )
-            task = asyncio.create_task(panel.handle_audio_cpp_remove_package(event))
+                )
+            else:
 
-        await asyncio.wait_for(entered.wait(), timeout=2)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        await owner.wait_until_idle()
+                async def wait_for_cancel() -> None:
+                    entered.set()
+                    await blocked.wait()
 
-        assert closed.is_set()
-        assert not owner.cleanup_pending
+                monkeypatch.setattr(panel, "recompose", wait_for_cancel)
+                event = SimpleNamespace(
+                    button=SimpleNamespace(
+                        id=(
+                            "settings-speech-audio-cpp-guided-package-remove-"
+                            f"{package.package_uuid}"
+                        )
+                    ),
+                    stop=lambda: None,
+                )
+                task = asyncio.create_task(panel.handle_audio_cpp_remove_package(event))
 
+            try:
+                await wait_for_background_signal(
+                    entered, task, what="managed Settings hold", timeout=2
+                )
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    async with asyncio.timeout(BACKGROUND_SIGNAL_TIMEOUT_SECONDS):
+                        await asyncio.shield(task)
+            finally:
+                if not task.done() and not task.cancelling():
+                    task.cancel()
+                blocked.set()
+                async with asyncio.timeout(BACKGROUND_SIGNAL_TIMEOUT_SECONDS):
+                    await asyncio.shield(asyncio.gather(task, return_exceptions=True))
+            await owner.wait_until_idle()
+
+            assert closed.is_set()
+            assert not owner.cleanup_pending
+    finally:
+        await owner.shutdown()
 
 async def _wait_for(condition, pilot, *, attempts: int = 160) -> bool:
     deadline = time.monotonic() + max(30.0, attempts * 0.02)

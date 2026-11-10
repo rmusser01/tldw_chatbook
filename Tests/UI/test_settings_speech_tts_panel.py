@@ -4,6 +4,7 @@ import asyncio
 import builtins
 import importlib
 import struct
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +16,10 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Collapsible, Input, Select, Static, Switch, TextArea
 
 from Tests.private_profile import private_profile_test
+from Tests.UI.background_signals import (
+    BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+    await_background_task,
+)
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -41,6 +46,7 @@ from tldw_chatbook.TTS.adapter_types import (
     TTSVoiceDiscoveryResult,
 )
 from tldw_chatbook.TTS.audio_cpp_config import AudioCppConfig
+from tldw_chatbook.TTS.audio_cpp_package_scanner import scan_audio_cpp_package_root
 from tldw_chatbook.TTS.audio_cpp_supervisor import AudioCppSupervisor
 from tldw_chatbook.TTS.openai_compatible_config import (
     normalize_openai_compatible_endpoint,
@@ -1108,20 +1114,30 @@ async def test_dirty_global_link_failed_save_keeps_owner_draft_and_focus() -> No
         panel._ask_leave_choice = AsyncMock(return_value="save")
 
         leave_task = asyncio.create_task(panel.confirm_leave())
-        for _ in range(100):
-            if app.events:
-                break
-            await pilot.pause(0.01)
-        assert app.events
-        panel.receive_stts_settings_save_result(
-            STTSSettingsSaveResult(
-                request_id=app.events[0].request_id or 0,
-                persisted=False,
-                provider_statuses={},
-                failure_phase="before_replace",
+        try:
+            for _ in range(100):
+                if app.events:
+                    break
+                await pilot.pause(0.01)
+            assert app.events
+            panel.receive_stts_settings_save_result(
+                STTSSettingsSaveResult(
+                    request_id=app.events[0].request_id or 0,
+                    persisted=False,
+                    provider_statuses={},
+                    failure_phase="before_replace",
+                )
             )
-        )
-        allowed = await leave_task
+            allowed = await await_background_task(
+                leave_task, what="speech Settings leave decision"
+            )
+        finally:
+            if not leave_task.done():
+                leave_task.cancel()
+            await asyncio.wait_for(
+                asyncio.gather(leave_task, return_exceptions=True),
+                timeout=BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+            )
         if allowed:
             await panel._open_lab(
                 SpeechTTSNavigationTarget(
@@ -1151,21 +1167,31 @@ async def test_dirty_global_link_successful_save_continues_with_bounded_intent()
         panel._ask_leave_choice = AsyncMock(return_value="save")
 
         leave_task = asyncio.create_task(panel.confirm_leave())
-        for _ in range(100):
-            if app.events:
-                break
-            await pilot.pause(0.01)
-        assert app.events
-        panel.receive_stts_settings_save_result(
-            STTSSettingsSaveResult(
-                request_id=app.events[0].request_id or 0,
-                persisted=True,
-                provider_statuses={"audio_cpp": "applied"},
-                provider_configuration_revisions={"audio_cpp": 5},
-                provider_runtime_revisions={"audio_cpp": 9},
+        try:
+            for _ in range(100):
+                if app.events:
+                    break
+                await pilot.pause(0.01)
+            assert app.events
+            panel.receive_stts_settings_save_result(
+                STTSSettingsSaveResult(
+                    request_id=app.events[0].request_id or 0,
+                    persisted=True,
+                    provider_statuses={"audio_cpp": "applied"},
+                    provider_configuration_revisions={"audio_cpp": 5},
+                    provider_runtime_revisions={"audio_cpp": 9},
+                )
             )
-        )
-        allowed = await leave_task
+            allowed = await await_background_task(
+                leave_task, what="speech Settings leave decision"
+            )
+        finally:
+            if not leave_task.done():
+                leave_task.cancel()
+            await asyncio.wait_for(
+                asyncio.gather(leave_task, return_exceptions=True),
+                timeout=BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+            )
         if allowed:
             await panel._open_lab(
                 SpeechTTSNavigationTarget(
@@ -1203,23 +1229,34 @@ async def test_every_leave_guard_waits_for_an_existing_save_instead_of_discardin
         panel._ask_leave_choice = AsyncMock(return_value="discard")
 
         leave_task = asyncio.create_task(panel.confirm_leave())
-        await pilot.pause()
+        try:
+            await pilot.pause()
 
-        assert leave_task.done() is False
-        panel._ask_leave_choice.assert_not_awaited()
-        assert field.value == "321"
+            assert leave_task.done() is False
+            panel._ask_leave_choice.assert_not_awaited()
+            assert field.value == "321"
 
-        panel.receive_stts_settings_save_result(
-            STTSSettingsSaveResult(
-                request_id=request_id,
-                persisted=True,
-                provider_statuses={"audio_cpp": "applied"},
-                provider_configuration_revisions={"audio_cpp": 1},
-                provider_runtime_revisions={"audio_cpp": 1},
+            panel.receive_stts_settings_save_result(
+                STTSSettingsSaveResult(
+                    request_id=request_id,
+                    persisted=True,
+                    provider_statuses={"audio_cpp": "applied"},
+                    provider_configuration_revisions={"audio_cpp": 1},
+                    provider_runtime_revisions={"audio_cpp": 1},
+                )
             )
-        )
 
-        assert await leave_task is True
+            allowed = await await_background_task(
+                leave_task, what="speech Settings leave decision"
+            )
+        finally:
+            if not leave_task.done():
+                leave_task.cancel()
+            await asyncio.wait_for(
+                asyncio.gather(leave_task, return_exceptions=True),
+                timeout=BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+            )
+        assert allowed is True
         panel._ask_leave_choice.assert_not_awaited()
         assert panel.has_unsaved_changes() is False
 
@@ -2024,7 +2061,9 @@ async def test_guided_scan_late_cancelled_root_cannot_mutate_newer_draft(
     newer_root = tmp_path / "Supertonic"
     newer_root.mkdir()
     (newer_root / "supertonic-3-orig.gguf").write_bytes(b"GGUF" + struct.pack("<I", 3))
-    real_scan = speech_tts_settings_panel_module.scan_audio_cpp_package_root_async
+    scans = {
+        root: scan_audio_cpp_package_root(root) for root in (older_root, newer_root)
+    }
     older_started = asyncio.Event()
     release_older = asyncio.Event()
 
@@ -2037,7 +2076,7 @@ async def test_guided_scan_late_cancelled_root_cannot_mutate_newer_draft(
                 # Model an uncooperative filesystem call that completes after its
                 # worker was cancelled; the revision fence must still reject it.
                 pass
-        return await real_scan(path, request_revision=request_revision)
+        return replace(scans[path], request_revision=request_revision)
 
     monkeypatch.setattr(
         speech_tts_settings_panel_module,
@@ -2051,12 +2090,14 @@ async def test_guided_scan_late_cancelled_root_cannot_mutate_newer_draft(
         app.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
         await pilot.pause()
 
-        panel._audio_cpp_package_picker_result(older_root)
-        await asyncio.wait_for(older_started.wait(), timeout=1.0)
-        panel._audio_cpp_package_picker_result(newer_root)
-        await pilot.pause()
-        release_older.set()
-        await _settle(pilot)
+        try:
+            panel._audio_cpp_package_picker_result(older_root)
+            await asyncio.wait_for(older_started.wait(), timeout=1.0)
+            panel._audio_cpp_package_picker_result(newer_root)
+            await pilot.pause()
+        finally:
+            release_older.set()
+            await _settle(pilot)
 
         model_ids = {
             package.public_model_id for package in panel._audio_cpp_guided_packages()
@@ -2074,7 +2115,7 @@ async def test_guided_source_round_trip_fences_an_inflight_package_scan(
     (package_root / "supertonic-3-orig.gguf").write_bytes(
         b"GGUF" + struct.pack("<I", 3)
     )
-    real_scan = speech_tts_settings_panel_module.scan_audio_cpp_package_root_async
+    scans = {package_root: scan_audio_cpp_package_root(package_root)}
     scan_started = asyncio.Event()
     release_scan = asyncio.Event()
 
@@ -2085,7 +2126,7 @@ async def test_guided_source_round_trip_fences_an_inflight_package_scan(
         except asyncio.CancelledError:
             # A blocking filesystem call may still return after cancellation.
             pass
-        return await real_scan(path, request_revision=request_revision)
+        return replace(scans[path], request_revision=request_revision)
 
     monkeypatch.setattr(
         speech_tts_settings_panel_module,
@@ -2099,18 +2140,20 @@ async def test_guided_source_round_trip_fences_an_inflight_package_scan(
         app.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
         await pilot.pause()
 
-        panel._audio_cpp_package_picker_result(package_root)
-        await asyncio.wait_for(scan_started.wait(), timeout=1.0)
-        source = app.query_one(
-            "#settings-speech-audio_cpp-managed-setup-source",
-            Select,
-        )
-        source.value = "user_json"
-        await pilot.pause()
-        source.value = "guided"
-        await pilot.pause()
-        release_scan.set()
-        await _settle(pilot)
+        try:
+            panel._audio_cpp_package_picker_result(package_root)
+            await asyncio.wait_for(scan_started.wait(), timeout=1.0)
+            source = app.query_one(
+                "#settings-speech-audio_cpp-managed-setup-source",
+                Select,
+            )
+            source.value = "user_json"
+            await pilot.pause()
+            source.value = "guided"
+            await pilot.pause()
+        finally:
+            release_scan.set()
+            await _settle(pilot)
 
         assert panel._audio_cpp_guided_packages() == ()
 
@@ -4094,13 +4137,15 @@ async def test_guided_save_keeps_later_realtime_edits_dirty(
         realtime_model = app.query_one("#settings-speech-realtime-model", Input)
         realtime_model.value = "snapshot-a"
         await pilot.pause()
-        await pilot.click("#settings-speech-save")
-        await asyncio.wait_for(validation_started.wait(), timeout=2.0)
+        try:
+            await pilot.click("#settings-speech-save")
+            await asyncio.wait_for(validation_started.wait(), timeout=2.0)
 
-        realtime_model.value = "later-edit-b"
-        await pilot.pause()
-        release_validation.set()
-        await _settle(pilot)
+            realtime_model.value = "later-edit-b"
+            await pilot.pause()
+        finally:
+            release_validation.set()
+            await _settle(pilot)
 
         assert persisted[0][0][0]["realtime"]["model"] == "snapshot-a"
         assert len(app.events) == 1
