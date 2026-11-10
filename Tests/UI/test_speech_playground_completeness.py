@@ -22,6 +22,13 @@ from tldw_chatbook.UI.Speech.speech_playground_model import (
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
 
 
+@pytest.fixture(autouse=True)
+def disable_provider_work(monkeypatch):
+    """These mounts inventory controls without requesting provider status."""
+    for method in ("_load_provider_catalog", "_request_audio_cpp_runtime_observation"):
+        monkeypatch.setattr(SpeechPlaygroundPane, method, lambda *args, **kwargs: None)
+
+
 class _Harness(App[None]):
     def __init__(self, provider: str) -> None:
         super().__init__()
@@ -39,6 +46,7 @@ async def _ids_for(provider: str) -> set[str]:
         return {widget.id for widget in app.query("*") if widget.id}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_every_legacy_control_survives_somewhere():
     """The union across providers must cover every legacy control.
@@ -55,6 +63,7 @@ async def test_every_legacy_control_survives_somewhere():
     assert not missing, f"lost in the rebuild: {sorted(missing)}"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_replaced_containers_are_genuinely_gone():
     """The containers the param group replaces must not linger.
@@ -69,6 +78,7 @@ async def test_the_replaced_containers_are_genuinely_gone():
     assert not (REPLACED_CONTAINERS & mounted)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider", sorted(PROVIDER_PARAMS))
 async def test_the_always_present_surface_is_present_for_every_provider(provider):
@@ -98,6 +108,7 @@ async def test_the_always_present_surface_is_present_for_every_provider(provider
     assert not missing, f"{provider} is missing {sorted(missing)}"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider", sorted(PROVIDER_PARAMS))
 async def test_only_the_selected_providers_knobs_are_mounted(provider):
