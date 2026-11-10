@@ -11,6 +11,10 @@ You need:
 
 - A working provider and model. Complete the [first-run setup](First_Run_Setup.md)
   or configure one under **Settings ▸ Providers & Models**.
+- **Full agent tools** turned on (Settings ▸ Tools & MCP ▸ Servers ▸ built-in
+  row ▸ Tool gates, or `[tools] full_agent_tools_enabled = true`). Plain chat's
+  [light tool surface](console/agent-runs-and-tools.md#what-plain-chat-offers--the-light-tool-surface)
+  does not offer the Watchlists tools.
 - One or more public RSS or Atom feed URLs. Do not put passwords, API keys, or
   other secrets in the URLs.
 - A name for the Watchlist, such as `Daily security news`.
@@ -93,6 +97,12 @@ continuation cursors when present; use **Watchlists ▸ Artifacts** to read or
 export the complete saved briefing when its Markdown was truncated. An empty
 briefing can be a valid terminal result when the checks produced no eligible
 items; inspect the source Runs before repeating the workflow.
+
+![A completed Console workflow showing terminal source-check receipts and the briefing summary](images/watchlists/console-workflow-complete.svg)
+
+*A completed run on a disposable demo profile, with demo feeds and scripted
+model replies. Each source check and the briefing show a COMPLETE receipt, and
+the reply below them summarizes the saved briefing.*
 
 ## 5. Verify the saved records
 

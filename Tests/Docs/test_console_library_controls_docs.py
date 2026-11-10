@@ -11,11 +11,12 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DOC_CONTRACT: dict[str, tuple[str, ...]] = {
+    # TASK-38974: the newcomer README (b9fe7ee28a) names the four controls in
+    # prose, not by their labels; pinned at that wording.
     "README.md": (
-        "Manual Search Library",
-        "Auto: Never / Automatic",
-        "Assistant: Blocked / Allowed",
-        "Direct / RAG",
+        "manual Library search, automatic retrieval policy, assistant tool "
+        "permission, and direct/RAG retrieval mode",
+        "New conversations do not silently grant every tool or source",
     ),
     "Docs/User_Guide/console.md": (
         "Manual Search Library",
@@ -51,9 +52,12 @@ DOC_CONTRACT: dict[str, tuple[str, ...]] = {
         "assistant generation state",
         "unresolved imported or remote state remains inert",
     ),
+    # TASK-38974: pinned at the wording f09a7786d4 shipped for "Use as source".
     "Docs/User_Guide/library/media-and-conversations.md": (
-        "does not change the conversation's Auto or Assistant setting",
-        "staged context",
+        "does not send automatically or change the conversation's Auto or "
+        "Assistant setting",
+        "Use as source stages a reference to the selected conversation in the "
+        "current Console session",
     ),
     "Docs/Development/Agent-Tools/local-library-tools.md": (
         "selector, not an enable switch",
@@ -71,6 +75,8 @@ DOC_CONTRACT: dict[str, tuple[str, ...]] = {
     ),
 }
 MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
+# Any URL scheme (http:, mailto:, media:, ...) names no file in the tree.
+URL_SCHEME_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*:")
 FORBIDDEN_CONTEXT_AND_RAG_CLAIMS = (
     "a send is never blocked on it",
     "the send goes out without evidence",
@@ -100,26 +106,31 @@ def test_console_library_control_docs_have_valid_local_links(
     relative_path: str,
 ) -> None:
     """Every local Markdown link in the governed pages resolves in the tree."""
-    document = REPO_ROOT / relative_path
-    text = document.read_text(encoding="utf-8")
+    missing = missing_local_links(REPO_ROOT / relative_path)
 
+    assert not missing, f"{relative_path} has missing local links: {missing}"
+
+
+def missing_local_links(
+    document: Path, link_re: re.Pattern[str] = MARKDOWN_LINK_RE
+) -> list[str]:
+    """Return the link targets in ``document`` that name no file in the tree."""
     missing: list[str] = []
-    for raw_target in MARKDOWN_LINK_RE.findall(text):
+    for raw_target in link_re.findall(document.read_text(encoding="utf-8")):
         target = raw_target.strip()
-        if target.startswith(("http://", "https://")):
-            continue
         if target.startswith("<") and target.endswith(">"):
             target = target[1:-1]
         else:
             target = target.split(maxsplit=1)[0]
+        if URL_SCHEME_RE.match(target):
+            continue
         local_path = unquote(target.partition("#")[0])
         resolved = (
             document if not local_path else (document.parent / local_path).resolve()
         )
         if not resolved.exists():
             missing.append(target)
-
-    assert not missing, f"{relative_path} has missing local links: {missing}"
+    return missing
 
 
 def test_context_and_rag_has_no_superseded_automatic_retrieval_claims() -> None:

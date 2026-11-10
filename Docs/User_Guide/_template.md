@@ -62,6 +62,12 @@ Playwright PNG harness) were never exercised.
 Fidelity bar: nav bar labels present and complete, box-drawing glyphs intact,
 theme colors rendered (not monochrome), no truncated right edge.
 
+Checked-in drivers already cover some images and strip the fonts themselves:
+`scripts/capture_user_guide.py <target>` boots the real app on a throwaway
+profile (targets `search-rag`, `file-notes`, `watchlists-workflow`), and
+`scripts/regen_approval_card_svg.py` renders the approval card. Add a target
+there rather than keeping a one-off script.
+
 1. Scratch profile (create once, reuse across every page's captures — never
    point `TLDW_CONFIG_PATH` at a real profile):
    ```bash

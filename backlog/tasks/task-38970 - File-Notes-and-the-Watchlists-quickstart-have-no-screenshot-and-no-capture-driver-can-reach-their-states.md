@@ -1,8 +1,11 @@
 ---
 id: TASK-38970
 title: "File Notes and the Watchlists quickstart have no screenshot, and no capture driver can reach their states"
-status: To Do
+status: Done
+assignee:
+- '@claude'
 created_date: 2026-11-06 01:21
+updated_date: 2026-11-10 17:17
 labels:
 - follow-up
 - docs
@@ -39,7 +42,30 @@ Merge state: the TASK-36521 branch is now stacked on the TASK-38757 branch, and 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 No User Guide page references a missing image; a Docs test resolves every image link under Docs/User_Guide and fails when one link is pointed at a missing file (negative control)
-- [ ] #2 A checked-in capture driver reaches the File Notes workspace with a folder chosen and the Watchlists Console workflow in its completed state, using a scratch profile and no real provider
-- [ ] #3 File Notes and the Watchlists quickstart each show a screenshot again, taken from the current app at 235x52 with that driver and with cdnjs font URLs stripped; if a state cannot be reached, the notes say which and why
+- [x] #1 No User Guide page references a missing image; a Docs test resolves every image link under Docs/User_Guide and fails when one link is pointed at a missing file (negative control)
+- [x] #2 A checked-in capture driver reaches the File Notes workspace with a folder chosen and the Watchlists Console workflow in its completed state, using a scratch profile and no real provider
+- [x] #3 File Notes and the Watchlists quickstart each show a screenshot again, taken from the current app at 235x52 with that driver and with cdnjs font URLs stripped; if a state cannot be reached, the notes say which and why
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add a Docs test resolving every image link under Docs/User_Guide (with a temporary broken link as negative control).
+2. Add scripts/capture_user_guide.py: boots the real TldwCli at 235x52 on a fresh temporary profile (null keyring, loopback-only sockets, real-profile guard), drives a named target through the UI, writes the SVG with cdnjs font URLs stripped.
+3. Targets: file-notes (Library > Notes > Folder files > Choose folder... picker > Select) and watchlists-workflow (the scripted Console Watchlists workflow from the mounted UAT, run to completion with no real provider).
+4. Capture both images and restore their references in file-notes.md and watchlists-quickstart.md.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Added a checked-in capture driver, `scripts/capture_user_guide.py`, and retook both images with it.
+
+- **AC#1** `Tests/Docs/test_user_guide_contract.py::test_every_user_guide_image_link_resolves` resolves every `![…](…)` link in every `Docs/User_Guide` page through the link resolver it shares with the Console Library contract test (TASK-38974). Negative control: `home.md`'s `images/home/idle.svg` link temporarily pointed at `idle-missing.svg` failed with `{'home.md': ['images/home/idle-missing.svg']}`; reverted. Green on dev before the images came back (TASK-36521 had removed the references), green after.
+- **AC#2** `scripts/capture_user_guide.py <target>`, one target per process. It makes a fresh temporary profile (HOME, XDG_*, TLDW_CONFIG_PATH) before importing the app, sets the null keyring, installs `Tests/real_profile_guard`, allows loopback `socket.connect` only, boots a real `TldwCli` in `run_test(size=(235, 52))`, writes the SVG through `write_guide_svg`, deletes the profile and ends with `os._exit` (lessons-live-verification, TASK-36521).
+  - `file-notes`: Library ▸ Notes ▸ **Folder files** ▸ **Choose folder…** by keyboard (Enter, Ctrl+A, the demo folder's path, Enter, Tab, Enter in the real `SelectDirectory` picker), then `welcome.md` opened from the Files tree.
+  - `watchlists-workflow`: the provider is saved through the first-run commit (`llama_cpp` at a loopback URL that is never called). The model's turns come from the mounted UAT's scripted gateway (`Tests/QA/test_console_watchlists_workflow_uat.py`), subclassed to answer `cached_context_window` (the real app's context meter asks the gateway; the factory app never did) and to drop the UAT marker from the final reply. Feed fetches and the briefing's model call return canned text. Each approval round is approved once its **Allow once** is enabled: pressing it while disabled is a no-op, and the first loop stalled on that.
+- **AC#3** Both states were reached; captured at 235x52, cdnjs-free, no temp paths or account names in the SVG text. `library/file-notes.md` shows `../images/library/file-notes.svg` in its Layout tour; `watchlists-quickstart.md` shows `images/watchlists/console-workflow-complete.svg` with a new caption (three source checks and the briefing COMPLETE, the summary reply below). Final run of all three targets after the last driver edit: rc=0 each.
+- Deviation, docs correctness: the workflow only completed with `[tools] full_agent_tools_enabled = true`; plain chat's light tool surface (TASK-34100.5.3) offers no Watchlists tools, so `load_tools` failed and the approved call came back "Tool not permitted". The quickstart's "Before you start" now lists **Full agent tools** with where to turn it on.
+- Files: `scripts/capture_user_guide.py` (new), `Docs/User_Guide/images/library/file-notes.svg`, `Docs/User_Guide/images/watchlists/console-workflow-complete.svg` (both new), `Docs/User_Guide/library/file-notes.md`, `Docs/User_Guide/watchlists-quickstart.md`, `Docs/User_Guide/_template.md` (points the capture recipe at the two drivers).
+<!-- SECTION:NOTES:END -->

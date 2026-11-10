@@ -1,8 +1,11 @@
 ---
 id: TASK-38969
 title: "User Guide: the index omits F8 Plugins and F9 Kanban, two Console captures still load cdnjs fonts, and search-rag hides its title"
-status: To Do
+status: Done
+assignee:
+- '@claude'
 created_date: 2026-11-06 01:21
+updated_date: 2026-11-10 17:17
 labels:
 - follow-up
 - docs
@@ -48,7 +51,27 @@ Found in round 8 of the 2026-10-23 burn-down. Checked on dev 29592ecc9b and on t
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The index's nav table lists F8 Plugins and F9 Kanban with working links, and every F-key list on the page (walk paragraph, hotkey note, no-borrow paragraph, keyboard table) matches SHELL_DESTINATION_SHORTCUTS; a Docs test compares the nav table with the map and is red on dev
-- [ ] #2 No SVG under Docs/User_Guide contains a cdnjs.cloudflare.com URL and scripts/regen_approval_card_svg.py writes a stripped SVG; a Docs test is red on dev and names the two files
-- [ ] #3 search-rag.svg shows the "Search / RAG" panel title and at least one result in a single 235x52 capture
+- [x] #1 The index's nav table lists F8 Plugins and F9 Kanban with working links, and every F-key list on the page (walk paragraph, hotkey note, no-borrow paragraph, keyboard table) matches SHELL_DESTINATION_SHORTCUTS; a Docs test compares the nav table with the map and is red on dev
+- [x] #2 No SVG under Docs/User_Guide contains a cdnjs.cloudflare.com URL and scripts/regen_approval_card_svg.py writes a stripped SVG; a Docs test is red on dev and names the two files
+- [x] #3 search-rag.svg shows the "Search / RAG" panel title and at least one result in a single 235x52 capture
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add a Docs test that parses index.md's nav table and every F-key list and compares them with SHELL_DESTINATION_SHORTCUTS (red on dev: no F8/F9).
+2. Add F8 Plugins (new stub plugins.md) and F9 Kanban (kanban.md) to index.md: nav table, walk paragraph, hotkey note, no-borrow paragraph, keyboard table.
+3. Add a Docs test that no SVG under Docs/User_Guide carries a cdnjs URL (red on dev, names approval-card.svg and context-modal.svg); strip both files; make scripts/regen_approval_card_svg.py write a stripped SVG through one shared strip helper, pinned in Tests/Scripts.
+4. Recapture search-rag.svg at 235x52 with the checked-in driver from TASK-38970 (scrolled to the panel title, one result visible).
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Added F8 Plugins and F9 Kanban to the index, stripped the last two cdnjs captures through one shared helper, and recaptured search-rag with the checked-in driver from TASK-38970.
+
+- **AC#1** `index.md`: nav-table rows `F8 | [Plugins](plugins.md) 🚧` and `F9 | [Kanban](kanban.md)`. There was no Plugins page, so `Docs/User_Guide/plugins.md` is a new stub (orientation, the 1/2/3 views, `/`, Escape, the action rows, all read from `plugins_screen.py`). The walk paragraph, the hotkey note (`F2–F5 / F7–F9 for the last seven`), the no-borrow paragraph and the keyboard table now cover F2–F5 and F7–F9. New `Tests/Docs/test_user_guide_contract.py`: `test_index_nav_table_matches_the_shell_shortcut_map` compares the table with `SHELL_DESTINATION_SHORTCUTS` plus the Ctrl+6/Ctrl+9 compatibility keys, checks each row names the destination label and links an existing page. Red on dev: `missing ['f8', 'f9']`. `test_every_f_key_list_on_the_index_names_the_whole_f_row` expands every F-key run on the page and compares it with the map's F-keys. Red on dev: `'F2, F3, F4, F5, F7' should cover [... 'F8', 'F9']`.
+- **AC#2** Both SVGs lose only their four cdnjs `url(...)` lines (the `local(...)` source stays). `strip_remote_fonts`/`write_guide_svg` live in `scripts/capture_user_guide.py`; `scripts/regen_approval_card_svg.py` now writes through `write_guide_svg(out, app.export_screenshot())`. `test_user_guide_svgs_load_no_remote_fonts` was red on dev naming `images/console/approval-card.svg` and `images/console/context-modal.svg`. `Tests/Scripts/test_regen_approval_card_svg.py::test_written_card_loads_no_remote_fonts` (real write into tmp_path) was red with dev's script swapped back in (`'cdnjs.cloudflare.com' is contained here`), green after; the file's three other tests now patch `write_guide_svg` instead of `App.save_screenshot` (6 passed).
+- **AC#3** `scripts/capture_user_guide.py search-rag` (real `TldwCli`, 235x52): it makes a note through Library ▸ Create ▸ New note, types a query on Search / RAG and presses Enter, then keeps `#library-rag-panel-title` in view. The capture paints "Search / RAG" on row 7 and the card "1. Release review" with its snippet; 2885 x 1318.8 viewBox like the other 235x52 captures. The result is now a note, not a conversation; no page prose described the old result.
+- Files: `Docs/User_Guide/index.md`, `Docs/User_Guide/plugins.md` (new), `Docs/User_Guide/images/console/{approval-card,context-modal}.svg`, `Docs/User_Guide/images/library/search-rag.svg`, `scripts/regen_approval_card_svg.py`, `Tests/Docs/test_user_guide_contract.py` (new), `Tests/Scripts/test_regen_approval_card_svg.py`.
+<!-- SECTION:NOTES:END -->

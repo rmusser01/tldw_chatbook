@@ -392,6 +392,12 @@ DREAMS_BOUNDARY_TARGETS = (
     # TASK-38966: the QwenCloud provider contract file, red on dev in no PR
     # lane. Pure, 7 tests; 2.7 s at -n 4 on dev, 1.8-2.1 s serial (load 36-38).
     "Tests/Chat/test_qwencloud_provider_contract.py",
+    # TASK-38974: Tests/Docs, red on dev in no PR lane (the User Guide and
+    # README contracts). Pure file reads plus one tmp_path database; sandboxed.
+    "Tests/Docs/test_console_library_controls_docs.py",
+    "Tests/Docs/test_user_guide_contract.py",
+    "Tests/Docs/test_user_guide_conflict_markers.py",
+    "Tests/Docs/test_personas_qa_capture_script.py",
     # TASK-38985: the Library modal dismissal contracts and launch inventory,
     # red on dev in no PR lane. ~2 min serial (140.2, 114.6 and 101.6 s with
     # this step's command, load 20-34 on 18 CPUs), whole file: the UI census
