@@ -71,12 +71,14 @@ _ASYNC_SETTLE_TIMEOUT = 10.0
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_classify_hands_free_grammar_phrase():
     result = classify_segment("Console, hands free.")
     assert isinstance(result, VoiceCommand)
     assert result.name == "hands-free"
 
 
+@pytest.mark.bootstrap_profile
 def test_classify_hands_free_grammar_phrase_is_whole_segment_only():
     # Fail-open rule: dictated text that merely CONTAINS the phrase is not a
     # command -- the same discipline every other grammar entry follows.
@@ -590,6 +592,7 @@ async def test_hands_free_buddy_follows_each_capture_and_reply_origin(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_countdown_cancel_restores_the_chip(monkeypatch):
     """Task-5 final review I1 (PROBE A): cancelling an armed countdown
     (`on_speech_resumed()`, the primary cancel route) must restore the
@@ -626,6 +629,7 @@ async def test_countdown_cancel_restores_the_chip(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_segment_no_final_consumes_latch_so_the_next_real_final_still_arms_countdown(
     monkeypatch,
 ):
@@ -674,6 +678,7 @@ async def test_segment_no_final_consumes_latch_so_the_next_real_final_still_arms
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_spoken_feedback_false_still_speaks_reply(monkeypatch):
     """Reply speech is intrinsic to hands-free -- it must not read
     `dictation.spoken_feedback` (which governs status acks only)."""
@@ -724,6 +729,7 @@ async def test_spoken_feedback_false_still_speaks_reply(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_at_most_one_failure_toast_per_reply():
     """Task-5 review M2: the first failed utterance in a reply passes
     `quiet=False` (a toast is allowed); every LATER failed utterance in
@@ -746,6 +752,7 @@ async def test_at_most_one_failure_toast_per_reply():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_two_sequential_replies_both_drain_through_the_real_wiring(
     monkeypatch,
 ):
@@ -812,6 +819,7 @@ async def test_two_sequential_replies_both_drain_through_the_real_wiring(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_spoken_send_mid_loop_drives_a_real_send_and_speaks_the_reply(
     monkeypatch,
 ):
@@ -870,6 +878,7 @@ async def test_spoken_send_mid_loop_drives_a_real_send_and_speaks_the_reply(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_discard_mid_loop_exits_cleanly_instead_of_desyncing(monkeypatch):
     """Task-5 review I3: spoken "Console, discard." mid-loop must not
     leave the FSM `listening` with `capture_open=True` while the real mic
@@ -906,6 +915,7 @@ async def test_discard_mid_loop_exits_cleanly_instead_of_desyncing(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_spoken_send_mid_reply_acoustic_mode_ends_capture_and_exits(
     monkeypatch,
 ):
@@ -959,6 +969,7 @@ async def test_spoken_send_mid_reply_acoustic_mode_ends_capture_and_exits(
         await _wait_for_mic_label(composer, pilot, "Dictate")
 
 
+@pytest.mark.bootstrap_profile
 def test_silence_speech_posts_stop_unconditionally_even_with_nothing_in_flight():
     """Task-5 review M9: a `_speak_status` ack ("Sent.", "Discarded.", ...)
     bypasses the sequencer entirely -- `SilenceSpeech`'s handler must post
@@ -996,6 +1007,7 @@ def test_silence_speech_posts_stop_unconditionally_even_with_nothing_in_flight()
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_keypress_in_speaking_silences_and_reopens_capture(monkeypatch):
     fake = FakeDictationSession()
     monkeypatch.setattr(
@@ -1043,6 +1055,7 @@ async def test_keypress_in_speaking_silences_and_reopens_capture(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_esc_exits_loop_and_restores_normal_esc_semantics(monkeypatch):
     fake = FakeDictationSession()
     monkeypatch.setattr(
@@ -1083,6 +1096,7 @@ async def test_esc_exits_loop_and_restores_normal_esc_semantics(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_barge_in_and_esc_work_with_focus_off_the_composer(monkeypatch):
     """Task-5 review I2: keyboard barge-in and Esc are the loop's PRIMARY
     interruption/exit mechanism (the docs say "press any key"/"Esc from
@@ -1143,6 +1157,7 @@ async def test_barge_in_and_esc_work_with_focus_off_the_composer(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_hands_free_marshal_routes_off_thread_calls_through_call_from_thread():
     """On `[console] agent_runtime`'s DEFAULT production send path, the
     delta/completion tap runs on a worker thread with its own event loop
@@ -1186,6 +1201,7 @@ async def test_hands_free_marshal_routes_off_thread_calls_through_call_from_thre
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_hands_free_marshal_calls_directly_when_already_on_ui_thread():
     """The same-thread half of I1's fix: the async, on-the-app-loop
     direct-provider send path calls the tap from the UI thread already --
@@ -1211,6 +1227,7 @@ async def test_hands_free_marshal_calls_directly_when_already_on_ui_thread():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_hands_free_marshal_fast_path_when_loop_is_off():
     """Task-5 review round 2, D1: the tap is installed once and never
     uninstalled, so EVERY chunk of EVERY message pays for this call
@@ -1237,6 +1254,7 @@ async def test_hands_free_marshal_fast_path_when_loop_is_off():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_hands_free_marshal_swallows_call_from_thread_failure():
     """Task-5 review round 2, D1: `App.call_from_thread` raises
     `RuntimeError("App is not running")` when the app has no running event
@@ -1273,6 +1291,7 @@ async def test_hands_free_marshal_swallows_call_from_thread_failure():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_hands_free_marshal_swallows_a_raising_callback_on_the_ui_thread():
     """Task-5 final review I2: the docstring claims a hands-free plumbing
     failure can NEVER escape into `store.append_message`/`append_stream_
@@ -1305,6 +1324,7 @@ async def test_hands_free_marshal_swallows_a_raising_callback_on_the_ui_thread()
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_append_stream_chunk_never_raises_off_thread_even_when_call_from_thread_fails():
     """The end-to-end shape of D1's exception concern: a background-thread
     call into the WRAPPED `store.append_stream_chunk` (the exact seam the
@@ -1349,6 +1369,7 @@ async def test_append_stream_chunk_never_raises_off_thread_even_when_call_from_t
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_on_key_outside_hands_free_loop_behaves_exactly_as_before(monkeypatch):
     """With no hands-free session, `on_key` must do exactly what it did
     before task 5: type a printable key, then Enter sends it -- the new
@@ -1384,6 +1405,7 @@ async def test_on_key_outside_hands_free_loop_behaves_exactly_as_before(monkeypa
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_typed_enter_during_listening_sends_normally_once(monkeypatch):
     """Mic open in hands-free `listening`: typing a draft and pressing
     Enter must send the TYPED draft via the normal path exactly once, and
@@ -1433,6 +1455,7 @@ async def test_typed_enter_during_listening_sends_normally_once(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_typed_enter_cancels_an_armed_countdown_first(monkeypatch):
     """The SAME keypress that would send the typed draft also reaches
     `on_composer_key()` first (this wiring's `on_key` ordering) -- a
@@ -1508,6 +1531,7 @@ def _prime_hands_free_send(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_reply_identity_same_session_new_id_claims_and_feeds():
     """Baseline happy path: a brand-new assistant id, in the recorded
     sending session, claims and feeds; a later delta for any OTHER id is
@@ -1552,6 +1576,7 @@ async def test_reply_identity_same_session_new_id_claims_and_feeds():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_reply_identity_rejects_a_concurrent_background_session_reply():
     """Task-5 review B1 probe 1 (cross-session): parallel per-session runs
     are a first-class supported feature -- a DIFFERENT session's reply
@@ -1606,6 +1631,7 @@ async def test_reply_identity_rejects_a_concurrent_background_session_reply():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_reply_identity_rejects_a_stale_same_session_reply():
     """Task-5 review B1 probe 2 (same session, no concurrency needed):
     keyboard barge-in during `awaiting_reply` suppresses speech but never
@@ -1668,6 +1694,7 @@ async def test_reply_identity_rejects_a_stale_same_session_reply():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_awaiting_reply_watchdog_disarms_at_row_creation_not_first_token():
     """Task-5 final review I3: the `awaiting_reply` watchdog's own
     docstring says it guards only the send -> `on_reply_started()` gap,
@@ -1740,6 +1767,7 @@ async def test_awaiting_reply_watchdog_disarms_at_row_creation_not_first_token()
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_zero_content_reply_completion_still_completes_the_turn():
     """A reply that streams ZERO chunks (empty/pure-tool-call) must still
     reach `on_reply_finished()` via its completion tap, or the loop hangs
@@ -1774,6 +1802,7 @@ async def test_zero_content_reply_completion_still_completes_the_turn():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_exit_loop_intent_emits_silence_and_close_capture_itself(monkeypatch):
     """`ExitLoop` reaching the FSM does not itself carry `SilenceSpeech`/
     `CloseCapture` -- the wiring's own `_console_hands_free_exit_loop` must
@@ -1827,6 +1856,7 @@ async def test_exit_loop_intent_emits_silence_and_close_capture_itself(monkeypat
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_open_and_close_capture_handlers_are_idempotent_no_ops(monkeypatch):
     fake = FakeDictationSession()
     monkeypatch.setattr(
@@ -1877,6 +1907,7 @@ async def _wait_for(
 # Windows Proactor event-loop setup owns an internal loopback socket pair.
 @pytest.mark.allow_network
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_hands_free_limit_exits_without_reopen_until_a_physical_mic_press(
     monkeypatch,
 ):
@@ -1925,6 +1956,7 @@ async def test_hands_free_limit_exits_without_reopen_until_a_physical_mic_press(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_hands_free_limit_never_auto_sends_the_retained_text(
     monkeypatch,
 ):
@@ -1971,6 +2003,7 @@ async def test_hands_free_limit_never_auto_sends_the_retained_text(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_deferred_capture_ended_is_dropped_for_a_replaced_loop():
     """Task-5 review round 2, D4: if the user exits and re-enters hands-free
     WHILE a limit-triggered `on_capture_ended` delivery is still waiting
@@ -2026,6 +2059,7 @@ async def test_deferred_capture_ended_is_dropped_for_a_replaced_loop():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_acoustic_barge_in_opens_capture_on_reply_started(monkeypatch):
     fake = FakeDictationSession()
     monkeypatch.setattr(
@@ -2075,6 +2109,7 @@ async def test_acoustic_barge_in_opens_capture_on_reply_started(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_vad_degraded_entry_warns_instead_of_promising_auto_send(monkeypatch):
     fake = FakeDictationSession()
     monkeypatch.setattr(
@@ -2107,6 +2142,7 @@ async def test_vad_degraded_entry_warns_instead_of_promising_auto_send(monkeypat
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_reply_with_only_failed_utterances_escalates_once(monkeypatch):
     """TASK-32494: when EVERY utterance of a hands-free reply fails to play,
     the loop must say so once -- a single synthesis-side failure toast (or
@@ -2176,6 +2212,7 @@ async def test_reply_with_only_failed_utterances_escalates_once(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_dictation_start_failure_exits_hands_free_loop(monkeypatch):
     """A dictation start failure (missing mic extras, no device) must tear
     the loop down through its reasoned exit path -- previously the Switch
@@ -2228,6 +2265,7 @@ def test_degraded_entry_copy_does_not_recommend_spoken_stop():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_entry_refused_when_dictation_probe_fails(monkeypatch):
     """Hands-free entry must preflight dictation availability and refuse
     with the probe's reason+remedy -- the switch never claims the mode."""
@@ -2264,6 +2302,7 @@ async def test_entry_refused_when_dictation_probe_fails(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_entry_warns_once_when_no_playback_path_exists(monkeypatch):
     """With no way to play ANY audio format (no sink, no player), entry
     still proceeds (mic-only use is legitimate) but warns once per app run."""
@@ -2315,6 +2354,7 @@ def test_voice_switch_tooltips_state_relationship_and_interrupts():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_reply_with_no_tts_handler_escalates_once(monkeypatch):
     """PR #2638 Qodo #1: when the TTS handler cannot initialize at all,
     every utterance takes the no-handler branch -- that must count as a
