@@ -10,6 +10,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.Chat.console_controller_factory import bind_app
+
 from Tests.Agents import test_mcp_tool_provider as mcp_helpers
 from Tests.Chat.test_console_approval_scope_journeys import owner_journey
 from tldw_chatbook.Agents.mcp_tool_provider import (
@@ -291,7 +293,7 @@ async def test_phone_settlement_retires_staged_desktop_choices_and_queued_apply(
     client = FakeRelayClient()
     publisher = ServedRelayPublisher(client)
     publisher.attach()
-    controller.app = app
+    bind_app(controller, app)
     controller.set_pending_approval = wrap_pending_approval_hook(publisher, app.show)
     controller.mcp_approval_timeout_seconds = lambda: 10.0
     tasks = []

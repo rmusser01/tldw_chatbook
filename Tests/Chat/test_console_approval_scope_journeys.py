@@ -2,6 +2,8 @@
 
 import pytest
 
+from Tests.Chat.console_controller_factory import bind_app, update_app
+
 from Tests.Agents import test_mcp_tool_provider as mcp_helpers
 from Tests.Agents.test_mcp_tool_provider import (
     FakeMCPService,
@@ -57,7 +59,7 @@ def owner_journey(tmp_path, loop, *, profile="default"):
         store=persisted_console_store(db_path=tmp_path / "chat.sqlite"),
         provider_gateway=object(),
     )
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     session = controller.store.ensure_session()
     controller.store.persistence.db.close()
     return controller, session, provider, service, transport
@@ -194,7 +196,7 @@ def test_deep_native_mcp_arguments_fail_closed_without_leaving_an_approval_round
     controller, session, provider, service, transport = owner_journey(
         tmp_path, running_loop
     )
-    controller.app.unified_mcp_service = service
+    update_app(controller, unified_mcp_service=service)
     tool = provider.list_catalog()[0].id
     leaf = "fixture-private-argument"
     depth = 520

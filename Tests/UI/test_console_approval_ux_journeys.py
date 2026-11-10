@@ -3,6 +3,8 @@
 import asyncio
 
 import pytest
+
+from Tests.Chat.console_controller_factory import bind_app
 from textual import on
 from textual.widgets import Button
 
@@ -62,7 +64,7 @@ async def test_painted_grouped_batch_releases_once_and_dispatches_only_consent(
     ]
     app = JourneyApp(controller)
     app.theme = theme
-    controller.app = app
+    bind_app(controller, app)
     controller.set_pending_approval = app.show
     # A finite test-only bound protects cleanup; no production deadline changes.
     controller.mcp_approval_timeout_seconds = lambda: 10.0
