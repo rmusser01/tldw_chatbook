@@ -752,9 +752,14 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
             assert case.rules.helpers.unsettled_count == 0
             assert case.composer.draft_text() == complaint
             assert case.learning_results and case.learning_results[-1][0] != "active"
+            # TASK-39166: wait on what is read next. The flag can clear before
+            # a later sync hides Stop (1 of 10 whole-file runs at load ~51).
             await _until(
-                lambda: not case.console._console_control_bar_sync_scheduled,
-                "the control-bar sync deferred during the hold",
+                lambda: not case.console._console_control_bar_sync_scheduled
+                and not stop.display
+                and "Testing rule" not in _run_text(case.console),
+                "the control-bar sync deferred during the hold hiding Stop "
+                "and 'Testing rule'",
                 lambda: case.pilot.pause(0.01),
             )
             assert "Testing rule" not in _run_text(case.console)
