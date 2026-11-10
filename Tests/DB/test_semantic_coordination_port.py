@@ -262,7 +262,7 @@ def _mobile_service(monkeypatch, tmp_path):
 
     service = mobile_service.MobileChatService.__new__(mobile_service.MobileChatService)
     service._data_dir = tmp_path
-    monkeypatch.setattr(mobile_service, "WorkspaceDB", _stop)
+    monkeypatch.setattr(mobile_service, "open_profile_storage", _stop)
     return service._build_engine
 
 
