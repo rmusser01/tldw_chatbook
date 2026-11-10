@@ -1,6 +1,8 @@
 """Recovery requires protected proof and exact retained definitions."""
 
 import shutil
+import sqlite3
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -809,3 +811,238 @@ def test_interrupted_cutover_requalifies_valid_legacy_writer_then_old_backup(
     )
     assert stack.call(stack.coordinator.published_snapshot) == expected
     assert stack.call(stack.authority.verify_legacy_cutover) == final
+
+
+# TASK-40132: backups capture the plugin root (owner decision 2026-11-10).
+
+
+def _plugin_root(tmp_path, *, process_state=None):
+    """A selected profile whose plugin root holds real registry, package and data bytes."""
+    from contextlib import closing
+
+    from tldw_chatbook.Plugins.registry import _schema_statements
+
+    config = tmp_path / "selected.toml"
+    config.write_text(
+        f'[general]\nusers_name = "Ada"\n[paths]\ndata_dir = "{tmp_path / "data"}"\n'
+    )
+    root = tmp_path / "data" / "Ada" / "plugins"
+    files = {
+        "packages/inst/plugin.json": b'{"name": "inst"}',
+        "packages-revisions/inst/digest/plugin.json": b'{"name": "inst", "v": 2}',
+        "data/root-1/notes.txt": b"made by the plugin",
+        "staging/op/snapshot/plugin.json": b'{"name": "git"}',
+        "acquisition-custody/op.json": b'{"phase": "terminal"}',
+        "cache/index.json": b"{}",
+        "runtime.lock": b"",
+    }
+    for relative, payload in files.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+        path.chmod(0o600)
+    registry = root / "registry.sqlite3"
+    with closing(sqlite3.connect(registry)) as connection:
+        for migration in (
+            "001_initial.sql",
+            "002_authority.sql",
+            "003_installation_alias.sql",
+            "004_root_users.sql",
+            "005_marketplace_sources.sql",
+        ):
+            for statement in _schema_statements(migration):
+                connection.execute(statement)
+        connection.execute("PRAGMA user_version=5")
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("INSERT INTO installations(installation_id) VALUES ('inst')")
+        connection.execute(
+            "INSERT INTO data_roots(root_id, installation_id, path, generation)"
+            " VALUES ('root-1', 'inst', ?, 0)",
+            (str(root / "data" / "root-1"),),
+        )
+        if process_state is not None:
+            connection.execute(
+                "INSERT INTO processes(token, operation_id, installation_id,"
+                " revision_digest, owner_session, state, kind)"
+                " VALUES ('t', 'op', 'inst', 'digest', 'session', ?, 'active_run')",
+                (process_state,),
+            )
+        connection.commit()
+    registry.chmod(0o600)
+    for directory in (tmp_path / "data", *(p for p in root.parent.rglob("*") if p.is_dir())):
+        directory.chmod(0o700)
+    return config, root
+
+
+def _plugin_rows(config, root):
+    from tldw_chatbook.Backup_Recovery.inventory import discover
+    from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
+
+    install_adapters()
+    inventory = discover((config,))
+    rows = {
+        item.path: item
+        for item in inventory.items
+        if item.path is not None and (item.path == root or root in item.path.parents)
+    }
+    return inventory, rows
+
+
+def test_backup_preview_captures_plugin_root_except_runtime_lock(tmp_path):
+    """AC1/AC2: registry, packages, revisions and every data root are captured,
+    staging and acquisition custody too (owner decision Q1); only runtime.lock is
+    excluded, and the registry's live WAL/SHM stay transient SQLite sidecars."""
+    config, root = _plugin_root(tmp_path)
+    registry = root / "registry.sqlite3"
+    reader = sqlite3.connect(registry)  # keeps -wal/-shm present, as a live store does
+    try:
+        reader.execute("PRAGMA wal_autocheckpoint=0")
+        reader.execute("INSERT INTO installations(installation_id) VALUES ('later')")
+        reader.commit()
+        inventory, rows = _plugin_rows(config, root)
+    finally:
+        reader.close()
+    statuses = {
+        path.relative_to(root).as_posix(): (item.owner, item.status)
+        for path, item in rows.items()
+    }
+    assert statuses.get("runtime.lock") == ("plugins", "intentionally_excluded")
+    del statuses["runtime.lock"]
+    assert statuses.pop("registry.sqlite3-wal") == (
+        "sqlite.transient",
+        "intentionally_excluded",
+    )
+    assert statuses.pop("registry.sqlite3-shm") == (
+        "sqlite.transient",
+        "intentionally_excluded",
+    )
+    for relative in (
+        "registry.sqlite3",
+        "packages/inst/plugin.json",
+        "packages-revisions/inst/digest/plugin.json",
+        "data/root-1/notes.txt",
+        "staging/op/snapshot/plugin.json",
+        "acquisition-custody/op.json",
+        "cache/index.json",
+    ):
+        assert statuses.pop(relative) == ("plugins", "included"), relative
+    assert set(statuses.values()) == {("plugins", "included_directory")}
+    assert "." in statuses
+    assert not any(item.owner == "unknown" for item in inventory.items if item.path == root)
+
+
+def test_plugin_registry_capture_folds_wal_into_its_exact_catalog(tmp_path, monkeypatch):
+    """AC3: the frozen catalog matches the installed migrations, and capture copies
+    committed WAL frames through the SQLite backup route like the other owners."""
+    from contextlib import closing
+    from threading import Event
+
+    from Tests.Backup_Recovery.test_core_owners import application_authority
+    from tldw_chatbook.Backup_Recovery.models import FileMetadata, StorageItem
+    from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
+    from tldw_chatbook.Plugins.registry import PluginRegistry
+
+    owners = {owner.owner_id: owner for owner in install_adapters()}
+    assert "plugins" in owners
+    from tldw_chatbook.Plugins.backup import REGISTRY_SCHEMAS
+
+    with PluginRegistry._reference_schema() as reference:
+        installed = tuple(
+            row[3]
+            for row in reference.execute(
+                "SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name"
+            )
+            if row[3] is not None
+        )
+    assert REGISTRY_SCHEMAS == ((5, installed),)
+    _, root = _plugin_root(tmp_path)
+    registry = root / "registry.sqlite3"
+    writer = sqlite3.connect(registry)
+    try:
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.execute("INSERT INTO installations(installation_id) VALUES ('wal-only')")
+        writer.commit()
+        assert Path(str(registry) + "-wal").stat().st_size > 0
+        authority = application_authority(tmp_path, root, monkeypatch)
+        adapter = owners["plugins"]
+        item = StorageItem(
+            "plugins",
+            "profile:test:plugins:registry",
+            registry,
+            "included",
+            (),
+            metadata=FileMetadata(
+                1, "profile:test:plugins", "registry.sqlite3",
+                "profile:test:plugins", "file", 0o600, 0, "private",
+            ),
+        )
+        stage = tmp_path / "stage"
+        stage.mkdir(mode=0o700)
+        destination = stage / "registry.sqlite3"
+        with (
+            authority.maintenance(("core", "bootstrap.unbound"), 1) as session,
+            session.capture_scope((registry,), stage),
+        ):
+            adapter.capture(item, destination, Event())
+            assert adapter.validate(destination) == ()
+        assert not Path(str(destination) + "-wal").exists()
+        with closing(sqlite3.connect(destination)) as captured:
+            assert captured.execute("PRAGMA user_version").fetchone()[0] == 5
+            assert {
+                row[0]
+                for row in captured.execute("SELECT installation_id FROM installations")
+            } == {"inst", "wal-only"}
+    finally:
+        writer.close()
+
+
+@pytest.mark.parametrize("writer", ["process", "lock"])
+def test_live_plugin_writers_refuse_preview_and_capture(tmp_path, monkeypatch, writer):
+    """AC4: an unsettled plugin process or a live runtime owner makes the preview
+    refuse every plugin item with a reason, and capture refuses the copy."""
+    from threading import Event
+
+    import portalocker
+
+    from Tests.Backup_Recovery.test_core_owners import application_authority
+    from tldw_chatbook.Backup_Recovery.recovery_service import issue_message
+
+    config, root = _plugin_root(
+        tmp_path, process_state="published" if writer == "process" else None
+    )
+    handle = open(root / "runtime.lock", "r+b")
+    try:
+        if writer == "lock":
+            portalocker.lock(handle, portalocker.LOCK_EX | portalocker.LOCK_NB)
+        inventory, rows = _plugin_rows(config, root)
+        assert "plugin_writers_active" in inventory.issues
+        assert not inventory.complete
+        assert rows[root / "data" / "root-1" / "notes.txt"].status == "unavailable"
+        assert rows[root / "registry.sqlite3"].status == "unavailable"
+        assert rows[root / "runtime.lock"].status == "intentionally_excluded"
+        assert any(
+            item.owner == "plugins" and item.logical_id.endswith(":writers_active")
+            for item in inventory.items
+        )
+        assert "quit" in issue_message("plugin_writers_active").lower()
+        if writer == "lock":
+            from tldw_chatbook.Plugins.backup import recovery_adapters
+
+            (adapter,) = recovery_adapters()
+            item = replace(rows[root / "data" / "root-1" / "notes.txt"], status="included")
+            authority = application_authority(tmp_path, root, monkeypatch)
+            stage = tmp_path / "stage"
+            stage.mkdir(mode=0o700)
+            destination = stage / "notes.txt"
+            with (
+                authority.maintenance(("core", "bootstrap.unbound"), 1) as session,
+                session.capture_scope((item.path,), stage),
+            ):
+                with pytest.raises(ValueError, match="plugin_writers_active"):
+                    adapter.capture(item, destination, Event())
+                assert not destination.exists()
+                portalocker.unlock(handle)
+                adapter.capture(item, destination, Event())
+            assert destination.read_bytes() == b"made by the plugin"
+    finally:
+        handle.close()

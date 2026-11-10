@@ -98,6 +98,7 @@ _OWNER_LABELS = {
     "db.workspaces": "Workspaces",
     "db.subscriptions": "Subscriptions",
     "db.scheduled_tasks": "Scheduled tasks",
+    "plugins": "Plugins",
     "db.library_collections": "Library collections",
     "db.library_ingest_jobs": "Library imports",
 }
@@ -151,6 +152,13 @@ _ISSUE_MESSAGES = {
     "insufficient_space": "Choose a location with more free space and review again.",
     "permission_denied": "Choose a local folder you can read and write.",
     "backup_operation_failed": "Review the selected file and local folders, then try again. Open the detailed recovery evidence if the problem continues.",
+    "plugin_writers_active": (
+        "Plugins are in use, so their files are not copied. Chatbook keeps plugins "
+        "running from their first use until you quit: quit Chatbook, reopen it and "
+        "back up before opening Plugins. If a plugin process is still recorded as "
+        "running, review it in Plugins first. A partial backup without plugins "
+        "remains available."
+    ),
 }
 
 

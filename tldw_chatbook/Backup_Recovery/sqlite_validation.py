@@ -49,6 +49,7 @@ def _installed_owner(owner_id):
     from tldw_chatbook.Kanban_Interop.recovery import recovery_adapters as kanban
     from tldw_chatbook.Notes.recovery import recovery_adapters as notes
     from tldw_chatbook.Notifications.recovery import recovery_adapters as notifications
+    from tldw_chatbook.Plugins.backup import recovery_adapters as plugins
     from tldw_chatbook.Research_Interop.recovery import recovery_adapters as research
     from tldw_chatbook.Scheduling.recovery import recovery_adapters as scheduling
     from tldw_chatbook.Study_Interop.recovery import recovery_adapters as study
@@ -77,6 +78,7 @@ def _installed_owner(owner_id):
         recovered,
         config,
         rag_indexing,
+        plugins,
     ):
         for owner in factory():
             if owner.owner_id == owner_id:

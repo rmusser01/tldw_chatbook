@@ -501,3 +501,30 @@ async def test_changed_restore_selection_discards_inflight_review(
         assert delivered and delivered[0].requested_groups == ("workspaces",)
         assert screen._restore_plan is None
         assert screen.query_one("#backup-start-restore", Button).disabled
+
+
+@pytest.mark.asyncio
+async def test_backup_review_explains_refused_live_plugins(tmp_path):
+    """TASK-40132 AC4: the preview names why plugins were refused and what to do."""
+    from textual.widgets import Static
+
+    from tldw_chatbook.Backup_Recovery.models import Inventory
+
+    async with mounted(tmp_path) as (pilot, screen, _service):
+        await press(pilot, "#backup-open-create")
+        details = {
+            "inventory": Inventory((), False, "scope", ("plugin_writers_active",)),
+            "complete": False,
+            "maintenance": "Writers resume after copying.",
+            "availability": (True, ""),
+            "capacity": (),
+            "credential_mode": "exclude",
+        }
+        screen._show_preview(
+            screen._revision,
+            details,
+            ((tmp_path / "config.toml",), tmp_path / "backup.zip", screen._options()),
+        )
+        coverage = str(screen.query_one("#backup-coverage", Static).render())
+        assert "Plugins are in use" in coverage
+        assert "quit Chatbook" in coverage

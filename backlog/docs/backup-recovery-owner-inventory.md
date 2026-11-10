@@ -2882,6 +2882,55 @@ existing private activation publisher and are not restored execution authority.
 | tldw_chatbook/MCP/recovery_activation.py | approve | create_private_file | 1 | qualified | mcp.local / mcp.permissions / mcp.context |
 | tldw_chatbook/MCP/recovery_activation.py | approve | write | 1 | qualified | mcp.local / mcp.permissions / mcp.context |
 
+## Plugins backup owner (TASK-40132)
+
+Owner decision 2026-11-10 (TASK-39116): capture all of it. The installed `plugins`
+owner (`Plugins/backup.py`) is one tree over `<user data>/plugins`, shaped like
+`recovered.media`: `registry.sqlite3` is its SQLite member, everything else is raw
+bytes. It is in the `tools` data group, next to `skills`, whose tree already holds
+the plugin authority under `skills/trust/plugins/`.
+
+| Path under `<user data>/plugins` | Preview status | Capture |
+| --- | --- | --- |
+| `registry.sqlite3` | included | SQLite backup route through `recovery.plugins.registry`; committed WAL frames fold in; exact frozen v5 catalog (`REGISTRY_SCHEMAS`, pinned to the installed migrations by a test). A registry at v1-v4 or failing validation is `unsupported`. |
+| `registry.sqlite3-wal`, `-shm` | `sqlite.transient`, intentionally excluded | folded into the registry copy |
+| `registry.sqlite3-journal` | unsupported | refused: a stray rollback journal could undo a restored copy |
+| `runtime.lock` | intentionally excluded | refused; the only excluded file |
+| `packages/`, `packages-revisions/`, `data/<root_id>/` | included | raw bytes |
+| `staging/`, `acquisition-custody/` | included | raw bytes. Plugin recovery re-verifies git-installed packages from the retained custody record and `staging/<sha>/snapshot`. Staging also holds the copies of the host git and SSH configuration a fetch used (`host-git-config`, `host-ssh-input`, `host-ssh-config`). |
+| anything else (`cache/`, unknown names) | included | raw bytes |
+
+**Live writers.** Capture refuses rather than waits. When any registry `processes`
+row is not `settled` (a plugin process may still run, including unresolved rows
+left by a crashed owner), or a non-blocking probe of an existing `runtime.lock`
+finds a live runtime owner, every plugin item is `unavailable`, a
+`plugins:writers_active` row is added and the inventory carries the issue
+`plugin_writers_active`, which the preview explains. A partial backup still omits
+plugins. Capture probes and holds the lock again while it copies each plugin
+item. Accepted ceiling: the app's plugin service holds the lock from its first
+use until quit, so a complete in-app backup after plugin use needs a restart.
+
+**Restore.** The registry restores through the restricted SQLite route, other
+files through the raw route, back to the same plugin root only: the registry and
+the authenticated authority snapshot bind absolute plugin-root paths. A restore
+into a separate profile refuses the owner (`owner_relocation_unverified:plugins`);
+a registry whose data-root paths do not match the destination is refused the same
+way. The OS-keyring generation marker is never captured, so a restored profile
+without it reports `recovery_required`; restored data roots and acquisition
+custody also fail their physical-identity bindings until rebound. The owner is
+activation-required: the plugin service refuses to run plugins for a restored
+generation until plugin authority recovery completes, which approves it.
+
+| Registry owner | Source module | Existing policy | Recovery cohort/status |
+| --- | --- | --- | --- |
+| sqlite:recovery.plugins.registry | tldw_chatbook/Plugins/backup | _PRIVATE_AND_READ_ONLY | sqlite/plugins backup owner (centralized backup and recovery capture allowed) |
+
+| Module | Producer symbol | Call | Count | Classification | Resolver / adapter cohort |
+| --- | --- | --- | --- | --- | --- |
+| tldw_chatbook/Plugins/backup.py | _Plugins._inspect | connect_private_sqlite | 1 | qualified | plugins; read-only registry validation and process check |
+| tldw_chatbook/Plugins/backup.py | _Plugins.capture | copy_private_sqlite | 1 | qualified | plugins |
+| tldw_chatbook/Plugins/backup.py | _runtime_lock | open | 1 | qualified | plugins; read-only runtime.lock probe, never creates it |
+
 ## Census reconciliation (TASK-39053)
 
 This inventory had not matched production since it landed. Recomputed at dev
@@ -2987,7 +3036,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | sqlite:library.legacy_recovery | tldw_chatbook/Library/collections_legacy_recovery | _READ_ONLY_URI | sqlite/unsupported |
 | sqlite:personal_context.interview_drafts | tldw_chatbook/Personal_Context/interview_draft_repository | _PRIVATE_FILE | sqlite/installed exclusion (`_LocalSQLite`) |
 | sqlite:personal_context.repository | tldw_chatbook/Personal_Context/repository | _PRIVATE_AND_READ_ONLY | sqlite/explicit unsupported declaration (`_LocalSQLite`, `excluded=False`) |
-| sqlite:plugins.registry | tldw_chatbook/Plugins/registry | _PRIVATE_MEMORY_AND_READ_ONLY | sqlite/unsupported |
+| sqlite:plugins.registry | tldw_chatbook/Plugins/registry | _PRIVATE_MEMORY_AND_READ_ONLY | sqlite/plugins runtime owner; no backup authority (backup uses `recovery.plugins.registry`) |
 | sqlite:recovery.operations.dreams | tldw_chatbook/DB/recovery_dreams_guardian | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
 | sqlite:recovery.operations.guardian | tldw_chatbook/DB/recovery_dreams_guardian | _PRIVATE_AND_READ_ONLY | sqlite/operational-recovery-qualified |
 | sqlite:utils.db_upgrade_notice | tldw_chatbook/Utils/db_upgrade_notice | _READ_ONLY_URI | sqlite/unsupported |
@@ -3293,67 +3342,67 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Petdex/sources.py | _zip_source | ZipFile | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Petdex/sources.py | _zip_source | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Petdex/sources.py | _zip_source.read | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/acquisition.py | _Producer.copy_local_git.copy | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/acquisition.py | _Producer.copy_local_git.copy | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/acquisition.py | _Producer.copy_local_git.copy | write | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/acquisition.py | _Producer.git_tree | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/acquisition.py | _Producer.ssh_authentication | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/acquisition.py | _Producer.ssh_authentication | write_text | 2 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/acquisition.py | _Producer.write_blob | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/acquisition.py | _Producer.write_blob | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/acquisition.py | _Producer.write_blob | write | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/acquisition.py | _inventory | open_private_binary | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/acquisition.py | _reserve | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/acquisition.py | _retire_cleaned | open_private_binary | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/acquisition.py | _save | open_private_binary | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | FilePluginMarkerStore.clear | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | FilePluginMarkerStore.clear | open_private_binary | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | FilePluginMarkerStore.clear | os.unlink | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | FilePluginMarkerStore.load_runtime_checkpoint | open_private_binary | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | FilePluginMarkerStore.save_marker | open_private_binary | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | FilePluginMarkerStore.save_runtime_checkpoint | open_private_binary | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | KeyringPluginMarkerStore.clear | delete_password | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | KeyringPluginMarkerStore.save_marker | set_password | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | KeyringPluginMarkerStore.save_runtime_checkpoint | set_password | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore._load_reset_state | open_private_binary | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore._qualify_reset_archive | open | 2 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore._qualify_reset_archive | secure_private_directory | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore._snapshot_inventory | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore._unlink_artifact | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore._unlink_artifact | open_private_binary | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore._unlink_artifact | os.unlink | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore.ensure_issued_metadata | open_private_binary | 2 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore.reset | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore.reset | os.rename | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore.retire_orphan_snapshots | open_private_binary | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | _directory | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | _directory | secure_private_directory | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | _read | open_private_binary | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | _sync_existing | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | _sync_existing | open_private_binary | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/authority_store.py | _write | atomic_private_write_bytes | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/coordinator.py | PluginCoordinator._materialize | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/coordinator.py | PluginCoordinator._materialize | open | 5 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/coordinator.py | PluginCoordinator._remove_uninstalled_package | open | 2 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/data_cleanup.py | create_data | mkdir | 2 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/data_cleanup.py | create_data | open | 2 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/data_cleanup.py | open_root | open | 3 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/data_cleanup.py | remove_root.descend | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/data_cleanup.py | remove_root.descend | os.unlink | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/package_files.py | _directory_fd | open | 2 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/package_files.py | _member_fd | open | 2 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/package_files.py | _output_parent | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/package_files.py | capture_package.walk | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/package_files.py | materialize_package | mkdir | 2 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/package_files.py | materialize_package | open | 2 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/package_files.py | materialize_package | write | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/retention.py | cleanup_staging | open | 2 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/retention.py | remove_revision_root | open | 2 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/runtime_owner.py | PluginRuntimeOwner.try_acquire | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/runtime_owner.py | PluginRuntimeOwner.try_acquire | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/source_service.py | SourceService.commit_import.operation | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/source_service.py | SourceService.commit_import.operation | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/source_service.py | SourceService.commit_import.operation | write | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Plugins/acquisition.py | _Producer.copy_local_git.copy | mkdir | 1 | qualified | plugins |
+| tldw_chatbook/Plugins/acquisition.py | _Producer.copy_local_git.copy | open | 1 | qualified | plugins |
+| tldw_chatbook/Plugins/acquisition.py | _Producer.copy_local_git.copy | write | 1 | qualified | plugins |
+| tldw_chatbook/Plugins/acquisition.py | _Producer.git_tree | mkdir | 1 | qualified | plugins |
+| tldw_chatbook/Plugins/acquisition.py | _Producer.ssh_authentication | open | 1 | qualified | plugins |
+| tldw_chatbook/Plugins/acquisition.py | _Producer.ssh_authentication | write_text | 2 | qualified | plugins |
+| tldw_chatbook/Plugins/acquisition.py | _Producer.write_blob | mkdir | 1 | qualified | plugins |
+| tldw_chatbook/Plugins/acquisition.py | _Producer.write_blob | open | 1 | qualified | plugins |
+| tldw_chatbook/Plugins/acquisition.py | _Producer.write_blob | write | 1 | qualified | plugins |
+| tldw_chatbook/Plugins/acquisition.py | _inventory | open_private_binary | 1 | qualified | plugins |
+| tldw_chatbook/Plugins/acquisition.py | _reserve | mkdir | 1 | qualified | plugins |
+| tldw_chatbook/Plugins/acquisition.py | _retire_cleaned | open_private_binary | 1 | qualified | plugins |
+| tldw_chatbook/Plugins/acquisition.py | _save | open_private_binary | 1 | qualified | plugins |
+| tldw_chatbook/Plugins/authority_store.py | FilePluginMarkerStore.clear | open | 1 | unsupported | plugins; caller-selected reduced-protection marker, unused by the app |
+| tldw_chatbook/Plugins/authority_store.py | FilePluginMarkerStore.clear | open_private_binary | 1 | unsupported | plugins; caller-selected reduced-protection marker, unused by the app |
+| tldw_chatbook/Plugins/authority_store.py | FilePluginMarkerStore.clear | os.unlink | 1 | unsupported | plugins; caller-selected reduced-protection marker, unused by the app |
+| tldw_chatbook/Plugins/authority_store.py | FilePluginMarkerStore.load_runtime_checkpoint | open_private_binary | 1 | unsupported | plugins; caller-selected reduced-protection marker, unused by the app |
+| tldw_chatbook/Plugins/authority_store.py | FilePluginMarkerStore.save_marker | open_private_binary | 1 | unsupported | plugins; caller-selected reduced-protection marker, unused by the app |
+| tldw_chatbook/Plugins/authority_store.py | FilePluginMarkerStore.save_runtime_checkpoint | open_private_binary | 1 | unsupported | plugins; caller-selected reduced-protection marker, unused by the app |
+| tldw_chatbook/Plugins/authority_store.py | KeyringPluginMarkerStore.clear | delete_password | 1 | unsupported | plugins; keyring generation marker, never captured: a restore without it reports recovery_required |
+| tldw_chatbook/Plugins/authority_store.py | KeyringPluginMarkerStore.save_marker | set_password | 1 | unsupported | plugins; keyring generation marker, never captured: a restore without it reports recovery_required |
+| tldw_chatbook/Plugins/authority_store.py | KeyringPluginMarkerStore.save_runtime_checkpoint | set_password | 1 | unsupported | plugins; keyring generation marker, never captured: a restore without it reports recovery_required |
+| tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore._load_reset_state | open_private_binary | 1 | qualified | skills; plugin authority under skills/trust/plugins, captured by the skills tree |
+| tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore._qualify_reset_archive | open | 2 | qualified | skills; plugin authority under skills/trust/plugins, captured by the skills tree |
+| tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore._qualify_reset_archive | secure_private_directory | 1 | qualified | skills; plugin authority under skills/trust/plugins, captured by the skills tree |
+| tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore._snapshot_inventory | open | 1 | qualified | skills; plugin authority under skills/trust/plugins, captured by the skills tree |
+| tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore._unlink_artifact | open | 1 | qualified | skills; plugin authority under skills/trust/plugins, captured by the skills tree |
+| tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore._unlink_artifact | open_private_binary | 1 | qualified | skills; plugin authority under skills/trust/plugins, captured by the skills tree |
+| tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore._unlink_artifact | os.unlink | 1 | qualified | skills; plugin authority under skills/trust/plugins, captured by the skills tree |
+| tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore.ensure_issued_metadata | open_private_binary | 2 | qualified | skills; plugin authority under skills/trust/plugins, captured by the skills tree |
+| tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore.reset | open | 1 | qualified | skills; plugin authority under skills/trust/plugins, captured by the skills tree |
+| tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore.reset | os.rename | 1 | qualified | skills; plugin authority under skills/trust/plugins, captured by the skills tree |
+| tldw_chatbook/Plugins/authority_store.py | PluginAuthorityStore.retire_orphan_snapshots | open_private_binary | 1 | qualified | skills; plugin authority under skills/trust/plugins, captured by the skills tree |
+| tldw_chatbook/Plugins/authority_store.py | _directory | open | 1 | qualified | skills; plugin authority under skills/trust/plugins, captured by the skills tree |
+| tldw_chatbook/Plugins/authority_store.py | _directory | secure_private_directory | 1 | qualified | skills; plugin authority under skills/trust/plugins, captured by the skills tree |
+| tldw_chatbook/Plugins/authority_store.py | _read | open_private_binary | 1 | qualified | skills; plugin authority under skills/trust/plugins, captured by the skills tree |
+| tldw_chatbook/Plugins/authority_store.py | _sync_existing | open | 1 | qualified | skills; plugin authority under skills/trust/plugins, captured by the skills tree |
+| tldw_chatbook/Plugins/authority_store.py | _sync_existing | open_private_binary | 1 | qualified | skills; plugin authority under skills/trust/plugins, captured by the skills tree |
+| tldw_chatbook/Plugins/authority_store.py | _write | atomic_private_write_bytes | 1 | qualified | skills; plugin authority under skills/trust/plugins, captured by the skills tree |
+| tldw_chatbook/Plugins/coordinator.py | PluginCoordinator._materialize | mkdir | 1 | qualified | plugins |
+| tldw_chatbook/Plugins/coordinator.py | PluginCoordinator._materialize | open | 5 | qualified | plugins |
+| tldw_chatbook/Plugins/coordinator.py | PluginCoordinator._remove_uninstalled_package | open | 2 | qualified | plugins |
+| tldw_chatbook/Plugins/data_cleanup.py | create_data | mkdir | 2 | qualified | plugins |
+| tldw_chatbook/Plugins/data_cleanup.py | create_data | open | 2 | qualified | plugins |
+| tldw_chatbook/Plugins/data_cleanup.py | open_root | open | 3 | qualified | plugins |
+| tldw_chatbook/Plugins/data_cleanup.py | remove_root.descend | open | 1 | qualified | plugins |
+| tldw_chatbook/Plugins/data_cleanup.py | remove_root.descend | os.unlink | 1 | qualified | plugins |
+| tldw_chatbook/Plugins/package_files.py | _directory_fd | open | 2 | generic_boundary | plugins; descriptor reader for owned packages and selected sources |
+| tldw_chatbook/Plugins/package_files.py | _member_fd | open | 2 | generic_boundary | plugins; descriptor reader for owned packages and selected sources |
+| tldw_chatbook/Plugins/package_files.py | _output_parent | open | 1 | qualified | plugins |
+| tldw_chatbook/Plugins/package_files.py | capture_package.walk | open | 1 | generic_boundary | plugins; descriptor reader for owned packages and selected sources |
+| tldw_chatbook/Plugins/package_files.py | materialize_package | mkdir | 2 | qualified | plugins |
+| tldw_chatbook/Plugins/package_files.py | materialize_package | open | 2 | qualified | plugins |
+| tldw_chatbook/Plugins/package_files.py | materialize_package | write | 1 | qualified | plugins |
+| tldw_chatbook/Plugins/retention.py | cleanup_staging | open | 2 | qualified | plugins |
+| tldw_chatbook/Plugins/retention.py | remove_revision_root | open | 2 | qualified | plugins |
+| tldw_chatbook/Plugins/runtime_owner.py | PluginRuntimeOwner.try_acquire | mkdir | 1 | qualified | plugins |
+| tldw_chatbook/Plugins/runtime_owner.py | PluginRuntimeOwner.try_acquire | open | 1 | process_artifact | plugins; runtime.lock, excluded from capture and probed to refuse live writers |
+| tldw_chatbook/Plugins/source_service.py | SourceService.commit_import.operation | mkdir | 1 | qualified | plugins |
+| tldw_chatbook/Plugins/source_service.py | SourceService.commit_import.operation | open | 1 | qualified | plugins |
+| tldw_chatbook/Plugins/source_service.py | SourceService.commit_import.operation | write | 1 | qualified | plugins |
 | tldw_chatbook/Prompt_Management/prompt_scope_service.py | PromptScopeService.save_prompt | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Research_Workspace/overlay_store.py | ResearchPresentationOverlayStore._read_payload | open_private_binary | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Research_Workspace/overlay_store.py | ResearchPresentationOverlayStore._read_payload | secure_private_directory | 1 | unsupported | miscellaneous |
@@ -3511,8 +3560,8 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Petdex/sources.py | source_from_bytes | open | 1 | memory | PIL-BytesIO decode; no-independent-file |
 | tldw_chatbook/Widgets/Library/library_media_image_preview.py | decode_media_image | open | 1 | memory | PIL-BytesIO decode; no-independent-file |
 | tldw_chatbook/Widgets/Persona_Widgets/actor_pack_import_review.py | _portrait_widget | open | 1 | memory | PIL-BytesIO decode; no-independent-file |
-| tldw_chatbook/Plugins/registry.py | PluginRegistry.__init__ | connect_private_sqlite | 1 | unsupported | plugins.registry |
-| tldw_chatbook/Plugins/registry.py | PluginRegistry._reference_schema | connect_private_sqlite | 1 | unsupported | plugins.registry |
+| tldw_chatbook/Plugins/registry.py | PluginRegistry.__init__ | connect_private_sqlite | 1 | qualified | plugins; registry.sqlite3, captured through recovery.plugins.registry |
+| tldw_chatbook/Plugins/registry.py | PluginRegistry._reference_schema | connect_private_sqlite | 1 | memory | plugins.registry; in-memory schema reference |
 | tldw_chatbook/Backup_Recovery/detached_source.py | _hash | write | 1 | disposable | private archive staging |
 | tldw_chatbook/Backup_Recovery/detached_source.py | acquire_source | create_private_file | 1 | disposable | private archive staging |
 | tldw_chatbook/Utils/private_paths.py | open_private_lock_stream | create_private_text | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |

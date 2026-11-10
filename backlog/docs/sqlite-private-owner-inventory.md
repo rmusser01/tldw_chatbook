@@ -375,7 +375,6 @@ execution API is initialized. It is excluded from centralized backup.
 | C96 | tldw_chatbook/DB/recovery_dreams_guardian | _DreamsAdapter.validate | recovery.operations.dreams | private_file, read_only_uri | exact installed historical Dreams v1–v6 catalogs | Migrated via `connect_private_sqlite`. Complete measured catalogs and positive historical version markers; no runtime reference-store construction. |
 | B40 | tldw_chatbook/DB/recovery_dreams_guardian | _DreamsAdapter.capture | recovery.operations.dreams | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Owner-checked private snapshot preserves historical data; restoration grants no automatic execution. |
 
-
 ADR-232 adds one exact restricted-validation caller, not a new SQLite owner:
 `DB/recovery_response_rules.py::prepare_imported_candidate` resolves only the
 installed `db.chachanotes.primary` adapter, validates that same disposable
@@ -386,3 +385,12 @@ internal rollback does not disable local rules. The private-call census pins
 this symbol, literal adapter selection, candidate argument, and validation call.
 
 | C98 | tldw_chatbook/DB/Workspace_Project_Index_DB | WorkspaceProjectIndexDB._open_connection | db.workspace_project_index | private_file | derived cache read/write | Migrated via `connect_private_sqlite`. Through SQLiteStoreKernel. Opaque workspace/binding accounting parent, complete-key namespace children, and stable per-authority native lifetime files. All nested DB, sidecar, control, and lease bytes are excluded from centralized backup payload; the service retains storage admission until native worker and DB owner-thread retirement. Fresh v2 uses incremental reclamation; binding-wide Clear preserves DB identity, control history, and stable lease files. |
+
+## Managed plugin backup (TASK-40132, ADR-126)
+
+The runtime `plugins.registry` owner keeps no backup authority. Backup reads and
+copies the registry through its own recovery owner, which only the installed
+`plugins` backup owner in `Plugins/backup.py` uses.
+
+| C99 | tldw_chatbook/Plugins/backup | _Plugins._inspect | recovery.plugins.registry | private_file, read_only_uri | exact installed v5 registry catalog and live plugin-process check | Migrated via `connect_private_sqlite`. Frozen measured catalog; reads only the `processes` states to refuse capture while a plugin process may run. No runtime owner or registry construction. |
+| B41 | tldw_chatbook/Plugins/backup | _Plugins.capture | recovery.plugins.registry | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Holds the plugin runtime lock and the checked maintenance scope; committed WAL frames fold into the snapshot. Restored plugins stay inactive until plugin authority recovery approves them. |
