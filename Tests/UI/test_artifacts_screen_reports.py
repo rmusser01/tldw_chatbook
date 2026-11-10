@@ -27,6 +27,13 @@ pytestmark = pytest.mark.ui
 _SEED_BODY = "## Daily Brief\n\nOne story [item 1]."
 
 
+@pytest.fixture
+def isolated_report_audio(tmp_path, monkeypatch):
+    from tldw_chatbook.Subscriptions import briefing_audio
+
+    monkeypatch.setattr(briefing_audio, "get_user_data_dir", lambda: tmp_path)
+
+
 def _seed_report(app, *, status: str = "complete") -> int:
     db: SubscriptionsDB = app.subscriptions_db
     watchlist_id = int(WatchlistBundleService(db).create("Daily Brief")["id"])
@@ -127,6 +134,7 @@ async def test_seeded_reports_list_rows_with_open_button():
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("isolated_report_audio")
 async def test_audio_row_shows_play_button():
     app = _build_test_app(configured_default="artifacts")
     briefing_id = _seed_report(app)
@@ -567,6 +575,7 @@ def _seed_audio_report(
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("isolated_report_audio")
 async def test_play_button_validates_path_and_plays_normalized_result(
     tmp_path, monkeypatch
 ):
@@ -593,6 +602,7 @@ async def test_play_button_validates_path_and_plays_normalized_result(
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("isolated_report_audio")
 async def test_play_button_missing_file_warns_through_the_validator(monkeypatch):
     """Qodo #1: a missing file is the validator's rejection, surfaced as the
     existing "no longer exists" warning -- and nothing is handed to the
@@ -641,6 +651,7 @@ async def _press_play_and_read_refusal(app, screen, pilot, briefing_id, played):
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("isolated_report_audio")
 async def test_play_button_refuses_a_row_outside_the_audio_dir(tmp_path, monkeypatch):
     """A cached row whose path now points outside `briefing_audio_dir()` is
     refused with a literal toast that never carries the path."""
@@ -695,6 +706,7 @@ def _captured_logs():
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("isolated_report_audio")
 async def test_play_button_plays_a_relative_row_from_inside_the_audio_dir(
     tmp_path, monkeypatch
 ):
@@ -729,6 +741,7 @@ async def test_play_button_plays_a_relative_row_from_inside_the_audio_dir(
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("isolated_report_audio")
 async def test_play_button_never_plays_a_relative_row_from_the_working_directory(
     tmp_path, monkeypatch
 ):
@@ -762,6 +775,7 @@ async def test_play_button_never_plays_a_relative_row_from_the_working_directory
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("isolated_report_audio")
 async def test_play_button_never_hands_a_dash_leading_name_to_the_player_as_an_option(
     tmp_path, monkeypatch
 ):
@@ -821,6 +835,7 @@ async def test_play_button_never_hands_a_dash_leading_name_to_the_player_as_an_o
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("isolated_report_audio")
 async def test_play_button_refuses_a_symlink_that_escapes_the_audio_dir(
     tmp_path, monkeypatch
 ):
