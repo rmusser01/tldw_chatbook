@@ -47,7 +47,7 @@ def _seed_report(app, *, status: str = "complete") -> int:
     return briefing_id
 
 
-def _attach_file_chacha(app, tmp_path) -> CharactersRAGDB:
+def _attach_file_chacha(app, tmp_path, request) -> CharactersRAGDB:
     """A file-backed ChaChaNotes DB on `app.chachanotes_db`.
 
     Deliberately NOT `attach_chachanotes_db` (`:memory:`): CharactersRAGDB
@@ -58,6 +58,12 @@ def _attach_file_chacha(app, tmp_path) -> CharactersRAGDB:
     same rule ("never `:memory:` for either").
     """
     db = CharactersRAGDB(Path(tmp_path) / "chacha.sqlite", client_id="artifacts-row")
+
+    def retire():
+        with db.quiesce_connections(timeout_seconds=2.0):
+            pass
+
+    request.addfinalizer(retire)
     app.chachanotes_db = db
     return db
 
@@ -376,9 +382,10 @@ async def test_report_preview_header_uses_formatted_timestamp():
 
 
 @pytest.mark.asyncio
-async def test_kept_report_row_shows_kept_badge(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_kept_report_row_shows_kept_badge(tmp_path, request):
     app = _build_test_app(configured_default="artifacts")
-    chacha = _attach_file_chacha(app, tmp_path)
+    chacha = _attach_file_chacha(app, tmp_path, request)
     briefing_id = _seed_report(app)
     keep_briefing(app.subscriptions_db, chacha, briefing_id, origin="manual")
     async with _open_artifacts(app) as (screen, pilot):
@@ -450,9 +457,10 @@ async def test_open_button_deep_links_to_watchlists_artifacts_pane():
 
 
 @pytest.mark.asyncio
-async def test_keep_button_keeps_previewed_report_and_flips_badge(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_keep_button_keeps_previewed_report_and_flips_badge(tmp_path, request):
     app = _build_test_app(configured_default="artifacts")
-    chacha = _attach_file_chacha(app, tmp_path)
+    chacha = _attach_file_chacha(app, tmp_path, request)
     briefing_id = _seed_report(app)
     async with _open_artifacts(app) as (screen, pilot):
         await _wait_for_rows(screen, pilot)
@@ -484,9 +492,10 @@ async def test_keep_button_disabled_without_chacha_handle():
 
 
 @pytest.mark.asyncio
-async def test_keep_button_disabled_for_failed_report_preview(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_keep_button_disabled_for_failed_report_preview(tmp_path, request):
     app = _build_test_app(configured_default="artifacts")
-    _attach_file_chacha(app, tmp_path)
+    _attach_file_chacha(app, tmp_path, request)
     briefing_id = _seed_report(app, status="failed")
     async with _open_artifacts(app) as (screen, pilot):
         await _wait_for_rows(screen, pilot)
@@ -872,13 +881,14 @@ async def test_play_button_refuses_a_symlink_that_escapes_the_audio_dir(
 
 
 @pytest.mark.asyncio
-async def test_kept_badge_is_exact_per_row_not_page_bound(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_kept_badge_is_exact_per_row_not_page_bound(tmp_path, request):
     """Qodo #14: kept-ness is resolved per displayed row id, so a keep that
     is NOT among the newest `list_kept_briefings` page still earns its
     badge. The report shown here is old (a newer briefing exists above it)
     but is the one that was kept."""
     app = _build_test_app(configured_default="artifacts")
-    chacha = _attach_file_chacha(app, tmp_path)
+    chacha = _attach_file_chacha(app, tmp_path, request)
     kept_id = _seed_report(app)  # the OLD, kept one (complete: Keep refuses others)
     for _ in range(3):  # newer briefings push it down the newest-first list
         _seed_report(app)
