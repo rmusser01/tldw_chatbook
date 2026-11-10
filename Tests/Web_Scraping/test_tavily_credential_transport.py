@@ -114,6 +114,7 @@ def _request_parameters(call: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_tavily_request_parameters_hold_no_credential(
     tavily_key: str, recording_requests: _RecordingRequests
 ) -> None:
@@ -136,6 +137,7 @@ def test_tavily_request_parameters_hold_no_credential(
     assert parameters.get("max_results") == 3
 
 
+@pytest.mark.bootstrap_profile
 def test_tavily_credential_travels_in_the_headers(
     tavily_key: str, recording_requests: _RecordingRequests
 ) -> None:
@@ -148,6 +150,7 @@ def test_tavily_credential_travels_in_the_headers(
     assert headers.get("Authorization") == f"Bearer {SENTINEL_KEY}"
 
 
+@pytest.mark.bootstrap_profile
 def test_tavily_optional_domain_filters_still_reach_the_request(
     tavily_key: str, recording_requests: _RecordingRequests
 ) -> None:

@@ -159,6 +159,7 @@ def test_safe_search_params_for_log_drops_key_keeps_allowlisted_and_unknown():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_google_success_path_never_logs_the_key(monkeypatch, loguru_caplog):
     _set_key(monkeypatch, "google_search_api_key", SENTINEL_KEY)
     _set_key(monkeypatch, "google_search_engine_id", "cx123")
@@ -191,6 +192,7 @@ def test_google_success_path_never_logs_the_key(monkeypatch, loguru_caplog):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_google_http_error_never_logs_the_key_via_exception_text(
     monkeypatch, loguru_caplog
 ):

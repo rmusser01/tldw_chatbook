@@ -284,6 +284,7 @@ def test_loader_preserves_shipped_keys_and_legacy_aliases(
         assert api.initialize_config()["search_engines"][canonical] == value
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "backend", ["brave", "serper", "exa", "kagi", "google", "tavily", "searx"]
 )

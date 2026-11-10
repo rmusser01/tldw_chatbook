@@ -68,6 +68,7 @@ def test_sanitize_accepts_dict_shapes():
 # --- analyze_question fallback ----------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_analyze_question_total_failure_falls_back_to_empty(monkeypatch):
     def always_garbage(**kwargs):
         return "not json and no quoted strings here"
@@ -108,6 +109,7 @@ def test_generate_and_search_surfaces_provider_errors(monkeypatch):
     assert wsr["error"] and "exploded" in wsr["error"]  # zero results -> error set
 
 
+@pytest.mark.bootstrap_profile
 def test_generate_and_search_dedupes_subquery_equal_to_question(monkeypatch):
     seen_queries = []
 
@@ -131,6 +133,7 @@ def test_generate_and_search_dedupes_subquery_equal_to_question(monkeypatch):
     assert seen_queries == ["what is love", "real subquery"]  # casefold-dup dropped
 
 
+@pytest.mark.bootstrap_profile
 def test_generate_and_search_caps_fanout_at_search_default_max_queries(monkeypatch):
     """Important 2 (final review): search_default_max_queries resolves but was
     never applied -- an LLM returning 12 sub-questions fanned out to 13
@@ -162,6 +165,7 @@ def test_generate_and_search_caps_fanout_at_search_default_max_queries(monkeypat
     assert len(seen_queries) == 5  # question + 4 sub-queries, NOT question + 12
 
 
+@pytest.mark.bootstrap_profile
 def test_generate_and_search_stops_fanout_at_phase1_time_budget(monkeypatch):
     """Important 3a (final review): a cheap between-queries deadline check.
     A fake clock advances past the budget after the first search call, so
@@ -206,6 +210,7 @@ def test_generate_and_search_stops_fanout_at_phase1_time_budget(monkeypatch):
     assert wsr["results"]  # partial results still returned, not discarded
 
 
+@pytest.mark.bootstrap_profile
 def test_generate_and_search_warns_when_subquery_generation_exhausts_attempts(
     monkeypatch,
 ):
@@ -269,6 +274,7 @@ def test_generate_and_search_no_warning_when_subquery_generation_disabled(monkey
     assert not any("sub-query generation failed" in w for w in wsr["warnings"])
 
 
+@pytest.mark.bootstrap_profile
 def test_generate_and_search_provider_error_not_demoted_by_subquery_warning(
     monkeypatch,
 ):
@@ -318,6 +324,7 @@ def test_generate_and_search_provider_error_not_demoted_by_subquery_warning(
     assert wsr["warnings"][-1] == subquery_notice
 
 
+@pytest.mark.bootstrap_profile
 def test_generate_and_search_no_false_error_when_subquery_warning_is_the_only_warning(
     monkeypatch,
 ):
@@ -398,6 +405,7 @@ def test_aggregate_empty_returns_typed_shape():
     assert out["confidence"] == 0.0 and out["evidence"] == []
 
 
+@pytest.mark.bootstrap_profile
 def test_aggregate_success_typed_and_numbered(monkeypatch):
     captured = {}
 
@@ -432,6 +440,7 @@ def test_aggregate_success_typed_and_numbered(monkeypatch):
     assert 0.1 <= out["confidence"] <= 0.99  # computed, not hardcoded
 
 
+@pytest.mark.bootstrap_profile
 def test_aggregate_llm_failure_still_typed(monkeypatch):
     def boom(**kwargs):
         raise RuntimeError("provider down")
@@ -462,6 +471,7 @@ def test_aggregate_no_llm_fallback():
     assert "sum one" in out["text"] and out["confidence"] > 0.0
 
 
+@pytest.mark.bootstrap_profile
 def test_aggregate_single_chunk_skips_wasted_map_call(monkeypatch):
     # _REL is one small entry -> exactly one chunk. The MAP-phase chunk
     # summarization would cost a provider round-trip whose output feeds
@@ -502,6 +512,7 @@ _REL_MULTI = {
 }
 
 
+@pytest.mark.bootstrap_profile
 def test_aggregate_multi_chunk_synthesizes_from_chunk_summaries(monkeypatch):
     # Two ~4000-char entries pack into 2 separate 6000-char chunks, so the
     # MAP phase runs. The synthesis prompt must consume the chunk SUMMARIES
@@ -555,6 +566,7 @@ async def test_relevance_scrape_failure_keeps_result_with_fallback(monkeypatch):
     assert "snippet text" in entry["content"] or "Kept Title" in entry["content"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_relevance_cancel_event_stops_loop(monkeypatch):
     import asyncio
@@ -1423,6 +1435,7 @@ async def test_analyze_and_aggregate_forwards_respect_robots_txt_false_when_abse
 # --- relevance gate robustness (task-16333) --------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_relevance_judgment_runs_at_classification_temperature(monkeypatch):
     captured = []
@@ -1449,6 +1462,7 @@ async def failing_scrape_noop(url, **k):
     raise RuntimeError("no scrape")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_zero_relevant_falls_back_to_flagged_top_results(monkeypatch):
     monkeypatch.setattr(
@@ -1472,6 +1486,7 @@ async def test_zero_relevant_falls_back_to_flagged_top_results(monkeypatch):
     assert "snippet 0" in (first["content"] or "")  # snippet-level, no summarize spend
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_zero_relevant_with_cancel_keeps_empty(monkeypatch):
     import asyncio
@@ -1512,6 +1527,7 @@ async def test_zero_relevant_with_unevaluated_results_keeps_empty(monkeypatch):
     )  # never-evaluated results are not promoted (existing pin, unchanged)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_aggregate_carries_gate_unverified_flag_into_evidence(monkeypatch):
     monkeypatch.setattr(WebSearch_APIs, "chat_api_call", lambda **kwargs: "A[1].")
@@ -1540,6 +1556,7 @@ async def test_aggregate_carries_gate_unverified_flag_into_evidence(monkeypatch)
 # --- source-type-aware gate prompt (task-17066) -------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_relevance_gate_carries_source_note_for_repository_records(monkeypatch):
     captured = {}
@@ -1566,6 +1583,7 @@ async def test_relevance_gate_carries_source_note_for_repository_records(monkeyp
     assert "does NOT need to directly answer" in captured["prompt"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_relevance_gate_carries_source_note_for_metadata_records(monkeypatch):
     captured = {}
@@ -1585,6 +1603,7 @@ async def test_relevance_gate_carries_source_note_for_metadata_records(monkeypat
     assert "metadata record" in captured["prompt"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_relevance_gate_prompt_unchanged_for_papers_and_web(monkeypatch):
     prompts = []
@@ -1608,6 +1627,7 @@ async def test_relevance_gate_prompt_unchanged_for_papers_and_web(monkeypatch):
         assert prompt.split("\n\n", 1)[0] == prefix
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_relevance_gate_paper_prompt_is_byte_identical(monkeypatch):
     captured = []
@@ -1682,6 +1702,7 @@ def test_real_summaries_are_not_mistaken_for_failures(summary_text):
     assert _is_summary_failure(summary_text) is False
 
 
+@pytest.mark.bootstrap_profile
 def test_verification_failure_is_not_labelled_a_synthesis_failure(monkeypatch):
     """Qodo (PR 1782): verify_citations runs after the provider returns, inside
     the same try, so a verification defect used to be recorded as a SYNTHESIS

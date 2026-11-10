@@ -96,6 +96,7 @@ _GOOGLE_PAYLOAD = {
 }
 
 
+@pytest.mark.bootstrap_profile
 def test_google_request_carries_timeout(monkeypatch):
     _set_key(monkeypatch, "google_search_api_key", "test-google-key")
     _set_key(monkeypatch, "google_search_engine_id", "test-cx")
@@ -106,6 +107,7 @@ def test_google_request_carries_timeout(monkeypatch):
         assert call["timeout"] == 30
 
 
+@pytest.mark.bootstrap_profile
 def test_google_timeout_raises_existing_error_contract(monkeypatch):
     """AC #2: a simulated hang must surface as a bounded-time error, not
     block indefinitely. search_web_google's existing contract (unchanged by
@@ -144,6 +146,7 @@ _BRAVE_PAYLOAD = {
 }
 
 
+@pytest.mark.bootstrap_profile
 def test_brave_request_carries_timeout(monkeypatch):
     _set_key(monkeypatch, "brave_search_api_key", "test-brave-key")
     fake = _patch_requests(monkeypatch, _BRAVE_PAYLOAD)
@@ -175,6 +178,7 @@ class _FakeDDGRequests:
         return response
 
 
+@pytest.mark.bootstrap_profile
 def test_duckduckgo_request_carries_timeout(monkeypatch):
     if not WebSearch_APIs.LXML_AVAILABLE:
         pytest.skip("lxml not available")
@@ -187,6 +191,7 @@ def test_duckduckgo_request_carries_timeout(monkeypatch):
         assert call["timeout"] == 30
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("status_code", [200, 202])
 @pytest.mark.parametrize("page_text", [b"Select ducks", b"No  results."])
 def test_duckduckgo_challenge_is_a_failure(monkeypatch, status_code, page_text):
@@ -202,6 +207,7 @@ def test_duckduckgo_challenge_is_a_failure(monkeypatch, status_code, page_text):
     assert len(fake.calls) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("status_code", [403, 429, 500])
 def test_duckduckgo_http_failure_is_not_empty_results(monkeypatch, status_code):
     pytest.importorskip("lxml")
@@ -217,6 +223,7 @@ def test_duckduckgo_missing_parser_is_a_failure(monkeypatch):
         WebSearch_APIs.search_web_duckduckgo("cherry cake")
 
 
+@pytest.mark.bootstrap_profile
 def test_duckduckgo_results_and_confirmed_empty_are_distinct(monkeypatch):
     pytest.importorskip("lxml")
     fake = _FakeDDGRequests(
@@ -252,6 +259,7 @@ _KAGI_PAYLOAD = {
 }
 
 
+@pytest.mark.bootstrap_profile
 def test_kagi_request_carries_timeout(monkeypatch):
     _set_key(monkeypatch, "kagi_search_api_key", "test-kagi-key")
     fake = _patch_requests(monkeypatch, _KAGI_PAYLOAD)
@@ -284,6 +292,7 @@ _SERPER_PAYLOAD = {
 }
 
 
+@pytest.mark.bootstrap_profile
 def test_serper_request_shape(monkeypatch):
     _set_key(monkeypatch, "serper_search_api_key", "test-serper-key")
     fake = _patch_requests(monkeypatch, _SERPER_PAYLOAD)
@@ -297,6 +306,7 @@ def test_serper_request_shape(monkeypatch):
     assert body == {"q": "cherry cake", "gl": "us", "hl": "en", "num": 7}
 
 
+@pytest.mark.bootstrap_profile
 def test_serper_request_defaults(monkeypatch):
     _set_key(monkeypatch, "serper_search_api_key", "test-serper-key")
     fake = _patch_requests(monkeypatch, _SERPER_PAYLOAD)
@@ -305,6 +315,7 @@ def test_serper_request_defaults(monkeypatch):
     assert body["gl"] == "us" and body["hl"] == "en" and body["num"] == 10
 
 
+@pytest.mark.bootstrap_profile
 def test_serper_missing_key_raises(monkeypatch):
     _set_key(monkeypatch, "serper_search_api_key", "")
     _patch_requests(monkeypatch, _SERPER_PAYLOAD)
@@ -330,6 +341,7 @@ def test_serper_parser_standard_shape():
     assert out2["results"] == []
 
 
+@pytest.mark.bootstrap_profile
 def test_serper_end_to_end_through_process(monkeypatch):
     _set_key(monkeypatch, "serper_search_api_key", "test-serper-key")
     _patch_requests(monkeypatch, _SERPER_PAYLOAD)
@@ -342,6 +354,7 @@ def test_serper_end_to_end_through_process(monkeypatch):
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_serper_http_error_raises(monkeypatch):
     _set_key(monkeypatch, "serper_search_api_key", "test-serper-key")
     _patch_requests(monkeypatch, {}, status_code=429)
@@ -349,6 +362,7 @@ def test_serper_http_error_raises(monkeypatch):
         WebSearch_APIs.search_web_serper("q", "US", "en", 5)
 
 
+@pytest.mark.bootstrap_profile
 def test_serper_http_error_via_perform_websearch(monkeypatch):
     """perform_websearch's dispatch try/except (spec 5) must turn a backend
     HTTPError into its {"processing_error": ...} envelope, not crash the
@@ -386,6 +400,7 @@ _EXA_PAYLOAD = {
 }
 
 
+@pytest.mark.bootstrap_profile
 def test_exa_request_shape(monkeypatch):
     _set_key(monkeypatch, "exa_search_api_key", "test-exa-key")
     fake = _patch_requests(monkeypatch, _EXA_PAYLOAD)
@@ -403,6 +418,7 @@ def test_exa_request_shape(monkeypatch):
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_exa_missing_key_raises(monkeypatch):
     _set_key(monkeypatch, "exa_search_api_key", "")
     _patch_requests(monkeypatch, _EXA_PAYLOAD)
@@ -424,6 +440,7 @@ def test_exa_parser_standard_shape():
     assert second["content"] == ""  # empty highlights tolerated
 
 
+@pytest.mark.bootstrap_profile
 def test_exa_end_to_end_through_process(monkeypatch):
     _set_key(monkeypatch, "exa_search_api_key", "test-exa-key")
     _patch_requests(monkeypatch, _EXA_PAYLOAD)
@@ -433,6 +450,7 @@ def test_exa_end_to_end_through_process(monkeypatch):
     assert len(result["results"]) == 2
 
 
+@pytest.mark.bootstrap_profile
 def test_exa_http_error_raises(monkeypatch):
     _set_key(monkeypatch, "exa_search_api_key", "test-exa-key")
     _patch_requests(monkeypatch, {}, status_code=401)
@@ -480,6 +498,7 @@ def _yandex_payload(xml_bytes):
     return {"rawData": base64.b64encode(xml_bytes).decode("ascii")}
 
 
+@pytest.mark.bootstrap_profile
 def test_yandex_request_shape(monkeypatch):
     _set_key(monkeypatch, "yandex_search_api_key", "test-ya-key")
     _set_key(monkeypatch, "yandex_search_folder_id", "test-folder")
@@ -497,6 +516,7 @@ def test_yandex_request_shape(monkeypatch):
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_yandex_missing_key_or_folder_raises(monkeypatch):
     _patch_requests(monkeypatch, _yandex_payload(_YANDEX_XML))
     _set_key(monkeypatch, "yandex_search_api_key", "")
@@ -532,6 +552,7 @@ def test_yandex_error_through_process_sets_processing_error():
     assert result["results"] == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("code", ["15", "32", "42"])
 def test_yandex_no_results_and_errors_reach_web_tool(monkeypatch, code):
     from tldw_chatbook.Tools import web_tool_impls
@@ -565,6 +586,7 @@ def test_yandex_no_results_and_errors_reach_web_tool(monkeypatch, code):
         web_tool_impls._reset_state_for_tests()
 
 
+@pytest.mark.bootstrap_profile
 def test_yandex_end_to_end_through_process(monkeypatch):
     _set_key(monkeypatch, "yandex_search_api_key", "test-ya-key")
     _set_key(monkeypatch, "yandex_search_folder_id", "test-folder")
@@ -578,6 +600,7 @@ def test_yandex_end_to_end_through_process(monkeypatch):
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_yandex_http_error_raises(monkeypatch):
     _set_key(monkeypatch, "yandex_search_api_key", "test-ya-key")
     _set_key(monkeypatch, "yandex_search_folder_id", "test-folder")
@@ -652,6 +675,7 @@ def test_tavily_error_string_raises_and_surfaces_as_processing_error():
     assert result["results"] == []
 
 
+@pytest.mark.bootstrap_profile
 def test_tavily_end_to_end_through_process(monkeypatch):
     _set_key(monkeypatch, "tavily_search_api_key", "test-tavily-key")
     _patch_requests(monkeypatch, _TAVILY_PAYLOAD)
@@ -664,6 +688,7 @@ def test_tavily_end_to_end_through_process(monkeypatch):
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_tavily_request_carries_timeout(monkeypatch):
     """task-3060."""
     _set_key(monkeypatch, "tavily_search_api_key", "test-tavily-key")
@@ -747,6 +772,7 @@ class _FakeSearxSession:
         return _FakeResponse(self._payload, self._status_code)
 
 
+@pytest.mark.bootstrap_profile
 def test_searx_request_carries_timeout(monkeypatch):
     """Every SearX HTTP attempt carries the bounded provider timeout."""
     _set_key(monkeypatch, "searx_search_api_url", "https://search.example.org/search")
@@ -758,6 +784,7 @@ def test_searx_request_carries_timeout(monkeypatch):
         assert call["timeout"] == 30
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("outcome", ["empty", "http_failure", "unconfigured"])
 def test_searx_backend_empty_and_failures_reach_web_tool(monkeypatch, outcome):
     from tldw_chatbook.Tools import web_tool_impls

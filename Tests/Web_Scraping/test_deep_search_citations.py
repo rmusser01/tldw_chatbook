@@ -4,6 +4,8 @@ exact substring, then casefold/whitespace-normalized containment, then a
 bounded token-level fuzzy fallback. Fakes live only at chat_api_call / the
 tool's phase boundaries; the verification code itself runs real."""
 
+import pytest
+
 from tldw_chatbook.Tools import web_tool_impls
 from tldw_chatbook.Tools.web_tool_impls import web_deep_search
 from tldw_chatbook.Web_Scraping import WebSearch_APIs
@@ -159,6 +161,7 @@ def test_footer_summary_names_unknown_and_misquotes_and_uncited():
 # --- pipeline integration ------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_aggregate_success_verifies_and_annotates_citations(monkeypatch):
     monkeypatch.setattr(
         WebSearch_APIs, "chat_api_call", lambda **kwargs: "Answer citing [1] and [7]."
@@ -189,6 +192,7 @@ def test_aggregate_success_verifies_and_annotates_citations(monkeypatch):
     assert out["text"] == "Answer citing [1] and [7?]."
 
 
+@pytest.mark.bootstrap_profile
 def test_aggregate_failure_branches_carry_no_verification(monkeypatch):
     monkeypatch.setattr(WebSearch_APIs, "chat_api_call", lambda **kwargs: None)
     failure = WebSearch_APIs.aggregate_results(
@@ -253,6 +257,7 @@ def _tool_env(monkeypatch, final_answer):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_tool_footer_surfaces_citation_verification(monkeypatch):
     _tool_env(
         monkeypatch,
@@ -288,6 +293,7 @@ def test_tool_footer_surfaces_citation_verification(monkeypatch):
     assert "2 uncited sentence(s)" in out
 
 
+@pytest.mark.bootstrap_profile
 def test_tool_footer_silent_without_verification(monkeypatch):
     _tool_env(
         monkeypatch,
