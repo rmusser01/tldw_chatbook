@@ -41,6 +41,7 @@ _SEED = (
     _PRIVATE
     + r"""
 from tldw_chatbook.app import TldwCli
+from tldw_chatbook.Chat.console_semantic_revision import install_semantic_coordination;install_semantic_coordination()
 from tldw_chatbook.config import get_chachanotes_db_path,get_user_data_dir
 async def main():
  app=TldwCli()
