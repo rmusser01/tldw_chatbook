@@ -2372,10 +2372,10 @@ class SchedulesWorkbench(BaseAppScreen):
         sites") were retired in redesign PR-4 task 4 -- this stayed
         because the dropdown is now the surface using it."""
         destination_label = "the server" if direction == "to_server" else "this device"
-        lines = [f'Move "{escape_markup(name)}" to {destination_label}?']
+        lines = [f'Move "{name}" to {destination_label}?']
         if warnings:
             lines.append("")
-            lines.extend(f"- {escape_markup(warning)}" for warning in warnings)
+            lines.extend(f"- {warning}" for warning in warnings)
         if direction == "to_server":
             lines.append("")
             lines.append(
@@ -2995,7 +2995,7 @@ class SchedulesWorkbench(BaseAppScreen):
                         task_id, form_data, owner_id=target_owner
                     )
                     if saved is None:
-                        raise ValueError("Reminder was deleted or locked by a transfer")
+                        raise ValueError("Scheduled task was deleted or locked by a transfer")
                     self.app_instance.notify(
                         "Scheduled task updated.", severity="information"
                     )
@@ -3114,7 +3114,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 row.show_error(message)
             else:
                 self.notify(
-                    f"An earlier reminder edit failed: {message}",
+                    f"An earlier scheduled task edit failed: {message}",
                     severity="error",
                     markup=False,
                 )
@@ -5285,7 +5285,7 @@ class SchedulesWorkbench(BaseAppScreen):
         if not self._reminder_bulk_pending:
             return False
         self.app_instance.notify(
-            "Reminder tasks are busy — wait for the current bulk action to finish.",
+            "Scheduled tasks are busy — wait for the current bulk action to finish.",
             severity="warning",
         )
         return True
@@ -5310,7 +5310,7 @@ class SchedulesWorkbench(BaseAppScreen):
             self._reminder_bulk_pending = False
             logger.exception("Could not start reminder bulk action {}", group)
             self.app_instance.notify(
-                "Could not start the reminder bulk action; marks kept for retry.",
+                "Could not start the scheduled task bulk action; marks kept for retry.",
                 severity="error",
             )
 
