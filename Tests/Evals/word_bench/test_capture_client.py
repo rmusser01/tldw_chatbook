@@ -486,6 +486,7 @@ async def test_preflight_reports_a_5xx_as_unavailable_not_blocked(make_capture_c
     assert result.status_label == "Unavailable"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_capture_client_reuses_one_pooled_async_client_across_calls():
     """No keep-alive across a 100+ cell grid was the defect: a fresh
@@ -510,10 +511,12 @@ async def test_capture_client_reuses_one_pooled_async_client_across_calls():
         client = WordBenchCaptureClient(
             base_url="http://127.0.0.1:9099", transport=transport
         )
-        await client.capture("a", target, "raw", 5)
-        await client.capture("b", target, "raw", 5)
-        await client.capture("c", target, "raw", 5)
-        await client.aclose()
+        try:
+            await client.capture("a", target, "raw", 5)
+            await client.capture("b", target, "raw", 5)
+            await client.capture("c", target, "raw", 5)
+        finally:
+            await client.aclose()
 
     assert len(created) == 1, (
         "capture() must reuse one pooled AsyncClient across calls, not "
@@ -521,6 +524,7 @@ async def test_capture_client_reuses_one_pooled_async_client_across_calls():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_aclose_releases_the_pooled_client_and_is_safe_to_call_twice():
     def handler(request: httpx.Request) -> httpx.Response:
@@ -528,14 +532,18 @@ async def test_aclose_releases_the_pooled_client_and_is_safe_to_call_twice():
 
     client = _client(handler)
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    await client.capture("a", target, "raw", 5)
-    assert client._client is not None
+    try:
+        await client.capture("a", target, "raw", 5)
+        assert client._client is not None
 
-    await client.aclose()
-    assert client._client is None
+        await client.aclose()
+        assert client._client is None
 
-    # Nothing open -- must not raise.
-    await client.aclose()
+        # Nothing open -- must not raise.
+        await client.aclose()
+    finally:
+        if client._client is not None:
+            await client._client.aclose()
 
 
 ##############################################################################
@@ -1259,6 +1267,7 @@ async def test_measured_distribution_is_identical_whether_or_not_a_continuation_
     assert continuation == " a continuation"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_used_as_an_async_context_manager_closes_on_exit():
     def handler(request: httpx.Request) -> httpx.Response:

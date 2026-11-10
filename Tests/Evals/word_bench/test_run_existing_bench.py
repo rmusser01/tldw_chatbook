@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from contextlib import closing
 from pathlib import Path
 
 import httpx
@@ -306,26 +307,28 @@ def test_resolve_targets_leaves_an_unsteered_row_unchanged(db):
     assert targets[0].system_prompt is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_steering_round_trips_from_model_config_to_the_request_body(db):
+async def test_steering_round_trips_from_model_config_to_the_request_body():
     """The full path: create_model(config={"prefix": ...}) ->
     _resolve_targets -> the Target -> WordBenchCaptureClient._build_request
     actually sends it. Mirrors test_capture_client.py's own request-shape
     convention (a MockTransport handler recording the posted body)."""
-    steered_id = db.create_model(
-        name="steered",
-        provider="llama_cpp",
-        model_id="m",
-        config={"prefix": "Be careful. "},
-    )
-    config = BenchConfig(
-        name="steering bench",
-        prompt_mode="raw",
-        top_k=5,
-        dataset_id="unused",
-        target_ids=(steered_id,),
-    )
-    target = _resolve_targets(db, config)[0]
+    with closing(EvalsDB(db_path=":memory:", client_id="test")) as db:
+        steered_id = db.create_model(
+            name="steered",
+            provider="llama_cpp",
+            model_id="m",
+            config={"prefix": "Be careful. "},
+        )
+        config = BenchConfig(
+            name="steering bench",
+            prompt_mode="raw",
+            top_k=5,
+            dataset_id="unused",
+            target_ids=(steered_id,),
+        )
+        target = _resolve_targets(db, config)[0]
 
     seen = {}
 
@@ -333,10 +336,10 @@ async def test_steering_round_trips_from_model_config_to_the_request_body(db):
         seen["body"] = json.loads(request.content)
         return httpx.Response(200, json=RAW)
 
-    client = WordBenchCaptureClient(
+    async with WordBenchCaptureClient(
         base_url="http://127.0.0.1:9099", transport=httpx.MockTransport(handler)
-    )
-    await client.capture("the snippet", target, "raw", 5)
+    ) as client:
+        await client.capture("the snippet", target, "raw", 5)
 
     assert seen["body"]["prompt"] == "Be careful. the snippet"
 

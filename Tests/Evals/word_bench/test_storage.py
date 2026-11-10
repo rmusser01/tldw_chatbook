@@ -44,7 +44,7 @@ def _capture(token=" a"):
     )
 
 
-def test_schema_version_is_six():
+def test_schema_version_is_seven():
     # task-1691 phase 1 bumped to 5 for the character probe annotation and
     # review-state tables (eval_probe_turn_annotations/eval_probe_review_state)
     # added to this same shared Evals_DB schema -- word_bench's own tables
@@ -54,7 +54,9 @@ def test_schema_version_is_six():
     # (eval_tasks/eval_datasets/eval_models/eval_runs/ab_tests) were dropped
     # from the shared schema -- again with no change to word_bench's own
     # tables or behavior.
-    assert SCHEMA_VERSION == 6
+    # TASK-34399 added the shared eval_results (run_id, created_at) index
+    # in schema v7, without changing Word Bench's storage model.
+    assert SCHEMA_VERSION == 7
 
 
 def test_run_group_id_column_exists(db):
