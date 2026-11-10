@@ -28,6 +28,7 @@ from Tests.app_module_patches import set_app_global
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.bootstrap_profile
 def test_unhandled_exception_is_recorded(monkeypatch):
     from Tests.UI.app_factory import _build_test_app
 
@@ -52,6 +53,7 @@ def test_unhandled_exception_is_recorded(monkeypatch):
     assert "secret detail" not in str(crashes[-1])
 
 
+@pytest.mark.bootstrap_profile
 def test_worker_failed_wrapper_is_unwrapped(monkeypatch):
     """The type recorded must be the worker's, not textual's wrapper.
 
@@ -104,6 +106,7 @@ def test_worker_failed_wrapper_is_unwrapped(monkeypatch):
     assert "secret detail" not in str(crashes[-1])
 
 
+@pytest.mark.bootstrap_profile
 def test_the_override_still_delegates_to_textual(monkeypatch):
     """Must not swallow: textual sets the return code from this call."""
     from Tests.UI.app_factory import _build_test_app

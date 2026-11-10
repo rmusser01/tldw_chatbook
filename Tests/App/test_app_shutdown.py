@@ -530,6 +530,7 @@ def test_unregistering_removes_only_the_matching_app(_isolated_shutdown_state):
     asyncio.run(_scenario())
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounting_the_real_app_under_test_arms_no_watchdog(monkeypatch):
     """The end-to-end version of the gate, through the real `on_unmount`.
