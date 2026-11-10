@@ -603,6 +603,7 @@ async def test_summary_worker_refuses_if_captured_session_changes_before_start(
 ):
     """A queued worker must never apply an old session's selection elsewhere."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
@@ -628,6 +629,9 @@ async def test_summary_worker_refuses_if_captured_session_changes_before_start(
         )
 
         other_session = store.create_session(title="other")
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+        assert console._console_visible_draft_session_id == other_session.id
         composer.load_draft("keep this draft")
         other_path = store.active_path_message_ids(other_session.id)
         await console._summarize_console_from(controller, session.id, ids["u2"].id)
@@ -1269,6 +1273,7 @@ async def test_console_rewind_memory_lookup_error_warns_conservatively_without_l
 @pytest.mark.asyncio
 async def test_keyboard_rewind_cancel_consumes_command_and_preserves_late_draft():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
@@ -1463,10 +1468,14 @@ async def test_rewind_modal_launch_failure_preserves_draft(source, monkeypatch):
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("/rewind")
 
+        token = None
         if source == "keyboard":
-            stash = composer.stash_draft_for_send()
+            from tldw_chatbook.UI.Screens.chat_screen import _ConsolePendingSend
+
+            stash = composer.capture_draft_for_send()
             assert stash is not None and stash.text == "/rewind"
-            console._console_pending_send_stash = stash
+            token = object()
+            console._console_pending_send = _ConsolePendingSend(session.id, stash, token)
             composer.insert_text("late")
 
         real_push_screen = console.app.push_screen
@@ -1479,7 +1488,7 @@ async def test_rewind_modal_launch_failure_preserves_draft(source, monkeypatch):
         monkeypatch.setattr(console.app, "push_screen", fail_rewind_modal)
 
         with pytest.raises(RuntimeError, match="rewind modal launch failed"):
-            await console._send_console_message_from_visible_action()
+            await console._send_console_message_from_visible_action(pending_send_token=token)
 
         expected = "/rewindlate" if source == "keyboard" else "/rewind"
         assert composer.draft_text() == expected
