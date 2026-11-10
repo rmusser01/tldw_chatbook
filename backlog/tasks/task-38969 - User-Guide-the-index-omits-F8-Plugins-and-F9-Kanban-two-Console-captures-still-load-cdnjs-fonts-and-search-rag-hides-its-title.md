@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:21
-updated_date: 2026-11-10 17:58
+updated_date: 2026-11-10 18:28
 labels:
 - follow-up
 - docs
@@ -78,4 +78,7 @@ Added F8 Plugins and F9 Kanban to the index, stripped the last two cdnjs capture
   - M-3: `settings.md` still listed "F2, F3, F4, F5, then F7" and called Settings "the thirteenth of fifteen"; it is the eleventh of the fifteen nav bar destinations (`SHELL_DESTINATION_ORDER`), and the paragraph now names F7–F9 and the Ctrl+6/Ctrl+9 compatibility keys. `home.md` read "F2–F5/F7" and now reads "F2–F5/F7–F9". The F-key test now scans every User Guide page. It was red on those two pages first: `home.md: 'F2–F5/F7'`, `settings.md: 'F2, F3, F4, F5'` and settings' quoted list.
   - M-6: the test now also compares quoted nav-label runs ("F2 Lab", "F3 Logs", …) with the map and reads ASCII-hyphen ranges. "Shift+F6" never starts a run, and runs of fewer than three keys ("F1, F6", finding ids like "F1/F2") are skipped. Red on a temporary edit that dropped "F9 Kanban" from the index's quoted list and changed home.md to "F2-F5/F7": both were named. Reverted, 5 passed.
   - Reviewer recommendation: `plugins.md`'s keys section is now the template's "Keyboard & commands" table; the action rows moved to "What this screen is for".
+- **Review round 2 (r13h-rev2).**
+  - "then" is now a list separator in both the run regex and the range split. Same temporary edits, run first with the round-1 test and then with the new one: home.md set to "F2, F3, then F7" and settings.md to the correct "F2, F3, F4, F5, then F7, F8, F9". The round-1 test let home.md through (a 2-key run plus a lone F7) and wrongly flagged settings.md (`'F2, F3, F4, F5'`, `'F7, F8, F9'`). The new test names only `home.md: 'F2, F3, then F7'`. Reverted.
+  - Two single-key F9 references meant Settings, which is F4 (F9 is Kanban). `settings.md` now reads "F4 → Console Behavior → Goal runs": the category label is `Console Behavior` (`settings_screen.py`) and its card composes `Goal runs` (`settings_goal_policy.py`). `console/context-and-rag.md` now reads "Press F4 → Workspaces" (the `Workspaces` category).
 <!-- SECTION:NOTES:END -->

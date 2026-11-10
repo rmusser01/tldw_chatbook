@@ -25,10 +25,11 @@ IMAGE_LINK_RE = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
 TABLE_KEY_RE = re.compile(r"Ctrl\+\d|F\d+")
 LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)#]+)")
 # A run of F-keys joined only by list separators: "F2, F3", "F2–F5 / F7",
-# "F2-F5/F7". Ranges (en dash or hyphen) are expanded; "Shift+F6" never starts
-# one. Runs of fewer than three keys ("F1, F6", finding ids like "F1/F2") are
-# not destination lists.
-F_KEY_RUN_RE = re.compile(r"(?<![+\w])F\d+(?:\s*(?:,|/|–|-|and|or)\s*F\d+)+\b")
+# "F2-F5/F7", "F5, then F7". Ranges (en dash or hyphen) are expanded;
+# "Shift+F6" never starts one. Runs of fewer than three keys ("F1, F6",
+# finding ids like "F1/F2") are not destination lists.
+_SEP = r"\s*(?:,|/|–|-|\band\b|\bor\b|\bthen\b)"
+F_KEY_RUN_RE = re.compile(rf"(?<![+\w])F\d+(?:(?:{_SEP})+\s*F\d+)+\b")
 # Two or more quoted nav labels: "F2 Lab", "F3 Logs", ...
 QUOTED_RUN_RE = re.compile(r'"F\d+ [A-Z]\w*"(?:,\s*(?:and\s+)?"F\d+ [A-Z]\w*")+')
 
@@ -68,7 +69,7 @@ def test_index_nav_table_matches_the_shell_shortcut_map() -> None:
 def _f_keys(run: str) -> list[str]:
     """Expand a run such as "F2–F5 / F7" to F2, F3, F4, F5, F7."""
     keys: list[str] = []
-    for part in re.split(r"\s*(?:,|/|and|or)\s*", run):
+    for part in re.split(r"(?:\s*(?:,|/|\band\b|\bor\b|\bthen\b)\s*)+", run):
         ends = [int(key[1:]) for key in re.findall(r"F\d+", part)]
         keys += [f"F{n}" for n in range(ends[0], ends[-1] + 1)]
     return keys

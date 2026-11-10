@@ -547,7 +547,7 @@ back to one ssh exchange per call), `session_idle_s` (default `60`
 seconds before an idle session closes), and `bundle_cache` (default
 `true`; set `false` to never cache the worker on the server).
 
-**Adding a binding.** Press **F9 → Workspaces**, select the workspace,
+**Adding a binding.** Press **F4 → Workspaces**, select the workspace,
 and use the **SSH folders** editor: a target (`user@host[:port]` or an
 ssh-config alias), an absolute remote path (starting with `/`), the
 **Access** toggle (read-only by default, read-write on request — a

@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:21
-updated_date: 2026-11-10 17:58
+updated_date: 2026-11-10 18:28
 labels:
 - follow-up
 - docs
@@ -75,4 +75,5 @@ Added a checked-in capture driver, `scripts/capture_user_guide.py`, and retook b
   - M-4: `console/agent-runs-and-tools.md`'s "Running the Watchlists workflow from Console" now says to turn on Full agent tools, linking the light-surface section.
   - Smoke test (reviewer recommendation): the gateway subclass moved to `guide_gateway()` in the driver. `Tests/Docs/test_user_guide_contract.py::test_capture_driver_builds_its_gateway_on_the_uat_planner` builds it and runs its first planner turn. Red under a temporary rename of the UAT's `_ScriptedWatchlistsGateway` (`ImportError: cannot import name '_ScriptedWatchlistsGateway'`), the break it exists to catch; reverted, green.
   - All three targets were rerun with the fixed driver: rc=0 each. `search-rag.svg` and `file-notes.svg` came out byte-identical to the previous run.
+- **Review round 2 (r13h-rev2).** The environment scrub missed credentials the app reads (`FAL_KEY`, `CONFLUENCE_PASSWORD`, `DOCEXT_PASSWORD`). It now drops every inherited variable ending in `KEY`, `_TOKEN`, `_SECRET`, `_PASSWORD` or `_USERNAME`, plus the proxies and `SSH_AUTH_SOCK`, and the comment says exactly that. `PYTHON_KEYRING_BACKEND`, `TLDW_*` paths and `TIKTOKEN_CACHE_DIR` do not match. `search-rag` rerun with it: rc=0 and the same painted rows. The file differed only in Rich's per-export class hash, so the committed image is kept.
 <!-- SECTION:NOTES:END -->

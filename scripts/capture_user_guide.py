@@ -42,7 +42,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 IMAGES = REPO_ROOT / "Docs" / "User_Guide" / "images"
 SIZE = (235, 52)
-_PROXY_VARS = {"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"}
+_DROPPED_VARS = {"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "SSH_AUTH_SOCK"}
+_CREDENTIAL_VAR = re.compile(r"(KEY|_TOKEN|_SECRET|_PASSWORD|_USERNAME)$")
 _REMOTE_FONT = re.compile(
     r',\s*url\("https://cdnjs\.cloudflare\.com/[^"]+"\) format\("woff2?"\)'
 )
@@ -67,10 +68,11 @@ def _isolate(profile: Path) -> None:
     config = profile / "config" / "config.toml"
     for directory in (home, profile / "data", config.parent):
         directory.mkdir(mode=0o700, parents=True)
-    # No proxy may carry a request off the machine, and no ambient provider
-    # credential may reach the app (httpx trusts *_PROXY by default).
+    # Drop the proxies (httpx trusts *_PROXY by default) and every inherited
+    # variable named like a credential: *KEY (FAL_KEY, OPENAI_API_KEY),
+    # *_TOKEN, *_SECRET, *_PASSWORD, *_USERNAME and the ssh agent socket.
     for name in list(os.environ):
-        if name.upper() in _PROXY_VARS or re.search(r"(API_KEY|_TOKEN|_SECRET)$", name):
+        if name.upper() in _DROPPED_VARS or _CREDENTIAL_VAR.search(name.upper()):
             del os.environ[name]
     os.environ.update(
         HOME=str(home),

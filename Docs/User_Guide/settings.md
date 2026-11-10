@@ -2,7 +2,7 @@
 
 ## Goal policy in Console behavior
 
-**F9 → Console behavior → Goal runs** stages changes with the existing **Save**
+**F4 → Console Behavior → Goal runs** stages changes with the existing **Save**
 and **Revert** controls. Saving updates the `[agents]` section in the same atomic
 batch as the other Console settings. Named Agents and fleet wake controls keep
 their existing meaning.
