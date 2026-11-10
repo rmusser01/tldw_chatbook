@@ -327,6 +327,7 @@ def attach_lab_media(lab_app, tmp_path, request):
 
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="Requires POSIX FIFO support")
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_template_import_refuses_fifo_without_changing_session(
     lab_app, tmp_path, monkeypatch
 ):
@@ -340,7 +341,6 @@ async def test_template_import_refuses_fifo_without_changing_session(
             pytest.fail("Template import attempted a blocking FIFO open")
         return original_open(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "open", guard_blocking_open)
     async with lab_app.run_test(size=(80, 24)) as pilot:
         screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
         await lab_app.push_screen(screen)
@@ -348,16 +348,23 @@ async def test_template_import_refuses_fifo_without_changing_session(
         await settle_lab(lab_app, screen, pilot)
         await screen.drain_edits()
         before = screen.coordinator.session
-        with pytest.raises(ValueError, match="regular"):
-            await screen.file_operation("import-template", {"path": str(selected)})
+        with monkeypatch.context() as scoped:
+            scoped.setattr(Path, "open", guard_blocking_open)
+            with pytest.raises(ValueError, match="regular"):
+                await screen.file_operation("import-template", {"path": str(selected)})
         assert screen.coordinator.session == before
 
 
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="Requires POSIX FIFO support")
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_template_import_refuses_file_replaced_by_fifo_at_open(
     lab_app, tmp_path, monkeypatch
 ):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Screens import chunking_lab_screen
+
     selected = tmp_path / "template.json"
     selected.write_text('{"chunking":{"method":"words"}}')
     original_open = os.open
@@ -380,9 +387,14 @@ async def test_template_import_refuses_file_replaced_by_fifo_at_open(
         await settle_lab(lab_app, screen, pilot)
         await screen.drain_edits()
         before = screen.coordinator.session
-        monkeypatch.setattr(os, "open", replace_at_open)
-        with pytest.raises(ValueError, match="regular"):
-            await screen.file_operation("import-template", {"path": str(selected)})
+        with monkeypatch.context() as scoped:
+            scoped.setattr(
+                chunking_lab_screen,
+                "os",
+                SimpleNamespace(**(vars(os) | {"open": replace_at_open})),
+            )
+            with pytest.raises(ValueError, match="regular"):
+                await screen.file_operation("import-template", {"path": str(selected)})
         assert replaced
         assert screen.coordinator.session == before
 
