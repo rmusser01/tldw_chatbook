@@ -56,3 +56,12 @@ No PR lane runs any of the three files.
 - [ ] #2 Each own-assertion red is classified as test drift or a product defect, and fixed or retired with the commit that moved the behaviour named; a product defect gets a test that is red before its fix
 - [ ] #3 Each of the three files runs on a PR lane (never the fast PR contract), with three timings recorded
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-09 evidence (review r12fr; dev 3a6498ae14, run.sh, `-n 4`, load ~20). `Tests/UI/test_console_mcp_approval.py` plain still has 11 `RecoveryRequired` nodes. Under the temporary `bootstrap_profile` marker it now gives 31 failed / 92 passed. Changes against the list above:
+- `test_revocation_cannot_split_a_batch_snapshot` now passes.
+- `test_raw_shell_command_view_has_bounded_scrollable_geometry` now fails with `_agentic_terminal.tcss is missing '.approval-row-full-command'`, because #3036 moved the approval rules into `css/features/_console_approvals.tcss`.
+- #3036 (the approval UX merge) makes 23 more nodes red. They are filed as their own task, which leaves this file's lane to this task.
+<!-- SECTION:NOTES:END -->

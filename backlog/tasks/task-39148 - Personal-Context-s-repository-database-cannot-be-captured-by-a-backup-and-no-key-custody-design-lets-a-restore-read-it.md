@@ -28,7 +28,7 @@ dependencies:
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Found in round 12 of the 2026-10-23 burn-down (backup stream, TASK-39110 on round-12 branch fu/r12-backup). Checked on dev b590a15afd and on the round-12 stack 9091820bf2, 2026-11-08. Line numbers are dev's; round-12 code is named by symbol.
 
-**The ruling.** Owner decision (2026-11-07), recorded in TASK-39110's notes for its AC#2: "Capture it: back up the database and design key custody so a restore can read it — a larger feature that needs its own design task." TASK-39110's AC#2 stays open for this task.
+**The ruling.** Owner decision (2026-11-06), recorded in TASK-39110's notes for its AC#2 on round-12 branch fu/r12-backup: "Capture it: back up the database and design key custody so a restore can read it — a larger feature that needs its own design task." TASK-39110's AC#2 stays open for this task.
 
 **Where it stands.**
 - Round 12 (`_LocalSQLite` in `Backup_Recovery/config_adapter.py`, fu/r12-backup) declares `personal_context.repository` (`tldw_chatbook_personal_context.db` and its `-wal`, `-shm` and `-journal`) as an explicit `unsupported` row. A present file keeps the preview incomplete, and capture is refused with `personal_context_repository_capture_unsupported`. The interview drafts are intentionally excluded.

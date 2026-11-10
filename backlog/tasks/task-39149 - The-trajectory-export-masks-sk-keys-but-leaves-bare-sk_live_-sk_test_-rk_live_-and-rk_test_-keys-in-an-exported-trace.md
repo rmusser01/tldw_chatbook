@@ -21,9 +21,9 @@ dependencies:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Found in round 12 of the 2026-10-23 burn-down (backup stream: TASK-39123's notes on round-12 branch fu/r12-backup list this as not covered). Checked on dev b590a15afd and on the round-12 stack 9091820bf2, 2026-11-08. Line numbers are dev's; the module is the same on the stack.
+Found in round 12 of the 2026-10-23 burn-down (backup stream: TASK-39123's notes on round-12 branch fu/r12-backup list this as not covered). Checked on dev b590a15afd and on the round-12 stack 9091820bf2, 2026-11-08. Line numbers are dev 3a6498ae14's (re-read 2026-11-09); the regex is the same on all three trees.
 
-- `_CREDENTIAL_VALUE_RES` (`Chat/trajectory_export.py:301-314`) has one key-prefix pattern, `\bsk-[A-Za-z0-9_-]{8,}` (`:308`). `_credential_text` (`:340-344`) applies these patterns to exported strings, and `_has_credential` decides with it.
+- `_CREDENTIAL_VALUE_RES` (`Chat/trajectory_export.py:300-317`) has one key-prefix pattern, `\bsk-[A-Za-z0-9_-]{8,}` (`:307`). `_credential_text` (`:339-343`) applies these patterns to exported strings, and `_has_credential` decides with it.
 - A probe on dev and on the stack used synthetic values and no network:
   - `_credential_text("sk-abcdefgh12345678")` returns `[credential redacted]`;
   - the same call returns `sk_live_abcdefgh12345678`, `sk_test_…`, `rk_live_…` and `rk_test_…` unchanged.
