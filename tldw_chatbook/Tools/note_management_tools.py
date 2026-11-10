@@ -38,10 +38,8 @@ _SERVICE_CACHE: Optional[Tuple[Any, NotesInteropService]] = None
 
 
 def _default_db_provider() -> Any:
-    """Self-initializing ChaChaNotes getter, resolved at call time."""
-    from ..config import get_chachanotes_db_lazy
-
-    return get_chachanotes_db_lazy()
+    """No host supplied a database, so the note tools report it unavailable."""
+    return None
 
 
 def _notes_service(db_provider: Callable[[], Any]) -> NotesInteropService:
@@ -140,8 +138,9 @@ class _NoteTool(Tool):
         """Bind the tool to a database source.
 
         Args:
-            db_provider: Zero-argument callable returning the ChaChaNotes DB.
-                Defaults to the self-initializing config getter.
+            db_provider: Zero-argument callable returning the ChaChaNotes DB,
+                supplied by the registrar (``BuiltinToolProvider``). Without
+                one, the tools report the database unavailable.
         """
         self._db_provider = db_provider or _default_db_provider
 

@@ -113,7 +113,7 @@ def test_factory_cleanup_keeps_replacement_instance_lock_caller_owned():
     borrowed_close.assert_not_called()
 
 
-async def test_app_owner_finalizer_joins_cancelled_native_worker_before_config_reset(
+async def test_app_owner_finalizer_joins_cancelled_native_worker_before_profile_reset(
     monkeypatch,
 ):
     import threading
@@ -122,31 +122,26 @@ async def test_app_owner_finalizer_joins_cancelled_native_worker_before_config_r
 
     from Tests import conftest as root_fixtures
     from Tests.UI import app_factory
-    from tldw_chatbook import config
 
     app = app_factory._build_test_app()
-    assert config.get_chachanotes_db_lazy() is not None
     entered = threading.Event()
     release = threading.Event()
     finished = threading.Event()
-    reset = root_fixtures._reset_config_database_instances
+    reset = root_fixtures._shutdown_prompts_interop_if_loaded
 
     def native_work():
-        database = config.get_chachanotes_db_lazy()
-        assert database is not None
         entered.set()
         try:
             assert release.wait(2.0)
-            assert database.get_connection().execute("SELECT 1").fetchone()[0] == 1
         finally:
             finished.set()
 
-    def reset_after_join(module):
-        assert finished.is_set(), "config reset preceded native worker completion"
-        reset(module)
+    def reset_after_join():
+        assert finished.is_set(), "prompts reset preceded native worker completion"
+        reset()
 
     monkeypatch.setattr(
-        root_fixtures, "_reset_config_database_instances", reset_after_join
+        root_fixtures, "_shutdown_prompts_interop_if_loaded", reset_after_join
     )
     worker = Worker(app, native_work, thread=True)
     task = asyncio.create_task(worker.run())

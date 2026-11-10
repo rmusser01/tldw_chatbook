@@ -25,7 +25,7 @@ pytestmark = pytest.mark.usefixtures("stub_characters")
 @pytest.fixture
 def handoff_app(mock_app_instance, monkeypatch):
     monkeypatch.setattr(
-        character_handler_module, "_default_character_db", lambda: object()
+        "tldw_chatbook.UI.Screens.personas_screen.PersonasScreen._character_db", lambda _self: object()
     )
     _install_conversation_db(monkeypatch, [])
     mock_app_instance.chat_dictionary_scope_service = None

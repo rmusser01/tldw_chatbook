@@ -341,8 +341,9 @@ def test_app_services_imports_only_the_standard_library_at_module_level() -> Non
 
 # ADR-250 Q2 (TASK-36947.7): constructions of the ProfileStorage database classes
 # outside the shared factory's openers, per file. The standalone MCP server, the
-# mobile service and the RAG backfill CLI have none. The counts only shrink: open
-# a profile database through ``app_services.open_profile_storage`` or an opener.
+# mobile service and the RAG backfill CLI have none; nor do the TUI's own opens or
+# config.py, since TASK-36947.6. The counts only shrink: open a profile database
+# through ``app_services.open_profile_storage`` or an opener.
 _PROFILE_DB_CLASSES = frozenset(
     {"CharactersRAGDB", "MediaDatabase", "PromptsDatabase", "WorkspaceDB", "AgentRunsDB"}
 )
@@ -369,9 +370,7 @@ AD_HOC_PROFILE_DB_CONSTRUCTIONS = {
     "Tools/workspace_file_roots.py": 1,
     "Widgets/settings_agents_panel.py": 1,
     "Workspaces/change_retention.py": 1,
-    "app.py": 1,
     "app_service_wiring.py": 1,
-    "config.py": 6,
 }
 
 
@@ -424,6 +423,34 @@ def test_no_new_ad_hoc_profile_database_construction() -> None:
         f"Constructions were removed: now {found}. Lower or delete their rows in "
         "AD_HOC_PROFILE_DB_CONSTRUCTIONS; the census only shrinks."
     )
+
+
+@pytest.mark.unit
+def test_config_defines_no_database_instance_or_getter() -> None:
+    """TASK-36947.6: config.py is no database service locator (report F9).
+
+    No module-level ``*_db`` binding, no ``get_*_db_lazy`` getter and no
+    ``initialize_all_databases``: entry points get their databases from the
+    services bundle or the shared factory (ADR-250 section 6).
+    """
+    tree = ast.parse((PACKAGE / "config.py").read_text(encoding="utf-8"))
+    bound = {
+        target.id
+        for node in tree.body
+        if isinstance(node, (ast.Assign, ast.AnnAssign))
+        for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
+        if isinstance(target, ast.Name)
+    }
+    functions = {
+        node.name for node in tree.body if isinstance(node, ast.FunctionDef)
+    }
+    assert not {name for name in bound if name.endswith("_db")}
+    assert not {
+        name
+        for name in functions
+        if (name.startswith("get_") and name.endswith("_db_lazy"))
+        or name == "initialize_all_databases"
+    }
 
 
 def _holds_connection(db) -> bool:
@@ -609,3 +636,22 @@ async def test_every_alias_is_still_the_bundle_field_after_mount(request) -> Non
             assert asyncio.get_running_loop().time() < deadline, "app never reached _ui_ready"
             await asyncio.sleep(0.05)
         assert not _misaligned(app)
+
+
+@private_profile_test
+def test_the_in_app_mcp_delegate_reads_the_bundle_storage(request) -> None:
+    """TASK-36947.6: the TUI wiring hands the in-app MCP delegate the services
+    bundle's storage; before the bundle exists it reports the DBs unavailable."""
+    from Tests.UI.app_factory import _build_test_app
+
+    app = _build_test_app()
+    delegate = app.local_mcp_control_service.runtime_delegate
+    assert delegate._storage_provider is not None
+    assert delegate._storage_provider() is app.services.storage
+    services = app.services
+    del app.services  # as before ``_publish_application_services``
+    try:
+        with pytest.raises(RuntimeError, match="database is unavailable"):
+            delegate._require_chachanotes_db()
+    finally:
+        app.services = services

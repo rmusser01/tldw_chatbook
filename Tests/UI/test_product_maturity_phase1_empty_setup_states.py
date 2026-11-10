@@ -290,7 +290,7 @@ async def test_personas_default_state_disables_false_console_handoff(
     (stubbed deterministically; the harness otherwise reads the ambient
     character DB).
     """
-    monkeypatch.setattr(character_handler_module, "fetch_all_characters", lambda: [])
+    monkeypatch.setattr(character_handler_module, "fetch_all_characters", lambda _db: [])
     patch_character_paging(monkeypatch, records=[])
     app = _build_test_app()
     host = DestinationHarness(app, "personas")

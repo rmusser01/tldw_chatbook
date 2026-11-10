@@ -717,9 +717,9 @@ def stub_characters_lore(monkeypatch):
     """Empty character library so Characters-mode code paths don't explode on mount."""
     import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 
-    monkeypatch.setattr(character_handler_module, "fetch_all_characters", lambda: [])
+    monkeypatch.setattr(character_handler_module, "fetch_all_characters", lambda _db: [])
     monkeypatch.setattr(
-        character_handler_module, "fetch_character_by_id", lambda character_id: None
+        character_handler_module, "fetch_character_by_id", lambda _db, character_id: None
     )
 
 

@@ -20,18 +20,15 @@ class _ClosingDatabase:
         self.closed = True
 
 
-_COLLECTION_CONFIG_DB = _ClosingDatabase()
 _COLLECTION_PROMPT_DB = _ClosingDatabase()
 
 
 @pytest.fixture(scope="module", autouse=True)
 def _seed_collection_time_database_singletons():
-    """Simulate DBs cached by modules imported before per-test fixtures."""
-    config.chachanotes_db = _COLLECTION_CONFIG_DB
+    """Simulate a DB cached by a module imported before per-test fixtures."""
     Prompts_Interop._db_instance = _COLLECTION_PROMPT_DB
     Prompts_Interop._db_path_global = "collection-time.db"
     yield
-    config.chachanotes_db = None
     Prompts_Interop._db_instance = None
     Prompts_Interop._db_path_global = None
 
@@ -47,9 +44,7 @@ def test_data_paths_follow_per_test_root_after_collection_import(
 
 def test_collection_time_database_singletons_are_closed_and_cleared() -> None:
     """Fixture setup must discard handles created before a test starts."""
-    assert _COLLECTION_CONFIG_DB.closed is True
     assert _COLLECTION_PROMPT_DB.closed is True
-    assert config.chachanotes_db is None
     assert Prompts_Interop.is_initialized() is False
 
 

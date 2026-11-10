@@ -909,7 +909,7 @@ async def test_the_real_app_wiring_getter_reads_chachanotes_db_live_not_frozen_a
     proves the specific closure `app.py` builds does too.
 
     `Tests/UI/app_factory._build_test_app` stubs `self.notes_service` to
-    `None` and `get_chachanotes_db_lazy` to return `None` for every test
+    `None` and `_open_profile_chachanotes` to return `None` for every test
     app it builds (by design, for speed and hermeticity across the 90+
     modules that share it) -- so `app.chachanotes_db` really is `None`
     immediately after boot in this harness, honestly. Asserting it

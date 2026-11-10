@@ -186,6 +186,7 @@ class LocalMCPControlService:
         policy_enforcer: Any | None = None,
         runtime_delegate: LocalMCPRuntimeDelegate | None = None,
         credential_service=None,
+        storage_provider: Callable[[], Any] | None = None,
     ) -> None:
         self._producer_lifetime = ProducerLifetime()
         self.store = store
@@ -200,6 +201,7 @@ class LocalMCPControlService:
         self.runtime_delegate = runtime_delegate or LocalMCPRuntimeDelegate(
             manifest_provider=self.manifest_provider,
             policy_enforcer=self.policy_enforcer,
+            storage_provider=storage_provider,
         )
         if isinstance(self.client, MCPClient):
             self.client._definition_store = self.store

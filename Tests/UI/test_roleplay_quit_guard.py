@@ -69,12 +69,12 @@ class _Store:
         monkeypatch.setattr(
             character_handler,
             "fetch_all_characters",
-            lambda: [dict(record) for record in _CHARACTERS],
+            lambda _db: [dict(record) for record in _CHARACTERS],
         )
         monkeypatch.setattr(
             character_handler,
             "fetch_character_by_id",
-            lambda character_id: next(
+            lambda _db, character_id: next(
                 dict(record)
                 for record in _CHARACTERS
                 if str(record["id"]) == str(character_id)
@@ -83,7 +83,7 @@ class _Store:
         monkeypatch.setattr(character_handler, "update_character", self._update)
         patch_character_paging(monkeypatch)
 
-    def _update(self, character_id, data) -> bool:
+    def _update(self, _db, character_id, data) -> bool:
         if self.fail:
             self.events.append(("save failed", str(character_id)))
             return False

@@ -3070,6 +3070,8 @@ class ServiceWiringMixin(
         self.local_mcp_control_service = LocalMCPControlService(
             store=self.local_mcp_store,
             policy_enforcer=self.service_policy_enforcer,
+            # The bundle is published after wiring; before then: unavailable.
+            storage_provider=lambda: getattr(getattr(self, "services", None), "storage", None),
         )
         self.unified_mcp_context_store = UnifiedMCPContextStore(
             get_user_data_dir() / "unified_mcp_context.json",

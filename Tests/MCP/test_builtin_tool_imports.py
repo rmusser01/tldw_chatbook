@@ -117,19 +117,15 @@ async def test_local_runtime_delegate_list_characters_executes_without_importerr
     Tool runner uses (`LocalMCPControlService.execute_tool()` ->
     `LocalMCPRuntimeDelegate.execute_tool()` -> `_tool_list_characters()` ->
     `MCPTools.list_available_characters()`), mirroring QA's own live
-    reproduction exactly. Monkeypatches the lazy DB getters
-    `local_runtime_delegate.py` imports by name (`get_chachanotes_db_lazy`/
-    `get_media_db_lazy`) to real tmp-backed instances instead of the
-    process-global singletons those getters normally cache."""
+    reproduction exactly. The delegate gets real tmp-backed databases through
+    its storage provider, as the TUI hands it the services bundle's storage."""
     import tldw_chatbook.MCP.local_runtime_delegate as delegate_module
+    from tldw_chatbook.app_services import ProfileStorage
 
     chachanotes_db, media_db = _real_dbs(tmp_path)
-    monkeypatch.setattr(
-        delegate_module, "get_chachanotes_db_lazy", lambda: chachanotes_db
-    )
-    monkeypatch.setattr(delegate_module, "get_media_db_lazy", lambda: media_db)
+    storage = ProfileStorage(chachanotes=chachanotes_db, media=media_db)
 
-    delegate = delegate_module.LocalMCPRuntimeDelegate()
+    delegate = delegate_module.LocalMCPRuntimeDelegate(storage_provider=lambda: storage)
     result = await delegate.execute_tool("list_characters", {})
 
     assert isinstance(result, list)

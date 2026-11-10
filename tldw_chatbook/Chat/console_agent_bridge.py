@@ -4060,6 +4060,7 @@ def _compose_run_registry_and_allowed(
     canvas_provider: Any | None = None,
     canvas_authority: Any | None = None,
     preview_canvas_profile_snapshot: Any | None = None,
+    storage_provider: Callable[[], Any] | None = None,
 ) -> tuple[ToolCatalogRegistry, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     """Build a fresh per-run tool registry + allow-list from a skills snapshot.
 
@@ -4178,6 +4179,7 @@ def _compose_run_registry_and_allowed(
         diff_sink=diff_sink,
         sandbox_root=scratch_root,
         sandbox_lease=scratch_lease,
+        storage_provider=storage_provider,
     )
     registry.register_provider(builtin_provider)
     builtin_names = tuple(entry.name for entry in builtin_provider.list_catalog())
@@ -4543,6 +4545,7 @@ def build_console_first_request_plan(
     preview_canvas_profile_snapshot: Any | None = None,
     progress_inbox_exists: bool = False,
     light_surface: bool = False,
+    storage_provider: Callable[[], Any] | None = None,
 ) -> ConsoleFirstRequestPlan:
     """Build live/preview-identical first-request inputs without live effects.
 
@@ -4640,6 +4643,7 @@ def build_console_first_request_plan(
                 canvas_provider=canvas_provider,
                 canvas_authority=canvas_authority,
                 preview_canvas_profile_snapshot=preview_canvas_profile_snapshot,
+                storage_provider=storage_provider,
             )
         )
     else:
@@ -5227,8 +5231,11 @@ class ConsoleAgentBridge:
         get_hooks_v2: Callable[[str], Any] | None = None,
         light_tool_surface: Callable[[], bool] | None = None,
         tool_kill_switch: Callable[[], bool] | None = None,
+        storage_provider: Callable[[], Any] | None = None,
     ) -> None:
         self._message_store = message_store
+        # ADR-250 s6: the host's ProfileStorage for the note and expand tools.
+        self._storage_provider = storage_provider
         # TASK-34100.5.3: asked once per send whether plain chat gets the
         # light tool surface (``plain_chat_tool_surface``). ``ConsoleRuntime``
         # passes the config reader; ``None`` (test harnesses built before the
@@ -5288,7 +5295,7 @@ class ConsoleAgentBridge:
         self._get_hooks_v2 = get_hooks_v2
         if registry is None:
             registry = ToolCatalogRegistry()
-            registry.register_provider(BuiltinToolProvider())
+            registry.register_provider(BuiltinToolProvider(storage_provider=storage_provider))
         self._registry = registry
         self._allowed_tools = tuple(e.name for e in registry.list_catalog()) + (
             SPAWN_TOOL_NAME,
@@ -6453,6 +6460,7 @@ class ConsoleAgentBridge:
         )
 
         first_request_plan = build_console_first_request_plan(
+            storage_provider=self._storage_provider,
             shared_registry=self._registry,
             shared_allowed_tools=self._allowed_tools,
             context=context,

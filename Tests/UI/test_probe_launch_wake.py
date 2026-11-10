@@ -72,7 +72,7 @@ async def test_probe_p4_the_real_conversation_service_can_be_wired_after_the_db(
 ):
     """Can a launch test use the PRODUCTION tree loader instead of a double?
 
-    `_build_test_app` patches `get_chachanotes_db_lazy` to None, so
+    `_build_test_app` patches `_open_profile_chachanotes` to None, so
     `_wire_chat_conversation_services` runs at `__init__` with no DB and
     leaves `local_chat_conversation_service` None -- which is why every
     resume test in the suite injects a `StaticConversationTreeService`.

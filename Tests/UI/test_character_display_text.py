@@ -206,6 +206,10 @@ class _CCPWindow:
     def query_one(self, *args, **kwargs):
         return self.app.query_one(*args, **kwargs)
 
+    def _character_db(self):
+        """PersonasScreen's seam; the CCP helpers are stubbed, so no DB."""
+        return None
+
 
 @pytest.mark.asyncio
 async def test_ccp_read_only_display_sanitizes_without_changing_source_data() -> None:
@@ -238,7 +242,7 @@ async def test_ccp_character_select_renders_saved_names_as_literal_text(
     monkeypatch.setattr(
         character_handler_module,
         "fetch_all_characters",
-        lambda: records,
+        lambda _db: records,
     )
     app = _CCPSelectApp()
 

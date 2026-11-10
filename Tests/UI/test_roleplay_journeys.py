@@ -100,7 +100,7 @@ async def test_editing_shows_the_unsaved_chip_and_saving_clears_it(
             await screen._select_character(str(char_id), "Abel Detective")
             await settle(pilot)
             card = str(screen.query_one("#personas-character-card-description").content)
-            saved = character_handler_module.fetch_character_by_id(char_id)
+            saved = character_handler_module.fetch_character_by_id(db, char_id)
             assert "x" in card and card == f"Description: {saved['description']}"
             assert "x" in saved["description"] and saved["description"] != "Noir"
             assert db.get_character_card_by_id(char_id)["version"] > 1

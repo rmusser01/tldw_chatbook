@@ -109,12 +109,12 @@ async def personas_editor_with_saved_character(mock_app_instance, monkeypatch, e
         "version": 1,
     }
     monkeypatch.setattr(
-        character_handler_module, "fetch_all_characters", lambda: [dict(record)]
+        character_handler_module, "fetch_all_characters", lambda _db: [dict(record)]
     )
     monkeypatch.setattr(
         character_handler_module,
         "fetch_character_by_id",
-        lambda character_id: (
+        lambda _db, character_id: (
             dict(record) if str(character_id) == str(char_id) else None
         ),
     )
@@ -200,12 +200,12 @@ async def personas_editor_with_bound_pack(mock_app_instance, monkeypatch, expr_d
         "version": 1,
     }
     monkeypatch.setattr(
-        character_handler_module, "fetch_all_characters", lambda: [dict(record)]
+        character_handler_module, "fetch_all_characters", lambda _db: [dict(record)]
     )
     monkeypatch.setattr(
         character_handler_module,
         "fetch_character_by_id",
-        lambda character_id: (
+        lambda _db, character_id: (
             dict(record) if str(character_id) == str(char_id) else None
         ),
     )

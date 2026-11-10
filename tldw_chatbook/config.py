@@ -60,9 +60,6 @@ from tldw_chatbook.Backup_Recovery import profile_paths
 from tldw_chatbook.Backup_Recovery import config_participants as _config_participants
 from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 from tldw_chatbook.Constants import DEFAULT_SPLASH_DURATION_SECONDS
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
-from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 
 from tldw_chatbook.provider_registry import (  # noqa: F401 - normalize_provider_config_key is re-exported
     ALL_RECORDS,
@@ -100,6 +97,7 @@ from tldw_chatbook.Utils.sensitive_config_keys import (
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 #
 #######################################################################################################################
 #
@@ -1311,7 +1309,7 @@ TLDW_API_PLACEHOLDER_AUTH_TOKEN = "default-secret-key-for-single-user"
 #: even though the shipped app and the full-suite alphabetical collect
 #: order happened to hide it. `config.py` is the dependency ROOT nearly
 #: everything else in this app already imports directly (verified: none of
-#: this module's own top-level imports -- the `DB.*`/`Utils.*` modules --
+#: this module's own top-level imports -- the `Utils.*` modules and the rest --
 #: reach back into `Chat` or `runtime_policy`), so the shared definition
 #: belongs here, with `Chat/provider_readiness.py` importing it -- not the
 #: reverse. This keeps the actual property Task 7 exists for -- exactly
@@ -8465,12 +8463,6 @@ def get_model_cache_dir() -> Path:
     return cache_path
 
 
-# --- Global CLI Database Instances ---
-chachanotes_db: Optional[CharactersRAGDB] = None
-prompts_db: Optional[PromptsDatabase] = None
-media_db: Optional[MediaDatabase] = None
-
-
 def seed_builtin_content(db: CharactersRAGDB) -> CharactersRAGDB:
     """Seed restart-safe bundled profile content after database initialization.
 
@@ -8495,134 +8487,6 @@ def seed_builtin_content(db: CharactersRAGDB) -> CharactersRAGDB:
     except Exception as exc:  # noqa: BLE001 - bundled content cannot prevent boot
         logger.warning("pixel_migu_profile_seed_failed category={}", type(exc).__name__)
     return db
-
-
-# --- Database Initialization Function (remains largely the same) ---
-def initialize_all_databases():
-    global chachanotes_db, prompts_db, media_db
-    logger.debug("CRITICAL DEBUG: INSIDE initialize_all_databases() NOW.")
-    logger.info("Initializing CLI databases...")
-    # ChaChaNotes DB
-    chachanotes_path = get_chachanotes_db_path()
-    logger.info(f"Attempting to initialize ChaChaNotes_DB at: {chachanotes_path}")
-    try:
-        chachanotes_db = CharactersRAGDB(
-            db_path=chachanotes_path,
-            client_id=CLI_APP_CLIENT_ID,
-            console_library_migration_seed=load_console_library_migration_seed(),
-        )
-        seed_builtin_content(chachanotes_db)
-        logger.success(f"ChaChaNotes_DB initialized successfully at {chachanotes_path}")
-    except Exception as e:
-        logger.opt(exception=True).error(
-            f"Failed to initialize ChaChaNotes_DB at {chachanotes_path}: {e}"
-        )
-        chachanotes_db = None
-    # Prompts DB
-    prompts_path = get_prompts_db_path()
-    logger.info(f"Attempting to initialize Prompts_DB at: {prompts_path}")
-    try:
-        prompts_db = PromptsDatabase(db_path=prompts_path, client_id=CLI_APP_CLIENT_ID)
-        logger.success(f"Prompts_DB initialized successfully at {prompts_path}")
-    except Exception as e:
-        logger.opt(exception=True).error(
-            f"Failed to initialize Prompts_DB at {prompts_path}: {e}"
-        )
-        prompts_db = None
-    # Media DB
-    media_path = get_media_db_path()
-    logger.info(f"Attempting to initialize Media_DB_v2 at: {media_path}")
-    try:
-        media_db = MediaDatabase(db_path=media_path, client_id=CLI_APP_CLIENT_ID)
-        logger.success(f"Media_DB_v2 initialized successfully at {media_path}")
-    except Exception as e:
-        logger.opt(exception=True).error(
-            f"Failed to initialize Media_DB_v2 at {media_path}: {e}"
-        )
-        media_db = None
-    logger.info("CLI database initialization complete.")
-
-
-# --- Lazy Database Getters ---
-def get_chachanotes_db_lazy() -> Optional[CharactersRAGDB]:
-    """Get the ChaChaNotes database instance, initializing it lazily if needed."""
-    global chachanotes_db
-    if chachanotes_db is None:
-        chachanotes_path = get_chachanotes_db_path()
-        logger.info(f"Lazy-initializing ChaChaNotes_DB at: {chachanotes_path}")
-        try:
-            # Get integrity check configuration
-            config = load_settings()
-            check_integrity = config.get("database", {}).get(
-                "check_integrity_on_startup", False
-            )
-
-            chachanotes_db = CharactersRAGDB(
-                db_path=chachanotes_path,
-                client_id=CLI_APP_CLIENT_ID,
-                check_integrity_on_startup=check_integrity,
-                console_library_migration_seed=load_console_library_migration_seed(),
-            )
-            seed_builtin_content(chachanotes_db)
-            logger.success(
-                f"ChaChaNotes_DB lazy-initialized successfully at {chachanotes_path}"
-            )
-        except Exception as e:
-            logger.opt(exception=True).error(
-                f"Failed to lazy-initialize ChaChaNotes_DB at {chachanotes_path}: {e}"
-            )
-            if chachanotes_db is not None:
-                # Seeding can fail after construction has acquired this worker's
-                # connection. Retire it before discarding the lazy owner.
-                chachanotes_db.close_connection()
-            chachanotes_db = None
-    return chachanotes_db
-
-
-def get_prompts_db_lazy() -> Optional[PromptsDatabase]:
-    """Get the Prompts database instance, initializing it lazily if needed."""
-    global prompts_db
-    if prompts_db is None:
-        prompts_path = get_prompts_db_path()
-        logger.info(f"Lazy-initializing Prompts_DB at: {prompts_path}")
-        try:
-            # Get integrity check configuration
-            config = load_settings()
-            check_integrity = config.get("database", {}).get(
-                "check_integrity_on_startup", False
-            )
-
-            prompts_db = PromptsDatabase(
-                db_path=prompts_path,
-                client_id=CLI_APP_CLIENT_ID,
-                check_integrity_on_startup=check_integrity,
-            )
-            logger.success(
-                f"Prompts_DB lazy-initialized successfully at {prompts_path}"
-            )
-        except Exception as e:
-            logger.opt(exception=True).error(
-                f"Failed to lazy-initialize Prompts_DB at {prompts_path}: {e}"
-            )
-            prompts_db = None
-    return prompts_db
-
-
-def get_media_db_lazy() -> Optional[MediaDatabase]:
-    """Get the Media database instance, initializing it lazily if needed."""
-    global media_db
-    if media_db is None:
-        media_path = get_media_db_path()
-        logger.info(f"Lazy-initializing Media_DB_v2 at: {media_path}")
-        try:
-            media_db = MediaDatabase(db_path=media_path, client_id=CLI_APP_CLIENT_ID)
-            logger.success(f"Media_DB_v2 lazy-initialized successfully at {media_path}")
-        except Exception as e:
-            logger.opt(exception=True).error(
-                f"Failed to lazy-initialize Media_DB_v2 at {media_path}: {e}"
-            )
-            media_db = None
-    return media_db
 
 
 # --- API Models (should be defined based on CONFIG_TOML_CONTENT or loaded from it) ---
@@ -8710,14 +8574,9 @@ APP_CONFIG = settings.get(
 DATABASE_CONFIG = settings.get("APP_DATABASE_CONFIG", DEFAULT_DATABASE_CONFIG)
 RAG_SEARCH_CONFIG = settings.get("APP_RAG_SEARCH_CONFIG", DEFAULT_RAG_SEARCH_CONFIG)
 
-# --- Load CLI Config and Initialize Databases on module import ---
+# --- Load CLI Config on module import ---
 # The `settings` global variable is now the result of the unified load_settings()
-logger.debug(
-    "CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access"
-)
-
-# Databases will be initialized lazily on first access
-# This significantly improves startup time by deferring expensive DB operations
+# Databases are opened by the entry points through app_services, never here.
 
 # Make APP_CONFIG available globally if needed by other modules that import from config.py
 # This will be the same as `settings` if `load_settings` is the sole config loader.

@@ -22,7 +22,8 @@ from tldw_chatbook.Backup_Recovery import recovered_media as owner
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 root=Path(os.environ['FIXTURE_ROOT'])
-db=config.get_chachanotes_db_lazy()
+from tldw_chatbook.app_services import open_chachanotes_db
+db=open_chachanotes_db(config.get_chachanotes_db_path(), client_id=config.CLI_APP_CLIENT_ID, seed_builtin_content=True)
 conversation=db.add_conversation({'title':'Reference lifecycle'})
 def message(text,parent=None):
  return db.add_message({'conversation_id':conversation,'sender':'User','content':text,'parent_message_id':parent})
@@ -225,7 +226,8 @@ from tldw_chatbook.Backup_Recovery import recovered_media as owner
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 root=Path(os.environ['FIXTURE_ROOT']);saved=json.loads((root/'committed.json').read_text())
 media_root=root/'data'/'test'/'recovered_media'
-db=config.get_chachanotes_db_lazy()
+from tldw_chatbook.app_services import open_chachanotes_db
+db=open_chachanotes_db(config.get_chachanotes_db_path(), client_id=config.CLI_APP_CLIENT_ID, seed_builtin_content=True)
 try:
  before=owner.review_recovered_asset(media_root,saved['asset'])
  assert [list(row) for row in before.references]==saved['references']

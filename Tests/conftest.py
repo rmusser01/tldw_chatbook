@@ -1294,13 +1294,6 @@ def _close_database_instance(db_instance):
         logger.warning(f"Failed to close cached test database: {exc}")
 
 
-def _reset_config_database_instances(config_module):
-    """Close and clear config.py's lazy database singletons."""
-    for db_name in ("chachanotes_db", "prompts_db", "media_db"):
-        _close_database_instance(getattr(config_module, db_name, None))
-        setattr(config_module, db_name, None)
-
-
 def _read_config_bytes(config_path: Path) -> bytes | None:
     """The config file's bytes, or None when it does not exist."""
     try:
@@ -1878,14 +1871,13 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
         str(test_config_dir / "config.toml"),
     )
 
-    # Clear lazy database and prompt singletons before each test so no
-    # connection survives after its per-test temporary directory is removed.
-    # ``get_user_data_dir`` resolves HOME at call time, so the environment
-    # patches above are the path-isolation authority.
+    # Clear the prompts singleton before each test so no connection survives
+    # after its per-test temporary directory is removed. ``get_user_data_dir``
+    # resolves HOME at call time, so the environment patches above are the
+    # path-isolation authority.
     try:
         from tldw_chatbook import config
 
-        _reset_config_database_instances(config)
         _shutdown_prompts_interop_if_loaded()
     except ImportError:
         config = None
@@ -1964,7 +1956,6 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             )
         if config is not None:
             _shutdown_prompts_interop_if_loaded()
-            _reset_config_database_instances(config)
     finally:
         # Even when a step above raises: otherwise this test's config writes
         # reach every later bootstrap-profile test (PR #3254's review).
