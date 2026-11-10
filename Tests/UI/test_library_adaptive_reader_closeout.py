@@ -2054,12 +2054,26 @@ async def _open_the_list_beside_the_open_item(
                 lambda: not layout().items_open and shell.work.display,
                 message=f"{width}: the open item did not take the stage",
             )
-        # The user is in the open item, then clicks the list grip.
-        reading = next(
-            target
-            for target in screen.focus_chain
-            if shell.work in target.ancestors and _work_cells(target) > 0
+
+        # The user is in the open item, then clicks the list grip. Under load
+        # the work pane may not have painted yet: wait for a painted control
+        # instead of taking a bare next() after one pause (TASK-39128).
+        def painted_reading_target():
+            return next(
+                (
+                    target
+                    for target in screen.focus_chain
+                    if shell.work in target.ancestors and _work_cells(target) > 0
+                ),
+                None,
+            )
+
+        await _wait_for_condition(
+            pilot,
+            lambda: painted_reading_target() is not None,
+            message=f"{width}: no work-pane control painted in the open item",
         )
+        reading = painted_reading_target()
         screen.set_focus(reading)
         await pilot.pause()
         await pilot.click(shell.items_grip)
