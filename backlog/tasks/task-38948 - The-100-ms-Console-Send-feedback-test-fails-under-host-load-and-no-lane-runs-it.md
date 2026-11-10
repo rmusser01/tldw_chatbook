@@ -52,6 +52,12 @@ These alone runs were at higher load than most of the whole-file runs, so they c
 3. Negative control: a temporary ~150 ms delay at the start of `request_visible_send`, both busy (loop CPU) and blocking-sleep, with the result and load recorded for each.
 4. Run 10x alone and 10x in-file at -n 4, recording the median and max of each interval. AC#1 needs load below 18; record the load seen.
 5. Add both cases as UI census tail entries, with the measured serial time.
+
+Round 13 (2026-11-10), after the owner's ruling (see the notes):
+6. Profile the loop thread between the Send action and the Sending paint (sampler plus per-callback CPU), and record the top costs.
+7. Subscription status: after the first read, a lapsed TTL keeps the last observed state while it is re-read, so the Console's credential pre-gate stops flipping missing -> pending -> missing. Red/green unit test; update the test that pinned "pending".
+8. Console skill discovery: take its trust build and skill read off the UI loop in the real app (stock eager task factory), and stop an older discovery from publishing over a newer one. Red/green tests for both.
+9. Re-measure the Sending interval (loop CPU and wall, both routes, with load) before and after, alone and in-file.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -94,6 +100,90 @@ Also changed: the held provider read waited only 0.5 s for the paints. At load 1
 - The other failures in those runs were in other files: the 4 RecoveryRequired store-continuity nodes, TASK-35567's node, the response-rules load failures already seen on dev, and at load 49-61 single failures of seven prompts-modal tests outside this task.
 
 **Files.** `Tests/UI/test_console_received_intent_feedback.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `backlog/docs/lessons-testing-evidence.md`.
+
+### Round 13 (2026-11-10, base ae9f9e8d21)
+
+**Owner decision (2026-11-10, AskUserQuestion), verbatim:** "Fix the two loop hogs (Recommended)": "Move skill discovery's file I/O to a worker thread and make the subscription status cache keep its last value while it refreshes. Both are real UI-jank bugs; paint order is unchanged. Re-measure, and come back only if it's still over." Option B (reorder the acknowledgement paint) and option C (let the screen settle before the test's interval) were not chosen.
+
+**Profile of the Sending interval, before.** The profile was thread-scoped (a stack sampler plus `thread_time` per asyncio `Handle._run` on the loop thread). 39 cases at load 22-105, with the probe on (it adds 10-20%).
+- **The send's own path: 33-53 ms (median 43).**
+  - The first-message Sending frame: 15-36 ms. That is one reflow of 120 widgets (5-7 ms) plus a render of about 5,300 dirty cells (13-18 ms), mostly from removing the empty-state panel.
+  - `paint_acknowledgement`: 10-16 ms. The row mount is 48% of it, the header's status classes 19% and the composer's acknowledged state 18%.
+  - Key dispatch, including the first-send import of `send_acknowledgement`: 3-12 ms. GC: 3-5 ms. No DB reads on the loop.
+- **Work the send did not cause: up to 57 ms more (median 12).** Most of it ran before the key reached `on_key`:
+  - credential-readiness passes, 7-30 ms;
+  - the post-mount whole sync, 20-35 ms;
+  - the coalesced control-bar sync, 4-13 ms;
+  - a cold skill discovery, 57-85 ms;
+  - extra frames, 2-25 ms;
+  - the 0.2 s draft-spend refresh from the test's `load_draft`, 4-14 ms.
+
+**Fix 1: the subscription status keeps its last value while it is re-read** (`LLM_Calls/anthropic_subscription.py`).
+- **The bug.** `_SubscriptionReadinessCache.status()` answered "pending" whenever its 5 s TTL lapsed. TASK-34956's credential pre-gate (status, revision, version) therefore went missing → pending → missing every 5 s. That is two full readiness rebuilds on the UI loop, 2-15 ms each, for an unchanged credential, and it defeated task-33081's revision gate. In the profile it landed in the interval in 2 of 6 cases on a settled screen.
+- **The fix.** After the first completed read, a lapsed TTL returns the last observed state while one background re-read runs. "pending" now means only "never read yet".
+- **What users see.** The Console settings modal, the send-disabled line, and Settings' Overview and Key check no longer flicker to "Checking Claude…" / "checking login" every 5 s. The User Guide describes only the first check, which is unchanged.
+- **Red/green.**
+  - New `Tests/Chat/test_subscription_background_readiness.py::test_lapsed_ttl_reread_of_unchanged_credential_never_moves_the_ui_gate`. Red on base: `[('pending', 1), ...] == [('missing', 1)] * 3` fails. Green after.
+  - `test_unchanged_refresh_does_not_bump_revision` asserted "pending" for a stale TTL. That was the flicker itself, and the owner's ruling removes it. It now asserts the last state ("ready") while the re-read runs. Its revision checks stay unchanged: the same revision for an unchanged credential, a new one once the file is removed, then "missing".
+  - Four UI tests pinned the flicker after a TTL lapse. In `Tests/UI/test_console_subscription_readiness.py` they are the modal and the send line; in `Tests/UI/test_settings_subscription_readiness.py`, the Overview and the Key check. They now wait for the re-read, hold it past a 0.25 s poll tick, and assert that the last state stays with no "checking" copy. Red on base: each showed "Checking Claude…" or "checking login". Green after.
+
+**Fix 2: Console skill discovery runs off the UI loop in the real app** (`app_skill_wiring.py`, `UI/Console_Modules/skill.py`).
+- **The bug.** `_capture_console_skill_trust_preparation` required `loop.get_task_factory() is None`. Textual's `App.run_async` installs `asyncio.eager_task_factory`, so every real run refused that preparation.
+  - The context read then found no trust service and fell back to `await get_context()` on the loop. That built the trust service through the sync property and read every skill (file I/O, pydantic models) synchronously.
+  - It ran eagerly inside `_start_console_view_after_reconciliation`, in the mount itself.
+  - `run_test` installs no factory, so every mounted test took the off-loop path. A subprocess probe of a real `TldwCli` with the eager factory showed `LocalSkillsService.get_context` on `MainThread`.
+- **The fix.** The guard now admits the stock eager factory, checked by identity; a custom factory still refuses. The existing off-loop path then runs:
+  - the trust build in the App worker (`ensure_local_skill_trust_service` → `run_preparation_read`);
+  - then the read (`_read_console_skill_context`).
+
+  Custom (non-stock) collaborators keep their pinned loop affinity (`Tests/Performance/test_console_skill_context_owned.py`).
+- **Superseded discoveries.** Reads now finish in any order. `_refresh_console_skill_candidates` takes a serial when it starts and publishes only while it is still the newest. An older read can no longer replace newer candidates, including a failed one that fails closed to no skills.
+- **Red/green.**
+  - `Tests/UI/test_console_skill_context_worker.py::test_mounted_discovery_builds_and_reads_off_the_loop_under_the_eager_factory` (a real `TldwCli` in a subprocess, eager factory installed). Red on base: "skill read on the UI loop". Green after.
+  - `Tests/UI/test_console_skill_controller.py::test_a_superseded_refresh_never_publishes_over_a_newer_one[stale|failed]`. Red on base: `['stale'] == ['fresh']` and `[] == ['fresh']` both fail. Green after.
+- **Limit.** In the 100 ms test's own harness the discovery still runs on the loop. `Tests/UI/app_factory.py` gives the app a `SimpleNamespace` runtime policy, which the reader classifies as a custom collaborator. So fix 2 removes a 57-85 ms cold block from the real app's mount, but does not change that test.
+
+**Re-measured, before and after.** Paired runs on the same host minutes apart: base ae9f9e8d21 and fix 064f161b9a, alternated run by run. 10 runs alone and 10 in the file, each at `-n 4`, both routes. Load was 35-63 on 18 CPUs, so the wall budget was reported but not enforced. Each cell is median / max in ms over 10 cases.
+
+| Run | Route | Sending loop CPU | Sending wall | Input mutation | Input frame |
+|---|---|---|---|---|---|
+| Alone, base | enter | 48 / 110 | 69 / 139 | 22 / 78 | 34 / 108 |
+| Alone, base | send button | 44 / 50 | 81 / 164 | 18 / 111 | 31 / 125 |
+| Alone, fix | enter | 43 / 57 | 82 / 115 | 38 / 129 | 47 / 136 |
+| Alone, fix | send button | 39 / 58 | 63 / 99 | 4 / 73 | 9 / 80 |
+| In file, base | enter | 58 / 69 | 132 / 296 | 5 / 196 | 15 / 205 |
+| In file, base | send button | 38 / 72 | 122 / 247 | 33 / 302 | 62 / 335 |
+| In file, fix | enter | 58 / 81 | 143 / 310 | 52 / 147 | 63 / 156 |
+| In file, fix | send button | 42 / 58 | 150 / 289 | 38 / 88 | 44 / 121 |
+
+- **Base:** 1 of 40 cases failed, an alone `[enter]` case with 110 ms of loop CPU (138 ms wall). The other 39 passed.
+- **Fix:** 40 of 40 passed. Its Sending loop CPU peaked at 58 ms alone and 81 ms in the file.
+- **These fixes do not move this test's interval measurably.** The Sending loop CPU medians are the same within noise (alone 46 → 40, in file 48 → 49).
+  - In this harness the skill discovery stays on the loop because of the `SimpleNamespace` runtime policy (see Limit above).
+  - A credential TTL flip lands in the window only now and then.
+  - What remains is the send's own 33-53 ms plus whatever mount-settling work happens to coincide.
+- **For comparison:** the coordinator's base runs at load 6-12 (dev ae9f9e8d21, 20 cases each) read Sending loop CPU median 55 / max 107 alone and 65 / 105 in the file, with 4 and 3 failures.
+
+**Covering runs (`-n 4`, load 23-46).**
+- **Subscription set (20 files): 936 passed, 16 failed.** 12 of the 16 fail the same way on base: 8 in the Personas subscription-readiness file (some with RecoveryRequired) and 4 in the first-run wizard file. The other 4 were the flicker pins above, now updated and green: Console and Settings readiness, 13 of 13.
+- **Skill set (15 files): 215 passed, 18 failed, 1 xfailed.** 17 of the 18 fail on base too: command popup ×9, visit dispatch ×2, controller wiring ×1, held pointer `[skill]`, managed received acceptance, and stock-owned `[send_enter]` / `[send_button]`.
+  - The 18th is `Tests/Performance/test_console_skill_trust_stock_owned.py::…[app_closing]`. It hangs to its 240 s subprocess timeout now and then, on base and fix alike, under concurrent load. Base: 2 of 16 four-way-parallel runs and 0 of 19 serial. Fix: 4 of 59 overall, 0 of them in 16 four-way-parallel runs.
+  - An asyncio task dump showed the script's outer `wait_for` pending with the loop idle. That is pre-existing; see the report's follow-ups.
+- **Serial Architecture ratchets: 269 passed, 1 skipped.** Module size, screen size, wave-6 inventory, controller self-attributes, chat code identity.
+- **New and updated test files on the final commit:** 8 files at `-n 4`, load 42-46. The first run had 2 Settings failures:
+  - the first-read "being checked" wait, which is unchanged by this round and has a 3 s limit;
+  - a `NoMatches` in `test_settings_missing_subscription_reports_owner_recovery_after_completion`, a test this round does not touch.
+
+  Two reruns of all 8 files then passed 86 of 86 each, and the Settings file alone passed 8 of 8 three times.
+- **Preflight passes.** The UI census gains two tail entries (the two new skill nodes) and the floor is 1915. The new Tests/Chat node is on no PR lane.
+
+**Files (round 13).**
+- Product: `tldw_chatbook/LLM_Calls/anthropic_subscription.py`, `tldw_chatbook/app_skill_wiring.py`, `tldw_chatbook/UI/Console_Modules/skill.py`.
+- Tests: `Tests/Chat/test_subscription_background_readiness.py`, `Tests/UI/test_console_subscription_readiness.py`, `Tests/UI/test_settings_subscription_readiness.py`, `Tests/UI/test_console_skill_context_worker.py`, `Tests/UI/test_console_skill_controller.py`.
+- Census: `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
+- Lessons: `backlog/docs/lessons-testing-evidence.md`, two entries.
+
+**AC#1 is still not met.** Every run in this round was at load 23-46 on 18 CPUs.
 
 **Off the PR gate (2026-11-10, owner decision; AC#4 unticked).** On CI runners the test failed intermittently in the required UI lane after round 12 merged: PR run 42841511400 (branch fu/r12-lanes), job 129933421436 shard 16 `[send-button]` "the event loop spent 112 ms of CPU against 100 ms (123 ms wall)", job 129933421583 shard 15 `[enter]` 119 ms / 128 ms. Owner decision 2026-11-10 (AskUserQuestion): "Off the gate, reorder next (Recommended)", option text: "Move it out of the required PR lane now (it keeps running in the dev-push job), and implement the paint reorder: 'Sending…' paints one frame before the user row, which measured Sending CPU median 56→30 ms. Re-gate it once it passes on CI." Both census entries were removed in the hotfix branch fu/hotfix-restyle (floor 1913 → 1911); the subagent's attempt was refused by the permission system as a CI bypass, and the owner then authorized the coordinator to make this one edit. The paint reorder and the dev-push watch follow on the round-13 send branch; re-gating waits for CI evidence.
 
