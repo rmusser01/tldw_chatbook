@@ -1482,6 +1482,7 @@ def _direct_failed_attempt() -> dict[str, object]:
 class TestIngestJobOptions:
     """Coverage for TldwCli._ingest_job_options."""
 
+    @pytest.mark.bootstrap_profile
     def test_empty_ingest_options_uses_deprecated_job_fields(self) -> None:
         app = _minimal_app()
         job = _make_job(
@@ -1506,6 +1507,7 @@ class TestIngestJobOptions:
             "overlap": 100,
         }
 
+    @pytest.mark.bootstrap_profile
     def test_generic_ingest_options_override_deprecated_fields(self) -> None:
         app = _minimal_app()
         job = _make_job(
@@ -1684,6 +1686,7 @@ class TestIngestJobOptions:
         assert options["transcription_precision"] == "int8"
         assert options["transcription_local_files_only"] is True
 
+    @pytest.mark.bootstrap_profile
     def test_document_group_options(self) -> None:
         """(task-3303 AC1) The document branch feeds ``process_document``."""
         app = _minimal_app()
@@ -1752,6 +1755,7 @@ class TestIngestJobOptions:
         assert options["ocr_language"] == "en"
         assert options["ocr_backend"] == "auto"
 
+    @pytest.mark.bootstrap_profile
     def test_ebook_chapters_choice_maps_to_ebook_chapters_method(self) -> None:
         """(task-3303 AC3) The human "chapters" choice becomes the real method."""
         app = _minimal_app()
@@ -1766,6 +1770,7 @@ class TestIngestJobOptions:
 
         assert options["chunk_options"]["method"] == "ebook_chapters"
 
+    @pytest.mark.bootstrap_profile
     def test_ebook_sentences_choice_travels_verbatim(self) -> None:
         app = _minimal_app()
         job = _make_job(
@@ -1779,6 +1784,7 @@ class TestIngestJobOptions:
 
         assert options["chunk_options"]["method"] == "sentences"
 
+    @pytest.mark.bootstrap_profile
     def test_ebook_legacy_snapshot_without_chunk_method_keeps_sentences(
         self,
     ) -> None:
@@ -1800,6 +1806,7 @@ class TestIngestJobOptions:
         assert options["chunk_options"] is not None
         assert options["chunk_options"]["method"] == "sentences"
 
+    @pytest.mark.bootstrap_profile
     def test_fresh_untouched_form_snapshot_maps_to_ebook_chapters(self) -> None:
         """(F11) A FRESH untouched submission still chunks e-books by
         chapter: the submit-time snapshot carries the schema default
@@ -2210,6 +2217,7 @@ class TestIngestJobOptions:
         assert context["retry_of_job_id"] == "ingest-job-22"
         assert context["retry_source_failure_provenance"] == failed_attempt
 
+    @pytest.mark.bootstrap_profile
     def test_untouched_exact_faster_whisper_model_uses_visible_base_default(
         self,
     ) -> None:
@@ -2253,6 +2261,7 @@ class TestIngestJobOptions:
 
         assert options["translation_target_language"] is None
 
+    @pytest.mark.bootstrap_profile
     def test_untouched_audio_form_snapshot_resolves_closed_gate_default(self) -> None:
         provider_field = next(
             field
@@ -2319,6 +2328,7 @@ class TestIngestJobOptions:
         assert options["extraction_method"] == "markdown"
         assert options["include_toc"] is True
 
+    @pytest.mark.bootstrap_profile
     def test_pdf_chunk_options_carry_explicit_words_method(self) -> None:
         """(task-3301/3303 xhigh review round 2, F12) The generic chunk-size
         hint promises WORDS ('words · 100–5000'), but ``process_pdf``
@@ -2335,6 +2345,7 @@ class TestIngestJobOptions:
 
         assert options["chunk_options"]["method"] == "words"
 
+    @pytest.mark.bootstrap_profile
     def test_audio_video_chunk_options_carry_explicit_words_method(self) -> None:
         """(F12) Same unit contract for the audio/video branch, whose
         processor defaults to sentences as well."""
@@ -2347,6 +2358,7 @@ class TestIngestJobOptions:
 
         assert options["chunk_options"]["method"] == "words"
 
+    @pytest.mark.bootstrap_profile
     def test_pdf_chunk_size_governs_word_budget_through_processor_tail(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -2405,6 +2417,7 @@ class TestIngestJobOptions:
         for chunk in chunks:
             assert len(chunk["text"].split()) <= 120
 
+    @pytest.mark.bootstrap_profile
     def test_type_specific_overrides_generic(self) -> None:
         app = _minimal_app()
         job = _make_job(
@@ -2476,6 +2489,7 @@ class TestIngestJobOptionsWiring:
         assert "custom_prompt" not in options
         assert "system_prompt" not in options
 
+    @pytest.mark.bootstrap_profile
     def test_untouched_overlap_default_is_schema_default(self) -> None:
         """Local fallback overlap == the generic schema default (100), the
         value the UI displays -- it used to be a hardcoded 50."""
@@ -2496,6 +2510,7 @@ class TestIngestJobOptionsWiring:
 
         assert options["chunk_options"]["overlap"] == schema_overlap == 100
 
+    @pytest.mark.bootstrap_profile
     def test_untouched_form_local_and_server_paths_agree_on_overlap(self) -> None:
         from tldw_chatbook.Library.server_ingest_request import (
             build_server_ingest_kwargs,
@@ -2569,6 +2584,7 @@ class TestIngestJobOptionsWiring:
             options["audio_video"]["transcription_external_scope_id"] == private_scope
         )
 
+    @pytest.mark.bootstrap_profile
     def test_display_string_sizes_are_coerced_to_int(self) -> None:
         """The panel Inputs hand back display text; processors get ints."""
         app = _minimal_app()
@@ -2590,6 +2606,7 @@ class TestIngestJobOptionsWiring:
         assert isinstance(options["chunk_options"]["size"], int)
         assert isinstance(options["chunk_options"]["overlap"], int)
 
+    @pytest.mark.bootstrap_profile
     def test_chunk_options_carry_max_size_for_chunking_service(self) -> None:
         """``improved_chunking_process`` reads ``max_size``; the legacy
         audio/video option map reads ``size``. Both spellings must travel."""
@@ -3613,6 +3630,7 @@ def test_invalid_audio_request_allows_next_job_to_dispatch(
 
 
 class TestImageIngestJobOptions:
+    @pytest.mark.bootstrap_profile
     def test_image_group_options_travel(self) -> None:
         """The image branch feeds ``process_image``'s OCR knobs."""
         app = _minimal_app()
