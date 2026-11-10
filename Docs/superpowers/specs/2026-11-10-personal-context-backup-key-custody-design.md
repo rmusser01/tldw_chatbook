@@ -208,11 +208,15 @@ The lock gets reasons and copy that name the cause:
 | Situation | Reason | Copy (draft) |
 |---|---|---|
 | The archive had no key (Q1a), and no account on this device authenticates the restored database | `personal_context_key_not_in_backup` | "Personal Context is locked: this backup did not include its key, and this device does not have it. Your profile data is kept. To read it, restore again with Replace from an encrypted backup that includes credentials." |
-| Isolated restored profile (F12) | `personal_context_keyring_unavailable` | "Personal Context can't open in a separately restored copy, because that copy has no access to the system keyring. Its data and key are kept. Restore with Replace to use it." |
+| Isolated restored profile (F12), from an archive that included the key | `personal_context_keyring_unavailable` | "Personal Context can't open in a separately restored copy, because that copy has no access to the system keyring. Its data and key are kept. Restore with Replace to use it." |
 | Replace restore when this device has no secure keyring | `personal_context_key_install_unavailable` | "Personal Context was restored but stays locked: this device has no secure keyring to hold its key. The key is kept in the encrypted restore copy. Set up a secure keyring, then restore again." |
-| The stored account's key does not authenticate the database's manifest, including a different key with the same `key_version` (F5) | `personal_context_key_mismatch` | "Personal Context is locked: the key on this device belongs to a different copy of the profile. Your data is kept. Use Backup & Restore to roll back or restore the matching copy. Do not use Remove local profile; it deletes the data." |
+| The stored account's key does not authenticate the database's manifest, including a different key with the same `key_version` (F5) | `personal_context_key_mismatch` | "Personal Context is locked: the key on this device belongs to a different copy of the profile. Your data is kept. Use Backup & Restore to roll back or restore the matching copy, then choose Try again." |
 
 The restore plan shows the first three as acknowledged issues **before** the restore runs (constraint 4).
+
+An isolated restore of an archive without the key uses the key-not-in-backup reason and copy. Its retained copy holds no key, so "Restore with Replace" alone would only lock again.
+
+A locked service refuses Remove local profile and Start fresh (`service.py:184-186`). The copy therefore names only what the user can do while locked: restore or roll back through Backup & Restore, then choose **Try again**.
 
 The fourth is detected by authentication when the repository opens.
 - A manifest-authentication failure at open is reported as this key mismatch. It replaces the tamper-like `profile_integrity_invalid`, even though a tampered manifest fails the same way (`repository.py:1341-1352`).
@@ -227,6 +231,8 @@ The code facts are F6, F7, F8 and F14.
 **Option A: never capture link keys, and never resume a restored link.** (Recommended.)
 - The device wrapping key, staged integrity keys and dataset staging keys stay keyring-only and never enter any archive.
 - **Generic gate.** After every restore, Personal Context sync stays off until the restored generation is reviewed.
+  - That review approves Personal Context sync only after a restore that published neither `personal_context.repository` nor `runtime.sync_state`.
+  - After one that published either, sync stays off with a named reason shown to the user, until the review that clears the link state approves it.
 - **Fresh link.** A restore that publishes `personal_context.repository` or `runtime.sync_state` also forces a fresh reviewed first link. On a new machine, that link registers a new device with a new wrapping key.
   - This includes an automation-only restore, which publishes only `runtime.sync_state` and can rewind `personal_context_link_state` under a live repository.
 - Mechanism:
@@ -325,7 +331,11 @@ This spec does not design Plugins.
 - **Re-key after restore** (Q2 option B): filed as TASK-40140 under decision 4.
 - **`runtime.sync_state` device binding after restore.**
   - This is Notes/Chat Sync, not Personal Context.
-  - No consumer gates sync on `execution_allowed(("runtime.sync_state",))`, and the restored shared `sync_profile_state.device_id` (F8) carries the old device identity.
+  - Server Sync V2 calls are already gated after a restore. `_sync_call` holds `execution_scope(("config", "runtime.sync_state"), …)` and raises `sync_activation_required` (`Sync_Interop/server_sync_service.py:51-95`, `:85-88`), and `local_first_sync_service.py` uses the same decorator.
+  - Not verified here:
+    - what approves `config` and `runtime.sync_state` for a restored generation (no approver naming them was found);
+    - whether that approval then lets Notes and Chat sync run with the restored shared `sync_profile_state.device_id` (F8), which carries the old device identity;
+    - whether any Notes or Chat path bypasses `_sync_call`.
   - Whether general Sync can resume as the old device after a cross-machine restore with re-entered server credentials is **unverified** here. It is filed as TASK-40139.
   - A fresh Personal Context link on a new machine will hit `personal_context_sync_profile_binding_conflict` (`link_service.py:1024-1028`) while that row holds the old device. TASK-40137 rebinds Personal Context and leaves Notes and Chat sync state unchanged.
 - **Personal Context recovery-export import** (F17): still unshipped. It is unrelated to backup.

@@ -57,6 +57,7 @@ Filed in round 13 of the 2026-10-23 burn-down from TASK-39148's owner-approved d
   - The repository's adapter is `activation_required`, and every restore binds all activation-required owners in `finalize_candidate` (`publication.py:592-604`).
   - So Personal Context sync (`app.py:2625-2662`) can stay off until the restored generation is reviewed, through `activation.py:224-227`.
   - This guard holds on its own.
+  - Its review approves Personal Context sync only after a restore that published neither `personal_context.repository` nor `runtime.sync_state`. After one that published either, sync stays off, with a named reason shown to the user, until a review that clears the link state exists.
 - **First link in flight.** Capture is refused while a `first_link_freeze` or `first_link_rebaseline_commit` row exists (`repository.py:214-226`, `:311-320`).
 - **Device-only records** are included, as **Export recovery copy** already does (decision 8).
 - **Detached imports.** A `_SQLiteDeclaration` owner is picked up by the detached layout automatically (`detached_layout.py:636-642`, `:1080-1085`). Without a guard, that would import the repository into an archive without its key. Decision 10 refuses it there by name.
@@ -68,11 +69,12 @@ Filed in round 13 of the 2026-10-23 burn-down from TASK-39148's owner-approved d
 - [ ] #2 The archive holds a consistent copy of the database, including device-only records, that passes the installed exact-schema validation for each v9 layout from TASK-40133
 - [ ] #3 A backup that includes credentials carries the profile key as a `personal_context` credential record, and capture checks that the key opens the captured copy (its manifest authenticates) before writing the record
 - [ ] #4 A backup without credentials carries no key material and keeps the database's key reference exactly as it was (it is not sanitized); its preview says the key is not in the backup
-- [ ] #5 After a replace restore with the default "Everything" selection, the live Personal Context repository is byte-for-byte unchanged, the restore plan said beforehand that Personal Context would not be restored, and the archive still holds the captured copy (red first)
+- [ ] #5 After a replace restore with the default "Everything" selection, the live Personal Context repository is byte-for-byte unchanged, the restore plan said beforehand that Personal Context would not be restored, and the archive still holds the captured copy; an isolated restore likewise leaves the repository out, and its plan says so (red first)
 - [ ] #6 Inert extraction cannot write the key to disk from any archive; a test pins it
 - [ ] #7 Capture is refused with a named reason, shown in the preview, while a first-link freeze or rebaseline marker exists
 - [ ] #8 The review of a backup that includes credentials says the device wrapping key, staged integrity keys and dataset staging keys are left out, as it does for skill-trust keys
 - [ ] #9 After any restore, Personal Context sync does not resume until the restored generation is reviewed; this guard holds on its own (red first)
-- [ ] #10 A detached source holding the repository is refused by name and never imported without its key
-- [ ] #11 The owner inventory doc's Personal Context rows and the Personal Context User Guide page's backup paragraph describe the new behaviour
+- [ ] #10 That review approves Personal Context sync only after a restore that published neither `personal_context.repository` nor `runtime.sync_state`; after one that published either, sync stays off and the user sees a named reason saying so
+- [ ] #11 A detached source holding the repository is refused by name and never imported without its key
+- [ ] #12 The owner inventory doc's Personal Context rows and the Personal Context User Guide page's backup paragraph describe the new behaviour
 <!-- AC:END -->

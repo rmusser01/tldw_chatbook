@@ -4,7 +4,7 @@ title: "Personal Context's repository database cannot be captured by a backup, a
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-08 06:54
-updated_date: 2026-11-10 19:03
+updated_date: 2026-11-10 19:19
 labels:
 - follow-up
 - backup
@@ -136,4 +136,11 @@ Follow-ups:
 - **TASK-40136.** Isolated restores now publish the repository.
 - **TASK-40137.** It now depends on TASK-40135.
 - **Markers.** Every marker a task writes has the form `recovery:setup_required:<reason>`, and the marker criteria compare "every table except `profile_meta.key_account`".
+
+**Review r13k-rev4 fixes (2026-11-10).** The review found one Important, two Minor and two factual items, and all are fixed. The decisions' text is unchanged.
+- **TASK-40134's interim review** approves Personal Context sync only after restores that published neither the repository nor `runtime.sync_state`. Otherwise sync stays off with a named reason; TASK-40137 builds on this.
+- **Isolated restores** leave the repository out, and the plan says so, pinned in TASK-40134 AC#5.
+- **Isolated restore of a key-less archive** uses the key-not-in-backup reason and copy.
+- **Locked-state copy** no longer mentions Remove local profile, which a locked service refuses (`service.py:184-186`).
+- **Spec F1 and TASK-40139** now state that Sync V2 calls are gated through `_sync_call` (`server_sync_service.py:85-88`).
 <!-- SECTION:NOTES:END -->
