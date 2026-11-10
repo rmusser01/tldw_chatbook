@@ -197,6 +197,7 @@ def _skill_content(*, title: str, description: str) -> str:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_open_skill_row_populates_editor_fields_and_save_bumps_version(tmp_path):
     local_service, service = _real_skills_scope_service(tmp_path)
     await local_service.create_skill(
@@ -242,6 +243,7 @@ async def test_open_skill_row_populates_editor_fields_and_save_bumps_version(tmp
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_renaming_an_existing_skill_is_refused_and_never_corrupts_it(tmp_path):
     """Fix wave for the review Critical: renaming an existing skill used to
     silently corrupt it. ``_save_library_skill`` baked the LIVE Name-input
@@ -323,6 +325,7 @@ async def test_renaming_an_existing_skill_is_refused_and_never_corrupts_it(tmp_p
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_saving_a_trusted_skill_warns_and_requeues_needs_review(tmp_path):
     trust_service = _real_trust_service(tmp_path)
     local_service = LocalSkillsService(store_dir=tmp_path, trust_service=trust_service)
@@ -372,6 +375,7 @@ async def test_saving_a_trusted_skill_warns_and_requeues_needs_review(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_trust_panel_review_then_approve_moves_skill_to_available(tmp_path):
     trust_service = _real_trust_service(tmp_path)
     local_service = LocalSkillsService(store_dir=tmp_path, trust_service=trust_service)
@@ -436,6 +440,7 @@ async def test_trust_panel_review_then_approve_moves_skill_to_available(tmp_path
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_skill_edit_work_pane_scrolls_actions_into_view(tmp_path):
     """The permanent Edit work pane scrolls and reveals its action row."""
     from textual.containers import VerticalScroll
@@ -520,6 +525,7 @@ async def test_skill_edit_work_pane_scrolls_actions_into_view(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_uninitialized_trust_shows_setup_state_and_bootstrap_enables_approve_flow(
     tmp_path,
 ):
@@ -629,6 +635,7 @@ async def test_uninitialized_trust_shows_setup_state_and_bootstrap_enables_appro
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_already_bootstrapped_store_never_shows_setup_state(tmp_path):
     """Once trust has been bootstrapped (by any means), the Trust panel must
     render its NORMAL Unlock/Review/Approve row, never the first-run "Set up
@@ -665,6 +672,7 @@ async def test_already_bootstrapped_store_never_shows_setup_state(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_uninitialized_trust_store_list_still_shows_needs_review_glyph(tmp_path):
     """A never-bootstrapped trust store must degrade gracefully everywhere
     else in the Library UI, not just in the editor's Trust panel -- the
@@ -753,6 +761,7 @@ async def test_skill_trust_bootstrap_modal_rejects_mismatched_confirmation():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_delete_skill_returns_to_list_and_decrements_count(tmp_path):
     local_service, service = _real_skills_scope_service(tmp_path)
     await local_service.create_skill(
@@ -811,6 +820,7 @@ async def test_delete_skill_returns_to_list_and_decrements_count(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_flush_pending_work_vetoes_dirty_skill_editor(tmp_path):
     local_service, service = _real_skills_scope_service(tmp_path)
     await local_service.create_skill(
@@ -845,6 +855,7 @@ async def test_flush_pending_work_vetoes_dirty_skill_editor(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_skill_editor_opens_under_real_runtime_policy_enforcer(tmp_path):
     """Regression test for the Phase-1 gate defect class (see
     ``test_library_prompt_row_opens_editor_under_real_runtime_policy_enforcer``
@@ -921,6 +932,7 @@ async def test_skill_editor_opens_under_real_runtime_policy_enforcer(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_library_shell_create_skill_row_opens_blank_editor(tmp_path):
     """The Create rail's "New skill" row opens the in-canvas editor on a
     blank, not-yet-saved record -- empty fields, Name Input editable (no
@@ -958,6 +970,7 @@ async def test_library_shell_create_skill_row_opens_blank_editor(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_library_shell_create_skill_save_creates_and_increments_count(tmp_path):
     """Save with a fresh valid name CREATES via the scope service's create
     path (not update) -- the Skills rail count increments, the record is
@@ -1014,6 +1027,7 @@ async def test_library_shell_create_skill_save_creates_and_increments_count(tmp_
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_library_shell_create_skill_save_invalid_name_shows_classify_outcome(
     tmp_path,
 ):
@@ -1053,6 +1067,7 @@ async def test_library_shell_create_skill_save_invalid_name_shows_classify_outco
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_library_shell_create_skill_save_arrives_needs_review_with_panel_primed(
     tmp_path,
 ):
@@ -1119,6 +1134,7 @@ async def test_library_shell_create_skill_save_arrives_needs_review_with_panel_p
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_delete_cancel_preserves_edits_typed_during_confirm(tmp_path):
     """Review finding: fields stay editable during the delete confirmation;
     an edit typed there was silently reverted on Cancel (and _dirty stayed
@@ -1169,6 +1185,7 @@ async def test_delete_cancel_preserves_edits_typed_during_confirm(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_derived_description_hint_hides_when_user_types(tmp_path):
     """Review finding: the 'No description set' hint (gated on
     description_derived at compose time) stayed visible after the user typed
@@ -1205,6 +1222,7 @@ async def test_derived_description_hint_hides_when_user_types(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_derived_flag_cleared_when_snapshotting_populated_description(tmp_path):
     """Review finding: cancelling delete confirmation snapshots text typed
     while confirmation is active and clears ``description_derived`` so the
@@ -1255,6 +1273,7 @@ async def test_derived_flag_cleared_when_snapshotting_populated_description(tmp_
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_orphaned_manifest_is_one_click_resetup(tmp_path):
     """Manifest present but scoped marker cleanly absent -> header offers a single
     Set-up that reset-then-bootstraps, never the locked/unlock/error detour."""
@@ -1312,6 +1331,7 @@ async def test_orphaned_manifest_is_one_click_resetup(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_trust_reset_cancel_backs_out_without_touching_trust_state(tmp_path):
     """Pressing Cancel on the confirm-gated Reset row dismisses the row and
     performs no destructive action -- the standalone Reset button is still
@@ -1357,6 +1377,7 @@ async def test_trust_reset_cancel_backs_out_without_touching_trust_state(tmp_pat
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_trust_reset_confirm_wipes_trust_state(tmp_path):
     """Pressing the confirm row's own Reset button actually runs the
     destructive reset -- the trust store drops back to a genuine first-run
@@ -1402,6 +1423,7 @@ async def test_trust_reset_confirm_wipes_trust_state(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_list_mode_unlock_refreshes_snapshot_not_just_posture(tmp_path):
     """Qodo review: a list-header Unlock refreshed only the trust posture, but
     the list rows' trust glyphs and the header's blocked-count derive from the
