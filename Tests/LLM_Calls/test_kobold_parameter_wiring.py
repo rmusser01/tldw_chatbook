@@ -80,29 +80,21 @@ def test_provided_system_message_is_passed_through(kobold_capture) -> None:
     assert call["system_message"] == "fixed system"
 
 
+@pytest.mark.bootstrap_profile
 def test_analyze_default_system_message_reaches_the_seam(
     kobold_capture, monkeypatch
 ) -> None:
     """Composition pin (original review round 1): analyze()'s substituted
     default system message reaches the chat-dispatch seam, which the
     handler prepends to the kobold prompt."""
-    from tldw_chatbook.Backup_Recovery import bootstrap
-
     monkeypatch.setattr(sgl, "CHUNKER_AVAILABLE", False)
-    try:
-        sgl.analyze(
-            api_name="kobold",
-            input_data="fixed input text",
-            custom_prompt_arg="fixed instruction",
-            api_key="fixed-key",
-            temp=None,
-            streaming=False,
-        )
-    except bootstrap.RecoveryRequired:
-        # The registry default resolves through the config bootstrap, which
-        # this machine's pre-existing recovery state refuses (the original
-        # TASK-34844 pin had the same guard); the seam-level pins above
-        # cover the composition without it.
-        pytest.skip("config bootstrap in recovery state (known env)")
+    sgl.analyze(
+        api_name="kobold",
+        input_data="fixed input text",
+        custom_prompt_arg="fixed instruction",
+        api_key="fixed-key",
+        temp=None,
+        streaming=False,
+    )
     assert kobold_capture.calls, "analyze never reached the chat seam"
     assert kobold_capture.calls[0]["system_message"]
