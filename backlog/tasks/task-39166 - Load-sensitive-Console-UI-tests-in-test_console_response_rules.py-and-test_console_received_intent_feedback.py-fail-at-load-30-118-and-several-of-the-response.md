@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-08 06:54
-updated_date: 2026-11-10 18:17
+updated_date: 2026-11-10 21:03
 labels:
 - follow-up
 - tests
@@ -55,7 +55,7 @@ Found in round 12 of the 2026-10-23 burn-down (TASK-38977 and TASK-38948 on roun
 <!-- AC:BEGIN -->
 - [ ] #1 For each listed node, the step that misses under load is named from its own failure: which wait, and which state it was waiting for
 - [x] #2 Each node waits on the state it reads, with a bound that fails naming that state; no latency budget is loosened to make it pass
-- [ ] #3 Both files pass 10 of 10 whole-file runs at `-n 4`, with load recorded, at least five of them at a one-minute load of 40 or more
+- [x] #3 Both files pass 10 of 10 whole-file runs at `-n 4`, with load recorded, at least five of them at a one-minute load of 40 or more
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -122,4 +122,19 @@ Base dev ae9f9e8d21, 2026-11-10. Test-only changes in both files. One listed nod
 **Files.** `Tests/UI/test_console_response_rules.py`, `Tests/UI/test_console_received_intent_feedback.py`, `backlog/docs/lessons-testing-evidence.md` (new entry).
 
 **Parent's combined runs (2026-11-10, for TASK-38977 AC#1).** Ten runs of this file and `test_console_prompts_modal.py` in one `-n 4` invocation, at load 36-47: 4 passed. `[roleplay]` failed 4 times on the `PromptHistory` wait above. `test_rule_phase_events_project_only_the_mounted_current_session[rebuild]` failed once, on the watch, with a second UI-thread config read: `_sync_console_native_session_tabs` -> `_maybe_show_fleet_coachmark` -> `_ensure_console_chat_controller` -> `_sync_console_chat_core_state` -> `_build_console_provider_selection_uncached` -> `_provider_readiness_app_config` -> `load_settings()` -> the participant lock loop (`config_participants.py:427`). Whether the real app routes that read the same way under `ConsoleHarness`'s own App was not checked. Two unlisted nodes also failed and were not captured: `test_actual_stop_after_generation_cancels_rule_check` (3 of the first 3 runs, 0 of the next 7; it waits a fixed 60 and 10 `pilot.pause()` turns) and, in the prompts file, `test_preservation_veto_retains_candidate_in_review_and_tamper_blocks_apply` (once).
+
+**Round 2 (2026-11-10, coordinator ruling: fix the product).**
+- **`PromptHistory` path off the loop.** `prompt_history._resolve_default_path_off_loop()` re-resolves the default path on a worker thread (`asyncio.to_thread`) until the kept path matches its inputs, and `PromptHistory._file_job()` awaits it before every `FileJob` (exact class only, as the source selection checks). The file job's selection on the loop then hits the kept path. New test `Tests/Backup_Recovery/test_prompt_history_path_memo.py::test_a_load_during_a_config_rebuild_never_waits_on_the_ui_loop` (laned, pr-fast-lane): red before, deterministically ("the history load waited on the UI loop for the config rebuild"), green after. `[roleplay]` as 8 temporary copies, two concurrent `-n 4` runs: before 12 of 16 failed at load 54-59, every stack in `default_prompt_history_path`; after 16 of 16 passed at load 57-60.
+- **Fleet coach-mark (`[rebuild]`).** Traced: the real app reaches it. Every tab sync calls `_maybe_show_fleet_coachmark`; on the 1 -> 2 session transition it read `_ensure_console_chat_controller().max_parallel_runs`, which resyncs the provider selection, and `_provider_readiness_app_config` calls `load_settings()` live whenever the snapshot is disk-loaded, as `TldwCli.app_config = load_settings()` is. The show is now a module-level `_show_console_fleet_coachmark` under `spend.retry_after_config_rebuild` (0.2 s retry while a rebuild holds config); the transition check stays synchronous. ChatScreen's method ceiling (741) refused a new method, and wrapping the whole method instead deferred every tab sync's bookkeeping, which the mount-refresh test (rightly) counted as an unfinished retry: 3 of 3 mount cases failed every run, so that version was replaced. New case `test_console_syncs_never_wait_for_a_config_rebuild[coachmark]` (census entry, all params): red before with the `[rebuild]` stack, green after, and the banner shows after release.
+- **Remaining nodes in this file.**
+  - `test_actual_stop_after_generation_cancels_rule_check`: the step that missed was the click. The old shape clicked as soon as the held assessment was entered; 1 of 24 temporary copies failed `assert await case.pilot.click(...)` (False: the Stop button was not under the pointer yet), 24 of 24 new-shape copies passed (load 38-56). It now waits for the button under the pointer, then for the cancel (phase idle) before releasing, then for composer focus. A temporary never-cancelling `rules.cancel` fails on "Stop cancelling the held rule check (phase idle): not within 30 s".
+  - `test_fixture_failure_retires_held_transport[helper]`: `ConsoleRuntime.dispose()` waits out helpers by design ("Helpers and admitted rule SQL outlive logical cancellation and grace", re-raising the cancel afterwards), so it is not a product defect; the test now frees an unreleased hold itself after its 30 s bound and fails naming it. With a temporary fixture that never releases: `[helper]` failed in 41 s ("the fixture's teardown did not retire the held helper transport within 30 s; the test released it"), not at the 300 s timeout; `[primary]` failed `assert release.is_set()`.
+  - `test_canonical_settings_opens_global_rules_before_console_visit` failed once in a combined run (load 44): the test ended with the manager's Selects still mounting, and teardown raised `NoMatches 'SelectOverlay'`. This test, `test_workspace_command_opens_same_manager_in_registered_scope`, `test_chat_and_canonical_settings_open_the_same_scoped_manager`, `test_violation_status_opens_rules_with_disable_action` and the refusal test now wait for the manager to be mounted (`is_mounted` turns True only after `on_mount`'s awaited reload), not just pushed. Presses that must do nothing keep their pauses.
+  - `[maintenance]` failed once in 10 runs (load ~51) at `assert not stop.display`: the deferred-sync flag cleared before a later sync hid Stop. It now waits for the flag, Stop hidden and "Testing rule" gone.
+
+**AC#3 (met, final head).** `test_console_response_rules.py`: 10 of 10 whole-file runs at `-n 4`, two streams at once, every run at load 41-57. `test_console_received_intent_feedback.py`: 10 of 10 at load 38-68 (plus round 1's 11 of 11).
+
+**AC#1 (not met for one node).** Every listed node's missing step is named above or in round 1, except `test_send_feedback_survives_preparation_and_provider_wait`. It never failed here (20 runs in round 1, 13 in round 2), and TASK-38948 recorded only that it failed "on its own 15 s bounded wait", which in that test was either the provider-entry wait or the custody-clear wait. Both are now state-bounded. `test_enter_sends_…` and `test_navigation_after_receipt_…` had one 15 s bounded wait each, the custody-clear wait, so TASK-38948's record names theirs.
+
+**Files (round 2).** `tldw_chatbook/Chat/prompt_history.py`, `tldw_chatbook/UI/Screens/chat_screen.py`, `Tests/Backup_Recovery/test_prompt_history_path_memo.py`, `Tests/UI/test_console_response_rules.py`. Preflight passed; the chat_screen line, method and projection ceilings pass (24605 of 24608 lines).
 <!-- SECTION:NOTES:END -->
