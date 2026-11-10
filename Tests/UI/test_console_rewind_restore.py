@@ -58,6 +58,20 @@ KIND_SUMMARIZE_UP_TO = "summarize-up-to"
 KIND_SUMMARIZE_FROM = "summarize-from"
 
 
+def _watch_console_run_worker(console) -> MagicMock:
+    real_run_worker = console.run_worker
+    spy = MagicMock(side_effect=lambda coro, **_kwargs: coro.close())
+
+    def run_worker(work, **kwargs):
+        group = kwargs.get("group")
+        if isinstance(group, str) and group.startswith("console-run-"):
+            return spy(work, **kwargs)
+        return real_run_worker(work, **kwargs)
+
+    console.run_worker = run_worker
+    return spy
+
+
 def _press_enter_synchronously(console) -> None:
     """Deliver Enter to the screen key handler without pumping messages."""
     console.on_key(Key(key="enter", character="\r"))
@@ -203,6 +217,7 @@ async def test_first_prompt_warns_if_restart_cursor_is_unsaved(monkeypatch):
 @pytest.mark.asyncio
 async def test_restore_blocked_while_a_run_is_streaming_makes_no_mutation():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
@@ -340,6 +355,7 @@ async def test_summary_choices_refuse_sending_streaming_and_compacting(
 ):
     """No summary worker may cancel an already-active Console operation."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
@@ -353,8 +369,7 @@ async def test_summary_choices_refuse_sending_streaming_and_compacting(
 
         controller = console._ensure_console_chat_controller()
         controller._set_run_state(ConsoleRunState(status, run_copy))
-        spy_worker = MagicMock(side_effect=lambda coro, **kwargs: coro.close())
-        console.run_worker = spy_worker
+        spy_worker = _watch_console_run_worker(console)
 
         notices: list[tuple[str, str]] = []
         app.notify = lambda message_text, **kwargs: notices.append(
@@ -969,8 +984,7 @@ async def test_summarize_choice_guards_against_changed_active_session():
         other_session = store.create_session(title="other")
         store.switch_session(other_session.id)
 
-        spy_worker = MagicMock(side_effect=lambda coro, **kwargs: coro.close())
-        console.run_worker = spy_worker
+        spy_worker = _watch_console_run_worker(console)
 
         notices: list[tuple[str, str]] = []
         app.notify = lambda message_text, **kwargs: notices.append(
