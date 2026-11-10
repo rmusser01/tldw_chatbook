@@ -305,6 +305,9 @@ _CREDENTIAL_VALUE_RES = (
     ),
     re.compile(r"\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE),
     re.compile(r"\bsk-[A-Za-z0-9_-]{8,}", re.IGNORECASE),
+    # TASK-39149: bare secret and restricted keys, live or test, at the sk-
+    # floor. The body takes no "_", so sk_live_mode_enabled stays readable.
+    re.compile(r"\b[rs]k_(?:live|test)_[A-Za-z0-9]{8,}", re.IGNORECASE),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(
         r"\b[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@",
