@@ -29,15 +29,17 @@ from tldw_chatbook.Workspaces.registry_service import WorkspaceNotFound
 pytestmark = pytest.mark.unit
 
 
-def build_test_registry(tmp_path: Path) -> LocalWorkspaceRegistryService:
-    return LocalWorkspaceRegistryService(
-        WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="task12-test")
-    )
+def build_test_registry(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> LocalWorkspaceRegistryService:
+    db = WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="task12-test")
+    request.addfinalizer(db.close)
+    return LocalWorkspaceRegistryService(db)
 
 
 @pytest.fixture()
-def registry(tmp_path):
-    return build_test_registry(tmp_path)
+def registry(tmp_path, request):
+    return build_test_registry(tmp_path, request)
 
 
 @pytest.fixture()
@@ -47,12 +49,14 @@ def workspace_id(registry):
 
 
 class TestTableCreatedIdempotently:
-    def test_repeat_init_on_same_file_does_not_raise(self, tmp_path):
-        WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="c1")
+    def test_repeat_init_on_same_file_does_not_raise(self, tmp_path, request):
+        first = WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="c1")
+        request.addfinalizer(first.close)
 
         # Second init against the same file must be a no-op, not an error
         # (CREATE TABLE IF NOT EXISTS, mirroring every other workspace table).
         second = WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="c1")
+        request.addfinalizer(second.close)
 
         with second.connection() as conn:
             row = conn.execute(
@@ -76,8 +80,8 @@ class TestRoundTrip:
 
         assert result == scope
 
-    def test_set_persists_across_reload(self, tmp_path):
-        registry = build_test_registry(tmp_path)
+    def test_set_persists_across_reload(self, tmp_path, request):
+        registry = build_test_registry(tmp_path, request)
         record = registry.create_workspace(
             workspace_id="ws-reload", name="Reload target"
         )
@@ -85,9 +89,7 @@ class TestRoundTrip:
 
         registry.set_workspace_scope(record.workspace_id, scope)
 
-        reloaded = LocalWorkspaceRegistryService(
-            WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="task12-test")
-        )
+        reloaded = build_test_registry(tmp_path, request)
         assert reloaded.get_workspace_scope(record.workspace_id) == scope
 
     def test_set_updates_an_existing_scope(self, registry, workspace_id):

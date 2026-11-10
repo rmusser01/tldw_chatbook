@@ -156,6 +156,8 @@ def test_concurrent_adds_do_not_lose_exclusions(registry, binding):
             registry.add_binding_exclusion("ws-excl", binding, path)
         except Exception as exc:  # noqa: BLE001 -- reported via assertion below
             failures.append(exc)
+        finally:
+            registry.db.close()
 
     threads = [threading.Thread(target=add, args=(p,)) for p in paths]
     for thread in threads:

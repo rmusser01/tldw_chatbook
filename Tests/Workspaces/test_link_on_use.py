@@ -33,10 +33,10 @@ from tldw_chatbook.Workspaces.registry_service import WorkspaceRegistryServiceEr
 
 
 @pytest.fixture
-def registry(tmp_path) -> LocalWorkspaceRegistryService:
-    service = LocalWorkspaceRegistryService(
-        WorkspaceDB(tmp_path / "workspace.sqlite", client_id="link-on-use")
-    )
+def registry(tmp_path, request) -> LocalWorkspaceRegistryService:
+    db = WorkspaceDB(tmp_path / "workspace.sqlite", client_id="link-on-use")
+    request.addfinalizer(db.close)
+    service = LocalWorkspaceRegistryService(db)
     service.ensure_default_workspace()
     service.set_active_workspace(DEFAULT_WORKSPACE_ID)
     return service
