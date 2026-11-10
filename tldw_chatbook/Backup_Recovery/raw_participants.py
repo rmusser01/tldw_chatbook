@@ -251,13 +251,13 @@ def _async_source_selection(source, route):
     if route == "note_templates":
         selected, installed, _ = settings_files.selection(source, route, None)
     elif route == "prompt_history":
-        from ..Chat.prompt_history import PromptHistory, default_prompt_history_path
-
-        if not isinstance(source, PromptHistory):
+        module = sys.modules.get("tldw_chatbook.Chat.prompt_history")
+        cls = getattr(module, "PromptHistory", None)
+        if cls is None or not isinstance(source, cls):
             raise bootstrap.RecoveryRequired("raw_source_not_supported")
         selected = lexical_path(source.path)
-        installed = type(source) is PromptHistory and selected == lexical_path(
-            default_prompt_history_path()
+        installed = type(source) is cls and selected == lexical_path(
+            module.default_prompt_history_path()
         )
     else:
         module = sys.modules.get("tldw_chatbook.UI.Screens.chat_screen")
@@ -323,27 +323,25 @@ def _raw_participant(source):
         if not installed:
             raise bootstrap.RecoveryRequired("raw_participant_not_installed")
     else:
-        from ..Notes.file_notes_replica import FileNotesReplica
-        from ..Widgets import emoji_picker
-
-        types = _types()
-        from ..Chat.prompt_history import PromptHistory
-
+        notes_module = sys.modules.get("tldw_chatbook.Notes.file_notes_replica")
+        notes_type = getattr(notes_module, "FileNotesReplica", None)
+        emoji_picker = sys.modules.get("tldw_chatbook.Widgets.emoji_picker")
+        history_module = sys.modules.get("tldw_chatbook.Chat.prompt_history")
+        history_type = getattr(history_module, "PromptHistory", None)
         screen_module = sys.modules.get("tldw_chatbook.UI.Screens.chat_screen")
         screen_type = getattr(screen_module, "ChatScreen", None)
-        if type(source) is PromptHistory or (
-            screen_type is not None and type(source) is screen_type
-        ):
+        types = _types()
+        if type(source) is history_type or type(source) is screen_type:
             route = (
-                "prompt_history" if type(source) is PromptHistory else "sidebar_state"
+                "prompt_history" if type(source) is history_type else "sidebar_state"
             )
             selected, installed = _async_source_selection(source, route)
             if not installed:
                 raise bootstrap.RecoveryRequired("raw_participant_not_installed")
             owner = "chat.prompt_history" if route == "prompt_history" else "ui.state"
-        elif type(source) is FileNotesReplica:
+        elif type(source) is notes_type:
             owner, selected = "notes.file_notes_replica", source.db_path
-        elif source is emoji_picker:
+        elif emoji_picker is not None and source is emoji_picker:
             owner, selected = "ui.emoji_recents", emoji_picker._recent_emojis_path()
         elif type(source).__module__ == "tldw_chatbook.Agents.hook_permissions":
             owner = "hooks.permissions"
@@ -629,11 +627,11 @@ def _selection(source, route, template, user_template, selected_read):
             raise bootstrap.RecoveryRequired("raw_source_selection_changed")
         return selected, installed, False
     if route == "file_notes_directory":
-        from ..Notes.file_notes_replica import FileNotesReplica
-
-        if not isinstance(source, FileNotesReplica) or source.is_memory_db:
+        module = sys.modules.get("tldw_chatbook.Notes.file_notes_replica")
+        cls = getattr(module, "FileNotesReplica", None)
+        if cls is None or not isinstance(source, cls) or source.is_memory_db:
             raise bootstrap.RecoveryRequired("raw_source_not_supported")
-        return lexical_path(source.db_path), type(source) is FileNotesReplica, False
+        return lexical_path(source.db_path), type(source) is cls, False
     types = _types()
     owner = types.get(type(source))
     installed = owner is not None
@@ -646,9 +644,8 @@ def _selection(source, route, template, user_template, selected_read):
         ):
             raise bootstrap.RecoveryRequired("raw_source_not_supported")
         return lexical_path(source.store_path), installed, False
-    from ..Widgets import emoji_picker
-
-    if route != "emoji" or source is not emoji_picker:
+    emoji_picker = sys.modules.get("tldw_chatbook.Widgets.emoji_picker")
+    if route != "emoji" or emoji_picker is None or source is not emoji_picker:
         raise bootstrap.RecoveryRequired("raw_source_not_supported")
     return lexical_path(emoji_picker._recent_emojis_path()), True, False
 
