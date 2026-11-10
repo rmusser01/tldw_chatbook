@@ -1820,13 +1820,9 @@ async def test_full_track_skip_everything_leaves_app_usable(
             )
             original_home = app.screen_stack[-2]
             assert original_home.__class__.__name__ == "HomeScreen"
-            await _wait_until(
-                pilot,
-                lambda: (
-                    original_home._home_content_snapshot is not None
-                    and not original_home._home_content_snapshot.console_ready
-                ),
-            )
+            # The overlay may suspend Home before its first snapshot lands.
+            snapshot = original_home._home_content_snapshot
+            assert snapshot is None or not snapshot.console_ready
             container = app.screen.query_one(SetupWizardContainer)
             await pilot.pause(0.2)
 
@@ -1869,18 +1865,18 @@ async def test_full_track_skip_everything_leaves_app_usable(
                 "protect-keys",
             ]
 
-            # Exit via "Explore Home" (TAB_HOME) to prove the app is
-            # usable afterwards, not just that the wizard closed. Change the
-            # readiness seam after Home's original mount so only a freshly
-            # mounted Home can observe the completed setup state.
+            # Explore Home resumes the installed Home and refreshes its state.
+            await _wait_until(
+                pilot, lambda: container.can_proceed and not container._advancing
+            )
             readiness["console"] = True
             _press(app.screen, "#setup-exit-home")
             await _wait_until(
                 pilot,
                 lambda: (
                     app.current_tab == TAB_HOME
-                    and app.screen.__class__.__name__ == "HomeScreen"
-                    and app.screen is not original_home
+                    and app.screen is original_home
+                    and app.app_config[WIZARD_STATE_SECTION][SETUP_COMPLETED_KEY] is True
                     and bool(app.screen.query("#nav-console"))
                 ),
             )
