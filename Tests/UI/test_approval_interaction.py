@@ -236,7 +236,11 @@ async def test_bulk_once_cannot_fall_back_to_temporary_scope():
         calls = _sample_calls()
         calls[0]["options"] = ["approve_session", "deny"]
         card.set_batch(calls, timeout_seconds=0, round_id="narrowed")
-        await pilot.pause()
+        # Decisions stay disabled until the round's facts lay out
+        # (a41da77591); read the button once they are actionable, bounded.
+        from Tests.UI.test_approval_action_ownership import _wait_for_actionable_card
+
+        await _wait_for_actionable_card(card, pilot)
         button = card.query_one("#approval-approve-all", Button)
         assert not button.disabled and str(button.label) == "Review individually"
         button.press()

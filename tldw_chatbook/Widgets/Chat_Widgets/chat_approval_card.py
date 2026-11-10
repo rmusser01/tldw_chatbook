@@ -607,12 +607,11 @@ class ChatApprovalCard(Container):
         self._batch_selects: list[Select] = []
         self._batch_reason_inputs: list[Input] = []
         self._batch_legal_values: list[list[str]] = []
-        self._batch_rows: list[Vertical] = []
         #: task-32278: each row's scope line, index-parallel to
-        #: `_batch_rows`/`_batch_selects`; re-rendered from
+        #: `_batch_selects`; re-rendered from
         #: `DECISION_SCOPE_COPY` on every `Select.Changed`.
         self._batch_scope_statics: list[Static] = []
-        #: task-32282: index-parallel to `_batch_rows` -- whether that row
+        #: task-32282: index-parallel to `_batch_selects` -- whether that row
         #: is the reserved raw-shell row (`_is_raw_shell_row`).
         self._batch_is_raw_shell: list[bool] = []
         #: The current batch's fast-approval buttons (task-1234 review
@@ -1304,7 +1303,6 @@ class ChatApprovalCard(Container):
             self._batch_selects = []
             self._batch_reason_inputs = []
             self._batch_legal_values = []
-            self._batch_rows = []
             self._batch_scope_statics = []
             self._batch_fast_buttons = []
             self._batch_is_raw_shell = []
@@ -1624,7 +1622,6 @@ class ChatApprovalCard(Container):
         self._batch_selects = selects
         self._batch_reason_inputs = reason_inputs
         self._batch_legal_values = legal_values
-        self._batch_rows = rows
         self._batch_scope_statics = scope_statics
         if not single_call:
             fast_buttons.extend(
@@ -1877,7 +1874,6 @@ class ChatApprovalCard(Container):
         )
         self._batch_reason_inputs = [reason_input]
         self._batch_legal_values = [row_values]
-        self._batch_rows = [row]
         self._batch_scope_statics = [scope_static]
         # This reuse path is never taken for a raw-shell row -- `set_batch`
         # only calls it when `not _is_raw_shell_row(grouped[0])` -- so the

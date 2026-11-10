@@ -566,30 +566,23 @@ async def test_set_batch_row_with_options_key_narrows_the_select_and_stays_valid
 @pytest.mark.asyncio
 async def test_bulk_approve_and_deny_all_are_row_aware_and_never_raise():
     """Important-severity fix: a batch containing narrowed rows must survive
-    BOTH bulk buttons without Textual's ``InvalidSelectValueError``, and each
-    row must always land on a value it legally offers -- never an
-    out-of-list value silently assigned to its own ``Select``.
+    BOTH bulk buttons without Textual's ``InvalidSelectValueError``, and no
+    row may ever hold a value outside its own options.
 
-    Before this fix, ``_set_all_batch_decisions`` (deleted with the
-    needs-decision flag, TASK-40097) unconditionally assigned
-    the bulk target to every row's ``Select.value``, which is safe only when
-    every row carries all four options (true before task-5). Three rows
-    here exercise every relevant shape:
-
-      - row A: narrowed to exclude ``approve_once`` (but keeps ``deny``) --
-        "Approve all" must fall back to ``approve_session`` for this row.
-      - row B: narrowed to exclude ``deny`` (but keeps ``approve_once``) --
-        "Deny all" must leave this row on its current legal value instead
-        of crashing or assigning an illegal one.
-      - row C: unnarrowed -- gets the bulk target directly, exactly as
-        before task-5 (regression guard for the common MCP case).
-
-    TASK-40097: a2fcbe61bc (#3036) made each bulk button one committing
+    Since a2fcbe61bc (#3036, TASK-40097) each bulk button is one committing
     gesture for the WHOLE counted batch (`ChatApprovalCard._commit_bulk`), so
-    a batch with a row that cannot legally take the target is no longer
-    partially applied: "Deny all" commits nothing, and "Allow all" becomes
-    "Review individually", which opens the staged per-row choices. No row
-    ever holds an illegal value and nothing raises.
+    a batch with a row that cannot legally take the target is never partially
+    applied and no row falls back to another value. Three rows:
+
+      - row A: narrowed to exclude ``approve_once`` (its default is
+        ``approve_session``);
+      - row B: narrowed to exclude ``deny``;
+      - row C: unnarrowed (all four options).
+
+    "Deny all" (row B cannot take it) commits nothing; "Allow all" reads
+    "Review individually" (row A cannot take ``approve_once``) and only opens
+    the staged per-row choices. Every row keeps its default and nothing
+    raises.
     """
     calls = [
         {
