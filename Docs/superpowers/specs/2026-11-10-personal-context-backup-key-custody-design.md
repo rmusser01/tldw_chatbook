@@ -1,12 +1,13 @@
 # Personal Context backup and key custody
 
-**Status:** draft for owner approval. No capture code lands before approval (TASK-39148 AC#1).
+**Status:** Approved by the owner, 2026-11-10 (all 11 decisions as written; see "Decisions"). Implementation is filed as TASK-40133 to TASK-40138, with follow-ups TASK-40139 and TASK-40140.
 **Task:** TASK-39148. **Base:** dev `ae9f9e8d21`, 2026-11-10. Line numbers are that commit's.
 
 ## Owner rulings
 
 - **2026-11-06** (TASK-39110 AC#2, quoted in TASK-39148): "Capture it: back up the database and design key custody so a restore can read it — a larger feature that needs its own design task."
-- **2026-11-10:** "Draft it now." The coordinator brings this spec's decisions to the owner; nothing below is decided until the owner rules on "Decisions for the owner".
+- **2026-11-10:** "Draft it now."
+- **2026-11-10** (AskUserQuestion): "Approve all 11". This approved every decision in "Decisions" as written.
 
 ## Constraints this design holds to
 
@@ -269,18 +270,18 @@ This spec does not design Plugins.
 
 ## Out of scope and proposed follow-ups
 
-- **Re-key after restore** (Q2 option B): only if the owner wants forward secrecy.
+- **Re-key after restore** (Q2 option B): filed as TASK-40140 under decision 4.
 - **`runtime.sync_state` device binding after restore.**
   - This is Notes/Chat Sync, not Personal Context.
   - No consumer gates sync on `execution_allowed(("runtime.sync_state",))`, and the restored shared `sync_profile_state.device_id` (F8) carries the old device identity.
-  - Whether general Sync can resume as the old device after a cross-machine restore with re-entered server credentials is **unverified** here. It needs its own check.
-  - A fresh Personal Context link on a new machine will hit `personal_context_sync_profile_binding_conflict` (`link_service.py:1024-1028`) while that row holds the old device. The link task below must clear or rebind it, or depend on that follow-up.
+  - Whether general Sync can resume as the old device after a cross-machine restore with re-entered server credentials is **unverified** here. It is filed as TASK-40139.
+  - A fresh Personal Context link on a new machine will hit `personal_context_sync_profile_binding_conflict` (`link_service.py:1024-1028`) while that row holds the old device. TASK-40137 rebinds or clears it.
 - **Personal Context recovery-export import** (F17): still unshipped. It is unrelated to backup.
-- **ADR records on approval:**
-  - an ADR-102 note covering backup custody and device-only records (Decision 8);
-  - an ADR-126 note covering the `personal_context` credential kind, the first non-server credential that restore writes back.
+- **ADR records:** written on approval as dated notes on ADR-102 (decision 8's reading of "never leave Chatbook") and ADR-126 (restore never overwrites a keyring entry; the stored key reference keeps that).
 
-## Decisions for the owner
+## Decisions
+
+**Status: Approved.** Owner decision 2026-11-10 (AskUserQuestion): "Approve all 11". The option text was: "Record approval of the 11 recommendations as written and file the implementation tasks: key reference (schema v9), capture, readable restore, restore without a key, no link resume, detached-layout treatment."
 
 1. Carry the Personal Context profile key as a credential record inside the encrypted archive (only when a backup includes credentials, which already forces encryption), rather than a separate Personal Context passphrase or no key at all.
 2. Give the repository a stored key reference (schema v9 `profile_meta.key_account`), so restore installs the key into a fresh keyring account and never overwrites an existing one (ADR-126 decision 8), rather than overwriting the path-keyed entry after escrowing it (which needs an ADR-126 amendment) or refusing replace-restore.
@@ -294,34 +295,38 @@ This spec does not design Plugins.
 10. Add the interview drafts to the detached-layout fixed owner list as excluded, and refuse the repository there by name, rather than refusing both as unknown content.
 11. Leave `PassphraseProfileKeyProtector` unshipped and out of this work (it has no production caller), rather than adopting it as the backup key carrier.
 
-## Filed implementation tasks (proposed)
+## Filed implementation tasks
 
-These are not created yet. The coordinator files them after approval, in this order. Each delivers one testable outcome.
+Filed 2026-11-10 after approval, in this order. Each delivers one testable outcome. Two follow-ups are listed after them.
 
-1. **"Personal Context's repository names its key's keyring account."**
+1. **TASK-40133, "Personal Context's repository names its key's keyring account."**
    - Outcome: a v8 database migrates to v9 with its current account stamped. The repository opens from the stamped account, including after the file moves to another path on the same keyring.
    - Includes the exact-SQL catalog for every reachable v9 layout, since in-place `ALTER TABLE` migrations make catalogs differ.
-2. **"A backup captures Personal Context's repository database."** (AC#3: capture.)
+2. **TASK-40134, "A backup captures Personal Context's repository database."** (AC#3: capture.)
    - Outcome: a preview of a profile with Personal Context is complete.
    - The archive holds the lock-safe, schema-validated database in the "Personal Context" group.
    - An archive that includes credentials holds the key as a credential record. One that does not says "database only".
    - Capture refuses while a first link is in flight.
-3. **"A replace restore makes restored Personal Context records readable."** (AC#3: a restore that reads its records.)
+3. **TASK-40135, "A replace restore makes restored Personal Context records readable."** (AC#3: a restore that reads its records.)
    - Outcome: after a replace restore onto the same or a different machine or path, Personal Context opens and lists the restored records.
    - Any pre-existing keyring entry is unchanged.
    - A later rollback opens the original records.
-4. **"A restore without a usable Personal Context key keeps the data and says what to do."** (AC#3: key unavailable.)
+4. **TASK-40136, "A restore without a usable Personal Context key keeps the data and says what to do."** (AC#3: key unavailable.)
    - Covers four cases: a key-less archive on another machine, an isolated profile, no secure keyring, and a key mismatch.
    - Outcome: the database is byte-identical, no keyring entry is created, and Personal Context is locked with the named reason.
    - The restore plan and the Settings panel show the Q2 copy, and the User Guide is updated.
-5. **"A restored Personal Context does not resume its old link."**
+5. **TASK-40137, "A restored Personal Context does not resume its old link."**
    - Outcome: after a restore, Personal Context sync stays off (`execution_allowed`) until a fresh reviewed first link. The old link state for that server profile is cleared, and no link key is ever in an archive.
-6. **"A detached source holding Personal Context files is treated by name."** (AC#3: detached treatment of the drafts file.)
+6. **TASK-40138, "A detached source holding Personal Context files is treated by name."** (AC#3: detached treatment of the drafts file.)
    - Outcome: drafts are an excluded row with a review line, instead of `detached_unknown_content`. The repository is refused as `detached_owner_unavailable:personal_context.repository`.
+
+Follow-ups:
+- **TASK-40139:** investigate whether a restored `runtime.sync_state` lets Notes and Chat sync resume as the old device after a cross-machine restore (security).
+- **TASK-40140:** re-encrypt the Personal Context profile after a restore (decision 4).
 
 ## Not verified
 
 - **Server behaviour on a fresh link after restore.** This covers whether a new `device_id` is issued for a reused wrapping key, and whether the integrity key is re-issued. tldw_server was not read.
-- **Inert extraction of `credential-recovery.json`.** It looks impossible, since credentials have no group (`group_selection.py:96`), but no test pins it. Task 2 must pin it.
+- **Inert extraction of `credential-recovery.json`.** It looks impossible, since credentials have no group (`group_selection.py:96`), but no test pins it. TASK-40134 must pin it.
 - **The set of v8 catalog variants** produced by the repository's in-place migrations (`repository.py:636-733`). These were not enumerated.
-- **General Sync impersonation after a restore** (follow-up above).
+- **General Sync impersonation after a restore** (TASK-40139).

@@ -1,10 +1,10 @@
 ---
 id: TASK-39148
 title: "Personal Context's repository database cannot be captured by a backup, and no key custody design lets a restore read it"
-status: In Progress
+status: Done
 assignee: ['@claude']
 created_date: 2026-11-08 06:54
-updated_date: 2026-11-10 16:28
+updated_date: 2026-11-10 17:18
 labels:
 - follow-up
 - backup
@@ -48,9 +48,9 @@ Found in round 12 of the 2026-10-23 burn-down (backup stream, TASK-39110 on roun
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A design (spec or ADR) answers each open question above, and the owner approves it before any capture code lands
-- [ ] #2 Every owner decision the design needs is recorded verbatim with its date
-- [ ] #3 The implementation is filed as tasks that each deliver one testable outcome: capture of the repository; a restore that reads its records; a restore where the key is unavailable, with no data loss and copy that says what to do; and the detached-layout treatment of the drafts file
+- [x] #1 A design (spec or ADR) answers each open question above, and the owner approves it before any capture code lands
+- [x] #2 Every owner decision the design needs is recorded verbatim with its date
+- [x] #3 The implementation is filed as tasks that each deliver one testable outcome: capture of the repository; a restore that reads its records; a restore where the key is unavailable, with no data loss and copy that says what to do; and the detached-layout treatment of the drafts file
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -63,15 +63,48 @@ Found in round 12 of the 2026-10-23 burn-down (backup stream, TASK-39110 on roun
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-**Draft spec (2026-11-10):** `Docs/superpowers/specs/2026-11-10-personal-context-backup-key-custody-design.md` (round 13, branch fu/r13-pcdesign, base dev ae9f9e8d21). It answers every open question in the description with facts from code, options and a recommendation, and ends with eleven decisions for the owner and six proposed implementation tasks.
+**Approach.** This was a design-only task; it changed no product code. I read the custody code, the backup and restore machinery, ADR-102, ADR-126, and TASK-39110, 39116 and 40132.
+- The spec `Docs/superpowers/specs/2026-11-10-personal-context-backup-key-custody-design.md` answers each open question in the description (Q1–Q6). Each answer gives facts from code with file:line, two or three options with trade-offs, and a recommendation.
+- The spec was drafted on branch fu/r13-pcdesign from base dev ae9f9e8d21, and the owner then approved it.
 
-**Owner rulings recorded so far, verbatim:**
+**Owner rulings, verbatim:**
 - 2026-11-06 (TASK-39110 AC#2): "Capture it: back up the database and design key custody so a restore can read it — a larger feature that needs its own design task."
 - 2026-11-10: "Draft it now."
+- 2026-11-10 (AskUserQuestion): "Approve all 11". The option text was: "Record approval of the 11 recommendations as written and file the implementation tasks: key reference (schema v9), capture, readable restore, restore without a key, no link resume, detached-layout treatment."
 
-**Status of the criteria:**
-- All three criteria stay unticked: the owner has not yet ruled on the spec's decisions.
-- AC#2 needs those rulings recorded here, verbatim and dated.
-- AC#3 needs the spec's proposed tasks filed after approval.
-- This task writes no product code.
+**The 11 approved decisions, as the spec words them:**
+1. Carry the Personal Context profile key as a credential record inside the encrypted archive (only when a backup includes credentials, which already forces encryption), rather than a separate Personal Context passphrase or no key at all.
+2. Give the repository a stored key reference (schema v9 `profile_meta.key_account`), so restore installs the key into a fresh keyring account and never overwrites an existing one (ADR-126 decision 8), rather than overwriting the path-keyed entry after escrowing it (which needs an ADR-126 amendment) or refusing replace-restore.
+3. When a backup does not include credentials, capture the database without its key and say so in the preview and restore plan, rather than refusing Personal Context capture.
+4. Install the restored key as it is and file re-encryption after restore as a separate follow-up, rather than re-encrypting every record during restore.
+5. Never capture the device wrapping key, staged integrity keys or dataset staging keys, and never resume a restored link; Personal Context sync stays off until a fresh reviewed first link, rather than restoring or re-wrapping link keys.
+6. Keep Personal Context locked in isolated restored profiles (they run with a null keyring), with its key retained in the encrypted restore copy, rather than giving isolated profiles keyring access.
+7. Refuse Personal Context capture while a first-link freeze or rebaseline marker exists, rather than capturing mid-link state.
+8. Include device-only records in the backup, as Export recovery copy already does, and record that ADR-102's "never leave Chatbook" means never synced or sent to a model, rather than filtering them out of the capture.
+9. Put the repository in a new selectable "Personal Context" backup group, rather than in the existing "Settings" group.
+10. Add the interview drafts to the detached-layout fixed owner list as excluded, and refuse the repository there by name, rather than refusing both as unknown content.
+11. Leave `PassphraseProfileKeyProtector` unshipped and out of this work (it has no production caller), rather than adopting it as the backup key carrier.
+
+**Filed tasks (AC#3).** Each delivers one testable outcome:
+- TASK-40133: key reference (schema v9). This is the foundation the others build on.
+- TASK-40134: capture the repository database.
+- TASK-40135: a replace restore makes the restored records readable.
+- TASK-40136: a restore without a usable key keeps the data and says what to do.
+- TASK-40137: a restored profile does not resume its old link. This includes the `personal_context_sync_profile_binding_conflict` rebind.
+- TASK-40138: the detached-layout treatment, by name.
+
+Follow-ups:
+- TASK-40139 (security): investigate whether a restored `runtime.sync_state` lets Notes and Chat sync resume as the old device.
+- TASK-40140: re-encrypt the profile after a restore (decision 4).
+
+**ADR notes.** Added dated notes, "2026-11-10 note (TASK-39148, owner-approved)":
+- ADR-102: decision 8's reading of "never leave Chatbook".
+- ADR-126: restore never overwrites a keyring entry, and the stored key reference keeps that rule workable.
+
+**Files:**
+- the spec;
+- `backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md`;
+- `backlog/decisions/126-complete-local-backup-and-recovery.md`;
+- the eight new task files, TASK-40133 to TASK-40140.
+- This task needed no tests, because it is design-only. Preflight runs through the scratch wrapper.
 <!-- SECTION:NOTES:END -->

@@ -1713,3 +1713,16 @@ This replaces repeated root-to-parent traversals, whose native opens grow
 quadratically with path depth. Reject skipping ancestor intent checks, caching a
 settled verdict, or bypassing admission when a process already owns a live lease:
 surviving creation intent and changed path/security evidence must still refuse.
+
+### 2026-11-10 note (TASK-39148, owner-approved)
+
+Personal Context's repository is captured with its profile key as a `personal_context` credential record, only in encrypted archives (`include` and `rollback` modes). A backup without credentials carries the database alone.
+
+Restore still never overwrites a keyring entry (decision 8). The stored key reference keeps that rule workable:
+- The repository stores a non-secret reference to its key's account (`profile_meta.key_account`, Personal Context schema v9).
+- Replace-restore reuses the target account when it already holds identical material. Otherwise it installs the key into a fresh account and rewrites the staged reference.
+- It deletes only an account it created itself.
+
+This is the first non-server credential that restore writes back to the keyring. Link keys (the device wrapping key, staged integrity keys and dataset staging keys) are never captured, and a restored repository does not resume its link. Isolated restored profiles keep Personal Context locked.
+
+Design: [Personal Context backup and key custody](../../Docs/superpowers/specs/2026-11-10-personal-context-backup-key-custody-design.md). Implementation: TASK-40133 to TASK-40138.
