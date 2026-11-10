@@ -26,3 +26,7 @@ Tests/UI/test_library_shell.py::test_library_shell_restored_media_viewer_fetches
 Tests/UI/test_library_shell.py::test_library_shell_restored_media_viewer_with_deleted_item_shows_recovery
 # product defect, TASK-34000.60 (TASK-39152 notes)
 Tests/UI/test_library_shell.py::test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
+# product defect: compact Preview scroll memory lost across a breakpoint round trip (TASK-39152 notes)
+Tests/UI/test_library_shell.py::test_library_note_breakpoint_round_trips_restore_every_region_focus_role
+# product defect: compact Preview scroll memory lost across a breakpoint round trip (TASK-39152 notes)
+Tests/UI/test_library_shell.py::test_library_note_deliberate_scroll_override_replaces_responsive_memory

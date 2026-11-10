@@ -4,7 +4,7 @@ title: "Lane the four files TASK-39141 made runnable: test_library_shell split b
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-10 20:24'
+updated_date: '2026-11-10 21:35'
 created_date: 2026-11-08 06:54
 labels:
 - follow-up
@@ -83,16 +83,30 @@ Found in round 12 of the 2026-10-23 burn-down (TASK-39141's timings, round-12 br
   - Round-robin spreads one slow test's parametrized cases across shards. The `fifty_*` and breakpoint families run 80-190 s each under load.
   - Why 14: replayed from the three whole-file runs' per-node times (each node at its slowest, capped at 180 s), 14 shards carry at most 11.3 local min against 13.2 for 12 shards. At CI's measured upper bound of 1.0x local, plus about 1.7 min of setup, that is about 14 min a job, 6 min under the cap.
   - Why 7 at once: a dev push borrows half the runners a PR's UI lane takes (18) and finishes in two waves.
-- **Deselected** by exact node id, in `scripts/library_shell_push_deselect.txt`, each under a one-line reason: the 12 product-defect nodes from TASK-39152's notes (TASK-34000.60's node among them). The shard script fails the job if a listed id is no longer collected, so the list cannot go stale silently. The coordinator replaces the reasons with follow-up task ids.
+- **Deselected** by exact node id, in `scripts/library_shell_push_deselect.txt`, each under a one-line reason. There are 14: the 12 product-defect nodes from TASK-39152's notes (TASK-34000.60's node among them), and since review r13l-rev1 the two nodes that lose compact Preview scroll memory across a breakpoint round trip (`test_library_note_breakpoint_round_trips_restore_every_region_focus_role`, `test_library_note_deliberate_scroll_override_replaces_responsive_memory`). The shard script fails the job if a listed id is no longer collected, so the list cannot go stale silently. The coordinator replaces the reasons with follow-up task ids.
 - **Per-shard times.** All 14 shards were run locally with the step's own commands (run.sh, 7 shards at once, each a serial pytest process, load 33-49).
   - Pytest minutes per shard, 1-14: 5.6, 5.1, 5.4, 6.6, 7.0, 7.6, 6.9, 8.0, 6.2, 6.0, 7.2, 6.1, 7.0, 6.1. Wall time with collection: 5.7-8.3 min.
   - Shards 1-10 hold 60 nodes each and shards 11-14 hold 59: 836 nodes, the file's 848 less the 12 deselected.
   - 830 passed and 6 failed. The 6 are watch items, below.
 - **Runner-minutes per push** (estimate): the shards' local wall sum, 97.3 min, times TASK-39144's CI/local ratio of 0.51-0.99, plus 14 x 1.7 min of setup: about 73-120 runner-minutes per push, about 95 at the median ratio. The slowest job is estimated at 6-10 min.
-- **Watch items.** These are load-intermittent nodes from TASK-39141's list. They stay in: CI runs each shard serially on its own runner.
-  - Failed in the local 14-shard run: `test_library_shell_blank_note_escape_key_returns_to_list_without_crash`, `test_library_note_deliberate_scroll_override_replaces_responsive_memory`, `test_library_onboarding_unmount_flushes_latest_lifecycle`, `test_library_shell_note_explicit_save_calls_seam_and_bumps_version`, `test_library_shell_ingest_canvas_submit_clears_path_and_title_keeps_metadata`, `test_library_note_same_side_resize_does_no_presentation_work[initial_size1-same_side_sizes1-False]`.
-  - Failed in TASK-39152's whole-file runs: `test_library_note_breakpoint_round_trips_restore_every_region_focus_role`, `test_library_shell_blank_title_save_round_trip_agrees_with_the_row`, `test_library_conversation_retry_first_failure_has_no_applied_metadata`, and the 1-of-3 nodes listed there.
-  - Three also failed alone, so they may turn the job red in CI: `blank_note_escape_key` (4 of 4 alone), `note_breakpoint_round_trips` (3 of 4) and `deliberate_scroll_override` (1 of 2).
+- **Watch items, final classification (review r13l-rev1).** Each node below was run alone through run.sh, one process per run, at load 28-64. The local 14-shard run above came before these fixes; the job now keeps 834 nodes.
+  - A stale pin, fixed: `test_library_shell_blank_note_escape_key_returns_to_list_without_crash` now waits for its status line; it passed 3 of 3 alone, red 4 of 4 before.
+  - Test races, fixed with deadline waits on the real end condition, each 5 of 5 alone after its fix:
+    - `test_library_note_same_side_resize_does_no_presentation_work[initial_size1-same_side_sizes1-False]`, red alone 4 of 5 before: autosave landed mid-resize.
+    - `test_library_shell_note_explicit_save_calls_seam_and_bumps_version`: it read the status line before it repainted from "Saving…".
+    - `test_library_shell_ingest_canvas_submit_clears_path_and_title_keeps_metadata`, red alone 3 of 5: it read the form before the submit rebuilt it.
+    - `test_library_onboarding_unmount_flushes_latest_lifecycle`, red alone 4 of 10: `pilot.pause()` blocked on the very unmount the test holds.
+    - `test_library_shell_blank_title_save_round_trip_agrees_with_the_row`, red alone 3 of 5: it read the list cache before the save's reply patched it.
+    - Details and negative controls are in TASK-39152's notes.
+  - A product defect, deselected: the two scroll-memory nodes above.
+  - Load-flaky, kept in as watch items:
+    - `test_library_conversation_retry_first_failure_has_no_applied_metadata`: 4 of 5 alone, 2 of 3 in the whole-file runs.
+    - The 1-of-3 nodes in TASK-39152's AC#4 list, each of which passed alone at least once: `test_background_recompose_restores_focus_on_a_filtered_empty_media_list`, `test_browse_row_error_callout_keeps_the_right_tint_across_a_retry`, `test_library_graduation_late_restore_does_not_steal_newer_user_focus`, `test_library_media_complete_facets_commit_during_initial_recovery[error-all]`, `test_library_note_keyboard_capability_matrix[edit_keywords-terminal_size1]`, `test_library_note_unsafe_session_outranks_rail_focus_on_compact_entry`, `test_library_note_wide_deep_link_back_clears_future_compact_intent`, `test_library_rag_scope_recovery_steady_state_snapshot_causes_no_churn`, `test_library_shell_note_preview_toggle_never_bumps_version_or_autosaves`, `test_slash_focuses_the_prompts_filter_not_the_rail_search`.
+    - These were not each run 5 times alone; any of them that turns the job red should get the same treatment.
+- **Bursts (review r13l-rev1, M4).** Dev pushes arrive in bursts: the merge queue lands PRs back to back, and an owner batch merges several at once. The workflow's push concurrency rule cancels the in-progress run whenever a newer push to dev arrives, so within a burst only the last push's run finishes.
+  - A regression merged mid-burst therefore shows up after the burst, in the last run, not in the run of the merge that brought it in.
+  - Cancelled runs still bill the minutes they used before cancellation, so the runner-minute estimate is per finished run; a burst costs up to one partial run more per push it supersedes.
+  - The job is unchanged.
 - **CI contract.** `Tests/CI/test_derived_artifacts_workflow.py`:
   - pins the job list, with `library-shell-dev` last;
   - adds `test_library_shell_runs_by_node_on_dev_pushes_only_and_is_never_required` (the push-only `if`, out of the aggregate, the matrix and parallelism, the install line, the UI lane's flags, no xdist);

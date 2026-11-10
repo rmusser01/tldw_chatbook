@@ -1912,11 +1912,17 @@ async def test_library_onboarding_unmount_flushes_latest_lifecycle(
                 await host.switch_screen(_DummyReplacementScreen())
 
             replacement = asyncio.create_task(replace_screen())
-            await _wait_for_condition(
-                pilot,
-                lambda: screen._library_onboarding_generation > mounted_generation,
-                message="unmount did not revoke onboarding authority",
-            )
+            # r13l-rev1: poll with asyncio.sleep, not pilot.pause. A pause
+            # waits for the app to drain its messages, and the app is busy in
+            # the very unmount this holds on the gated write; a pause taken
+            # before the revoke landed blocked until the gate's 30 s timeout
+            # released the write, and then the switch was done (2 of 5 alone).
+            deadline = time.monotonic() + 15.0
+            while screen._library_onboarding_generation <= mounted_generation:
+                assert time.monotonic() < deadline, (
+                    "unmount did not revoke onboarding authority"
+                )
+                await asyncio.sleep(0.01)
             assert replacement.done() is False
 
             first_write_release.set()
@@ -11877,6 +11883,10 @@ async def test_library_shell_media_viewer_inplace_large_document_latency_and_par
         # baseline identities are taken, so the measured submit/Next/Prev
         # are what they claim to be.
         await _open_media_find(screen, pilot)
+        # Known debt (r13l-rev1): since 7b04023420 opening Find re-mounts the
+        # document, which parses it once more. Bound it at exactly one extra
+        # parse, so a second re-parse on Find open still fails here.
+        assert len(markdown_updates) == 2, markdown_updates
         viewer_before = screen.query_one("#library-media-viewer", LibraryMediaViewer)
         markdown_before = screen.query_one(
             "#library-media-viewer-content-markdown", Markdown
@@ -20814,8 +20824,17 @@ async def test_library_shell_note_explicit_save_calls_seam_and_bumps_version():
             )
 
         assert screen.query_one("#library-note-body", TextArea) is body_before_save
-        status = str(screen.query_one("#library-note-status").renderable)
-        assert "Saved" in status
+        # The version lands before the status line repaints from "Saving…"
+        # (r13l-rev1): wait for the line itself, bounded.
+        await _wait_for_condition(
+            pilot,
+            lambda: "Saved" in str(screen.query_one("#library-note-status").renderable),
+            message=lambda: (
+                "The note status never read Saved: "
+                f"{screen.query_one('#library-note-status').renderable!s}"
+            ),
+        )
+        assert screen.query_one("#library-note-body", TextArea) is body_before_save
 
 
 @pytest.mark.asyncio
@@ -23973,7 +23992,9 @@ async def test_library_shell_blank_note_escape_key_returns_to_list_without_crash
         # attribute happened to flip before a crash tore the process down.
         assert host._exit is False
         assert screen.is_mounted
-        screen.query_one("#library-notes-status")
+        # The list's status row mounts before its status line; wait for the
+        # line rather than reading it on the frame Escape lands (r13l-rev1).
+        await _wait_for_selector(screen, pilot, "#library-notes-status")
 
         # GC bookkeeping flags are unconditionally cleared on any full
         # editor exit (``_reset_library_note_editor_state``), independent
@@ -24408,14 +24429,24 @@ async def test_library_shell_blank_title_save_round_trip_agrees_with_the_row(
         else:
             raise AssertionError("The emptied title never persisted.")
 
-        rows = screen._local_source_records.get("notes", ())
-        patched = [row for row in rows if str(row.get("id")) == created_id]
-        assert patched, "The saved note vanished from the list cache."
-        assert patched[0]["title"] == "Untitled", (
-            "The list row patched from the session snapshot disagrees with "
-            f"the persisted row's name ({patched[0]['title']!r} vs "
-            "'Untitled')."
+        def patched_rows():
+            rows = screen._local_source_records.get("notes", ())
+            return [row for row in rows if str(row.get("id")) == created_id]
+
+        # r13l-rev1: the DB row lands on the save's worker thread before the
+        # reply patches the list cache on the UI loop; wait for the patch,
+        # bounded, instead of reading the cache the moment the DB agrees.
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(patched_rows()) and patched_rows()[0]["title"] == "Untitled",
+            message=lambda: (
+                "The list row patched from the session snapshot disagrees with "
+                "the persisted row's name "
+                f"({[row.get('title') for row in patched_rows()]!r} vs "
+                "'Untitled')."
+            ),
         )
+        assert patched_rows(), "The saved note vanished from the list cache."
 
 
 @pytest.mark.asyncio
@@ -26495,7 +26526,20 @@ async def test_library_shell_ingest_canvas_submit_clears_path_and_title_keeps_me
         await pilot.pause()
 
         screen.query_one("#library-ingest-start", Button).press()
-        await pilot.pause()
+        # r13l-rev1: Start waits for its pre-check (51662384a8), and the
+        # submit then rebuilds the form. Wait for the cleared form to mount,
+        # bounded, instead of reading it one frame after the press.
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._ingest_state.form.path == ""
+                and screen.query_one("#library-ingest-path", Input).value == ""
+                and screen.query_one("#library-ingest-title", Input).value == ""
+            ),
+            message=lambda: (
+                f"The submitted form never cleared: {screen._ingest_state.form!r}"
+            ),
+        )
 
         assert screen._ingest_state.form.path == ""
         assert screen._ingest_state.form.title == ""
@@ -32848,6 +32892,17 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
         body.scroll_to(y=8, animate=False, immediate=True)
         body.focus()
         await pilot.pause()
+        # r13l-rev1: the edit autosaves after its debounce, which used to land
+        # mid-resize (baseline, dirty and status moved). Let it land first, so
+        # the resizes are the only thing measured.
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_note_session.snapshot is not None
+                and not screen._library_note_session.snapshot.dirty
+            ),
+            message="The edited note never autosaved.",
+        )
         before = (
             screen._notes_state.stage,
             screen._library_notes_active_region(),
@@ -36156,7 +36211,7 @@ async def test_background_recompose_focus_fallback_stays_inside_screen_content()
 
 
 @pytest.mark.asyncio
-async def test_background_recompose_restores_focus_on_an_empty_conversations_list():
+async def test_background_recompose_restores_focus_on_a_route_without_a_list_row_class():
     """task-31946 (PR L review item 2): the stand-down cannot strand focus.
 
     The seam stands down while a one-shot focus channel is armed, because
