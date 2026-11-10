@@ -1,8 +1,10 @@
 ---
 id: TASK-39148
 title: "Personal Context's repository database cannot be captured by a backup, and no key custody design lets a restore read it"
-status: To Do
+status: In Progress
+assignee: ['@claude']
 created_date: 2026-11-08 06:54
+updated_date: 2026-11-10 16:28
 labels:
 - follow-up
 - backup
@@ -19,6 +21,7 @@ references:
 - tldw_chatbook/Personal_Context/interview_launch.py
 - backlog/docs/backup-recovery-owner-inventory.md
 - Docs/User_Guide/settings/personal-context-profile.md
+- Docs/superpowers/specs/2026-11-10-personal-context-backup-key-custody-design.md
 dependencies:
 - TASK-39110
 ---
@@ -49,3 +52,26 @@ Found in round 12 of the 2026-10-23 burn-down (backup stream, TASK-39110 on roun
 - [ ] #2 Every owner decision the design needs is recorded verbatim with its date
 - [ ] #3 The implementation is filed as tasks that each deliver one testable outcome: capture of the repository; a restore that reads its records; a restore where the key is unavailable, with no data loss and copy that says what to do; and the detached-layout treatment of the drafts file
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Read the custody code (`Personal_Context/key_protector.py`, `repository.py`, `link_key_custody.py`, `link_service.py`), the backup and restore machinery (`Backup_Recovery/capture.py`, `credentials.py`, `replacement.py`, `isolated_restore.py`, `activation.py`, `detached_layout.py`), ADR-102, ADR-126, the owner inventory, and TASK-39110, TASK-39116 and TASK-40132.
+2. Write `Docs/superpowers/specs/2026-11-10-personal-context-backup-key-custody-design.md`. For each open question, give the code facts with file:line, two or three options with trade-offs, and a recommendation. End with "Decisions for the owner" and "Filed implementation tasks (proposed)".
+3. The coordinator brings the decisions to the owner. Record each ruling verbatim with its date (AC#2).
+4. After approval, file the implementation tasks listed in the spec (AC#3). Then fold the approved decisions into ADR-102 and ADR-126 notes. No capture code lands before approval (AC#1).
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Draft spec (2026-11-10):** `Docs/superpowers/specs/2026-11-10-personal-context-backup-key-custody-design.md` (round 13, branch fu/r13-pcdesign, base dev ae9f9e8d21). It answers every open question in the description with facts from code, options and a recommendation, and ends with eleven decisions for the owner and six proposed implementation tasks.
+
+**Owner rulings recorded so far, verbatim:**
+- 2026-11-06 (TASK-39110 AC#2): "Capture it: back up the database and design key custody so a restore can read it — a larger feature that needs its own design task."
+- 2026-11-10: "Draft it now."
+
+**Status of the criteria:**
+- All three criteria stay unticked: the owner has not yet ruled on the spec's decisions.
+- AC#2 needs those rulings recorded here, verbatim and dated.
+- AC#3 needs the spec's proposed tasks filed after approval.
+- This task writes no product code.
+<!-- SECTION:NOTES:END -->
