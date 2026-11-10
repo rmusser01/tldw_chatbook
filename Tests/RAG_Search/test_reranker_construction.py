@@ -54,12 +54,14 @@ from tldw_chatbook.RAG_Search.simplified.enhanced_rag_service_v2 import (
 from tldw_chatbook.RAG_Search.simplified.vector_store import SearchResult
 
 
+@pytest.mark.bootstrap_profile
 def test_create_reranker_from_config_does_not_double_pass_strategy():
     cfg = RerankingConfig(strategy="pointwise", top_k_to_rerank=5)
     reranker = create_reranker_from_config(cfg)
     assert reranker.config.strategy == "pointwise"
 
 
+@pytest.mark.bootstrap_profile
 def test_every_builtin_profile_reranking_config_constructs(tmp_path):
     # get_profile_manager(profiles_dir=...) always returns a FRESH manager
     # over that directory (never the cached singleton) -- the documented
@@ -81,6 +83,7 @@ def test_every_builtin_profile_reranking_config_constructs(tmp_path):
             create_reranker_from_config(rc)  # must not raise
 
 
+@pytest.mark.bootstrap_profile
 def test_no_builtin_profile_asks_for_reasoning_it_cannot_fit_or_read(tmp_path):
     """AC#11 (spend safety): shipped presets never set `include_reasoning`.
 
@@ -881,6 +884,7 @@ async def test_reranking_degraded_tag_when_scoring_silently_fails_for_every_resu
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pairwise_reranker_counts_failed_comparisons():
     """The shared BaseReranker seam (`RerankOutcome`) must actually work for
@@ -910,6 +914,7 @@ async def test_pairwise_reranker_counts_failed_comparisons():
     assert outcome.failed == outcome.total
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_listwise_reranker_counts_total_failure():
     """Same shared-seam check as the pairwise test, for ListwiseReranker --
@@ -935,6 +940,7 @@ async def test_listwise_reranker_counts_total_failure():
     assert outcome.total == 2
 
 
+@pytest.mark.bootstrap_profile
 def test_reranked_rows_carry_a_detectable_marker_and_never_band_as_similarity():
     """(Task 6, coordinator follow-up) What does a REAL reranked row carry?
 
