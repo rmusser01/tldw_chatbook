@@ -2323,6 +2323,7 @@ class _SettingsFlowHarness(ConsolidatedCSSApp):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_vllm_default_handoff_stages_settings_and_revert_is_byte_identical() -> (
     None
 ):
@@ -2332,7 +2333,7 @@ async def test_vllm_default_handoff_stages_settings_and_revert_is_byte_identical
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
     from tldw_chatbook.UI.Navigation.vllm_handoff import VllmDefaultIntent
 
-    app = _console_app()
+    app = _console_app(retire_chachanotes_db=True)
     _, target = _install_ready_vllm_target(app)
     config_path = get_cli_config_path()
     before = config_path.read_bytes()
@@ -2375,6 +2376,7 @@ async def test_vllm_default_handoff_stages_settings_and_revert_is_byte_identical
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_vllm_default_handoff_persists_only_through_ordinary_settings_save() -> (
     None
 ):
@@ -2384,7 +2386,7 @@ async def test_vllm_default_handoff_persists_only_through_ordinary_settings_save
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
     from tldw_chatbook.UI.Navigation.vllm_handoff import VllmDefaultIntent
 
-    app = _console_app()
+    app = _console_app(retire_chachanotes_db=True)
     _, target = _install_ready_vllm_target(app)
     config_path = get_cli_config_path()
     before = config_path.read_bytes()
@@ -2417,6 +2419,7 @@ async def test_vllm_default_handoff_persists_only_through_ordinary_settings_save
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("shortcut", ("s", "r", "t"))
+@pytest.mark.bootstrap_profile
 async def test_vllm_default_shortcuts_are_fenced_until_late_ack_rollback(
     monkeypatch,
     shortcut,
@@ -2427,7 +2430,7 @@ async def test_vllm_default_shortcuts_are_fenced_until_late_ack_rollback(
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
     from tldw_chatbook.UI.Navigation.vllm_handoff import VllmDefaultIntent
 
-    app = _console_app()
+    app = _console_app(retire_chachanotes_db=True)
     owner, target = _install_ready_vllm_target(app)
     config_path = get_cli_config_path()
     config_before = config_path.read_bytes()
@@ -2478,13 +2481,14 @@ async def test_vllm_default_shortcuts_are_fenced_until_late_ack_rollback(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_vllm_default_handoff_stale_target_rolls_back_and_replays() -> None:
     """A stale owner must leave both the draft and exact handoff retryable."""
 
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
     from tldw_chatbook.UI.Navigation.vllm_handoff import VllmDefaultIntent
 
-    app = _console_app()
+    app = _console_app(retire_chachanotes_db=True)
     owner, target = _install_ready_vllm_target(app)
     app.pending_handoffs.stage(
         HandoffChannel.VLLM_DEFAULT,
@@ -2503,6 +2507,7 @@ async def test_vllm_default_handoff_stale_target_rolls_back_and_replays() -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_vllm_default_late_ack_failure_restores_complete_provider_presentation() -> (
     None
 ):
@@ -2516,7 +2521,7 @@ async def test_vllm_default_late_ack_failure_restores_complete_provider_presenta
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
     from tldw_chatbook.UI.Navigation.vllm_handoff import VllmDefaultIntent
 
-    app = _console_app()
+    app = _console_app(retire_chachanotes_db=True)
     owner, target = _install_ready_vllm_target(app)
     config_path = get_cli_config_path()
     config_before = config_path.read_bytes()
@@ -2721,6 +2726,7 @@ async def test_vllm_default_late_ack_failure_restores_complete_provider_presenta
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("release_failure", ("false", "exception"))
+@pytest.mark.bootstrap_profile
 async def test_vllm_default_late_ack_release_failure_stays_fenced_until_retry(
     monkeypatch,
     release_failure,
@@ -2731,7 +2737,7 @@ async def test_vllm_default_late_ack_release_failure_stays_fenced_until_retry(
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
     from tldw_chatbook.UI.Navigation.vllm_handoff import VllmDefaultIntent
 
-    app = _console_app()
+    app = _console_app(retire_chachanotes_db=True)
     owner, target = _install_ready_vllm_target(app)
     config_path = get_cli_config_path()
     config_before = config_path.read_bytes()
@@ -2809,6 +2815,7 @@ async def test_vllm_default_late_ack_release_failure_stays_fenced_until_retry(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_vllm_default_release_auto_retries_are_bounded_and_recoverable(
     monkeypatch,
 ) -> None:
@@ -2817,7 +2824,7 @@ async def test_vllm_default_release_auto_retries_are_bounded_and_recoverable(
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
     from tldw_chatbook.UI.Navigation.vllm_handoff import VllmDefaultIntent
 
-    app = _console_app()
+    app = _console_app(retire_chachanotes_db=True)
     owner, target = _install_ready_vllm_target(app)
     harness = _SettingsFlowHarness(app)
 
@@ -2876,6 +2883,7 @@ async def test_vllm_default_release_auto_retries_are_bounded_and_recoverable(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_vllm_default_unscheduled_ack_cleanup_survives_screen_replacement(
     monkeypatch,
 ) -> None:
@@ -2885,7 +2893,7 @@ async def test_vllm_default_unscheduled_ack_cleanup_survives_screen_replacement(
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
     from tldw_chatbook.UI.Navigation.vllm_handoff import VllmDefaultIntent
 
-    app = _console_app()
+    app = _console_app(retire_chachanotes_db=True)
     _owner, target = _install_ready_vllm_target(app)
     config_path = get_cli_config_path()
     config_before = config_path.read_bytes()
