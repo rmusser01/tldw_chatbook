@@ -27,11 +27,17 @@ def source(tmp_path, monkeypatch, local_root):
 
 
 def test_pause_refuses_cached_bootstrap_without_erasing_cache(source):
+    # 5e56aac410 (TASK-32804.1) serves a warm read ahead of the admission
+    # handshake, so a pause no longer refuses the public warm hit; the guarded
+    # bootstrap behind it still refuses, and neither erases the cache.
     before = source._CONFIG_CACHE
+    assert before is not None
     pause = storage._begin_local_pause()
     try:
         with pytest.raises(bootstrap.RecoveryRequired):
-            source.load_cli_config_and_ensure_existence()
+            source._load_cli_config_bootstrap()
+        assert source._CONFIG_CACHE is before
+        assert source.load_cli_config_and_ensure_existence() is before
         assert source._CONFIG_CACHE is before
     finally:
         pause.resume()
@@ -486,11 +492,16 @@ bootstrap.default_bootstrap_root = lambda: Path(sys.argv[1])
 from tldw_chatbook import config
 mode = sys.argv[2]
 if mode == 'first':
+    # A save serializes twice under the lock (the expected round trip, then
+    # the write); hold the first only.
     original = config.toml.dumps
+    held = []
     def serialize(*args, **kwargs):
         value = original(*args, **kwargs)
-        print('serializing', flush=True)
-        sys.stdin.readline()
+        if not held:
+            held.append(True)
+            print('serializing', flush=True)
+            sys.stdin.readline()
         return value
     config.toml.dumps = serialize
 else:
@@ -562,7 +573,17 @@ def test_reentrant_publication_from_derived_scope_refuses_all_effects(
             source.replace_cli_config({"general": {"users_name": "reentrant"}})
         return original(path, *args, **kwargs)
 
+    def reenter_secure(path, *args, **kwargs):
+        if Path(path) == directory:
+            source.replace_cli_config({"general": {"users_name": "reentrant"}})
+        return secure(path, *args, **kwargs)
+
+    # 6ae1ddd69f (task-32901) creates the default cache directory through
+    # secure_private_directory, which makes it natively on POSIX: re-enter
+    # there too, so the publication still fires inside the derived scope.
+    secure = source.secure_private_directory
     monkeypatch.setattr(Path, "mkdir", reenter)
+    monkeypatch.setattr(source, "secure_private_directory", reenter_secure)
     with pytest.raises(bootstrap.RecoveryRequired, match="raw_path_outside_scope"):
         source.get_model_cache_dir()
     assert not directory.exists()
