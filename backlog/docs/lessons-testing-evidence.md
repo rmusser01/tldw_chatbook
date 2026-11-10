@@ -1,5 +1,11 @@
 # Lessons: what counts as evidence a change works
 
+## A process-wide `os.close` spy also counts another thread's closes, so a profile change moved a "pin count" (TASK-39114, 2026-11-10)
+
+**Incident.** `test_migration_immutable_failure_retains_complete_destination[True]` monkeypatched `os.close` and expected 6 closes after a failed view close, "Admission also owns two directory pins for a file-backed view." It failed `assert 4 == 6` on dev. A first-parent bisect over 905 commits (a `git archive` tree per step, one 4 s node) named 5a915a43e5, a test-only commit that moved `Tests/DB` to the bootstrap profile. Stacks recorded in the spy showed the two missing closes came from the `chatbook-storage-admission` hold thread (`admission._lock` and `native_files.pinned_directory`), which a per-test profile's admission happened to run in that window. The cleanup under test closed the same 4 descriptors under both profiles.
+
+**What to do.** When a test spies on a process-wide function (`os.close`, `os.open`, `sqlite3.connect`), filter the calls to the thread that runs the code under test (`threading.get_ident()`), and run it under both profiles before trusting a count. When a count changes with no product change, record the spy's stacks first; a bisect that lands on a test-infrastructure commit means the extra calls were never the product's.
+
 ## A parent source pin does not bind a private pytest child's Core import (PR3036, 2026-11-07)
 
 **Incident.** The approval launcher verified selected Main, Core and Tests origins in its `-I` parent after inserting the selected paths into `sys.path`. `Tests.private_profile` then spawned a fresh interpreter: only Main survived through its working directory, and Core resolved through the primary checkout's editable installation. A real child-environment metadata probe reproduced that foreign origin even though all 14 Core Python files happened to have identical content. Earlier parent-origin receipts therefore did not prove complete child-source closure. Performance helper environments had the same omission, including one first-use environment whitelist that dropped `PYTHONPATH` entirely.
