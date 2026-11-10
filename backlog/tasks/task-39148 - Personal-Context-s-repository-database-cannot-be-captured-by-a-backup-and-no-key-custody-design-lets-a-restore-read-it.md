@@ -4,7 +4,7 @@ title: "Personal Context's repository database cannot be captured by a backup, a
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-08 06:54
-updated_date: 2026-11-10 17:52
+updated_date: 2026-11-10 18:23
 labels:
 - follow-up
 - backup
@@ -112,10 +112,21 @@ Follow-ups:
 - **Key reference.** It is a non-secret name that exclude mode keeps unchanged, and every restore installs into a fresh account.
 - **Authentication.** A key is used, and an account changed or deleted, only after it authenticates the database. Detection never relies on `key_version`.
 - **Stamping and gates.**
-  - Migration stamps the reference on first authentication.
+  - Migration adds an empty `key_account` column; the repository writes the reference the first time the path-derived account's key authenticates the database.
   - The sync gate moved into TASK-40134 and covers automation-only restores.
   - The rebind leaves Notes and Chat sync state unchanged, pinned by a test.
 - **ADR-102 note.** It now carries ADR-203's qualifier.
 - **Corrections.** F3 and F9 are corrected.
 - **TASK-39116.** Left untouched.
+
+**Review r13k-rev2 fixes (2026-11-10).** The review found four Important and ten Minor issues, and all are fixed. The decisions' text is unchanged.
+- **New profiles.** Creating or re-creating a profile writes a new, unused key account and never adopts an existing one (TASK-40133).
+- **Restore marker.** A restore that installs no key stamps the `recovery:setup_required` marker, recording the reason, and leaves every other table unchanged.
+- **Task split.**
+  - TASK-40134 is safe on its own: until readable restores ship, a restore stamps the marker.
+  - The same-device key-less restore criterion and the "readable only on this device, and only until Personal Context is linked or removed" preview copy moved to TASK-40135.
+  - The same-PR landing note was dropped.
+- **Mismatch.** A manifest-authentication failure at open reports a key mismatch.
+- **Fresh link.** It is scoped to restores that publish the repository or `runtime.sync_state`.
+- **Citations.** They now point at `publication.py:592-604`.
 <!-- SECTION:NOTES:END -->

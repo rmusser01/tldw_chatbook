@@ -27,13 +27,15 @@
   - Schema migrations run in `_inspect_schema` **before** the key is loaded (`repository.py:373-378`; migrations at `:630-733`).
 - **F3.** Production always uses `KeyringProfileKeyProtector`. It is the repository default (`repository.py:368`), `bootstrap.py:44-49` passes none, and drafts use it too (`interview_launch.py:97-113`).
   - `PassphraseProfileKeyProtector` (`key_protector.py:209-380`) and `InterviewPassphraseKeyProtector` (`:383-426`), which builds one per interview session, have no production caller. Only the package export and `Tests/Personal_Context/test_key_protector.py` use them. **No real profile has a passphrase bundle today.**
-  - Its bundle also binds the path-derived `profile_ref` into its AAD and KDF salt (`:238-239`, `:333-336`). A bundle restored to another path would not open even with the right passphrase.
+  - `PassphraseProfileKeyProtector`'s bundle also binds the path-derived `profile_ref` into its AAD and KDF salt (`:238-239`, `:333-336`). A bundle restored to another path would not open even with the right passphrase.
 - **F4.** An existing database whose key is missing raises `ProfileLockedError` from `load()` (`repository.py:380-387`, `key_protector.py:161-165`). Bootstrap then returns a locked service with `profile_present=True` (`bootstrap.py:59-73`).
   - Only a **new** database calls `load_or_create` (`repository.py:374-378`). Today, a restored database whose key is missing is therefore already locked, kept, and never re-keyed.
 - **F5.** `encryption_key` never rotates.
   - The first link keeps it, replaces `integrity_key` with the server's, and bumps `key_version` (`repository.py:2051-2055`). It then writes the keyring entry (`:2612-2618`).
   - Remove local profile deletes whichever account the repository loaded (`:4972-4997`). Reinitialising creates a new one (`:1703`).
   - So the same path can hold a different key than an older backup of that path did.
+  - Creating a database (`repository.py:374-378`) and Start fresh (`reinitialize_destroyed_profile`, `:1703`, from `service.py:606-635`) both call `load_or_create` on the path account. That adopts any existing entry (`key_protector.py:144-148`).
+  - A failed re-initialisation deletes the path account even when it only loaded it (`repository.py:1752-1754`). The secure-removal retry deletes it as well (`service.py:1952-1963` → `repository.py:4995`).
   - `key_version` starts at 1 (`key_protector.py:48`) and only a link bumps it. Two unrelated keys therefore usually share version 1, so the version cannot tell keys apart. A wrong key fails authentication instead: `ProfileIntegrityError`, reported as `profile_integrity_invalid` (`bootstrap.py:69-73`), which reads like tampering.
 
 **Link keys and sync state**
@@ -76,7 +78,7 @@
 
   Rollback copies are kept until the user deletes them (ADR-126:182; `recovery_copies.py:187-215`).
 - **F14.** Every restore mints a new `installation_id` (`isolated_restore.py:96-98`, `replacement.py:1629-1630`).
-  - Every owner with `activation_required=True` is bound into the restored generation's review (`replacement.py:2584-2596`). Its consumers stay off until `execution_allowed((owner,), path)` passes (`activation.py:224-227`). Precedents are `app.py:4717` and `app_service_wiring.py:3348`.
+  - Every owner with `activation_required=True` is bound into the restored generation's review. On the forward path this happens in `finalize_candidate` (`publication.py:592-604`), which is called from `replacement.py:1682` and `isolated_restore.py:260`. `_rollback_replacement` repeats it (`replacement.py:2584-2596`). Its consumers stay off until `execution_allowed((owner,), path)` passes (`activation.py:224-227`). Precedents are `app.py:4717` and `app_service_wiring.py:3348`.
   - No Personal Context code calls it today.
 - **F15.** The current row is `_LocalSQLite(..., "personal_context_repository_capture_unsupported", excluded=False)` (`config_adapter.py:1163-1176`). It blocks every preview that finds the file (`config_adapter.py:705-712`; `inventory.py:57`).
   - Its SQLite policy lacks `centralized_backup_allowed` / `recovery_capture_allowed` (`DB/private_sqlite.py:470-475`).
@@ -122,7 +124,9 @@ The code facts are F2, F3, F9, F10 and F17. The backup's own credential is the a
 ### Q1a. A backup without credentials
 
 **Option A: capture the database without its key.** (Recommended.)
-- The preview says: "Database only: readable on this device".
+- The preview says: "Database only: readable only on this device, and only until Personal Context is linked or removed."
+  - The first link overwrites the named account in place (`repository.py:2051-2055`, `:2613`), and Remove deletes it. After either, every earlier key-less backup fails to authenticate, even on this device.
+  - `exclude` is the default capture mode (`capture.py:296`).
 - The restore plan raises an acknowledged issue.
 - Such an archive still serves the common case of repairing a profile on the same device. The key is still in this device's keyring, and the archive keeps the database's key reference unchanged (Q1, option A).
 
@@ -150,6 +154,10 @@ Today the keyring account is derived from the path (F2), so a different path nev
   - nothing changes for today's users.
 - The repository looks the key up by the stored account, or by the path-derived account while the reference is empty. **It uses a key only after that key authenticates this database's manifest head.** Detection is never by `key_version` (F5).
 - A stamped database that is moved to another path keeps finding its key on the same keyring.
+- **Creating or re-creating a profile** (the first profile, or Start fresh) writes its key to a **new, unused account** (set-if-absent) and records that account in the same `profile_meta` row.
+  - It never adopts an existing keyring entry: no `load_or_create` on the path account (F5).
+  - Failure cleanup deletes only an account it created.
+  - A database with no profile yet holds no key, and has nothing to authenticate.
 
 **How backup treats the reference.**
 - Backup registers `(personal_context.repository, profile_meta, key_account)` as a credential column of a new kind.
@@ -160,12 +168,15 @@ Today the keyring account is derived from the path (F2), so a different path nev
 **How a replace restore installs the key.** Restore **always** installs into a fresh account (`personal-context:recovery_<hex>`, set-if-absent) and rewrites the staged reference, following the server-credential remap (F11). A restore therefore never leaves two databases, live or retained, naming one account.
 - The material comes from the archive's credential record. For a key-less archive, it is copied from the account the archive names on this device. If that reference is empty, it is copied from the target path's legacy account.
 - Either way, the material is used only after it authenticates the restored database's manifest head.
-- If nothing authenticates, the staged reference becomes `recovery:setup_required` (F10's marker). The database then names no account and stays locked.
-- An isolated restore cannot write the keyring (F12), so it stamps `recovery:setup_required` too. The isolated copy never names the live profile's account.
+- If nothing authenticates, the staged reference becomes the marker `recovery:setup_required:<reason>`, which records the restore case. The database then names no account and stays locked.
+- An isolated restore cannot write the keyring (F12), so it stamps the marker too. The isolated copy never names the live profile's account.
+- The staged reference is always rewritten, either to a fresh account or to the marker; capture's `exclude` treatment does not apply here.
+  - The same holds before readable restores ship: until then, a restore publishes the repository with the marker, so no restored database ever names an existing account.
 - After publication, restore opens the database read-only and authenticates its manifest head again. If that fails, it deletes only the account it just created, and Personal Context stays locked (Q2 copy below).
 
 **Operations that change or delete an account.** The first link's key replace (`repository.py:2612-2618`) and Remove local profile (`:4994-4997`) change or delete only the account this database names, and only after that account's key has authenticated this database.
-- Every restore stamps a fresh account or the marker, so a retained restore copy never names the live database's account. Neither operation can therefore break a rollback.
+- Remove records the account it removes in `profile_meta`, so the secure-removal retry deletes exactly that account and nothing else.
+- Every restore stamps a fresh account or the marker, and every new profile gets a new account. A retained restore copy therefore never names the live database's account, and neither operation can break a rollback.
 - Known ceiling: a user's own manual copy of the database file shares its key account, so linking or removing one copy affects the other.
 
 This "re-wraps" the key in one sense only: the key moves from the encrypted archive into the target keyring. **Nothing re-encrypts records.**
@@ -186,7 +197,7 @@ This "re-wraps" the key in one sense only: the key moves from the encrypted arch
 
 ### What the user sees when the key is missing
 
-Personal Context is locked, as it already is (F4). The database is byte-identical, and no keyring entry is created.
+Personal Context is locked, as it already is (F4). No keyring entry is created. Every table except `profile_meta.key_account` is unchanged from the archived copy. `key_account` carries the marker, and the marker records the reason. The reason is therefore still named correctly after a restart.
 
 The lock gets reasons and copy that name the cause:
 
@@ -199,7 +210,11 @@ The lock gets reasons and copy that name the cause:
 
 The restore plan shows the first three as acknowledged issues **before** the restore runs (constraint 4).
 
-The fourth is detected by authentication when the repository opens. Its reason replaces the tamper-like `profile_integrity_invalid`. After a restore it cannot arise, because restore stamps only an account that authenticated. It covers other causes: Remove local profile followed by a new profile, a manual copy, or an unlinked profile from another machine.
+The fourth is detected by authentication when the repository opens.
+- A manifest-authentication failure at open is reported as this key mismatch. It replaces the tamper-like `profile_integrity_invalid`, even though a tampered manifest fails the same way (`repository.py:1341-1352`).
+- Integrity failures beyond the manifest stay `profile_integrity_invalid`.
+
+After a restore a key mismatch cannot arise, because restore stamps only an account that authenticated. It covers other causes: a manual copy, an unlinked profile from another machine, or a legacy path account that another database's key now occupies.
 
 ## Q3. Link and sync key custody
 
@@ -207,13 +222,14 @@ The code facts are F6, F7, F8 and F14.
 
 **Option A: never capture link keys, and never resume a restored link.** (Recommended.)
 - The device wrapping key, staged integrity keys and dataset staging keys stay keyring-only and never enter any archive.
-- After any replace restore, Personal Context sync stays off until the user runs a fresh reviewed first link. On a new machine, that link registers a new device with a new wrapping key.
-  - This includes a restore that publishes only `runtime.sync_state` (the "automation" group). Such a restore can rewind `personal_context_link_state` under a live repository.
+- **Generic gate.** After every restore, Personal Context sync stays off until the restored generation is reviewed.
+- **Fresh link.** A restore that publishes `personal_context.repository` or `runtime.sync_state` also forces a fresh reviewed first link. On a new machine, that link registers a new device with a new wrapping key.
+  - This includes an automation-only restore, which publishes only `runtime.sync_state` and can rewind `personal_context_link_state` under a live repository.
 - Mechanism:
   - The new capture adapter is a `_SQLiteDeclaration` subclass, so it is `activation_required` by default (F14).
-  - Every restore binds all activation-required owners (`replacement.py:2585-2587`), so the gate fires whichever groups were restored.
+  - Every restore binds all activation-required owners (`publication.py:592-604`), so the gate fires whichever groups were restored.
   - `_load_personal_context_sync_runtime` (`app.py:2625`) checks `execution_allowed` for `personal_context.repository` and `runtime.sync_state`.
-  - The Personal Context review action clears that server profile's `personal_context_link_state` before approving, so the next **Link to home server** starts fresh.
+  - For a restore that published either owner, the Personal Context review clears that server profile's `personal_context_link_state` before approving, so the next **Link to home server** starts fresh.
   - The fresh link rebinds Personal Context's device without changing Notes and Chat sync state (device id, dataset cursors, outbox) for that profile. Note that `_seed_sync_profile` carries `dataset_cursors` forward (`link_service.py:1029`).
   - What Notes and Chat sync do after a cross-machine restore is investigated separately (TASK-40139).
 - The restored records stay readable locally. The integrity key restored with them keeps them authenticated, and the next link rebaselines it (F5).
@@ -334,24 +350,26 @@ This spec does not design Plugins.
 Filed 2026-11-10 after approval, in this order. Each delivers one testable outcome. Two follow-ups are listed after them.
 
 1. **TASK-40133, "Personal Context's repository names its key's keyring account."**
-   - Outcome: a v8 database is stamped with its path-derived account the first time that account's key authenticates it; a locked one stays unstamped. The repository uses a key only after it authenticates the database, and opens from the stamped account even after the file moves. Link and Remove local profile act only on that authenticated account.
+   - Outcome: the migration adds an empty reference, and the repository writes the path-derived account the first time that account's key authenticates the database; a locked one stays unstamped. The repository uses a key only after it authenticates the database, and opens from the stamped account even after the file moves. New and re-created profiles get a new, unused account. Link and Remove local profile act only on the authenticated account.
    - Includes the exact-SQL catalog for every reachable v9 layout, since in-place `ALTER TABLE` migrations make catalogs differ.
 2. **TASK-40134, "A backup captures Personal Context's repository database."** (AC#3: capture.)
    - Outcome: a preview of a profile with Personal Context is complete.
    - The archive holds the lock-safe, schema-validated database in the "Personal Context" group.
-   - An archive that includes credentials holds the key as a credential record. One that does not keeps the reference unchanged and says "database only", and a same-device replace restore from it reads the records.
+   - An archive that includes credentials holds the key as a credential record. One that does not keeps the reference unchanged and says its key is not included.
+   - Until readable restores ship, a restore publishes the repository with the marker, so this task is safe on its own.
    - Capture refuses while a first link is in flight.
-   - Personal Context sync is gated after any replace restore.
+   - As an interim guard, Personal Context sync does not resume after any restore until the restored generation is reviewed.
 3. **TASK-40135, "A replace restore makes restored Personal Context records readable."** (AC#3: a restore that reads its records.)
    - Outcome: after a replace restore onto the same or a different machine or path, Personal Context opens and lists the restored records.
-   - Every restore installs authenticated material into a fresh account, so no two databases name one account. Any pre-existing keyring entry is unchanged.
+   - When a key authenticates, it goes into a fresh account. The restored database names an account no other database names, and any pre-existing keyring entry is unchanged.
+   - A same-device replace restore from a backup without credentials reads its records. That backup's preview says it is readable only on this device, and only until Personal Context is linked or removed.
    - A later rollback opens the original records, even after the restored profile has linked or been removed.
 4. **TASK-40136, "A restore without a usable Personal Context key keeps the data and says what to do."** (AC#3: key unavailable.)
    - Covers four cases: a key-less archive on another machine, an isolated profile, no secure keyring, and a key mismatch.
-   - Outcome: the database is byte-identical, no keyring entry is created, and Personal Context is locked with the named reason.
+   - Outcome: no keyring entry is created. Every table except `key_account` is unchanged, `key_account` carries the marker with its reason, and Personal Context is locked with that reason, including after a restart.
    - The restore plan and the Settings panel show the Q2 copy, and the User Guide is updated.
 5. **TASK-40137, "A restored Personal Context does not resume its old link."**
-   - Outcome: after any replace restore, including an automation-only one, Personal Context sync stays off until a fresh reviewed first link. The old link state for that server profile is cleared. The rebind leaves Notes and Chat sync state unchanged, and no link key is ever in an archive.
+   - Outcome: after a restore that publishes the repository or `runtime.sync_state` (including an automation-only one), Personal Context sync stays off until a fresh reviewed first link. The old link state for that server profile is cleared. The rebind leaves Notes and Chat sync state unchanged, and no link key is ever in an archive.
 6. **TASK-40138, "A detached source holding Personal Context files is treated by name."** (AC#3: detached treatment of the drafts file.)
    - Outcome: drafts are an excluded row with a review line, instead of `detached_unknown_content`. The repository is refused as `detached_owner_unavailable:personal_context.repository`.
 

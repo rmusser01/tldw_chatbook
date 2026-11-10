@@ -1721,8 +1721,10 @@ Personal Context's repository is captured with its profile key as a `personal_co
 - The database's key reference (`profile_meta.key_account`, Personal Context schema v9) is a non-secret account name. `exclude` mode leaves it unchanged, unlike the citation column.
 
 Restore still never overwrites a keyring entry (decision 8). The stored key reference keeps that rule workable:
-- Every replace-restore installs key material into a fresh account and rewrites the staged reference. The material comes from the archive or, for a key-less archive, from the account the archive names on this device. It is used only after it authenticates the restored database.
-- An isolated restore has no keyring, so it stamps `recovery:setup_required` instead.
+- Every replace-restore installs key material into a fresh account and rewrites the staged reference.
+- The material comes from the archive or, for a key-less archive, from the account the archive names on this device. If that reference is empty, it comes from the target path's legacy account.
+- The material is used only after it authenticates the restored database.
+- A restore that installs no key, including every isolated restore (which has no keyring), stamps the `recovery:setup_required` marker instead.
 - No two databases, live or retained, therefore name one account.
 - A restore deletes only an account it created itself.
 

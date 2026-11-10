@@ -43,12 +43,17 @@ Filed in round 13 of the 2026-10-23 burn-down from TASK-39148's owner-approved d
   - The key is never in a readable archive.
   - A database whose reference is still empty carries no key record.
 - **The reference is not a secret.** Exclude mode is the default, and it rewrites every `SQLITE_CREDENTIAL_COLUMNS` owner's database in staging (`credentials.py:1100-1101`). It turns a citation column into `recovery:setup_required` (`credentials.py:704-706`).
-  - The Personal Context reference must be kept unchanged there, never sanitized. Otherwise a same-device restore of a key-less backup would lock for good, contrary to decision 3.
-  - A backup without credentials carries the database alone, and its preview says "database only: readable on this device".
+  - The Personal Context reference must be kept unchanged there, never sanitized. Otherwise a later same-device restore of a key-less backup would lock for good, contrary to decision 3.
+  - A backup without credentials carries the database alone, and its preview says its key is not in the backup.
+- **Restore before readable restores ship.** This task does not install keys.
+  - A restore that installs no key for the repository publishes it with `profile_meta.key_account` set to the marker `recovery:setup_required`.
+  - The restored database therefore never names an existing keyring account, so it cannot alias the retained original's account, and Personal Context stays locked.
+  - This keeps the task safe on its own.
 - **Link keys.** The device wrapping key, staged integrity keys and dataset staging keys are never captured (decision 5). A backup that includes credentials discloses that they are left out, as it already does for skill-trust keys (`credentials.py:1052-1065`).
-- **Sync gate.** A restored link must not resume with stale cursors.
-  - The repository's adapter is `activation_required`, and every restore binds all activation-required owners (`replacement.py:2585-2587`).
-  - So the Personal Context sync loader (`app.py:2625-2662`) checks `execution_allowed` for `personal_context.repository` and `runtime.sync_state` (`activation.py:224-227`), and stays off until the restored generation is reviewed.
+- **Interim sync guard.** A restored link must not resume with stale cursors.
+  - The repository's adapter is `activation_required`, and every restore binds all activation-required owners in `finalize_candidate` (`publication.py:592-604`).
+  - So Personal Context sync (`app.py:2625-2662`) can stay off until the restored generation is reviewed, through `activation.py:224-227`.
+  - This guard holds on its own.
 - **First link in flight.** Capture is refused while a `first_link_freeze` or `first_link_rebaseline_commit` row exists (`repository.py:214-226`, `:311-320`).
 - **Device-only records** are included, as **Export recovery copy** already does (decision 8).
 - **Detached imports.** A `_SQLiteDeclaration` owner is picked up by the detached layout automatically (`detached_layout.py:636-642`, `:1080-1085`). Without a guard, that would import the repository into an archive without its key. Decision 10 refuses it there by name.
@@ -59,12 +64,12 @@ Filed in round 13 of the 2026-10-23 burn-down from TASK-39148's owner-approved d
 - [ ] #1 A backup preview of a profile holding the repository database (with its `-wal`) lists it as captured in a selectable "Personal Context" group, and the preview is no longer incomplete because of it (red first)
 - [ ] #2 The archive holds a consistent copy of the database, including device-only records, that passes the installed exact-schema validation for each v9 layout from TASK-40133
 - [ ] #3 A backup that includes credentials carries the profile key as a `personal_context` credential record, and capture checks that the key opens the captured copy (its manifest authenticates) before writing the record
-- [ ] #4 A backup without credentials carries no key material and keeps the database's key reference exactly as it was (it is not sanitized); its preview says the database is readable only on this device
-- [ ] #5 A same-device replace restore from a backup without credentials opens and lists the records
+- [ ] #4 A backup without credentials carries no key material and keeps the database's key reference exactly as it was (it is not sanitized); its preview says the key is not in the backup
+- [ ] #5 A restore that installs no key for the repository publishes it with `profile_meta.key_account` set to `recovery:setup_required`. Every other table is unchanged from the archived copy, the restored database names no existing keyring account, and Personal Context is locked
 - [ ] #6 Inert extraction cannot write the key to disk from any archive; a test pins it
 - [ ] #7 Capture is refused with a named reason, shown in the preview, while a first-link freeze or rebaseline marker exists
 - [ ] #8 The review of a backup that includes credentials says the device wrapping key, staged integrity keys and dataset staging keys are left out, as it does for skill-trust keys
-- [ ] #9 After any replace restore, Personal Context sync stays off until the restored generation is reviewed: the sync loader checks `execution_allowed` for `personal_context.repository` and `runtime.sync_state` (red first)
+- [ ] #9 After any restore, Personal Context sync does not resume until the restored generation is reviewed; this guard holds on its own (red first)
 - [ ] #10 A detached source holding the repository is refused by name and never imported without its key
 - [ ] #11 The owner inventory doc's Personal Context rows and the Personal Context User Guide page's backup paragraph describe the new behaviour
 <!-- AC:END -->
