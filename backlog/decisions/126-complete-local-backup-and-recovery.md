@@ -1716,12 +1716,15 @@ surviving creation intent and changed path/security evidence must still refuse.
 
 ### 2026-11-10 note (TASK-39148, owner-approved)
 
-Personal Context's repository is captured with its profile key as a `personal_context` credential record, only in encrypted archives (`include` and `rollback` modes). A backup without credentials carries the database alone.
+Personal Context's repository is captured with its profile key as a `personal_context` credential record, only in encrypted archives (`include` and `rollback` modes).
+- A backup without credentials carries the database alone.
+- The database's key reference (`profile_meta.key_account`, Personal Context schema v9) is a non-secret account name. `exclude` mode leaves it unchanged, unlike the citation column.
 
 Restore still never overwrites a keyring entry (decision 8). The stored key reference keeps that rule workable:
-- The repository stores a non-secret reference to its key's account (`profile_meta.key_account`, Personal Context schema v9).
-- Replace-restore reuses the target account when it already holds identical material. Otherwise it installs the key into a fresh account and rewrites the staged reference.
-- It deletes only an account it created itself.
+- Every replace-restore installs key material into a fresh account and rewrites the staged reference. The material comes from the archive or, for a key-less archive, from the account the archive names on this device. It is used only after it authenticates the restored database.
+- An isolated restore has no keyring, so it stamps `recovery:setup_required` instead.
+- No two databases, live or retained, therefore name one account.
+- A restore deletes only an account it created itself.
 
 This is the first non-server credential that restore writes back to the keyring. Link keys (the device wrapping key, staged integrity keys and dataset staging keys) are never captured, and a restored repository does not resume its link. Isolated restored profiles keep Personal Context locked.
 

@@ -35,16 +35,20 @@ The restore cases in the approved design (spec Q2 table; decisions 3 and 6):
 - **No key in the backup.** A backup without credentials, restored onto a device that lacks the key.
 - **Isolated restored profile.** It runs with `keyring.backends.null.Keyring` (`Backup_Recovery/isolated_restore.py:393`, `:423-426`), which the key protector refuses (`key_protector.py:138-141`).
 - **No secure keyring on a replace restore.** The key stays in the retained encrypted restore copy (`replacement.py:1604-1620`).
-- **Key mismatch.** The stored key's version byte (`key_protector.py:75-84`) differs from the rows' `key_version` (`repository.py:1323-1330`).
+- **Key mismatch.** The stored account's key does not authenticate the database's manifest.
+  - This is detected by authentication (TASK-40133), never by version. `key_version` starts at 1 (`key_protector.py:48`) and only a link bumps it (`repository.py:2051-2055`). So Remove local profile followed by a new profile, or an unlinked profile from another machine, gives a different key with the same version.
+  - Today that surfaces as `ProfileIntegrityError`, which `bootstrap.py:69-73` reports as the tamper-like `profile_integrity_invalid`.
+  - A restore never stamps a non-authenticating account (TASK-40135), so this case comes from outside restores.
 
 The spec's Q2 table gives each case a named reason and the copy.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 In each case (key not in the backup, isolated restored profile, no secure keyring on a replace restore, key version mismatch), the restored database is byte-identical afterwards, no keyring entry is created, changed or deleted, and Personal Context is locked with that case's reason: `personal_context_key_not_in_backup`, `personal_context_keyring_unavailable`, `personal_context_key_install_unavailable` or `personal_context_key_mismatch` (red first)
-- [ ] #2 The restore plan lists the first three cases as issues the user must acknowledge before the restore runs
-- [ ] #3 The Settings panel's locked state shows the spec's copy for each reason, including that Remove local profile deletes the data, and `scripts/check_markup_interpolation.py` passes
-- [ ] #4 After a replace restore with no secure keyring, a second replace restore from the same archive once a keyring is available makes the records readable
-- [ ] #5 The Personal Context User Guide troubleshooting table describes these states
+- [ ] #1 In each restore case (key not in the backup, isolated restored profile, no secure keyring on a replace restore), the restored database is byte-identical afterwards, no keyring entry is created, changed or deleted, and Personal Context is locked with that case's reason: `personal_context_key_not_in_backup`, `personal_context_keyring_unavailable` or `personal_context_key_install_unavailable` (red first)
+- [ ] #2 A database whose stored account holds a different key, including a different key with the same `key_version`, is detected by authentication and locked as `personal_context_key_mismatch`, not `profile_integrity_invalid`; its data is byte-identical and no keyring entry changes (red first)
+- [ ] #3 The restore plan lists the first three cases as issues the user must acknowledge before the restore runs
+- [ ] #4 The Settings panel's locked state shows the spec's copy for each reason, including that Remove local profile deletes the data, and `scripts/check_markup_interpolation.py` passes
+- [ ] #5 After a replace restore with no secure keyring, a second replace restore from the same archive once a keyring is available makes the records readable
+- [ ] #6 The Personal Context User Guide troubleshooting table describes these states
 <!-- AC:END -->

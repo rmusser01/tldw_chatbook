@@ -4,7 +4,7 @@ title: "Personal Context's repository database cannot be captured by a backup, a
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-08 06:54
-updated_date: 2026-11-10 17:18
+updated_date: 2026-11-10 17:52
 labels:
 - follow-up
 - backup
@@ -107,4 +107,15 @@ Follow-ups:
 - `backlog/decisions/126-complete-local-backup-and-recovery.md`;
 - the eight new task files, TASK-40133 to TASK-40140.
 - This task needed no tests, because it is design-only. Preflight runs through the scratch wrapper.
+
+**Review r13k-rev1 fixes (2026-11-10).** The review found four Important and eight Minor issues, and all are fixed. The 11 decisions are unchanged.
+- **Key reference.** It is a non-secret name that exclude mode keeps unchanged, and every restore installs into a fresh account.
+- **Authentication.** A key is used, and an account changed or deleted, only after it authenticates the database. Detection never relies on `key_version`.
+- **Stamping and gates.**
+  - Migration stamps the reference on first authentication.
+  - The sync gate moved into TASK-40134 and covers automation-only restores.
+  - The rebind leaves Notes and Chat sync state unchanged, pinned by a test.
+- **ADR-102 note.** It now carries ADR-203's qualifier.
+- **Corrections.** F3 and F9 are corrected.
+- **TASK-39116.** Left untouched.
 <!-- SECTION:NOTES:END -->
