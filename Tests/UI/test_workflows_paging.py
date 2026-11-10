@@ -15,6 +15,7 @@ from Tests.Workflows.test_document_complexity import definition, nested_raw
 from tldw_chatbook.UI.Workflows_Modules.editor import WorkflowEditor
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("compact", [False, True])
 async def test_library_names_do_not_project_full_definitions(
     tmp_path, monkeypatch, compact
@@ -94,6 +95,7 @@ def seed_library(harness, count=23):
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("compact", [False, True])
 async def test_admitted_surrogate_name_cannot_block_library_or_selection(
     tmp_path, compact
@@ -182,6 +184,7 @@ async def test_slow_old_search_cannot_replace_newer_library_results(
         assert controller.library_query == "Workflow 22"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("compact", [False, True])
 async def test_oversized_search_recovers_without_changing_open_draft(tmp_path, compact):
     harness = WorkflowEditorHarness(tmp_path, seed=False)
@@ -227,6 +230,7 @@ async def test_oversized_search_recovers_without_changing_open_draft(tmp_path, c
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_legacy_over_limit_definition_remains_selectable_and_exportable(tmp_path):
     harness = WorkflowEditorHarness(tmp_path, seed=False)
     base = seed_library(harness, 1)[0]
@@ -266,6 +270,7 @@ async def test_legacy_over_limit_definition_remains_selectable_and_exportable(tm
         await pilot.press("escape")
 
 
+@pytest.mark.bootstrap_profile
 async def test_large_raw_edit_preserves_text_and_reuses_controls(tmp_path):
     harness = WorkflowEditorHarness(tmp_path, seed=False)
     saved = harness.workflow_documents.create(json.dumps(definition(500)))
@@ -308,6 +313,7 @@ async def test_large_raw_edit_preserves_text_and_reuses_controls(tmp_path):
         print({"raw_edit_seconds": elapsed, "max_heartbeat_gap_seconds": max(delays)})
 
 
+@pytest.mark.bootstrap_profile
 async def test_library_pages_search_and_off_page_head_keep_pending_draft(tmp_path):
     harness = WorkflowEditorHarness(tmp_path, seed=False)
     revisions = seed_library(harness)

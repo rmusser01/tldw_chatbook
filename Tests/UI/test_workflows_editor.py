@@ -184,6 +184,7 @@ async def more_action(harness, pilot, action):
     await choose_option(harness, pilot, action)
 
 
+@pytest.mark.bootstrap_profile
 async def test_raw_edits_reconcile_values_schema_and_summaries_without_synthetic_edits(
     tmp_path,
 ):
@@ -252,6 +253,7 @@ async def test_raw_edits_reconcile_values_schema_and_summaries_without_synthetic
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_field_refresh_keeps_unrepresented_value_source_disabled(tmp_path):
     harness = WorkflowEditorHarness(tmp_path)
     async with harness.run_test(size=(110, 36)) as pilot:
@@ -275,6 +277,7 @@ async def test_field_refresh_keeps_unrepresented_value_source_disabled(tmp_path)
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "section,pointer,partial,replacement",
     [
@@ -343,6 +346,7 @@ async def test_incomplete_field_is_repairable_across_fresh_screens(
         assert_hit(fresh, field)
 
 
+@pytest.mark.bootstrap_profile
 async def test_deferred_view_restore_preserves_newer_field_focus_and_invalid_paint(
     tmp_path, monkeypatch
 ):
@@ -406,6 +410,7 @@ async def test_deferred_view_restore_preserves_newer_field_focus_and_invalid_pai
         assert_hit(harness.screen, field)
 
 
+@pytest.mark.bootstrap_profile
 async def test_restart_protected_parseable_fragment_needs_explicit_advanced_acceptance(
     tmp_path,
 ):
@@ -447,6 +452,7 @@ async def test_restart_protected_parseable_fragment_needs_explicit_advanced_acce
         assert not reopened.screen.query_one("#workflow-save-revision", Button).disabled
 
 
+@pytest.mark.bootstrap_profile
 async def test_history_copy_refuses_head_dirtied_at_owner_boundary_without_touching_source(
     tmp_path, monkeypatch
 ):
@@ -480,6 +486,7 @@ async def test_history_copy_refuses_head_dirtied_at_owner_boundary_without_touch
         assert harness.screen.controller.inspection == base
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "pointer,want",
     [
@@ -515,6 +522,7 @@ async def test_nested_json_issue_selects_exact_member_in_owning_field(
         assert_hit(harness.screen, field)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "extra,size", [(0, (110, 36)), (12, (110, 36)), (12, (60, 20))]
 )
@@ -571,6 +579,7 @@ async def test_admissible_reorder_confirmation_shows_dependencies_and_rejects_ne
         assert "changed" in screen._error.lower()
 
 
+@pytest.mark.bootstrap_profile
 async def test_reopen_ui_discovers_invalid_stale_draft_repairs_copies_and_saves(
     tmp_path,
 ):
@@ -643,6 +652,7 @@ async def test_reopen_ui_discovers_invalid_stale_draft_repairs_copies_and_saves(
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_recovery_confirmation_typing_and_dirty_head_offer_do_not_overwrite(
     tmp_path,
 ):
@@ -675,6 +685,7 @@ async def test_recovery_confirmation_typing_and_dirty_head_offer_do_not_overwrit
         assert documents.get_draft(head.workflow_id, head.revision_id) == dirty
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("change", ["selection", "head", "dirty-after-confirmation"])
 async def test_recovery_confirmation_rechecks_selection_head_and_target(
     tmp_path, change
@@ -718,6 +729,7 @@ async def test_recovery_confirmation_rechecks_selection_head_and_target(
             assert owner.current == old_target
 
 
+@pytest.mark.bootstrap_profile
 async def test_real_ui_typing_during_save_recovery_and_second_save(
     tmp_path, monkeypatch
 ):
@@ -782,6 +794,7 @@ async def test_real_ui_typing_during_save_recovery_and_second_save(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("fail", [False, True])
 @pytest.mark.parametrize("settled_before_mount", [False, True])
 async def test_cancelled_screen_caller_cannot_unlock_recovery_owner(
@@ -849,6 +862,7 @@ async def test_cancelled_screen_caller_cannot_unlock_recovery_owner(
             assert "Recovery failed" in painted_text(harness.screen)
 
 
+@pytest.mark.bootstrap_profile
 async def test_load_failure_is_visible_and_retry_keeps_the_document_owner(
     tmp_path, monkeypatch
 ):
@@ -985,6 +999,7 @@ async def test_typing_keeps_widget_cursor_and_lossless_durable_value(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(160, 48), (110, 36), (60, 20)])
 async def test_field_summaries_refresh_without_resetting_view_state(tmp_path, size):
     harness = WorkflowEditorHarness(tmp_path)
@@ -1033,6 +1048,7 @@ async def test_field_summaries_refresh_without_resetting_view_state(tmp_path, si
         assert "retry 2" in execution.title and execution.collapsed
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("transition", ["workflow", "inspect", "return", "create"])
 async def test_operation_error_clears_after_successful_context_change(
     tmp_path, transition
@@ -1101,6 +1117,7 @@ async def test_deleted_raw_step_returns_to_overview_and_can_edit_name(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 async def test_validate_preserves_unrelated_operation_error(tmp_path):
     import json
 
@@ -1127,6 +1144,7 @@ async def test_validate_preserves_unrelated_operation_error(tmp_path):
         assert not screen.query_one("#workflow-retry-save").display
 
 
+@pytest.mark.bootstrap_profile
 async def test_failed_flush_vetoes_real_screen_navigation_without_losing_text(
     tmp_path, monkeypatch
 ):
@@ -1161,6 +1179,7 @@ async def test_failed_flush_vetoes_real_screen_navigation_without_losing_text(
         assert await harness.screen.flush_pending_work()
 
 
+@pytest.mark.bootstrap_profile
 async def test_historical_inspection_keeps_dirty_current_draft_and_edit_guard(tmp_path):
     harness = WorkflowEditorHarness(tmp_path)
     async with harness.run_test(size=(110, 36)) as pilot:
@@ -1215,6 +1234,7 @@ async def test_overlapping_overview_refresh_keeps_one_complete_form(tmp_path):
         assert field_for(editor, "/name").value == "Local file to reviewed note"
 
 
+@pytest.mark.bootstrap_profile
 async def test_resize_focus_and_selector_cancel_are_visible_and_keep_search_cursor(
     tmp_path,
 ):
@@ -1242,6 +1262,7 @@ async def test_resize_focus_and_selector_cancel_are_visible_and_keep_search_curs
         assert harness.focused is not search
 
 
+@pytest.mark.bootstrap_profile
 async def test_sections_scroll_focus_survive_step_navigation_without_documents_in_snapshot(
     tmp_path,
 ):
@@ -1265,6 +1286,7 @@ async def test_sections_scroll_focus_survive_step_navigation_without_documents_i
         assert "raw_text" not in repr(state)
 
 
+@pytest.mark.bootstrap_profile
 async def test_reference_picker_filters_earlier_types_and_restores_exact_opener(
     tmp_path,
 ):
@@ -1297,6 +1319,7 @@ async def test_reference_picker_filters_earlier_types_and_restores_exact_opener(
         assert_hit(screen, prompt)
 
 
+@pytest.mark.bootstrap_profile
 async def test_new_add_step_and_confirmed_discard_are_reachable_at_minimum(tmp_path):
     harness = WorkflowEditorHarness(tmp_path, seed=False)
     async with harness.run_test(size=(60, 20)) as pilot:
@@ -1368,6 +1391,7 @@ def test_only_visible_panes_participate_in_focus_cycle(width, expected):
     assert visible_pane_ids(width) == expected
 
 
+@pytest.mark.bootstrap_profile
 async def test_invalid_json_remains_after_navigation_and_reopen(tmp_path):
     harness = WorkflowEditorHarness(tmp_path)
     async with harness.run_test(size=(110, 36)) as pilot:
@@ -1411,6 +1435,7 @@ async def test_expanded_editor_escape_restores_the_original_field(
         assert harness.focused is field
 
 
+@pytest.mark.bootstrap_profile
 async def test_console_refresh_and_stale_raw_edits_cannot_replace_editor(tmp_path):
     harness = WorkflowEditorHarness(tmp_path)
     async with harness.run_test(size=(110, 36)) as pilot:
@@ -1501,6 +1526,7 @@ async def test_continuous_form_sections_expand_independently_and_restore(tmp_pat
         assert harness.workflow_drafts.current == original
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(160, 48), (110, 36), (60, 20)])
 async def test_pinned_status_distinguishes_stored_draft_from_saved_revision(
     tmp_path, size
