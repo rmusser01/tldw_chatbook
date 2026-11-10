@@ -97,6 +97,15 @@ def _db(tmp_path) -> SubscriptionsDB:
     return SubscriptionsDB(tmp_path / "subs.db", "test")
 
 
+@pytest.fixture
+def db(tmp_path):
+    database = _db(tmp_path)
+    try:
+        yield database
+    finally:
+        database.close()
+
+
 def _new_source(db, watchlist_id, name) -> int:
     """Add a subscription and attach it to a watchlist."""
     source_id = db.add_subscription(
@@ -176,7 +185,8 @@ def _junction(db, briefing_id) -> list[tuple[int, int]]:
 
 
 @pytest.mark.asyncio
-async def test_generation_happy_path_writes_everything(monkeypatch, tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_generation_happy_path_writes_everything(monkeypatch, db):
     """One generation, end to end: body, counts, junction flags, watermark.
 
     Seeds more items than `DEFAULT_ITEM_CAP` so the overflow leg is real
@@ -190,7 +200,6 @@ async def test_generation_happy_path_writes_everything(monkeypatch, tmp_path):
         "resolve_persisted_briefing_defaults",
         lambda: ("local-llama", "local-model"),
     )
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
 
@@ -257,8 +266,8 @@ async def test_generation_happy_path_writes_everything(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_generation_writes_ordered_snapshot_provenance(tmp_path):
-    db = _db(tmp_path)
+@pytest.mark.bootstrap_profile
+async def test_generation_writes_ordered_snapshot_provenance(db):
     watchlist = WatchlistBundleService(db).create(name="Ordered")["id"]
     source = _new_source(db, watchlist, "ordered")
     first = _add_article(db, source, "First", age_hours=2)
@@ -364,8 +373,8 @@ async def test_generation_writes_ordered_snapshot_provenance(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_provenance_and_complete_publication_roll_back_together(tmp_path):
-    db = _db(tmp_path)
+@pytest.mark.bootstrap_profile
+async def test_provenance_and_complete_publication_roll_back_together(db):
     watchlist = WatchlistBundleService(db).create(name="Atomic")["id"]
     source = _new_source(db, watchlist, "atomic")
     item_id = _add_article(db, source, "Atomic item")
@@ -397,14 +406,14 @@ async def test_provenance_and_complete_publication_roll_back_together(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_llm_failure_is_honest_and_loses_nothing(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_llm_failure_is_honest_and_loses_nothing(db):
     """THE named invariant: a failed generation never advances coverage.
 
     Asserted through its consequence -- the next attempt re-selects the same
     item identities -- rather than through the column alone, because that is
     the property the user actually has (no item is silently skipped).
     """
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
 
@@ -457,13 +466,13 @@ async def test_llm_failure_is_honest_and_loses_nothing(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_empty_window_is_a_row_not_an_absence(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_empty_window_is_a_row_not_an_absence(db):
     """No items -> a visible `empty` row, no provider call, watermark held.
 
     Silence is never a state (spec §Error-handling ethos): the user gets a
     row saying "nothing arrived", not an absent artifact they must interpret.
     """
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Quiet")["id"]
     source = _new_source(db, watchlist, "quiet")
 
@@ -690,14 +699,14 @@ def test_interrupted_recovery_only_touches_generating_rows(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_an_empty_model_response_is_a_failure_not_an_empty_briefing(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_an_empty_model_response_is_a_failure_not_an_empty_briefing(db):
     """A provider that returns nothing produced no briefing.
 
     Recording it `complete` with a blank body would show the user an empty
     artifact with no error to explain it -- and, worse, would advance the
     coverage window past items nothing ever reported.
     """
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     item = _add_article(db, source, "Something Happened")
@@ -716,7 +725,8 @@ async def test_an_empty_model_response_is_a_failure_not_an_empty_briefing(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_a_failed_generation_logs_no_item_content(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_a_failed_generation_logs_no_item_content(db):
     """The module's egress claim, pinned: no item content reaches the log.
 
     Generation sends titles, excerpts and diffs to the configured provider --
@@ -735,7 +745,6 @@ async def test_a_failed_generation_logs_no_item_content(tmp_path):
     # reason. Round 1's first draft used a 15-character title and the repr
     # ended one character short of it -- green against a live leak.
     canary = "ZEBRACANARY"
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, canary)
     _add_article(db, source, canary)
@@ -764,9 +773,9 @@ async def test_a_failed_generation_logs_no_item_content(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_explicit_provider_and_model_override_the_default(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_explicit_provider_and_model_override_the_default(db):
     """A preset's provider/model wins over the app default (spec §5)."""
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -792,10 +801,10 @@ async def test_explicit_provider_and_model_override_the_default(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_a_presets_provider_and_model_are_used_with_no_explicit_override(
-    tmp_path,
+    db,
 ):
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -813,8 +822,8 @@ async def test_a_presets_provider_and_model_are_used_with_no_explicit_override(
 
 
 @pytest.mark.asyncio
-async def test_explicit_args_still_win_over_the_presets_provider_and_model(tmp_path):
-    db = _db(tmp_path)
+@pytest.mark.bootstrap_profile
+async def test_explicit_args_still_win_over_the_presets_provider_and_model(db):
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -834,8 +843,8 @@ async def test_explicit_args_still_win_over_the_presets_provider_and_model(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_a_presets_style_notes_are_appended_to_the_system_prompt(tmp_path):
-    db = _db(tmp_path)
+@pytest.mark.bootstrap_profile
+async def test_a_presets_style_notes_are_appended_to_the_system_prompt(db):
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -850,8 +859,9 @@ async def test_a_presets_style_notes_are_appended_to_the_system_prompt(tmp_path)
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_a_deleted_preset_id_is_recorded_as_none_and_generation_proceeds(
-    monkeypatch, tmp_path
+    monkeypatch, db
 ):
     """A preset id that no longer resolves must not brick generation."""
     monkeypatch.setattr(
@@ -859,7 +869,6 @@ async def test_a_deleted_preset_id_is_recorded_as_none_and_generation_proceeds(
         "resolve_persisted_briefing_defaults",
         lambda: ("local-llama", "local-model"),
     )
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -878,7 +887,8 @@ async def test_a_deleted_preset_id_is_recorded_as_none_and_generation_proceeds(
 
 
 @pytest.mark.asyncio
-async def test_curated_mode_generation_leaves_the_window_alone(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_curated_mode_generation_leaves_the_window_alone(db):
     """The service honours the watchlist's stored mode, and curated's echo.
 
     Task 2's contract: curated selection echoes the prior watermark rather
@@ -886,7 +896,6 @@ async def test_curated_mode_generation_leaves_the_window_alone(tmp_path):
     a service that recomputed "max id covered" from its own item list would
     silently step the window past items no briefing ever covered.
     """
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Curated")["id"]
     source = _new_source(db, watchlist, "acme")
 
@@ -914,14 +923,14 @@ async def test_curated_mode_generation_leaves_the_window_alone(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_generation_accepts_an_async_chat_seam(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_generation_accepts_an_async_chat_seam(db):
     """`chat` may be a coroutine function; the service awaits it.
 
     The real seam is synchronous and is offloaded to a thread, but the UI
     (task 4) may wrap it, so both shapes must work rather than one of them
     returning an un-awaited coroutine object as the briefing body.
     """
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -940,7 +949,8 @@ async def test_generation_accepts_an_async_chat_seam(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_the_db_work_runs_off_the_event_loop_thread(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_the_db_work_runs_off_the_event_loop_thread(db):
     """Whole-branch review fix 1: `generate_briefing`'s DB work must not run
     on the caller's event loop. The screen dispatches this from a Textual
     worker, so a contended sqlite write used to block the whole UI.
@@ -950,7 +960,6 @@ async def test_the_db_work_runs_off_the_event_loop_thread(tmp_path):
     executes the database-owned accept and publish operations can distinguish
     the off-loop implementation from a blocking event-loop mutation.
     """
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Threaded")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -1025,13 +1034,13 @@ def test_fail_interrupted_briefings_spares_an_excluded_row_both_directions(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_a_second_generation_for_a_claimed_watchlist_raises_before_any_row_insert(
-    tmp_path,
+    db,
 ):
     """Phase-1's no-orphan-row contract, extended to the claim itself: the
     refusal must happen before `generate_briefing` ever calls
     `db.insert_briefing`."""
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -1047,8 +1056,8 @@ async def test_a_second_generation_for_a_claimed_watchlist_raises_before_any_row
 
 
 @pytest.mark.asyncio
-async def test_the_claim_is_released_after_a_successful_generation(tmp_path):
-    db = _db(tmp_path)
+@pytest.mark.bootstrap_profile
+async def test_the_claim_is_released_after_a_successful_generation(db):
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -1060,8 +1069,8 @@ async def test_the_claim_is_released_after_a_successful_generation(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_the_claim_is_released_after_a_chat_failure(tmp_path):
-    db = _db(tmp_path)
+@pytest.mark.bootstrap_profile
+async def test_the_claim_is_released_after_a_chat_failure(db):
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -1147,11 +1156,11 @@ def test_active_briefing_claim_row_ids_is_an_empty_snapshot_by_default():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_a_second_database_owner_resolves_the_existing_durable_briefing_claim(
-    tmp_path,
+    db,
 ):
     """A durable active row wins before a second owner can call the model."""
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -1252,11 +1261,11 @@ def test_a_claim_with_no_recorded_row_id_yet_survives_a_sweep_of_its_own_row(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_reconciliation_releases_a_zombie_claim_before_new_generation(
-    tmp_path,
+    db,
 ):
     """Terminal reconciliation releases the partial-index claim."""
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -1281,10 +1290,10 @@ async def test_reconciliation_releases_a_zombie_claim_before_new_generation(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_a_reasoning_typed_deepseek_model_gets_a_larger_completion_budget(
-    tmp_path,
+    db,
 ):
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -1299,13 +1308,13 @@ async def test_a_reasoning_typed_deepseek_model_gets_a_larger_completion_budget(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_a_plain_deepseek_chat_model_keeps_the_plain_completion_budget(
-    tmp_path,
+    db,
 ):
     """deepseek-chat completes the same prompt within the plain budget
     (live-verified during the TASK-21515 incident) -- only the
     reasoning-typed families are widened."""
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
