@@ -143,6 +143,7 @@ def test_responses_request_preserves_native_headers_and_wire_payload(
     assert request["json"]["stream"] is streaming
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_streaming_payload_includes_stream_options(mock_post):
     mock_post.return_value = _streaming_ok_response(
@@ -192,6 +193,7 @@ def test_stopping_stream_closes_transport_without_yielding_after_generator_exit(
     response.close.assert_called_once_with()
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_non_streaming_payload_omits_stream_options(mock_post):
     ok = Mock()
@@ -212,6 +214,7 @@ def test_non_streaming_payload_omits_stream_options(mock_post):
     assert "stream_options" not in mock_post.call_args[1]["json"]
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_400_naming_stream_options_retries_without_it(mock_post):
     bad = Mock()
@@ -260,6 +263,7 @@ def test_responses_completed_event_carries_usage_through():
     assert completed[0]["usage"]["input_tokens_details"]["cached_tokens"] == 1024
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_400_not_naming_stream_options_is_passed_through_unretried(mock_post):
     """The degrade rule is narrow ON PURPOSE: only a 400 that actually names
