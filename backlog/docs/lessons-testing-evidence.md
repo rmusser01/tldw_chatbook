@@ -24,6 +24,22 @@
 
 **What to do.** When you add a backup owner, or a dependency edge to one, test the profile where the owner's folder is absent as well as present. Assert the core's dependencies in both states, not only the owner's own items. Then run the Backup_Recovery owner suites locally, because CI will not. Run the failing nodes once against base code, and count only the nodes that pass there as yours.
 
+## A loop-thread latency interval also collects work the action never caused (TASK-38948, 2026-11-10)
+
+**Incident.** The 100 ms Send-feedback test read 88-107 ms of event-loop CPU between the Send action and the "Sending…" paint on a quiet host, and the round-13 brief read that as the send's own cost. A thread-scoped profile over 39 cases split it differently. It used a stack sampler plus `thread_time` per `asyncio` `Handle._run` on the loop thread (cProfile is not thread-scoped, see TASK-35961 below).
+- **The send itself: 33-53 ms.** Key dispatch, `paint_acknowledgement`, and the first-message frame (one full reflow plus about 5,300 dirty cells).
+- **Up to 57 ms more that the send did not cause.** Much of it ran before the key even reached `ChatScreen.on_key`. The test presses Send 0.6-1.5 s after the Console attaches, so the window catches the mount still settling: the first credential-readiness passes, the post-mount whole sync, the coalesced control-bar sync, extra frames and a cold skill discovery. It also catches the 0.2 s draft-spend refresh queued by the test's own `load_draft`.
+
+Two of those were real product waste, fixed in round 13: the credential TTL flip and skill discovery on the loop in the eager-factory app (next entry). The rest is the screen settling.
+
+**What to do.** Before reading a loop-CPU interval as the cost of the action under test, attribute it per callback on the loop thread, and set apart the timers and workers that were already due when the action started. A budget on "the action" that also counts the screen's own settling fails for reasons the action cannot fix.
+
+## `run_test` installs no task factory, the real app installs the eager one (TASK-38948, 2026-11-10)
+
+**Incident.** `_capture_console_skill_trust_preparation` required `loop.get_task_factory() is None`. Textual's `App.run_async` installs `asyncio.eager_task_factory`, so in every real run that preparation refused. The Console's first skill discovery then built the trust service and read every skill on the UI loop, inside the mount itself. The eager start ran the worker inside `_start_console_view_after_reconciliation`. Every mounted test stayed green, because `run_test` installs no factory and the off-loop path ran there. Only a subprocess run of a real `TldwCli` with the eager factory installed showed `LocalSkillsService.get_context` on `MainThread`. With the guard admitting the stock eager factory, it ran on a worker thread.
+
+**What to do.** A branch that depends on the loop's task factory needs a test that installs `asyncio.eager_task_factory` first, the way `App.run_async` does. Mounted tests can use `Tests.UI.test_console_hook_review_send_freeze._task_factory("eager")`. Treat a guard that refuses the stock eager factory as a path that never runs in production.
+
 ## A parent source pin does not bind a private pytest child's Core import (PR3036, 2026-11-07)
 
 **Incident.** The approval launcher verified selected Main, Core and Tests origins in its `-I` parent after inserting the selected paths into `sys.path`. `Tests.private_profile` then spawned a fresh interpreter: only Main survived through its working directory, and Core resolved through the primary checkout's editable installation. A real child-environment metadata probe reproduced that foreign origin even though all 14 Core Python files happened to have identical content. Earlier parent-origin receipts therefore did not prove complete child-source closure. Performance helper environments had the same omission, including one first-use environment whitelist that dropped `PYTHONPATH` entirely.

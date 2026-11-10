@@ -59,6 +59,8 @@ class ConsoleSkillController:
         self._set_task_resume_state = set_task_resume_state
         self._current_chat_controller = current_chat_controller
         self._console_skill_candidates: tuple[SkillCommandCandidate, ...] = ()
+        #: The newest discovery started; an older one never publishes over it.
+        self._console_skill_refresh_serial = 0
 
     async def _fetch_console_skill_context(self) -> Mapping[str, Any]:
         """Fetch a fresh skill context, failing closed to an empty mapping."""
@@ -209,6 +211,8 @@ class ConsoleSkillController:
         """Refresh the popup's cached trusted-candidate snapshot."""
         from tldw_chatbook.config import config_read_would_wait
 
+        self._console_skill_refresh_serial += 1
+        serial = self._console_skill_refresh_serial
         owner = _capture_console_skill_discovery(self)
         # TASK-35836: the first trust-service build reads config on the UI loop.
         while config_read_would_wait():
@@ -218,6 +222,10 @@ class ConsoleSkillController:
             return
         candidates = self._console_skill_trusted_candidates_from_context(context)
         if owner is not None and not owner[0]():
+            return
+        # TASK-38948: reads finish off the loop in any order; a superseded
+        # discovery (an empty failed read included) must not replace newer.
+        if serial != self._console_skill_refresh_serial:
             return
         self._console_skill_candidates = candidates
         self._sync_console_command_popup()

@@ -2906,3 +2906,8 @@ Tests/UI/test_plugins_browse.py::test_navigation_during_child_prune_settles_orig
 Tests/UI/test_plugins_browse.py::test_navigation_during_child_prune_settles_original_load[snapshot-error]
 Tests/UI/test_plugins_browse.py::test_authority_recovery_copy_is_truthful_without_a_reset_step
 Tests/UI/test_plugin_review.py::test_unlock_mismatch_shows_restore_copy_not_passphrase_advice
+# TASK-38948 round 13 (2026-11-10): the real app's mount-time skill discovery
+# builds and reads off the UI loop under the eager task factory, and a
+# superseded discovery never publishes over a newer one.
+Tests/UI/test_console_skill_controller.py::test_a_superseded_refresh_never_publishes_over_a_newer_one
+Tests/UI/test_console_skill_context_worker.py::test_mounted_discovery_builds_and_reads_off_the_loop_under_the_eager_factory
