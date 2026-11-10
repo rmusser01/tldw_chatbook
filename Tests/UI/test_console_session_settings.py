@@ -34,6 +34,12 @@ import tldw_chatbook.Widgets.Console.console_settings_modal as settings_modal_mo
 from Tests.app_module_patches import patch_app_global
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import persist_seeded_config
+from Tests.UI.background_signals import (
+    BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+    await_background_task,
+    wait_for_background_signal,
+    wait_for_signal,
+)
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -41,6 +47,7 @@ from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp, app_c
 from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_non_obscuring_focus_contract import css_blocks
+from Tests.UI.textual_test_helpers import wait_for_worker
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
@@ -1343,10 +1350,23 @@ async def test_source_reopen_revalidates_exact_owner_after_model_resolution(
     )
     context_spend_for_test(screen)._active_console_context_control_state = lambda **_kwargs: None
     _install_open_settings_dependencies(screen)
+    # Reopen revalidates the same controller while the model catalog loads.
+    controller = screen._ensure_console_chat_controller()
+    screen._ensure_console_chat_controller = lambda: controller
+    screen._console_run_active = lambda: False
     screen._provider_readiness_app_config = lambda: {"api_settings": {"openai": {}}}
     screen._global_chat_display_name = lambda: "Ada"
     resolution_started = asyncio.Event()
     release_resolution = asyncio.Event()
+    stack_checks_after_resolution: list[bool] = []
+
+    def owns_stack():
+        owns = ChatScreen._owns_console_screen_stack(screen)
+        if release_resolution.is_set():
+            stack_checks_after_resolution.append(owns)
+        return owns
+
+    screen._owns_console_screen_stack = owns_stack
 
     async def delayed_provider_models(*_args, **_kwargs):
         resolution_started.set()
@@ -1363,12 +1383,17 @@ async def test_source_reopen_revalidates_exact_owner_after_model_resolution(
             settings_revision=0,
         )
     )
-    await resolution_started.wait()
-    later_top_screen = object()
-    stack.append(later_top_screen)
-    release_resolution.set()
-    await reopen_task
+    try:
+        await wait_for_background_signal(
+            resolution_started, reopen_task, what="settings reopen model resolution"
+        )
+        later_top_screen = object()
+        stack.append(later_top_screen)
+    finally:
+        release_resolution.set()
+        await await_background_task(reopen_task, what="settings reopen")
 
+    assert stack_checks_after_resolution == [False]
     assert pushed == []
     assert stack[-1] is later_top_screen
     assert screen._suspended_conversation_settings is snapshot
@@ -13172,37 +13197,43 @@ async def test_connection_probe_publishes_only_bounded_current_identity_model_ev
     async with app.run_test(size=(120, 60)) as pilot:
         await app.push_screen(modal)
         await pilot.pause()
-        modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button).press()
-        await tester.started.wait()
+        try:
+            modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button).press()
+            await wait_for_signal(tester.started, what="connection model evidence probe")
 
-        readiness = modal.query_one("#console-settings-readiness", Static)
-        assert "Endpoint · Testing…" in str(readiness.renderable)
-        testing_evidence = modal._connection_evidence_store.evidence_for(
-            modal._current_connection_probe_identity()
-        )
-        assert testing_evidence is not None
-        assert testing_evidence.endpoint == "testing"
+            readiness = modal.query_one("#console-settings-readiness", Static)
+            assert "Endpoint · Testing…" in str(readiness.renderable)
+            testing_evidence = modal._connection_evidence_store.evidence_for(
+                modal._current_connection_probe_identity()
+            )
+            assert testing_evidence is not None
+            assert testing_evidence.endpoint == "testing"
 
-        assert len(tester.calls) == 1
-        identity = tester.calls[0]
-        assert type(identity) is ProviderDraftIdentity
-        assert identity.provider_key == "llama_cpp"
-        assert identity.connection_identity == (
-            "llama_cpp",
-            "http://127.0.0.1:9099",
-        )
+            assert len(tester.calls) == 1
+            identity = tester.calls[0]
+            assert type(identity) is ProviderDraftIdentity
+            assert identity.provider_key == "llama_cpp"
+            assert identity.connection_identity == (
+                "llama_cpp",
+                "http://127.0.0.1:9099",
+            )
 
-        tester.release.set()
-        await _wait_for_discover_status(app, pilot, "1 model listed")
+            tester.release.set()
+            await _wait_for_discover_status(app, pilot, "1 model listed")
 
-        assert modal._current_model_value() is None
-        evidence = modal._connection_evidence_store.evidence_for(
-            modal._current_connection_probe_identity()
-        )
-        assert evidence is not None
-        assert evidence.endpoint == "reachable"
-        assert evidence.model_ids == ("served-model",)
-        assert evidence.generation == "not_tested"
+            assert modal._current_model_value() is None
+            evidence = modal._connection_evidence_store.evidence_for(
+                modal._current_connection_probe_identity()
+            )
+            assert evidence is not None
+            assert evidence.endpoint == "reachable"
+            assert evidence.model_ids == ("served-model",)
+            assert evidence.generation == "not_tested"
+        finally:
+            tester.release.set()
+            assert await wait_for_worker(
+                pilot, timeout=BACKGROUND_SIGNAL_TIMEOUT_SECONDS
+            )
 
 
 @pytest.mark.asyncio
@@ -13488,44 +13519,50 @@ async def test_connection_probe_is_cancelled_and_cannot_publish_after_endpoint_e
     async with app.run_test(size=(120, 60)) as pilot:
         await app.push_screen(modal)
         await pilot.pause()
-        modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button).press()
-        await tester.started.wait()
+        try:
+            modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button).press()
+            await wait_for_signal(tester.started, what="connection probe before endpoint edit")
 
-        modal.query_one("#console-settings-base-url", Input).value = (
-            "http://127.0.0.1:9100"
-        )
-        for _ in range(40):
-            if tester.cancelled:
-                break
-            await pilot.pause(0.01)
+            modal.query_one("#console-settings-base-url", Input).value = (
+                "http://127.0.0.1:9100"
+            )
+            for _ in range(40):
+                if tester.cancelled:
+                    break
+                await pilot.pause(0.01)
 
-        assert tester.cancelled is True
-        assert modal._connection_evidence_store.evidence_for(
-            modal._current_connection_probe_identity()
-        ) is None
-        assert modal._current_model_discovery_identity is None
-        cancelled_readiness = str(
-            modal.query_one("#console-settings-readiness", Static).renderable
-        )
-        assert "Endpoint · Not tested" in cancelled_readiness
-        assert "Endpoint · Testing…" not in cancelled_readiness
-        assert "Endpoint · Reachable" not in cancelled_readiness
+            assert tester.cancelled is True
+            assert modal._connection_evidence_store.evidence_for(
+                modal._current_connection_probe_identity()
+            ) is None
+            assert modal._current_model_discovery_identity is None
+            cancelled_readiness = str(
+                modal.query_one("#console-settings-readiness", Static).renderable
+            )
+            assert "Endpoint · Not tested" in cancelled_readiness
+            assert "Endpoint · Testing…" not in cancelled_readiness
+            assert "Endpoint · Reachable" not in cancelled_readiness
 
-        endpoint = modal.query_one("#console-settings-base-url", Input)
-        endpoint.value = "not a valid endpoint"
-        await pilot.pause()
-        action = modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
-        assert action.display is False
-        assert str(
-            modal.query_one(
-                "#console-settings-model-discover-scope", Static
-            ).renderable
-        ) == settings_modal_module.CONNECTION_PROBE_UNAVAILABLE_COPY
+            endpoint = modal.query_one("#console-settings-base-url", Input)
+            endpoint.value = "not a valid endpoint"
+            await pilot.pause()
+            action = modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
+            assert action.display is False
+            assert str(
+                modal.query_one(
+                    "#console-settings-model-discover-scope", Static
+                ).renderable
+            ) == settings_modal_module.CONNECTION_PROBE_UNAVAILABLE_COPY
 
-        endpoint.value = "http://127.0.0.1:9200"
-        await pilot.pause()
-        assert action.display is True
-        assert action.disabled is False
+            endpoint.value = "http://127.0.0.1:9200"
+            await pilot.pause()
+            assert action.display is True
+            assert action.disabled is False
+        finally:
+            tester.release.set()
+            assert await wait_for_worker(
+                pilot, timeout=BACKGROUND_SIGNAL_TIMEOUT_SECONDS
+            )
 
 
 @pytest.mark.asyncio
@@ -13549,16 +13586,22 @@ async def test_connection_probe_is_cancelled_when_modal_closes() -> None:
     async with app.run_test(size=(120, 60)) as pilot:
         await app.push_screen(modal)
         await pilot.pause()
-        modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button).press()
-        await tester.started.wait()
+        try:
+            modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button).press()
+            await wait_for_signal(tester.started, what="connection probe before modal close")
 
-        await pilot.press("escape")  # TASK-33006.5: the Model view has no Cancel
-        for _ in range(40):
-            if tester.cancelled:
-                break
-            await pilot.pause(0.01)
+            await pilot.press("escape")  # TASK-33006.5: the Model view has no Cancel
+            for _ in range(40):
+                if tester.cancelled:
+                    break
+                await pilot.pause(0.01)
 
-        assert tester.cancelled is True
+            assert tester.cancelled is True
+        finally:
+            tester.release.set()
+            assert await wait_for_worker(
+                pilot, timeout=BACKGROUND_SIGNAL_TIMEOUT_SECONDS
+            )
 
 
 @pytest.mark.asyncio
