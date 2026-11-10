@@ -179,12 +179,14 @@ def test_unwired_name_falls_through_to_the_permission_gate(name):
 # duplicates rather than strengthens this end-to-end assertion.
 
 
-def test_subagent_cannot_call_run_log_stats_or_run_log_slice(tmp_path, monkeypatch):
+@pytest.mark.bootstrap_profile
+def test_subagent_cannot_call_run_log_stats_or_run_log_slice(tmp_path, monkeypatch, request):
     from tldw_chatbook.Agents import run_log as run_log_module
 
     monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
 
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    request.addfinalizer(db.close)
     reg = ToolCatalogRegistry()
     reg.register_provider(BuiltinToolProvider())
 
@@ -211,18 +213,20 @@ def test_subagent_cannot_call_run_log_stats_or_run_log_slice(tmp_path, monkeypat
     )
 
     service = AgentService(db, reg, chat_call=chat)
-    _rid, outcome = service.run_turn(
-        conversation_id="c1",
-        messages=[{"role": "user", "content": "go"}],
-        config=AgentConfig(
-            model="m",
-            system_prompt="s",
-            allowed_tools=("calculator", SPAWN_TOOL_NAME),
-            budget=RunBudget(),
-        ),
-        api_endpoint="llama_cpp",  # fence protocol: schemas render into the system prompt
-    )
-    join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
+    try:
+        _rid, outcome = service.run_turn(
+            conversation_id="c1",
+            messages=[{"role": "user", "content": "go"}],
+            config=AgentConfig(
+                model="m",
+                system_prompt="s",
+                allowed_tools=("calculator", SPAWN_TOOL_NAME),
+                budget=RunBudget(),
+            ),
+            api_endpoint="llama_cpp",  # fence protocol: schemas render into the system prompt
+        )
+    finally:
+        join_fleet_children(service)  # The child can outlive the turn.
     assert outcome.status == RUN_DONE
 
     # (a) schema gate: the child's own system prompt must never mention
