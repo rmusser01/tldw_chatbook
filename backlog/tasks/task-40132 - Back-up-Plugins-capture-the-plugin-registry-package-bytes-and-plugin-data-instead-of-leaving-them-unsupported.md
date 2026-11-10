@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-10 16:15
-updated_date: 2026-11-10 16:31
+updated_date: 2026-11-10 17:10
 labels:
 - follow-up
 - backup
@@ -44,6 +44,8 @@ Today every one of these producers sits in the backup review's conservative `uns
 - [ ] #4 While a plugin process or another plugin data writer is running, capture either waits for it to stop or is refused with a reason the preview shows, so no capture holds half-written plugin data; a test shows it
 - [ ] #5 A restore puts the registry, packages and data back byte for byte. The plugin system then reports its documented state for a missing keyring marker, and the user sees copy that says what to do; no plugin data is lost. Tests cover both
 - [ ] #6 The owner inventory doc's Plugins rows and the backup User Guide page describe the new behaviour
+- [ ] #7 After a restore, the plugin service refuses to run plugins until plugin authority recovery completes, which approves them; a test shows both
+- [ ] #8 A restore into a separate profile refuses the plugins owner with the reason owner_relocation_unverified, and a same-profile restore is unaffected; a test shows both
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -64,7 +66,7 @@ Checked on worktree base 42fc21939d (dev ae9f9e8d21 plus the filing commit), 202
 - `-wal`/`-shm` are declared as `sqlite.transient` and intentionally excluded through `inventory._sqlite_sidecars`. The two `recovered.media` name checks become one small owner-to-SQLite-member map, shared by `inventory._sqlite_sidecars` and `capture._item_validator`; `replacement.py` already reuses the latter.
 - The new owner joins `sqlite_validation._installed_owner`'s factory list.
 
-**Exclusions (AC2).** `runtime.lock` is intentionally excluded, and its capture is refused. `staging/` and `acquisition-custody/` are an open question (Q1). Everything else under the root is captured, including `cache/` and unknown names.
+**Exclusions (AC2).** `runtime.lock` is intentionally excluded, and its capture is refused. Everything else under the root is captured (Q1 decision), including `staging/`, `acquisition-custody/`, `cache/` and unknown names.
 
 **Quiescing (AC4): refuse, never wait.**
 - Discover reads the registry through the preview copy. If any `processes.state` is not `settled`, a plugin process may be running. Also, if a non-blocking `portalocker` probe of an existing `runtime.lock` fails, a live runtime owner holds it; the probe never creates the file. In either case every `plugins` item becomes `unavailable`, plus a `plugins:writers_active` item.
@@ -82,7 +84,17 @@ Checked on worktree base 42fc21939d (dev ae9f9e8d21 plus the filing commit), 202
 
 **Tests.** Discover and capture tests go in `Tests/Architecture/test_backup_owner_inventory.py`, next to the Personal Context owner test; it is on the backup-recovery-qualification lane. A roundtrip test goes in `Tests/Backup_Recovery/test_complete_roundtrip.py` (same lane). Each test is shown red before its change.
 
-**Pending owner decisions. Implementation is stopped here (NEEDS_CONTEXT, 2026-11-10).**
+**Owner decisions (2026-11-10, via the coordinator's AskUserQuestion), recorded verbatim:**
+
+- Q1 staging/custody: "Capture both (Recommended)" — "Capture staging/ and acquisition-custody/; exclude only runtime.lock. Git-installed plugins can be recovered after a restore."
+- Q2 restore copy: "Plugins screen (Recommended)" — "Rewrite the Plugins screen's recovery_required copy to name the restore case and the Reset authority action."
+- Q3 execution gate: "Enforce it (Recommended)" — "The plugin service refuses to start plugins after a restore until plugin authority recovery completes, which then approves it."
+- Q4 relocation: "Refuse plugins there (Recommended)" — "Restoring into a separate profile refuses the plugins owner ('owner relocation unverified') until a relocation design exists; restoring onto the same profile works."
+- The refusal ceiling (runtime.lock held until quit) is accepted; the preview reason copy and the User Guide state it.
+
+Q3 and Q4 added criteria #7 and #8.
+
+**Questions as asked (kept for the record):**
 
 - **Q1: staging and acquisition custody.** The description calls `staging/` and `acquisition-custody/*.json` in-flight state, but they are not only that. For every git-acquired installation, `acquisition.verify_reference` needs the terminal, `recovery_referenced` custody record and the retained `staging/<sha>/snapshot` bytes. That call is used by plugin recovery (`recovery.retained_inspections`, through `retained_inspection._verify_retained_source`) and by `source_service.validate_inspection_source`. These entries are never swept. Excluding them makes those installations unrecoverable after a restore. Options:
   - (a) Capture all of `staging/` and `acquisition-custody/`, so only `runtime.lock` is excluded. **Recommended.**
