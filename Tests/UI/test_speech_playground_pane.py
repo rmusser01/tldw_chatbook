@@ -14,7 +14,11 @@ from textual.screen import Screen
 from textual.widgets import Button, Collapsible, Input, Select, Static
 
 from Tests.UI.app_factory import _build_test_app
-from Tests.UI.background_signals import wait_for_signal
+from Tests.UI.background_signals import (
+    await_background_task,
+    wait_for_background_signal,
+    wait_for_signal,
+)
 from Tests.UI.speech_playground_fixtures import (
     FakeTTSService,
     _native_profile_artifact,
@@ -1508,6 +1512,7 @@ async def test_openai_catalog_worker_uses_explicit_tts_probe_and_records_outcome
         (SpeechTTSConnectionState.UNREACHABLE, "incompatible"),
     ),
 )
+@pytest.mark.bootstrap_profile
 async def test_latest_openai_probe_replaces_success_independently_of_hydration(
     faked_service: FakeTTSService,
     monkeypatch: pytest.MonkeyPatch,
@@ -1579,6 +1584,7 @@ async def test_latest_openai_probe_replaces_success_independently_of_hydration(
         assert evidence.catalog_state(fingerprint) is latest_state
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_openai_probe_result_is_not_attributed_after_revision_changes(
     faked_service: FakeTTSService,
@@ -1626,10 +1632,14 @@ async def test_openai_probe_result_is_not_attributed_after_revision_changes(
                 request_generation=request_generation,
             )
         )
-        await wait_for_signal(probe_started, what="the explicit catalog probe")
-        faked_service.revisions["openai"] = 2
-        release_probe.set()
-        await worker
+        try:
+            await wait_for_background_signal(
+                probe_started, worker, what="the explicit catalog probe"
+            )
+            faked_service.revisions["openai"] = 2
+        finally:
+            release_probe.set()
+            await await_background_task(worker, what="the revision-change probe")
 
         changed = build_provider_test_fingerprint(
             state,
@@ -1642,6 +1652,7 @@ async def test_openai_probe_result_is_not_attributed_after_revision_changes(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_openai_probe_result_is_not_attributed_after_fingerprint_changes(
     faked_service: FakeTTSService,
@@ -1694,25 +1705,29 @@ async def test_openai_probe_result_is_not_attributed_after_fingerprint_changes(
                 request_generation=request_generation,
             )
         )
-        await wait_for_signal(probe_started, what="the explicit catalog probe")
-        runtime_values.update(
-            {
-                "COMPREHENSIVE_CONFIG_RAW": {
-                    "app_tts": {
-                        "OPENAI_BASE_URL": "http://127.0.0.1:8765/v1/audio/speech"
+        try:
+            await wait_for_background_signal(
+                probe_started, worker, what="the explicit catalog probe"
+            )
+            runtime_values.update(
+                {
+                    "COMPREHENSIVE_CONFIG_RAW": {
+                        "app_tts": {
+                            "OPENAI_BASE_URL": "http://127.0.0.1:8765/v1/audio/speech"
+                        }
                     }
                 }
-            }
-        )
-        changed_state = load_global_speech_tts_state(runtime_values, environment={})
-        changed = build_provider_test_fingerprint(
-            changed_state,
-            provider_id="openai",
-            saved_revision=1,
-        )
-        assert initial != changed
-        release_probe.set()
-        await worker
+            )
+            changed_state = load_global_speech_tts_state(runtime_values, environment={})
+            changed = build_provider_test_fingerprint(
+                changed_state,
+                provider_id="openai",
+                saved_revision=1,
+            )
+            assert initial != changed
+        finally:
+            release_probe.set()
+            await await_background_task(worker, what="the fingerprint-change probe")
 
         evidence = process_provider_test_evidence_store(app)
         assert evidence.catalog_state(initial) is SpeechTTSConnectionState.NOT_TESTED
