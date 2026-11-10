@@ -212,6 +212,9 @@ async def exercise():
             )
             await asyncio.sleep(0)
             await asyncio.sleep(0)
+            # Long enough for an unheld dispose to finish (review r13n-rev2),
+            # under the 3 s worker cancellation grace, so app_closing holds.
+            await asyncio.sleep(1.0)
             assert not control.done(), 'close must wait for the held build'
             release.set()
             await asyncio.wait_for(asyncio.shield(control), timeout=30)

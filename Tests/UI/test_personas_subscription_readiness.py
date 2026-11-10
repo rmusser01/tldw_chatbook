@@ -226,7 +226,6 @@ async def test_handoff_readiness_refreshes_expiry_and_stale_snapshot_without_edi
         # while the handoff keeps its last state; it never flickers back to
         # "Checking Claude" for a credential that was already read.
         credential_io.release.clear()
-        credential_io.entered.clear()
         credential_io.expires_at_ms = 2000000
         credential_io.monotonic = subscription._KEYCHAIN_TTL_S + 1
         async with asyncio.timeout(3):
