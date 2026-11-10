@@ -140,7 +140,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleViewHookSlot as ConsoleViewHookSlot,
 )
 from tldw_chatbook.Chat.console_display_state import console_sent_source_count
-from tldw_chatbook.Chat.console_hook_review import HookReviewResult
+from tldw_chatbook.Chat.console_hook_review import HookReviewResult, screen_hook_review_projection
 from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAssistantLibraryAccess,
     ConsoleAutoRetrieve,
@@ -1622,7 +1622,7 @@ class ConsoleRuntime:
 
     def _request_visible_receipt_render(self) -> None:
         """Re-arm the on-screen view's transcript sync (thread-safe post)."""
-        start = getattr(self.view, "_start_console_transcript_sync_timer", None)
+        start = getattr(self.view, "request_transcript_sync", None)
         call_later = getattr(self._app, "call_later", None)
         if not callable(start) or not callable(call_later):
             return
@@ -5303,7 +5303,7 @@ class ConsoleRuntime:
         # The owning modal suspends the Console and clears reconciliation.
         # Its current token and attachment still identify an answerable review.
         try:
-            projection = view.app.screen._console_hook_review_projection
+            projection = screen_hook_review_projection(view.app.screen)
         except (AttributeError, RuntimeError):
             return False
         return bool(
@@ -5618,7 +5618,7 @@ class ConsoleRuntime:
         try:
             app = self.view.app
             visible_hook_review = any(
-                getattr(screen, "_console_hook_review_projection", None) is not None
+                screen_hook_review_projection(screen) is not None
                 for screen in getattr(app, "screen_stack", (app.screen,))
             )
         except (AttributeError, RuntimeError):

@@ -92,7 +92,7 @@ def _present(state, review_id="review", generation=1):
         review_id, generation, attachment
     )
     assert projection is not None
-    state.app.screen = SimpleNamespace(_console_hook_review_projection=projection)
+    state.app.screen = SimpleNamespace(hook_review_projection=projection)
     # A real modal suspends its Console after the initial claim.
     state.runtime._reconciled_view = None
     return view, attachment, projection
@@ -595,7 +595,7 @@ async def test_new_modal_token_survives_delayed_old_modal_unmount(review_runtime
     pending = state.controller.pending_decision_projection(state.session.id)
     assert project_runtime_hook_review(state.runtime, pending)
     old_modal = state.app.screen
-    old = old_modal._console_hook_review_projection
+    old = old_modal.hook_review_projection
 
     # Textual posts ScreenResume before the popped modal's Unmount finishes.
     state.app.screen_stack.remove(old_modal)
@@ -603,7 +603,7 @@ async def test_new_modal_token_survives_delayed_old_modal_unmount(review_runtime
     state.runtime._reconciled_view = view
     assert project_runtime_hook_review(state.runtime, pending)
     new_modal = state.app.screen
-    current = new_modal._console_hook_review_projection
+    current = new_modal.hook_review_projection
     assert new_modal is not old_modal
     assert current.presentation_token is not old.presentation_token
     old_modal.on_unmount()
@@ -612,3 +612,141 @@ async def test_new_modal_token_survives_delayed_old_modal_unmount(review_runtime
     assert new_modal._runtime_result(HookReviewResult("cancel"))
     assert (await waiter).kind == "cancel"
     assert state.controller.pending_decision_projection(state.session.id) is None
+
+
+_SCREEN_NAMES = {"view", "screen", "current", "modal", "top"}
+
+
+def _private_screen_reads(source: str) -> list[int]:
+    """Lines reading ``_x`` off a screen-valued expression (attr/getattr/hasattr).
+
+    Screen-valued: names in _SCREEN_NAMES, ``.view`` / ``.screen`` / ``*_view``
+    attributes, subscripts of a screen stack, and any local bound (assignment,
+    annotated assignment, walrus, any loop target) from such an expression or by
+    iterating a screen stack. A screen stack is an expression naming
+    ``screen_stack`` or a local assigned from one. Anything else is not
+    statically a screen; the bound is that every screen enters the runtime
+    through these names. Only literal attribute names are seen: a
+    ``getattr(view, CONSTANT)`` is not resolved. The one such read today is the
+    runtime's own ``_VIEW_RUNTIME_FALLBACK_ATTR`` (an attribute the runtime
+    itself writes onto the view, read by the module-level
+    ``ensure_console_runtime`` / ``leave_console_runtime``, not by
+    ConsoleRuntime), which is not a screen-owned private field.
+    """
+    import ast
+
+    tree = ast.parse(source)
+    names = set(_SCREEN_NAMES)
+    stacks: set[str] = set()
+
+    def bound(target):  # names a target binds (not ``self`` in ``self.x = ...``)
+        return {
+            t.id
+            for t in ast.walk(target)
+            if isinstance(t, ast.Name) and isinstance(t.ctx, ast.Store)
+        }
+
+    def is_stack(n):
+        return "screen_stack" in ast.unparse(n) or any(
+            isinstance(m, ast.Name) and m.id in stacks for m in ast.walk(n)
+        )
+
+    def is_screen(n):
+        if isinstance(n, ast.Name):
+            return n.id in names
+        if isinstance(n, ast.Attribute):
+            return n.attr in {"view", "screen"} or n.attr.endswith("_view")
+        if isinstance(n, ast.Subscript):
+            return is_stack(n.value)
+        if isinstance(n, ast.NamedExpr):
+            return is_screen(n.value)
+        return False
+
+    for _ in range(3):  # propagate through bindings and loops
+        for n in ast.walk(tree):
+            if isinstance(n, (ast.For, ast.AsyncFor, ast.comprehension)):
+                if is_stack(n.iter):
+                    names |= bound(n.target)
+            elif isinstance(n, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+                if n.value is None:
+                    continue
+                targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+                for target in targets:
+                    if is_screen(n.value):
+                        names |= bound(target)
+                    elif "screen_stack" in ast.unparse(n.value):
+                        stacks |= bound(target)
+    hits = []
+    for n in ast.walk(tree):
+        if (
+            isinstance(n, ast.Attribute)
+            and n.attr.startswith("_")
+            and not n.attr.startswith("__")
+            and is_screen(n.value)
+        ):
+            hits.append(n.lineno)
+        elif (
+            isinstance(n, ast.Call)
+            and getattr(n.func, "id", None) in {"getattr", "hasattr"}
+            and len(n.args) >= 2
+            and isinstance(n.args[1], ast.Constant)
+            and isinstance(n.args[1].value, str)
+            and n.args[1].value.startswith("_")
+            and is_screen(n.args[0])
+        ):
+            hits.append(n.lineno)
+    return hits
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        "for screen in app.screen_stack:\n    screen._x",
+        "def f(self):\n    return self.view._x",
+        "def f(app):\n    s = app.screen\n    return getattr(s, '_x', None)",
+        "def f(app):\n    return app.screen_stack[-1]._x",
+        "for i, s in enumerate(app.screen_stack):\n    s._x",
+        "def f(view):\n    stack = list(view.app.screen_stack)\n    return stack[0]._x",
+        "def f(view):\n    stack = list(view.app.screen_stack)\n    for s in stack:\n        s._x",
+        "def f(self):\n    return self._reconciled_view._x",
+        "def f(app):\n    if (s := app.screen) is not None:\n        return s._x",
+        "def f(app):\n    s: object = app.screen\n    return s._x",
+        "def f(view):\n    return hasattr(view, '_x')",
+    ],
+)
+def test_private_screen_read_detector_catches_each_shape(snippet):
+    assert _private_screen_reads(snippet)
+
+
+def test_console_runtime_reads_no_private_screen_attribute():
+    """ConsoleRuntime must use public screen state, never ``screen._x``."""
+    from pathlib import Path
+
+    import tldw_chatbook.Chat.console_runtime as module
+
+    offenders = _private_screen_reads(Path(module.__file__).read_text())
+    assert not offenders, f"private screen attribute read at lines {offenders}"
+
+
+def test_every_view_seam_console_runtime_looks_up_exists_on_chat_screen() -> None:
+    """The runtime reaches the screen through `getattr(self.view, "<name>", None)`
+    (or `getattr(view, ...)` / `hasattr` on a local view) and does nothing when
+    the name is missing, so a rename on ChatScreen would silently stop that work
+    (the transcript re-render, for one). Pin every such name to a callable on
+    ChatScreen. The string keys read from the `console_view_hooks()` dict are a
+    separate, older seam this test does not cover."""
+    import re
+    from pathlib import Path
+
+    import tldw_chatbook.Chat.console_runtime as module
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    names = set(
+        re.findall(
+            r"""(?:getattr|hasattr)\(\s*(?:self\.)?view,\s*["']([A-Za-z_]\w*)["']""",
+            Path(module.__file__).read_text(),
+        )
+    )
+    assert "request_transcript_sync" in names
+    missing = sorted(name for name in names if not callable(getattr(ChatScreen, name, None)))
+    assert not missing, f"ConsoleRuntime looks these up on the view, but ChatScreen lacks them: {missing}"
