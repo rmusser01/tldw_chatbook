@@ -1527,6 +1527,16 @@ class _ConsolePendingSend:
     received_inputs: Any | None = field(default=None, repr=False)
 
 
+@spend.retry_after_config_rebuild
+def _show_console_fleet_coachmark(screen: "ChatScreen", surface: ConsoleSessionSurface) -> None:
+    """The cap reads config: a held rebuild defers the show (TASK-39166)."""
+    max_parallel_runs = screen._ensure_console_chat_controller().max_parallel_runs
+    surface.show_fleet_coachmark(
+        f"Each tab runs its own agent — up to {max_parallel_runs} in "
+        "parallel (change in Settings > Console Behavior)."
+    )
+
+
 class ChatScreen(BaseAppScreen):
     """
     Chat screen with comprehensive state management.
@@ -11897,7 +11907,6 @@ class ChatScreen(BaseAppScreen):
             self._console_fleet_coachmark_seen_cached = coerce_bool_setting(raw, False)
         return self._console_fleet_coachmark_seen_cached
 
-    @spend.retry_after_config_rebuild
     def _maybe_show_fleet_coachmark(
         self,
         sessions: list[ConsoleChatSession],
@@ -11913,7 +11922,6 @@ class ChatScreen(BaseAppScreen):
         ``_sync_console_native_session_tabs``). Seeded from whatever count
         this screen instance first observes, so a restore that starts the
         store already at 2+ sessions is never mistaken for a "creation".
-        Its cap reads config, so a held rebuild defers it 0.2 s (TASK-39166).
 
         Args:
             sessions: The current Console session list (already fetched by
@@ -11932,11 +11940,7 @@ class ChatScreen(BaseAppScreen):
             return
         if self._console_fleet_coachmark_seen():
             return
-        max_parallel_runs = self._ensure_console_chat_controller().max_parallel_runs
-        surface.show_fleet_coachmark(
-            f"Each tab runs its own agent — up to {max_parallel_runs} in "
-            "parallel (change in Settings > Console Behavior)."
-        )
+        _show_console_fleet_coachmark(self, surface)
 
     def _record_console_fleet_coachmark_dismissed(self) -> None:
         """Hide the fleet coach-mark and persist the one-time seen flag.
