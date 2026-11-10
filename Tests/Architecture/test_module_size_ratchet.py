@@ -245,7 +245,14 @@ _BUDGETS: dict[str, int] = {
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
     # 2026-11-07, TASK-39044 (owner size waiver): +7, an automatic turn drops
     # the chat's previous ordinary outcome id at acceptance.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29167,
+    # 2026-11-07, TASK-39138 (owner size waiver): +3, a send to a closed chat
+    # reaches its dispatch-gap result, and a close mid-stream reads "Session
+    # closed." again instead of the ownership-changed result.
+    # 2026-11-07, TASK-39138 review r12c-rev1 (owner size waiver): +1, the
+    # custody-refusal comment moved onto its own line above the check.
+    # 2026-11-09, round-12 restack onto dev 3a6498ae14 (owner size waiver):
+    # dev's 29,167 plus TASK-39138's +4.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29171,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
@@ -264,7 +271,9 @@ _BUDGETS: dict[str, int] = {
     # and takes late-joining owners without waiting, the managed seal runs
     # outside the owner scope with a recheck (a purge mid-seal refuses), and
     # the owner-scope nesting order is documented: 22,445, the exact measurement.
-    "tldw_chatbook/Chat/console_chat_store.py": 22445,
+    # 2026-11-07, TASK-39139 (owner size waiver): +4, a prompt mix-in attempt
+    # that creates the active leaf's row writes the durable cursor through.
+    "tldw_chatbook/Chat/console_chat_store.py": 22449,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).

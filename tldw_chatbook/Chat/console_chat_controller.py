@@ -9350,7 +9350,8 @@ class ConsoleChatController:
         mixin_service = None
         pending = self._prepared_send_continuations.get(_resume_preparation_id)
         mixin_capture = pending.prompt_mixin_capture if pending is not None else None
-        if (configuration is None and owner_key and origin is ConsoleSubmissionOrigin.MANUAL
+        # TASK-39138: a closed session skips capture to reach the dispatch-gap result.
+        if (configuration is None and owner_key in self.store._sessions and origin is ConsoleSubmissionOrigin.MANUAL
                 and _resume_preparation_id is None and _operation is None):
             mixin_service = self.prompt_mixin_service()
             witness = self.store.session_input_snapshot(owner_key)
@@ -9756,7 +9757,8 @@ class ConsoleChatController:
         target_id = session_id or self.store.active_session_id or ""
         if origin is ConsoleSubmissionOrigin.MANUAL and target_id:
             await self._chat_start.withdraw_for_manual(target_id)
-            if not await self.store.drain_agent_handoff(target_id):
+            # A closed session skips this refusal to reach the dispatch-gap result.
+            if not await self.store.drain_agent_handoff(target_id) and target_id in self.store._sessions:
                 return ConsoleSubmitResult(
                     False, False, "Draft custody is unconfirmed."
                 )
@@ -10066,8 +10068,8 @@ class ConsoleChatController:
         turn_selection = configuration.provider_selection
         if has_pending_attachment:
             vision_model = configuration.effective_model
-            # ONE capability check decides the gate AND the copy: this
-            # module's is_vision_capable (the documented monkeypatch seam) is
+            # ONE capability check decides the gate AND the copy: the turn's
+            # frozen capture (console_configuration_capture's reader) is
             # injected into vision_block_reason instead of being re-checked
             # around it — the two seams could otherwise disagree under test.
             block_reason = vision_block_reason(
@@ -26674,6 +26676,8 @@ class ConsoleChatController:
                 # separate task. Cancelling this stream does not cancel that
                 # callback, so join its handoff before touching the owner.
                 await self._drain_dispatch_transition(assistant_message_id)
+                if generation_authority.closed_in_place(self):
+                    return self._session_closed_result(session_id=owner_id)
                 if not generation_authority.is_current(self):
                     return ConsoleSubmitResult(
                         True,

@@ -205,6 +205,13 @@ from Tests.UI.test_destination_shells import (
 from Tests.UI.app_factory import _build_test_app as _build_tldw_test_app
 from Tests.UI.library_media_rows import summary_row
 
+# TASK-39141: the Library harness reads config through `_build_test_app`
+# (app_factory's `load_settings()`), the footer's Tamagotchi settings and the
+# ingest backend's `get_cli_setting`. Under the per-test TLDW_CONFIG_PATH
+# redirect each read is refused (RecoveryRequired
+# raw_source_selection_changed). Keep the collection-time sandbox profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _build_test_app(
     configured_default: str | None = None,
@@ -2912,13 +2919,16 @@ async def test_library_starter_production_geometry_and_focus_order(size) -> None
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_library_real_config_creation_admits_fresh_profile_to_starter(
-    tmp_path, monkeypatch
+    request, monkeypatch
 ) -> None:
     """The config-creation fact survives TldwCli's later settings load."""
-    config_path = tmp_path / "fresh-profile" / "config.toml"
-    config_path.parent.mkdir(parents=True)
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    # TASK-39141: the bound config source refuses a TLDW_CONFIG_PATH redirect
+    # (RecoveryRequired raw_source_selection_changed), so the load creates
+    # the config of this child's own fresh profile instead.
+    config_path = Path(app_config._get_effective_config_path())
+    config_path.unlink(missing_ok=True)
     monkeypatch.setattr(
         app_config, "_FIRST_PROFILE_CREATED_THIS_SESSION", False, raising=False
     )
@@ -2951,13 +2961,13 @@ async def test_library_real_config_creation_admits_fresh_profile_to_starter(
 
 @pytest.mark.asyncio
 async def test_library_real_existing_config_without_lifecycle_defaults_expanded(
-    tmp_path, monkeypatch
+    monkeypatch,
 ) -> None:
     """An existing config has no transient admission fact and stays legacy-full."""
-    config_path = tmp_path / "existing-profile" / "config.toml"
-    config_path.parent.mkdir(parents=True)
-    config_path.write_text("[first_run]\nsetup_completed = true\n", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    # TASK-39141: the bound config source refuses a TLDW_CONFIG_PATH redirect
+    # (RecoveryRequired raw_source_selection_changed); the selected profile's
+    # config already exists, which is the case under test.
+    assert Path(app_config._get_effective_config_path()).exists()
     monkeypatch.setattr(
         app_config, "_FIRST_PROFILE_CREATED_THIS_SESSION", False, raising=False
     )
