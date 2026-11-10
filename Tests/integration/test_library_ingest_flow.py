@@ -61,6 +61,16 @@ def _force_missing_required_features(monkeypatch, *groups: str) -> None:
     )
 
 
+def _d_open_local_start_gate(app) -> None:
+    """Open the media-DB gate the harness leaves shut, without parse workers.
+
+    Since 5ef598f764 (2026-10-21) a submit obeys ``start_enabled``, which
+    needs ``app.media_db``; the harness leaves it unset (TASK-39152).
+    """
+    app.media_db = SimpleNamespace()
+    app._top_up_ingest_parse_pool = lambda: None
+
+
 @pytest_asyncio.fixture
 async def library_screen(tmp_path):
     """Provide a mounted LibraryScreen with ingest seams isolated."""
@@ -124,6 +134,7 @@ async def test_inline_consent_gates_start_when_pdf_deps_missing(
     press arms the inline confirm (no modal on any Start path), the SECOND
     press submits and the job lands in the real registry."""
     screen, pilot = library_screen
+    _d_open_local_start_gate(screen.app_instance)
     pdf = tmp_path / "doc.pdf"
     pdf.write_text("%PDF-1.4 dummy")
 
@@ -384,6 +395,7 @@ def test_snapshot_coerces_display_string_chunk_numbers(monkeypatch):
 async def test_job_persists_to_db(library_screen, tmp_path):
     """Start ingest, verify row in Library_Ingest_Jobs_DB has ingest_options."""
     screen, pilot = library_screen
+    _d_open_local_start_gate(screen.app_instance)
     pdf = tmp_path / "doc.pdf"
     pdf.write_text("%PDF-1.4 dummy")
 
@@ -409,6 +421,7 @@ async def test_job_persists_to_db(library_screen, tmp_path):
 async def test_unsupported_file_not_retryable(library_screen, tmp_path):
     """Ingest unsupported file, verify no Retry button."""
     screen, pilot = library_screen
+    _d_open_local_start_gate(screen.app_instance)
     unsupported = tmp_path / "file.xyz"
     unsupported.write_text("dummy")
 
