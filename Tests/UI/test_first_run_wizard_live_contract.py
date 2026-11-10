@@ -177,11 +177,14 @@ def _isolate_wizard_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
 
 
-def _build_fresh_wizard_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    """A truly fresh config: no provider configured, no first_run state at
-    all -- the exact condition ``should_offer_wizard`` auto-offers under.
-    """
-    _prepare_clean_environment(monkeypatch, tmp_path)
+def _build_fresh_wizard_app(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, selected_profile: bool = False
+):
+    """Build the truly fresh wizard with its selected config and no provider."""
+    if selected_profile:
+        _isolate_wizard_cache(monkeypatch, tmp_path)
+    else:
+        _prepare_clean_environment(monkeypatch, tmp_path)
     app = _build_test_app(first_run_setup_completed=False)
     app.app_config["_first_run"] = True
     app._initial_tab_value = "chat"
@@ -323,10 +326,12 @@ async def test_fresh_config_splash_disabled_wizard_auto_offers(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_escape_exit_setup_dismisses_and_next_boot_offers_recovery(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
@@ -1519,12 +1524,14 @@ async def test_failed_resumed_mount_leaves_attempt_and_next_launch_on_home(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_required_provider_failure_manual_setup_routes_with_checkpoint(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from tldw_chatbook.UI.Wizards.first_run_setup_state import read_setup_draft
 
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
     monkeypatch.setattr(ProviderStep, "compose_step", _raising_compose_step)
     navigation_messages = _capture_navigation_messages(monkeypatch, app)
 
@@ -1791,7 +1798,9 @@ async def test_first_run_result_callback_remounts_same_tab_home_after_completion
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_full_track_skip_everything_leaves_app_usable(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from tldw_chatbook.UI.Screens.home_screen import HomeScreen
@@ -1802,7 +1811,7 @@ async def test_full_track_skip_everything_leaves_app_usable(
         "_home_console_model_state",
         lambda _self, **_kwargs: (readiness["console"], False),
     )
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
@@ -2299,10 +2308,12 @@ async def test_palette_setup_wizard_action_wires_result_callback(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_wizard_navigation_visible_at_80x24(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(80, 24)) as pilot:
@@ -2469,7 +2480,9 @@ async def test_voice_step_controls_are_stable_and_scroll_reachable(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_provider_key_input_visible_at_120x40_without_scrolling(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """TASK-1495 AC #1: the Provider step's API-key field must be visible
@@ -2481,7 +2494,7 @@ async def test_provider_key_input_visible_at_120x40_without_scrolling(
     section) reclaims just enough of the step's fixed ~15-row viewport for
     the Input to fit un-scrolled alongside it.
     """
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(120, 40)) as pilot:
@@ -2529,10 +2542,12 @@ async def test_provider_key_input_visible_at_120x40_without_scrolling(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (120, 40)])
+@private_profile_test
 async def test_exact_draft_model_controls_remain_keyboard_visible_in_compact_view(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, size: tuple[int, int]
 ) -> None:
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=size) as pilot:
@@ -2590,7 +2605,9 @@ async def test_exact_draft_model_controls_remain_keyboard_visible_in_compact_vie
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (120, 40)])
+@private_profile_test
 async def test_summary_five_actions_visible_and_focused_on_full_track(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     size: tuple[int, int],
@@ -2606,7 +2623,7 @@ async def test_summary_five_actions_visible_and_focused_on_full_track(
     action is on-screen and unclipped at the wizard's two supported
     sizes.
     """
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=size) as pilot:
@@ -2702,7 +2719,9 @@ async def test_summary_five_actions_visible_and_focused_on_full_track(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_speech_step_install_button_visible_at_120x40_without_scrolling(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """TASK-1301 review Important 2: the Speech step's primary action
@@ -2715,7 +2734,7 @@ async def test_speech_step_install_button_visible_at_120x40_without_scrolling(
     RadioSets so it renders within the step's first few rows regardless of
     how tall that catalog grows below it.
     """
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(120, 40)) as pilot:
@@ -2818,11 +2837,13 @@ async def test_speech_step_install_button_visible_at_120x40_without_scrolling(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_external_cancel_is_keyboard_reachable_and_in_bounds_at_80_columns(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(80, 40)) as pilot:
@@ -2879,12 +2900,14 @@ async def test_external_cancel_is_keyboard_reachable_and_in_bounds_at_80_columns
 
 @pytest.mark.parametrize("attempt", ["back", "finish-later"])
 @pytest.mark.asyncio
+@private_profile_test
 async def test_external_commit_fences_back_and_finish_later_until_handoff_settles(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     attempt: str,
 ) -> None:
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(120, 40)) as pilot:
@@ -2981,10 +3004,12 @@ async def test_external_commit_fences_back_and_finish_later_until_handoff_settle
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_navigation_and_focus_stay_stable_at_80x24(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(80, 24)) as pilot:
@@ -3019,7 +3044,9 @@ async def test_navigation_and_focus_stay_stable_at_80x24(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """TASK-1496 AC #1: "focusing any wizard widget scrolls it into view."
@@ -3034,7 +3061,7 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
     genuinely scrollable; before this fix ".setup-step" was not one, so
     nothing could.
     """
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(100, 18)) as pilot:
@@ -3115,10 +3142,12 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_back_next_mashing_across_provider_model_does_not_double_advance(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
@@ -3231,12 +3260,14 @@ async def test_back_next_mashing_across_provider_model_does_not_double_advance(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_ctrl_n_ctrl_b_do_not_crash_and_move_one_step(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from textual.widgets import Input
 
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
@@ -3321,10 +3352,12 @@ def _current_step_id(container: SetupWizardContainer) -> "str | None":
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_cold_full_track_speech_entry_keeps_keyboard_alive(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 50)) as pilot:
@@ -3369,10 +3402,12 @@ async def test_cold_full_track_speech_entry_keeps_keyboard_alive(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_step_commit_failure_renders_on_pinned_strip_and_clears(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
@@ -3419,14 +3454,16 @@ async def test_step_commit_failure_renders_on_pinned_strip_and_clears(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_password_dialog_failed_submit_keeps_buttons_visible_in_real_app(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from textual.widgets import Input as _Input
 
     from tldw_chatbook.Widgets.password_dialog import PasswordDialog
 
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
@@ -3473,10 +3510,12 @@ async def test_password_dialog_failed_submit_keeps_buttons_visible_in_real_app(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_arrow_selection_follows_highlight_on_track_radio(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
@@ -3498,10 +3537,12 @@ async def test_arrow_selection_follows_highlight_on_track_radio(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_enter_advances_from_track_radio(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
@@ -3518,10 +3559,12 @@ async def test_enter_advances_from_track_radio(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_tab_from_step_content_reaches_next_before_cancel(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
@@ -3540,12 +3583,14 @@ async def test_tab_from_step_content_reaches_next_before_cancel(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_enter_in_model_fallback_input_advances(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from textual.widgets import Input as _Input
 
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
@@ -4115,11 +4160,13 @@ async def test_production_sized_catalog_reaches_the_model_picker(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_provider_discovery_failure_keeps_escape_exit_alive(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Real Enter/Enter/Escape walk: discovery fails, Escape still exits."""
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(235, 52)) as pilot:
@@ -4164,7 +4211,9 @@ async def test_provider_discovery_failure_keeps_escape_exit_alive(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_escape_cannot_dismiss_an_exit_dialog_that_never_painted(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The settle clock must anchor to first paint, not to on_mount.
@@ -4175,7 +4224,7 @@ async def test_escape_cannot_dismiss_an_exit_dialog_that_never_painted(
     time passes, a second Escape must be absorbed -- dismissing a dialog
     the user has never seen reads as "Escape does nothing", twice.
     """
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
     original_call_after_refresh = _SettlingGuardedConfirmationDialog.call_after_refresh
 
     def _swallow_settle(self, callback, *args, **kwargs):
@@ -4208,7 +4257,9 @@ async def test_escape_cannot_dismiss_an_exit_dialog_that_never_painted(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_enter_on_an_empty_provider_key_advances_with_a_visible_skip(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """task-32555 AC#3: Enter in an empty key field skips the provider.
@@ -4219,7 +4270,7 @@ async def test_enter_on_an_empty_provider_key_advances_with_a_visible_skip(
     provider choice and advances, and the Summary reports the provider as
     not configured (the honest "skipped" -- nothing was staged).
     """
-    app = _build_fresh_wizard_app(monkeypatch, tmp_path)
+    app = _build_fresh_wizard_app(monkeypatch, tmp_path, selected_profile=True)
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
