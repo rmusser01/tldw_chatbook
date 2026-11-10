@@ -50,6 +50,7 @@ def _mgr(tmp_path):
     return ConfigProfileManager(profiles_dir=tmp_path / "profiles")
 
 
+@pytest.mark.bootstrap_profile
 def test_builtins_apply_declared_settings(tmp_path):
     m = _mgr(tmp_path)
     fast = m.get_profile("fast_search")
@@ -65,6 +66,7 @@ def test_builtins_apply_declared_settings(tmp_path):
     assert len(set(sizes.values())) == 3, sizes
 
 
+@pytest.mark.bootstrap_profile
 def test_builtins_use_valid_search_mode_and_store_type(tmp_path):
     m = _mgr(tmp_path)
     valid_modes = {"plain", "semantic", "hybrid"}
@@ -77,6 +79,7 @@ def test_builtins_use_valid_search_mode_and_store_type(tmp_path):
     assert m.get_profile("bm25_only").rag_config.search.default_search_mode == "plain"
 
 
+@pytest.mark.bootstrap_profile
 def test_validate_profile_reads_real_fields(tmp_path):
     m = _mgr(tmp_path)
     bad = m.get_profile("hybrid_basic")
@@ -86,6 +89,7 @@ def test_validate_profile_reads_real_fields(tmp_path):
     assert any("overlap" in w.lower() for w in warnings)
 
 
+@pytest.mark.bootstrap_profile
 def test_high_accuracy_has_no_stray_method_attr(tmp_path):
     m = _mgr(tmp_path)
     chunking = m.get_profile("high_accuracy").rag_config.chunking
@@ -113,6 +117,7 @@ RUNTIME_VALID_CHUNKING_METHODS = {
 }
 
 
+@pytest.mark.bootstrap_profile
 def test_all_builtins_use_a_runtime_valid_chunking_method(tmp_path):
     """Every builtin profile's chunking_method must be one Chunk_Lib actually accepts.
 
@@ -159,6 +164,7 @@ def test_all_builtins_use_a_runtime_valid_chunking_method(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_builtins_are_read_only_with_ids(tmp_path):
     m = _mgr(tmp_path)
     hb = m.get_profile("hybrid_basic")
@@ -194,6 +200,7 @@ def test_profileconfig_id_backfilled_and_round_trips():
     assert legacy_restored.read_only is False
 
 
+@pytest.mark.bootstrap_profile
 def test_user_profile_saved_as_own_file(tmp_path):
     m = _mgr(tmp_path)
     from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
@@ -211,6 +218,7 @@ def test_user_profile_saved_as_own_file(tmp_path):
     assert isinstance(loaded.rag_config, RAGConfig)
 
 
+@pytest.mark.bootstrap_profile
 def test_legacy_blob_migrated_to_per_file(tmp_path):
     pdir = tmp_path / "profiles"
     pdir.mkdir(parents=True)
@@ -235,6 +243,7 @@ def test_legacy_blob_migrated_to_per_file(tmp_path):
     _mgr(tmp_path)
 
 
+@pytest.mark.bootstrap_profile
 def test_legacy_blob_migration_isolates_per_entry_failures(tmp_path):
     # Review finding (Important): the whole `for pdata in ...` loop in
     # _migrate_legacy_blob was one try/except. If ProfileConfig.from_dict
@@ -278,6 +287,7 @@ def test_legacy_blob_migration_isolates_per_entry_failures(tmp_path):
     assert not (pdir / "custom_profiles.json").exists()
 
 
+@pytest.mark.bootstrap_profile
 def test_cannot_mutate_builtins(tmp_path):
     m = _mgr(tmp_path)
     with pytest.raises(ValueError):
@@ -288,6 +298,7 @@ def test_cannot_mutate_builtins(tmp_path):
         m.save_profile(m.get_profile("hybrid_basic"))  # read_only
 
 
+@pytest.mark.bootstrap_profile
 def test_builtin_readonly_flag_cannot_be_flipped_to_bypass_guards(tmp_path):
     # Review finding (Important): delete_profile/rename_profile/save_profile
     # guarded on `profile.read_only`, checked on the SHARED ProfileConfig
@@ -314,6 +325,7 @@ def test_builtin_readonly_flag_cannot_be_flipped_to_bypass_guards(tmp_path):
     assert not (tmp_path / "profiles" / "hybrid_basic.json").exists()
 
 
+@pytest.mark.bootstrap_profile
 def test_clone_builtin_creates_writable_copy(tmp_path):
     m = _mgr(tmp_path)
     clone = m.clone_profile("high_accuracy", "My Accuracy")
@@ -333,6 +345,7 @@ def test_clone_builtin_creates_writable_copy(tmp_path):
     assert m.get_profile("high_accuracy").rag_config.chunking.chunk_size != 300
 
 
+@pytest.mark.bootstrap_profile
 def test_a_saved_profile_round_trips_its_reranking_strategy(tmp_path):
     """The reranking strategy is selectable HERE, and only here (TASK-17600 F3).
 
@@ -365,6 +378,7 @@ def test_a_saved_profile_round_trips_its_reranking_strategy(tmp_path):
     assert reloaded.reranking_config.strategy == "cross_encoder"
 
 
+@pytest.mark.bootstrap_profile
 def test_rename_keeps_id_and_file(tmp_path):
     m = _mgr(tmp_path)
     c = m.clone_profile("hybrid_basic", "Before")
@@ -375,6 +389,7 @@ def test_rename_keeps_id_and_file(tmp_path):
     assert (tmp_path / "profiles" / f"{old_id}.json").exists()
 
 
+@pytest.mark.bootstrap_profile
 def test_delete_removes_file_and_entry(tmp_path):
     m = _mgr(tmp_path)
     c = m.clone_profile("hybrid_basic", "Temp")
@@ -383,6 +398,7 @@ def test_delete_removes_file_and_entry(tmp_path):
     assert not (tmp_path / "profiles" / f"{c.id}.json").exists()
 
 
+@pytest.mark.bootstrap_profile
 def test_create_custom_profile_is_id_consistent(tmp_path):
     # Carry-forward fix from Task 4 review: create_custom_profile used to key
     # _profiles by name.lower().replace(" ", "_") while profile.id is
@@ -396,6 +412,7 @@ def test_create_custom_profile_is_id_consistent(tmp_path):
     assert (tmp_path / "profiles" / f"{created.id}.json").exists()
 
 
+@pytest.mark.bootstrap_profile
 def test_save_profile_rejects_id_collision_with_readonly_builtin(tmp_path):
     # Review finding (Critical): a builtin's id is _slugify(display_name), so
     # a brand-new non-read-only ProfileConfig named "High Accuracy" collides
@@ -427,6 +444,7 @@ def test_save_profile_rejects_id_collision_with_readonly_builtin(tmp_path):
     assert not (tmp_path / "profiles" / "high_accuracy.json").exists()
 
 
+@pytest.mark.bootstrap_profile
 def test_create_custom_profile_uniquifies_id_matching_builtin_name(tmp_path):
     # Review finding (Critical), friendly-path companion: creating a custom
     # profile whose display name matches a builtin's must not raise and must
@@ -441,6 +459,7 @@ def test_create_custom_profile_uniquifies_id_matching_builtin_name(tmp_path):
     assert builtin.id == "high_accuracy"
 
 
+@pytest.mark.bootstrap_profile
 def test_clone_tags_are_independent_of_source(tmp_path):
     # Review finding (Important): ProfileConfig.to_dict() did `"tags": self.tags`
     # (no copy), so a clone's tags list was the SAME list object as the
@@ -451,6 +470,7 @@ def test_clone_tags_are_independent_of_source(tmp_path):
     assert "X" not in m.get_profile("high_accuracy").tags
 
 
+@pytest.mark.bootstrap_profile
 def test_legacy_blob_migration_does_not_shadow_readonly_builtin(tmp_path):
     # Review finding (Important): _migrate_legacy_blob wrote
     # self._profiles[profile.id] = profile directly, bypassing
@@ -495,6 +515,7 @@ def test_legacy_blob_migration_does_not_shadow_readonly_builtin(tmp_path):
     assert (pdir / f"{others[0].id}.json").exists()
 
 
+@pytest.mark.bootstrap_profile
 def test_hand_placed_file_named_like_builtin_id_is_self_healed(tmp_path):
     # Companion path for the same review finding: a hand-placed (or
     # otherwise stray) <builtin_id>.json file loaded directly via
@@ -539,6 +560,7 @@ def test_hand_placed_file_named_like_builtin_id_is_self_healed(tmp_path):
     assert not (pdir / "high_accuracy.json").exists()
 
 
+@pytest.mark.bootstrap_profile
 def test_create_custom_profile_returns_fully_built_rag_config(tmp_path):
     # Review finding (Important): create_custom_profile built rag_config via
     # RAGConfig(**asdict(base.rag_config)) -- the RAGConfig(**dict)
@@ -554,6 +576,7 @@ def test_create_custom_profile_returns_fully_built_rag_config(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_save_reload_round_trips_explicit_persist_directory(tmp_path):
     # Exercises the Path/default=str save+reload branch for
     # persist_directory regardless of whether the embeddings_rag optional
@@ -582,6 +605,7 @@ def test_save_reload_round_trips_explicit_persist_directory(tmp_path):
     assert reloaded.rag_config.vector_store.persist_directory == persist_dir
 
 
+@pytest.mark.bootstrap_profile
 def test_load_does_not_clobber_unrelated_profile_on_disk_during_self_heal(
     tmp_path, monkeypatch
 ):
@@ -689,6 +713,7 @@ def _force_glob_order(monkeypatch, first_name):
     monkeypatch.setattr(Path, "glob", ordered_glob)
 
 
+@pytest.mark.bootstrap_profile
 def test_load_does_not_clobber_sibling_file_that_slugifies_to_same_id(
     tmp_path, monkeypatch
 ):
@@ -763,6 +788,7 @@ def test_load_does_not_clobber_sibling_file_that_slugifies_to_same_id(
     assert len(on_disk_names) == 2
 
 
+@pytest.mark.bootstrap_profile
 def test_load_does_not_clobber_sibling_file_reverse_glob_order(tmp_path, monkeypatch):
     # Same two colliding-slug files as above, but with the glob order
     # reversed (canonical "foo_bar.json" visited first). The fix must hold
@@ -819,6 +845,7 @@ def test_load_does_not_clobber_sibling_file_reverse_glob_order(tmp_path, monkeyp
     assert "profile-b-marker-model" in disk_models
 
 
+@pytest.mark.bootstrap_profile
 def test_save_profile_allows_user_over_user_same_id(tmp_path):
     # Only READ-ONLY collisions are rejected; two distinct user profiles that
     # happen to share an id may overwrite one another via save_profile.
@@ -847,6 +874,7 @@ def test_save_profile_allows_user_over_user_same_id(tmp_path):
     assert m.get_profile("shared_id").name == "Second"
 
 
+@pytest.mark.bootstrap_profile
 def test_profile_path_rejects_non_slug_id(tmp_path):
     # Review finding (Important), defense-in-depth: _profile_path built
     # `profiles_dir / f"{id}.json"` directly from whatever id it was given.
@@ -865,6 +893,7 @@ def test_profile_path_rejects_non_slug_id(tmp_path):
         m._profile_path("Not A Slug")
 
 
+@pytest.mark.bootstrap_profile
 def test_hand_edited_id_path_traversal_is_neutralized_by_filename_authority(tmp_path):
     # Review finding (Important): ProfileConfig.from_dict trusts the JSON's
     # internal "id" field verbatim (__post_init__ only backfills when it's
@@ -905,6 +934,7 @@ def test_hand_edited_id_path_traversal_is_neutralized_by_filename_authority(tmp_
     assert not (pdir / "evil.json").exists()
 
 
+@pytest.mark.bootstrap_profile
 def test_load_uses_filename_stem_as_authoritative_id(tmp_path):
     # Review finding (Important), companion case: even a non-malicious
     # divergence between a profile file's name and its internal JSON id
@@ -941,6 +971,7 @@ def test_load_uses_filename_stem_as_authoritative_id(tmp_path):
     assert m2.get_profile("b") is None
 
 
+@pytest.mark.bootstrap_profile
 def test_stray_file_named_custom_profiles_json_is_not_destroyed_as_legacy_blob(
     tmp_path,
 ):
@@ -998,6 +1029,7 @@ def test_stray_file_named_custom_profiles_json_is_not_destroyed_as_legacy_blob(
     assert_survives()
 
 
+@pytest.mark.bootstrap_profile
 def test_create_custom_profile_never_canonicalizes_onto_reserved_blob_filename(
     tmp_path,
 ):
@@ -1043,12 +1075,14 @@ def _isolated_default_profile_manager(tmp_path, monkeypatch):
     reset_profile_manager_cache()
 
 
+@pytest.mark.bootstrap_profile
 def test_get_profile_manager_no_arg_returns_same_cached_instance():
     first = get_profile_manager()
     second = get_profile_manager()
     assert first is second
 
 
+@pytest.mark.bootstrap_profile
 def test_get_profile_manager_explicit_dir_bypasses_cache(tmp_path):
     default_call = get_profile_manager()
     explicit_call = get_profile_manager(profiles_dir=tmp_path / "explicit")
@@ -1058,6 +1092,7 @@ def test_get_profile_manager_explicit_dir_bypasses_cache(tmp_path):
     assert explicit_call_2 is not explicit_call
 
 
+@pytest.mark.bootstrap_profile
 def test_reset_profile_manager_cache_forces_a_new_instance():
     first = get_profile_manager()
     reset_profile_manager_cache()
@@ -1065,6 +1100,7 @@ def test_reset_profile_manager_cache_forces_a_new_instance():
     assert first is not second
 
 
+@pytest.mark.bootstrap_profile
 def test_cached_default_manager_sees_mutations_from_other_default_dir_callers():
     """Because CRUD mutates ConfigProfileManager._profiles in place and all
     default-dir callers now share one instance, a profile saved through one
@@ -1100,6 +1136,7 @@ import threading
 import time
 
 
+@pytest.mark.bootstrap_profile
 def test_concurrent_first_touch_constructs_exactly_one_manager(monkeypatch):
     """RED for the task-641 round-2 review finding: two threads racing
     get_profile_manager() on a genuinely first (uncached) touch must
@@ -1132,27 +1169,27 @@ def test_concurrent_first_touch_constructs_exactly_one_manager(monkeypatch):
 
     t1 = threading.Thread(target=_call, daemon=True)
     t2 = threading.Thread(target=_call, daemon=True)
-    t1.start()
-    t2.start()
     try:
-        # Give both threads a moment to reach construction; whether they
-        # overlap or not, the assertion below is what actually matters.
+        t1.start()
+        t2.start()
+        # Keep the first constructor parked while the second caller arrives.
         both_entered.wait(timeout=2)
-        release_construction.set()
-        t1.join(timeout=5)
-        t2.join(timeout=5)
-        assert not t1.is_alive() and not t2.is_alive()
-        assert len(results) == 2
-        assert len(construction_count) == 1, (
-            f"ConfigProfileManager was constructed {len(construction_count)} "
-            "times by concurrent first-touch callers -- expected exactly 1"
-        )
-        assert results[0] is results[1], (
-            "concurrent callers ended up with two different profile-manager "
-            "instances instead of sharing one"
-        )
     finally:
         release_construction.set()
+        for thread in (t1, t2):
+            if thread.ident is not None:
+                thread.join(timeout=5)
+        assert not t1.is_alive() and not t2.is_alive()
+
+    assert len(results) == 2
+    assert len(construction_count) == 1, (
+        f"ConfigProfileManager was constructed {len(construction_count)} "
+        "times by concurrent first-touch callers -- expected exactly 1"
+    )
+    assert results[0] is results[1], (
+        "concurrent callers ended up with two different profile-manager "
+        "instances instead of sharing one"
+    )
 
 
 # --- PR #829 review finding 5(b): save_profile must be transactional -- a
@@ -1164,6 +1201,7 @@ def test_concurrent_first_touch_constructs_exactly_one_manager(monkeypatch):
 # the save failed). ---
 
 
+@pytest.mark.bootstrap_profile
 def test_save_profile_does_not_register_when_the_disk_write_fails(
     tmp_path, monkeypatch
 ):
@@ -1198,6 +1236,7 @@ def test_save_profile_does_not_register_when_the_disk_write_fails(
 # the manager) and save_profile (must reject hard-invalid configs outright).
 
 
+@pytest.mark.bootstrap_profile
 def test_save_profile_rejects_hard_invalid_rag_config(tmp_path):
     # chunk_overlap >= chunk_size is one of RAGConfig.validate()'s checks.
     m = _mgr(tmp_path)
@@ -1223,6 +1262,7 @@ def test_save_profile_rejects_hard_invalid_rag_config(tmp_path):
     assert not (tmp_path / "profiles" / "bad_profile.json").exists()
 
 
+@pytest.mark.bootstrap_profile
 def test_save_profile_accepts_a_valid_rag_config(tmp_path):
     # Companion happy-path: a config with no validate() errors is unaffected.
     m = _mgr(tmp_path)
@@ -1239,6 +1279,7 @@ def test_save_profile_accepts_a_valid_rag_config(tmp_path):
     assert (tmp_path / "profiles" / "good_profile.json").exists()
 
 
+@pytest.mark.bootstrap_profile
 def test_load_degrades_gracefully_on_hand_corrupted_profile_json(tmp_path):
     # A hand-edited (or otherwise poisoned) profile file with a bad enum
     # value and a negative top_k must not crash the manager, must not be
@@ -1283,6 +1324,7 @@ def test_load_degrades_gracefully_on_hand_corrupted_profile_json(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_load_still_skips_a_structurally_unparseable_profile_file(tmp_path):
     # Companion to the above: genuine structural corruption (not just an
     # invalid-but-well-formed rag_config) must still be isolated per-file and

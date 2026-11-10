@@ -29,6 +29,7 @@ def _wire(monkeypatch, tmp_path, active_rag):
     return mgr, p
 
 
+@pytest.mark.bootstrap_profile
 def test_ingest_and_query_config_are_identical_for_active_profile(
     monkeypatch, tmp_path
 ):
@@ -42,6 +43,7 @@ def test_ingest_and_query_config_are_identical_for_active_profile(
         vector_store=VectorStoreConfig(type="memory"),
     )
     _wire(monkeypatch, tmp_path, rag)
+    monkeypatch.setenv("RAG_DEVICE", "cpu")
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "env-wins-model")
     # Search path config:
     query_cfg = RC.from_settings()

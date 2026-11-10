@@ -7,6 +7,7 @@ import pytest
 TEXT = "# Section A\n\nPara one under A.\n\n## Sub A1\n\nDeep text.\n\n# Section B\n\nPara under B.\n"
 
 
+@pytest.mark.bootstrap_profile
 def test_parent_child_shape():
     from tldw_chatbook.RAG_Search import parent_child_adapter as pca
 
@@ -20,6 +21,7 @@ def test_parent_child_shape():
         assert chunk.get("parent_id") is not None
 
 
+@pytest.mark.bootstrap_profile
 def test_structureaware_engine_underneath():
     # The adapter must call the engine's hierarchical path, not ECS logic.
     from tldw_chatbook.RAG_Search import parent_child_adapter as pca
@@ -67,6 +69,7 @@ def _ecs():
     return EnhancedChunkingService()
 
 
+@pytest.mark.bootstrap_profile
 def test_ecs_delegation_legacy_shape():
     service = _ecs()
     result = service.chunk_with_parent_retrieval(
@@ -105,6 +108,7 @@ def test_ecs_delegation_legacy_shape():
         assert chunk["metadata"]["parent_chunk_index"] is not None
 
 
+@pytest.mark.bootstrap_profile
 def test_ecs_delegation_forwards_kwargs():
     # chunk_size must reach the engine as max_size (kwarg aliasing seam).
     from tldw_chatbook.Chunking.engine import Chunker
@@ -143,6 +147,7 @@ def test_ecs_delegation_forwards_kwargs():
     assert wide["metadata"]["total_parent_chunks"] == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_ecs_delegation_factory():
     from tldw_chatbook.RAG_Search.enhanced_chunking_service import (
         EnhancedChunkingService,
@@ -158,6 +163,7 @@ def test_ecs_delegation_factory():
     assert result["metadata"]["total_chunks"] == len(result["chunks"])
 
 
+@pytest.mark.bootstrap_profile
 def test_ecs_delegation_chunk_text_with_structure():
     # The preview modal path: legacy StructuredChunk attribute reads.
     service = _ecs()
@@ -177,6 +183,7 @@ def test_ecs_delegation_chunk_text_with_structure():
         assert chunk.chunk_type.value  # modal reads chunk.chunk_type.value
 
 
+@pytest.mark.bootstrap_profile
 def test_parent_text_is_sanitized_like_children():
     """Parents slice the engine's sanitized text, not the raw input.
 

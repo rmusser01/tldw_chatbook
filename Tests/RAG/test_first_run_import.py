@@ -1,4 +1,5 @@
 import os
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,8 @@ def _wire(monkeypatch, tmp_path):
     (e.g. one write silently clobbering the other's tracked value) that a
     single shared dict/lambda would have masked.
     """
+    # Snapshot settings without probing the host embedding device.
+    monkeypatch.setenv("RAG_DEVICE", "cpu")
     mgr = ConfigProfileManager(profiles_dir=tmp_path / "profiles")
     import tldw_chatbook.RAG_Search.simplified.active_config as ac
 
@@ -51,6 +54,7 @@ def _wire(monkeypatch, tmp_path):
     return mgr, ptr
 
 
+@pytest.mark.bootstrap_profile
 def test_first_run_creates_imported_profile_and_sets_active(monkeypatch, tmp_path):
     """A legacy upgrader (has hand-set [AppRAGSearchConfig.rag.*] material)
     gets the first-run "Imported settings" profile created and activated."""
@@ -71,6 +75,7 @@ def test_first_run_creates_imported_profile_and_sets_active(monkeypatch, tmp_pat
     assert ensure_imported_profile() is None
 
 
+@pytest.mark.bootstrap_profile
 def test_imported_fingerprint_matches_sp1_adoption(monkeypatch, tmp_path):
     """Cross-SP invariant: the imported profile's fingerprint == the fingerprint
     SP1 would adopt the legacy 'default' collection under (both from the same
@@ -106,6 +111,7 @@ def test_imported_fingerprint_matches_sp1_adoption(monkeypatch, tmp_path):
     assert imported_fp == pre_fp
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "env_var,env_value,attr_path",
     [
@@ -152,6 +158,7 @@ def test_imported_fingerprint_matches_sp1_adoption_with_env_override(
     assert resolved == expected
 
 
+@pytest.mark.bootstrap_profile
 def test_ensure_imported_profile_heals_half_done_first_run(monkeypatch, tmp_path):
     """If a prior first run persisted the imported profile but crashed before
     (or otherwise failed to) flip the active pointer to it, the guard must not
@@ -187,6 +194,7 @@ def test_ensure_imported_profile_heals_half_done_first_run(monkeypatch, tmp_path
     assert ptr["marker"] is True  # task-639: marker recorded, so this can't recur
 
 
+@pytest.mark.bootstrap_profile
 def test_ensure_imported_profile_swallows_save_failure(monkeypatch, tmp_path):
     """Exception-safety: any failure while creating the imported profile must
     be swallowed (logged, not raised) so it can never block RAG service
@@ -329,6 +337,7 @@ def _wire_legacy_rag_config(monkeypatch, rag_section):
     monkeypatch.setattr(ac, "get_cli_setting", _fake_get_cli_setting, raising=False)
 
 
+@pytest.mark.bootstrap_profile
 def test_imported_profile_preserves_hand_set_legacy_query_time_keys(
     monkeypatch, tmp_path
 ):
@@ -380,6 +389,7 @@ def test_imported_profile_preserves_hand_set_legacy_query_time_keys(
     assert imported_profile.reranking_config.top_k_to_rerank == 7
 
 
+@pytest.mark.bootstrap_profile
 def test_imported_profile_reranking_config_absent_when_legacy_reranking_unset(
     monkeypatch, tmp_path
 ):
@@ -403,6 +413,7 @@ def test_imported_profile_reranking_config_absent_when_legacy_reranking_unset(
     assert mgr.get_profile(new_id).reranking_config is None
 
 
+@pytest.mark.bootstrap_profile
 def test_imported_profile_reranking_config_keeps_model_default_when_legacy_model_blank(
     monkeypatch, tmp_path
 ):
@@ -431,6 +442,7 @@ def test_imported_profile_reranking_config_keeps_model_default_when_legacy_model
     assert imported_profile.reranking_config.top_k_to_rerank == 12
 
 
+@pytest.mark.bootstrap_profile
 def test_imported_profile_fingerprint_invariant_with_legacy_query_keys_set(
     monkeypatch, tmp_path
 ):
@@ -472,6 +484,7 @@ def test_imported_profile_fingerprint_invariant_with_legacy_query_keys_set(
     assert imported_fp == pre_fp
 
 
+@pytest.mark.bootstrap_profile
 def test_imported_profile_unchanged_when_no_legacy_query_time_keys_set(
     monkeypatch, tmp_path
 ):
@@ -498,6 +511,7 @@ def test_imported_profile_unchanged_when_no_legacy_query_time_keys_set(
     assert asdict(imported) == asdict(expected)
 
 
+@pytest.mark.bootstrap_profile
 def test_fresh_user_no_legacy_rag_config_stays_on_default_builtin(
     monkeypatch, tmp_path
 ):
@@ -523,6 +537,7 @@ def test_fresh_user_no_legacy_rag_config_stays_on_default_builtin(
     assert ptr["v"] is None  # pointer never written -- stays on the default builtin
 
 
+@pytest.mark.bootstrap_profile
 def test_fresh_user_unreadable_legacy_section_stays_on_default_builtin(
     monkeypatch, tmp_path
 ):
@@ -547,6 +562,7 @@ def test_fresh_user_unreadable_legacy_section_stays_on_default_builtin(
     assert ptr["v"] is None
 
 
+@pytest.mark.bootstrap_profile
 def test_imported_profile_does_not_merge_legacy_index_determining_keys(
     monkeypatch, tmp_path
 ):
@@ -589,6 +605,7 @@ def test_imported_profile_does_not_merge_legacy_index_determining_keys(
 # --- never delete a profile on a content guess (review: marker-based fix) --
 
 
+@pytest.mark.bootstrap_profile
 def test_ensure_imported_profile_does_not_reflip_deliberate_switch(
     monkeypatch, tmp_path
 ):
@@ -618,6 +635,7 @@ def test_ensure_imported_profile_does_not_reflip_deliberate_switch(
     assert ptr["v"] == "fast_search"  # NOT flipped back to imported_settings
 
 
+@pytest.mark.bootstrap_profile
 def test_ensure_imported_profile_still_heals_when_pointer_is_default(
     monkeypatch, tmp_path
 ):
@@ -648,6 +666,7 @@ def test_ensure_imported_profile_still_heals_when_pointer_is_default(
     assert ptr["marker"] is True  # recorded, so this can never recur
 
 
+@pytest.mark.bootstrap_profile
 def test_ensure_imported_profile_marker_present_never_touches_pointer_even_back_to_default(
     monkeypatch, tmp_path
 ):
@@ -677,6 +696,7 @@ def test_ensure_imported_profile_marker_present_never_touches_pointer_even_back_
     assert mgr.get_profile(ac._IMPORTED_ID) is not None  # untouched either way
 
 
+@pytest.mark.bootstrap_profile
 def test_fresh_user_leaves_marker_unset(monkeypatch, tmp_path):
     """A truly fresh install (task-635 no-op path) never creates the imported
     profile, so there is nothing to mark done either -- the marker stays
@@ -714,6 +734,7 @@ def _pre635_damage_snapshot(mgr, ac):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_ensure_imported_profile_never_deletes_settings_screen_customization(
     monkeypatch, tmp_path
 ):
@@ -753,6 +774,7 @@ def test_ensure_imported_profile_never_deletes_settings_screen_customization(
     assert ptr["marker"] is True  # adopted as settled after the first call
 
 
+@pytest.mark.bootstrap_profile
 def test_ensure_imported_profile_adopts_preexisting_imported_pointer_without_deleting(
     monkeypatch, tmp_path
 ):
@@ -829,6 +851,7 @@ def _wire_pointer_write_succeeds(monkeypatch, ac, ptr):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_ensure_imported_profile_does_not_mark_when_healing_pointer_write_fails(
     monkeypatch, tmp_path
 ):
@@ -878,6 +901,7 @@ def test_ensure_imported_profile_does_not_mark_when_healing_pointer_write_fails(
     assert ptr["marker"] is True
 
 
+@pytest.mark.bootstrap_profile
 def test_ensure_imported_profile_does_not_mark_when_fresh_import_pointer_write_fails(
     monkeypatch, tmp_path
 ):
@@ -921,31 +945,23 @@ def test_ensure_imported_profile_does_not_mark_when_fresh_import_pointer_write_f
 # test, closing the gap between the unit-level fakes and reality. ---
 
 
-def _write_config_toml(text: str) -> None:
-    """Write real TOML content to this test's isolated TLDW_CONFIG_PATH.
-
-    `isolate_test_environment` (Tests/conftest.py, autouse) already points
-    TLDW_CONFIG_PATH at a fresh, per-test tmp_path location before any test
-    body runs -- writing directly to that path (rather than introducing a
-    second override) is what makes this a real round-trip through
-    `tldw_chatbook.config`'s actual load/cache path: `_get_effective_config_
-    path()` resolves the env var, and the module-level config cache is keyed
-    by that resolved path, so each test's unique tmp_path guarantees a real
-    fresh parse rather than a stale cached config from a previous test.
-    """
-    import tldw_chatbook.config as config_module
+@contextmanager
+def _selected_config_toml(monkeypatch, text: str):
+    """Parse and retain the exact test-owned source through the assertion."""
+    from Tests.Backup_Recovery.config_test_support import select_config_source
+    from tldw_chatbook.RAG_Search.simplified import active_config
 
     config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(text, encoding="utf-8")
-    # Belt-and-braces: force a reload even if some earlier-in-process code
-    # already touched this exact path (shouldn't happen given tmp_path's
-    # per-test uniqueness, but this keeps the test honest either way rather
-    # than silently passing against a stale in-memory cache).
-    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    with monkeypatch.context() as source_patches:
+        source = select_config_source(source_patches, config_path, vars(active_config))
+        source.load_cli_config_and_ensure_existence(force_reload=True)
+        yield
 
-
-def test_has_legacy_rag_config_material_true_against_a_real_config_toml_with_legacy_section():
+def test_has_legacy_rag_config_material_true_against_a_real_config_toml_with_legacy_section(
+    monkeypatch,
+):
     """task-640 item 3: a real config.toml with a hand-set legacy
     [AppRAGSearchConfig.rag.search] section (the task-635 "upgrading from
     before the profile system existed" signal) must be detected via the
@@ -954,18 +970,20 @@ def test_has_legacy_rag_config_material_true_against_a_real_config_toml_with_leg
         _has_legacy_rag_config_material,
     )
 
-    _write_config_toml(
+    with _selected_config_toml(
+        monkeypatch,
         """
 [AppRAGSearchConfig.rag.search]
 default_top_k = 25
 score_threshold = 0.42
 """
-    )
+    ):
+        assert _has_legacy_rag_config_material() is True
 
-    assert _has_legacy_rag_config_material() is True
 
-
-def test_has_legacy_rag_config_material_false_against_a_fresh_install_config_toml():
+def test_has_legacy_rag_config_material_false_against_a_fresh_install_config_toml(
+    monkeypatch,
+):
     """task-640 item 3: a real config.toml with NO [AppRAGSearchConfig.rag]
     section at all (the genuine fresh-install case) must resolve to False
     via the real parsing path -- ensure_imported_profile() must leave a
@@ -975,17 +993,19 @@ def test_has_legacy_rag_config_material_false_against_a_fresh_install_config_tom
         _has_legacy_rag_config_material,
     )
 
-    _write_config_toml(
+    with _selected_config_toml(
+        monkeypatch,
         """
 [rag.service]
 profile = "hybrid_basic"
 """
-    )
+    ):
+        assert _has_legacy_rag_config_material() is False
 
-    assert _has_legacy_rag_config_material() is False
 
-
-def test_has_legacy_rag_config_material_false_when_the_legacy_section_is_present_but_empty():
+def test_has_legacy_rag_config_material_false_when_the_legacy_section_is_present_but_empty(
+    monkeypatch,
+):
     """An [AppRAGSearchConfig.rag] table that exists in the TOML but has no
     sub-keys at all (e.g. left behind by a partial hand-edit) must still
     read as "nothing to preserve" -- matches the function's documented
@@ -995,10 +1015,10 @@ def test_has_legacy_rag_config_material_false_when_the_legacy_section_is_present
         _has_legacy_rag_config_material,
     )
 
-    _write_config_toml(
+    with _selected_config_toml(
+        monkeypatch,
         """
 [AppRAGSearchConfig.rag]
 """
-    )
-
-    assert _has_legacy_rag_config_material() is False
+    ):
+        assert _has_legacy_rag_config_material() is False

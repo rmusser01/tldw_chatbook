@@ -32,6 +32,8 @@ def test_normalize_rag_search_mode_accepts_only_known_exact_values(value, expect
 @pytest.fixture
 def active(tmp_path, monkeypatch):
     """A ConfigProfileManager over a temp dir + a helper to set the active pointer."""
+    # These resolver contracts do not exercise device discovery.
+    monkeypatch.setenv("RAG_DEVICE", "cpu")
     mgr = ConfigProfileManager(profiles_dir=tmp_path / "profiles")
     # Point resolve_active_rag_config at this manager + a chosen active id via monkeypatch.
     import tldw_chatbook.RAG_Search.simplified.active_config as ac
@@ -44,6 +46,7 @@ def active(tmp_path, monkeypatch):
     return mgr, state
 
 
+@pytest.mark.bootstrap_profile
 def test_resolves_active_profiles_rag_config(active, monkeypatch):
     from tldw_chatbook.RAG_Search.simplified.active_config import (
         resolve_active_rag_config,
@@ -67,6 +70,7 @@ def test_resolves_active_profiles_rag_config(active, monkeypatch):
     assert cfg.chunking.chunk_size == 321
 
 
+@pytest.mark.bootstrap_profile
 def test_env_overrides_win_over_profile(active, monkeypatch):
     from tldw_chatbook.RAG_Search.simplified.active_config import (
         resolve_active_rag_config,
@@ -88,6 +92,7 @@ def test_env_overrides_win_over_profile(active, monkeypatch):
     assert resolve_active_rag_config().embedding.model == "env-model"
 
 
+@pytest.mark.bootstrap_profile
 def test_returns_deep_copy_not_the_profile_object(active):
     from tldw_chatbook.RAG_Search.simplified.active_config import (
         resolve_active_rag_config,
@@ -99,6 +104,7 @@ def test_returns_deep_copy_not_the_profile_object(active):
     assert mgr.get_profile(state["active"]).rag_config.chunking.chunk_size != 99999
 
 
+@pytest.mark.bootstrap_profile
 def test_env_overrides_chunking_and_search_and_pipeline_settings(active, monkeypatch):
     """These env reads exist in the legacy from_settings body (RAG_CHUNK_SIZE,
     RAG_CHUNK_OVERLAP, RAG_TOP_K, RAG_SEARCH_MODE, RAG_DEFAULT_PIPELINE) but were
@@ -132,6 +138,7 @@ def test_env_overrides_chunking_and_search_and_pipeline_settings(active, monkeyp
     assert cfg.pipeline.default_pipeline == "custom_pipeline"
 
 
+@pytest.mark.bootstrap_profile
 def test_override_persist_dir_and_embedding_model_args_win_over_env(
     active, monkeypatch, tmp_path
 ):
@@ -160,6 +167,7 @@ def test_override_persist_dir_and_embedding_model_args_win_over_env(
     assert str(cfg.vector_store.persist_directory) == str(override_dir)
 
 
+@pytest.mark.bootstrap_profile
 def test_hybrid_alpha_comes_from_active_profile(active, monkeypatch):
     from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig
     from tldw_chatbook.RAG_Search.simplified.config import (
@@ -186,6 +194,7 @@ def test_hybrid_alpha_comes_from_active_profile(active, monkeypatch):
     )  # explicit=None -> active profile
 
 
+@pytest.mark.bootstrap_profile
 def test_set_active_profile_writes_pointer_and_resets_service(active, monkeypatch):
     from tldw_chatbook.RAG_Search.simplified.active_config import set_active_profile
     import tldw_chatbook.RAG_Search.simplified.active_config as ac
@@ -211,6 +220,7 @@ def test_set_active_profile_writes_pointer_and_resets_service(active, monkeypatc
     assert reset["called"] is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "stored_type,env_value,expected_type",
     [
@@ -245,6 +255,7 @@ def test_env_vector_store_override_wins_over_profile(
     assert resolve_active_rag_config().vector_store.type == expected_type
 
 
+@pytest.mark.bootstrap_profile
 def test_no_env_vector_store_leaves_profile_type_untouched(active, monkeypatch):
     from tldw_chatbook.RAG_Search.simplified.active_config import (
         resolve_active_rag_config,
@@ -312,11 +323,15 @@ def test_set_active_profile_round_trip_write_matches_read(monkeypatch, tmp_path)
     get_cli_setting("rag", "service", {}).get("profile")) reads back. Uses a
     real temp TOML file via TLDW_CONFIG_PATH so this exercises an actual
     write-then-read round trip, not mocks."""
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "config.toml"))
-    from tldw_chatbook.RAG_Search.simplified.active_config import set_active_profile
+    from Tests.Backup_Recovery.config_test_support import select_config_source
+    from tldw_chatbook.RAG_Search.simplified import active_config
 
-    set_active_profile("some_profile_xyz")
-    assert get_cli_setting("rag", "service", {}).get("profile") == "some_profile_xyz"
+    with monkeypatch.context() as source_patches:
+        select_config_source(
+            source_patches, tmp_path / "config.toml", vars(active_config), globals()
+        )
+        active_config.set_active_profile("some_profile_xyz")
+        assert get_cli_setting("rag", "service", {}).get("profile") == "some_profile_xyz"
 
 
 # --------------------------------------------------------------------------
@@ -334,6 +349,7 @@ def test_set_active_profile_round_trip_write_matches_read(monkeypatch, tmp_path)
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "stored_mode, env_mode, expected",
     [
@@ -374,6 +390,7 @@ def test_search_mode_only_resolution_agrees_with_full_config(
     assert resolve_active_rag_config().search.default_search_mode == expected
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "profile_top_k, env_top_k, expected",
     [
@@ -413,6 +430,7 @@ def test_top_k_only_resolution_agrees_with_the_full_config_resolution(
     assert resolve_active_rag_config().search.default_top_k == expected
 
 
+@pytest.mark.bootstrap_profile
 def test_top_k_only_resolution_reports_the_shipped_default_profile_depth(active):
     """The number B3's live check reads off the screen: the default profile
     (`hybrid_basic`, the pointer's own fallback) ships `default_top_k = 15`.
