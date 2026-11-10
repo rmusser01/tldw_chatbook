@@ -881,12 +881,11 @@ _BUDGETS: dict[str, int] = {
     # release and the interval constant, with their comments).
     # 2026-11-10, restack onto dev e78b62f0e7 (owner size waiver): dev's 8,842
     # plus TASK-38987's +20; exact measurement.
-    # 2026-11-08, TASK-36949.6: 8983 -> 8967, the exact measurement (the seed
-    # type now comes from the ChaChaNotes_DB import; no TYPE_CHECKING block).
-    # 2026-11-08, TASK-36949.6: 8983 -> 8980, measured after the 2026-11-09
-    # rebase (the seed type now comes from the ChaChaNotes_DB import; no
-    # TYPE_CHECKING block).
-    "tldw_chatbook/config.py": 8864,
+    # 2026-11-10, TASK-36949.6: the migration seed moved from Chat to
+    # DB/ChaChaNotes_DB, and config.py loads it lazily from there (types stay
+    # under TYPE_CHECKING, per #3470); dev 4a9c4c1132 (#3480) shrank the file,
+    # so this branch measures 8,837 (dev 8,835, +2); exact measurement.
+    "tldw_chatbook/config.py": 8837,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
