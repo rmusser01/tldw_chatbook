@@ -68,6 +68,7 @@ VERDICTS = {
     "dreams-tracking": "Require successful Dreams tracking tests",
     "architecture-guards": "Require successful Architecture guard contracts",
     "pr-fast-lane-arch": "Require successful PR fast lane (architecture-review tests)",
+    "recovered-suites": "Require successful PR lane (recovered suites)",
 }
 
 
@@ -120,6 +121,8 @@ def test_workflow_has_one_fast_prerequisite_and_one_required_aggregator():
         "architecture-guards",
         # Architecture-review program tests, split out of pr-fast-lane (cap).
         "pr-fast-lane-arch",
+        # Owner decision 2026-11-06: suites runnable again, in no PR lane before.
+        "recovered-suites",
         "derived-artifacts",
         "queue-tick",
     ]
@@ -170,8 +173,11 @@ def test_ui_fast_lane_runs_the_census_in_serial_round_robin_shards():
     # TASK-33007 (PR #3057): ten, by the same replay once Phase 7's 92 census
     # entries joined (heaviest shard 15.2 pytest min at nine, 13.7 at ten).
     # TASK-37266..37268: measured 32 slices, retaining the 17-runner ceiling.
-    assert strategy["matrix"]["shard"] == list(range(1, 33))
-    assert strategy["max-parallel"] == 17
+    # TASK-39144 (owner decision 2026-11-07, "36 shards, 18 at once"): no
+    # re-deal of 34 kept every shard's slowest job 5 min under the cap once
+    # the round-12 tail entries joined; 18 at once keeps two waves.
+    assert strategy["matrix"]["shard"] == list(range(1, 37))
+    assert strategy["max-parallel"] == 18
     assert job["timeout-minutes"] == 20
 
     install = next(
@@ -446,6 +452,7 @@ def _pytest_step_targets() -> list[tuple[str, tuple[str, ...]]]:
         "dreams-tracking",
         "architecture-guards",
         "pr-fast-lane-arch",
+        "recovered-suites",
     ):
         for step in _workflow()["jobs"][job_name]["steps"]:
             run = step.get("run", "")
@@ -491,6 +498,7 @@ def test_every_pr_lane_pytest_step_has_disjoint_targets():
         "dreams-tracking: Run the Dreams tracking tests",
         "architecture-guards: Run Architecture guard contracts",
         "pr-fast-lane-arch: Run the architecture-review tests",
+        "recovered-suites: Run the recovered suites",
     )
     overlapping = _census_checker().overlapping_targets
     for name, targets in steps:

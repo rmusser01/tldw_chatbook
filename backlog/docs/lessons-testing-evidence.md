@@ -55,6 +55,20 @@ A separate trap in the same test: the held provider read gave up waiting for the
 
 **What to do.** Before trusting a GIL-contention measurement, measure base and head back to back in the same minutes, record the 1-minute load with each run, and check that base still shows the slowdown at that load. If it does not, the run is not evidence either way. For a config write, change the value on every timed save.
 
+## A test's store handle opened on an executor thread can only be closed on that thread (TASK-39049, 2026-11-07)
+
+**Incident.** Under `--storage-lease-guard`, `Tests/Library/test_library_ingest_runner.py` left 130 live leases. 128 were `_make_db` Media DB handles, and an autouse fixture calling `close_idle_connections()` closed them, on every thread. The other four were WorkspaceDB handles that a research retry opened on the test loop's executor threads (`asyncio_0`, `asyncio_1`). `WorkspaceDB.close()` on the test thread closes only that thread's handle, the store keeps no cross-thread registry, and the connection's own `close()` from the test thread raised `ProgrammingError: SQLite objects created in a thread can only be used in that same thread`. Retiring the executor alone did not close it either: the handle stayed open after its thread exited (`register_core_connection` retains core native handles). A closer that looked the handle up through the store's own thread-local found nothing at thread exit, because that slot was cleared first.
+
+**Since TASK-39117.** WorkspaceDB now opens its handles with `check_same_thread=False` and keeps them in its connection registry, so `close_idle_connections()` from the test thread closes every thread's handle; the ingest runner's fixture now does that, and the closer below is only for a store that keeps no registry.
+
+**What to do.** Record each handle as it opens (`WorkspaceDB._on_connection_opened` is the hook), put an object holding the connection itself in a test-owned `threading.local()` of the opening thread, close the connection in that object's `__del__`, and end the test with `await asyncio.get_running_loop().shutdown_default_executor()`. The thread's exit then closes its handle on its own thread, before the guard checks. The guard runs before the loop's own teardown, so the executor has to be retired inside the test.
+
+## On a loaded machine, CI runs UI census entries faster than local, not twice as slow (TASK-39144, 2026-11-07)
+
+**Incident.** An earlier lesson (#3057, 2026-10-13) says to charge untimed census entries at least twice their local seconds. In round 12 the machine ran at load 45-175 on 18 CPUs. Twelve census entries already timed by 22 PR runs, run again serially with the UI lane's command, took 0.51-0.99 times as long in CI (each entry at its slowest run) as here, median 0.73. Charging 106 untimed entries at twice their local seconds would have added about 35 phantom minutes to the lane and asked for more shards than the work needs.
+
+**What to do.** Before pricing untimed entries, rerun a dozen timed entries in the same local run and divide. Charge at the measured ratio's upper end (here 1.0 times local), not at a fixed multiple, and record the load.
+
 ## A census's "gone" row can be a live producer the scanner stopped seeing (TASK-39053, 2026-11-06)
 
 **Incident.** The backup owner inventory reported 194 gone producer rows, and the task that filed it read them as removed or moved code. But 24 of them were live `os.replace` / `os.unlink` calls. Their modules had switched to `from tldw_chatbook.Utils.platform_files import os`, and the census only bound `os` from `import os`. Other reviewed rows looked gone for the same kind of reason:

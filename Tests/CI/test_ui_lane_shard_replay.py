@@ -90,6 +90,47 @@ def test_the_tail_search_moves_the_heavy_file_off_the_heavy_shard():
     assert order == ["t2", "t1"]  # the 90 s file goes to shard 2
 
 
+def test_rebalance_swaps_only_until_every_shard_is_under_target():
+    """TASK-39144: shard 1 carries a and c (190 s), shard 2 b and d (15 s)."""
+    costs = {"a": 100.0, "b": 10.0, "c": 90.0, "d": 5.0}
+    entries = ["a", "b", "c", "d"]
+
+    assert replay.rebalanced(entries, costs, 2, 110.0) == (["b", "a", "c", "d"], 1)
+    # A fixed entry keeps its slot; the swap uses the other one.
+    assert replay.rebalanced(entries, costs, 2, 110.0, frozenset({"a"})) == (
+        ["a", "b", "d", "c"],
+        1,
+    )
+    # Already under the target: nothing moves.
+    assert replay.rebalanced(entries, costs, 2, 200.0) == (entries, 0)
+
+
+def test_a_swap_moves_each_entry_with_its_comments_and_leaves_block_openers():
+    census = (
+        "# header\n"
+        "Tests/UI/test_a.py\n"
+        "# what c pins\n"
+        "Tests/UI/test_c.py\n"
+        "\n"
+        "# a block\n"
+        "Tests/UI/test_b.py\n"
+        "Tests/UI/test_d.py\n"
+    )
+    assert replay.anchored(census) == {"Tests/UI/test_a.py", "Tests/UI/test_b.py"}
+    order = ["Tests/UI/test_a.py", "Tests/UI/test_d.py", "Tests/UI/test_b.py", "Tests/UI/test_c.py"]
+
+    assert replay._swapped(census, order) == (
+        "# header\n"
+        "Tests/UI/test_a.py\n"
+        "Tests/UI/test_d.py\n"
+        "\n"
+        "# a block\n"
+        "Tests/UI/test_b.py\n"
+        "# what c pins\n"
+        "Tests/UI/test_c.py\n"
+    )
+
+
 _CENSUS = """\
 # a comment that stays where it is
 Tests/UI/test_x.py

@@ -164,8 +164,9 @@ def no_snapshot_splash(monkeypatch):
 @pytest.mark.parametrize(
     "bad", [{"keep_count": 0}, {"keep_count": 1.5}, {"enabled": "yes"}]
 )
+@private_profile_test
 async def test_malformed_f9_preferences_leave_provider_surface_and_revert_recovery(
-    no_snapshot_splash, bad
+    request, no_snapshot_splash, bad
 ):
     from tldw_chatbook import config
 
@@ -184,6 +185,9 @@ async def test_malformed_f9_preferences_leave_provider_surface_and_revert_recove
         assert "Advanced Config" in str(
             screen.query_one("#settings-snapshot-result").render()
         )
+        # The guided Save/Revert pair can mount after the fields (TASK-38993:
+        # absent after one pause, 3 of 3 serially at load 50-155).
+        await _until(lambda: screen.query("#settings-revert-category"), timeout=10)
         assert not screen.query_one("#settings-revert-category", Button).disabled
         screen.query_one("#settings-revert-category", Button).press()
         await pilot.pause()
@@ -210,8 +214,9 @@ async def test_malformed_f9_preferences_leave_provider_surface_and_revert_recove
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_f9_snapshot_save_rejects_noninteger_values_without_coercion(
-    no_snapshot_splash,
+    request, no_snapshot_splash,
 ):
     app = _build_test_app()
     async with app.run_test(size=(140, 45)) as pilot:
@@ -231,10 +236,14 @@ async def test_f9_snapshot_save_rejects_noninteger_values_without_coercion(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("raw", ["027", "+27", " 27 "])
+# Named ids: the UI census takes one node per line, without whitespace.
+@pytest.mark.parametrize(
+    "raw", ["027", "+27", " 27 "], ids=["leading-zero", "plus-sign", "padded"]
+)
 @pytest.mark.parametrize("combined", [False, True])
+@private_profile_test
 async def test_success_canonicalizes_unchanged_f9_draft_and_continues_once(
-    no_snapshot_splash, monkeypatch, raw, combined
+    request, no_snapshot_splash, monkeypatch, raw, combined
 ):
     from tldw_chatbook import config
 
@@ -269,7 +278,9 @@ async def test_success_canonicalizes_unchanged_f9_draft_and_continues_once(
 
         monkeypatch.setattr(screen, "action_settings_save_category", action)
         original_action(allow_text_entry_focus=True)
-        await pilot.pause(0.2)
+        # Until the save worker settles: its thread's write lands before the
+        # worker canonicalizes the field (TASK-38993; a 0.2 s pause raced it).
+        await _until(lambda: not screen._snapshot_preferences_saving)
         assert len(writes) == 1
         assert preferences.load_snapshot_preferences().keep_count == 27
         assert field.value == "27"
@@ -283,8 +294,9 @@ async def test_success_canonicalizes_unchanged_f9_draft_and_continues_once(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_f9_save_preserves_new_edits_while_persistence_waits(
-    no_snapshot_splash, monkeypatch
+    request, no_snapshot_splash, monkeypatch
 ):
     app = _build_test_app()
     entered, release = threading.Event(), threading.Event()
@@ -347,7 +359,10 @@ async def test_f9_save_preserves_new_edits_while_persistence_waits(
 
 
 @pytest.mark.asyncio
-async def test_f9_snapshot_draft_uses_category_save_offthread_and_reverts(monkeypatch):
+@private_profile_test
+async def test_f9_snapshot_draft_uses_category_save_offthread_and_reverts(
+    request, monkeypatch
+):
     from tldw_chatbook.config import get_cli_setting
 
     set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
@@ -396,7 +411,8 @@ async def test_f9_snapshot_draft_uses_category_save_offthread_and_reverts(monkey
 
 
 @pytest.mark.asyncio
-async def test_f9_stale_snapshot_draft_requires_revert_before_save(monkeypatch):
+@private_profile_test
+async def test_f9_stale_snapshot_draft_requires_revert_before_save(request, monkeypatch):
     from tldw_chatbook.config import get_cli_setting
 
     set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
@@ -415,9 +431,13 @@ async def test_f9_stale_snapshot_draft_requires_revert_before_save(monkeypatch):
         newer = preferences.SnapshotPreferences(enabled=True, keep_count=14)
         await asyncio.to_thread(preferences.save_snapshot_preferences, newer)
         screen.action_settings_save_category(allow_text_entry_focus=True)
-        await pilot.pause(0.2)
+        # Until the save worker settles; "Revert" alone is in the draft's own
+        # copy before any Save, so the refusal's copy is what this pins.
+        await _until(lambda: not screen._snapshot_preferences_saving)
         assert preferences.load_snapshot_preferences() == newer
-        assert "Revert" in str(screen.query_one("#settings-snapshot-result").render())
+        assert "changed elsewhere" in str(
+            screen.query_one("#settings-snapshot-result").render()
+        )
         assert screen.query_one("#settings-snapshot-keep", Input).value == "31"
 
 

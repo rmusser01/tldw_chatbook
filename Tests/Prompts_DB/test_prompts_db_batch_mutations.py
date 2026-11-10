@@ -499,6 +499,7 @@ def test_begin_immediate_preflights_after_competing_recovery_metadata_commit(
     batch_thread.join(5)
     assert not writer_thread.is_alive()
     assert not batch_thread.is_alive()
+    competitor.close_connection()  # its schema setup's handle (TASK-38976)
 
     observed = []
     while not outcomes.empty():

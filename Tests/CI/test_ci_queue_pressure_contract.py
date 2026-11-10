@@ -430,8 +430,17 @@ DREAMS_BOUNDARY_TARGETS = (
     # ~10-20 s serial. Last, after every sandboxed target: TASK-32873's note
     # (derived-artifacts.yml) keeps bootstrap-profile suites out of sandboxed
     # invocations, because their enrollment can break the sandboxed suites
-    # that follow; here none follows. It pauses no storage, so need not lead.
+    # that follow. The sandboxed Console sync maintenance file below follows
+    # it safely: each of its tests runs its body in a subprocess with its own
+    # HOME and config (test_home_citation_retirement._run), which the
+    # in-process enrollment cannot reach. It pauses no storage, so need not lead.
     "Tests/DB/test_sync_log_retention.py",
+    # TASK-39043 (owner decision 2026-11-06: only its two small files here,
+    # its two ~86 s files in recovered-suites): TASK-38973's repaired Console
+    # sync maintenance suite (sandboxed, ~17 s serial) and TASK-38971's
+    # automatic wake recovery suite (bootstrap_profile, ~13 s serial).
+    "Tests/Backup_Recovery/test_console_sync_maintenance.py",
+    "Tests/Chat/test_automatic_wake_recovery.py",
 )
 #: TASK-34929: the Dreams tracking tests, gated whole in their own job.
 DREAMS_TRACKING_TARGET = "Tests/Dreams/test_track_service.py"
@@ -500,6 +509,51 @@ ARCH_REVIEW_TARGETS = (
     "Tests/Tools/test_note_tool_user_id.py::test_note_tools_succeed_in_a_process_where_nothing_created_the_db",
     "Tests/Utils/test_optional_deps.py::test_apply_config_eager_flags_propagates_recovery_required",
     "Tests/Architecture/test_agents_chat_boundary.py",
+)
+#: Owner decision (2026-11-06): suites runnable again after being red in no PR
+#: lane, in their own job, serial under --storage-lease-guard. Sandboxed suites
+#: first, then the bootstrap_profile ones (TASK-32873), except a sandboxed suite
+#: whose path reads no config in-process, which may follow them (the pixel
+#: buddy file below).
+RECOVERED_SUITES_TARGETS = (
+    # TASK-39043: TASK-38973's repaired stub-screen suites, ~86 s serial each.
+    "Tests/Backup_Recovery/test_console_config_sync_lifetime.py",
+    "Tests/Backup_Recovery/test_home_citation_retirement.py",
+    # TASK-38976: the prompt scope-service and batch suites (TASK-38756's pins).
+    "Tests/Prompt_Management/test_prompt_scope_service.py",
+    "Tests/Prompt_Management/test_prompt_batch_models.py",
+    "Tests/Prompts_DB/test_prompts_db_batch_mutations.py",
+    # TASK-39142: bootstrap_profile since TASK-38111. TASK-39049's keyword-leg
+    # pool retirement file runs beside its four siblings.
+    "Tests/Prompt_Management/test_prompt_improvement_service.py",
+    "Tests/RAG_Search/test_keyword_leg_chacha.py",
+    "Tests/RAG_Search/test_keyword_leg_db_resolution.py",
+    "Tests/RAG_Search/test_keyword_leg_prompts.py",
+    "Tests/RAG_Search/test_keyword_leg_pushdown.py",
+    "Tests/RAG_Search/test_keyword_leg_tiered_merge.py",
+    # TASK-39049: the Library ingest runner, guard-clean since its tests close
+    # the stores they open (130 live leases before).
+    "Tests/Library/test_library_ingest_runner.py",
+    # TASK-39124: the built-in pixel buddy file, no Persona_Visual file ran on
+    # a PR lane before. Sandboxed, yet last: nothing on its path reads config
+    # in-process, so the bootstrap enrollment cannot reach it.
+    # BuddyLibrary.ensure_builtin and ChaChaNotes take no config, its readiness
+    # cases patch get_user_data_dir, and with no app_config the Buddy-preference
+    # migration returns before its writer (library.migrate_legacy_selection).
+    "Tests/Persona_Visual/test_builtin_pixel_migu_buddy.py",
+    # TASK-39119: the wake and goal-iteration reply pins, by node (the three
+    # fleet-wake nodes run their bodies in private-profile children; the
+    # goal-dispatch file is bootstrap_profile). Four other fleet-wake nodes
+    # ride pr-fast-lane; none of these does. Guard-clean, ~55 s serial.
+    "Tests/Chat/test_console_fleet_wake.py::test_a_wake_takes_no_mixin_anchor_from_an_earlier_unsaved_user_row",
+    "Tests/Chat/test_console_fleet_wake.py::test_a_failed_wake_reply_is_saved_as_failed",
+    "Tests/Chat/test_console_fleet_wake.py::test_a_wake_reply_is_the_durable_active_leaf",
+    "Tests/Chat/test_console_goal_dispatch.py::test_a_goal_iteration_takes_no_mixin_anchor_from_an_unsaved_earlier_turn",
+    "Tests/Chat/test_console_goal_dispatch.py::test_a_failed_goal_iteration_reply_is_saved_as_failed",
+    "Tests/Chat/test_console_goal_dispatch.py::test_a_goal_iteration_reply_is_the_durable_active_leaf",
+    # TASK-39119: the goal recovery file (bootstrap_profile, 4 tests, ~19 s
+    # serial), which caught a regression this round and ran on no lane.
+    "Tests/Chat/test_console_goal_recovery.py",
 )
 DREAMS_ADMISSION_TARGETS = (
     "Tests/Dreams/test_boot_dispatch_admission.py",
@@ -839,8 +893,8 @@ def _pytest_targets(run: str) -> tuple[str, ...]:
 
 def _assert_ui_capacity(workflow: dict) -> None:
     strategy = workflow["jobs"]["ui-fast-lane"]["strategy"]
-    assert strategy["matrix"] == {"shard": list(range(1, 33))}
-    assert strategy.get("max-parallel") == 17
+    assert strategy["matrix"] == {"shard": list(range(1, 37))}
+    assert strategy.get("max-parallel") == 18
 
 
 def test_ui_capacity_preserves_peak_runner_budget() -> None:
@@ -899,6 +953,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         "dreams-tracking",
         "architecture-guards",
         "pr-fast-lane-arch",
+        "recovered-suites",
     ]
     assert required["if"] == "${{ always() }}"
     assert not required.get("continue-on-error", False)
@@ -932,6 +987,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         ("dreams-tracking", "Require successful Dreams tracking tests"),
         ("architecture-guards", "Require successful Architecture guard contracts"),
         ("pr-fast-lane-arch", "Require successful PR fast lane (architecture-review tests)"),
+        ("recovered-suites", "Require successful PR lane (recovered suites)"),
     ):
         verdict = _named_step(required, step_name)
         assert not verdict.get("continue-on-error", False)
@@ -948,6 +1004,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         "dreams-tracking",
         "architecture-guards",
         "pr-fast-lane-arch",
+        "recovered-suites",
     ):
         job = workflow["jobs"][job_name]
         assert not job.get("continue-on-error", False)
@@ -1266,6 +1323,65 @@ def test_architecture_review_lane_is_one_serial_minimal_python_312_job() -> None
     assert not set(ARCH_REVIEW_TARGETS) & set(FAST_LANE_TARGETS)
 
 
+def test_recovered_suites_lane_is_one_serial_guarded_minimal_python_312_job() -> None:
+    """Owner decision (2026-11-06): the recovered suites' own bounded job.
+
+    One invocation under --storage-lease-guard, sandboxed suites before the
+    bootstrap_profile ones (bar a sandboxed suite that reads no config
+    in-process), and each file in no other PR-lane step.
+    """
+    workflow = _workflow("derived-artifacts.yml")
+    job = workflow["jobs"]["recovered-suites"]
+
+    assert job["name"] == "PR lane (recovered suites)"
+    assert job["needs"] == ["preflight"]
+    assert job["if"] == LANES
+    assert job["runs-on"] == "ubuntu-latest"
+    assert job["timeout-minutes"] == 20
+    assert "strategy" not in job
+    assert len(job["steps"]) == 4
+    setup = next(
+        step for step in job["steps"] if step.get("uses") == "actions/setup-python@v5"
+    )
+    assert setup["with"]["python-version"] == "3.12"
+    install = _named_step(job, "Install fast-lane dependencies")["run"]
+    assert shlex.split(install) == shlex.split(
+        _named_step(workflow["jobs"]["pr-fast-lane"], "Install fast-lane dependencies")["run"]
+    )
+    step = _named_step(job, "Run the recovered suites")
+    assert "if" not in step
+    assert tuple(shlex.split(step["run"].replace("\\\n", " "), comments=True)) == (
+        "pytest",
+        *RECOVERED_SUITES_TARGETS,
+        "--storage-lease-guard",
+        "--timeout=180",
+        "--tb=short",
+    )
+    assert len(set(RECOVERED_SUITES_TARGETS)) == len(RECOVERED_SUITES_TARGETS)
+    for target in RECOVERED_SUITES_TARGETS:
+        assert (PROJECT_ROOT / target.split("::", 1)[0]).is_file()
+    # A whole file here runs in no other step; a node id here is not listed
+    # by another step, nor is its file listed there whole. Node ids compare
+    # without a parametrize suffix, so one case listed elsewhere is caught.
+    def test_id(target: str) -> str:
+        return target.split("[", 1)[0]
+
+    files = {target for target in RECOVERED_SUITES_TARGETS if "::" not in target}
+    nodes = {test_id(target) for target in RECOVERED_SUITES_TARGETS if "::" in target}
+    node_files = {node.split("::", 1)[0] for node in nodes}
+    others = [
+        f"{key}: {candidate['name']}"
+        for key, other in workflow["jobs"].items()
+        if key != "recovered-suites"
+        for candidate in other.get("steps", ())
+        for targets in [set(_pytest_targets(str(candidate.get("run", ""))))]
+        if files & {target.split("::", 1)[0] for target in targets}
+        or nodes & {test_id(target) for target in targets}
+        or node_files & targets
+    ]
+    assert others == []
+
+
 def test_dreams_tracking_lane_is_one_serial_minimal_python_312_job() -> None:
     """TASK-34929: the Dreams tracking tests run, whole, on every pull request.
 
@@ -1567,6 +1683,9 @@ def test_required_aggregation_contract_rejects_a_dropped_admission_lane(lane: st
         ("architecture-guards", None),
         ("architecture-guards", "Run Architecture guard contracts"),
         ("derived-artifacts", "Require successful Architecture guard contracts"),
+        ("recovered-suites", None),
+        ("recovered-suites", "Run the recovered suites"),
+        ("derived-artifacts", "Require successful PR lane (recovered suites)"),
         ("console-p0-gate", None),
         ("console-p0-gate", "Run the admission-sensitive Console P0 regression tests"),
         ("dreams-boundary", None),

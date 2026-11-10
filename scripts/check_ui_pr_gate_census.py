@@ -509,7 +509,7 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-36512 lists four heavy whole-file entries by function (the MCP
 # permissions handoff by parametrize case), so no shard takes one whole:
 # every test still runs once, and the floor follows the entry count.
-# Current UI lane: 32 shards.
+# Current UI lane: 36 shards (TASK-39144).
 # TASK-36454..36458 append all 58 exact mounted regressions after dev's
 # measured split-file tail (TASK-36512), preserving its slots and coverage.
 # 2026-10-24, TASK-36479 appends two static node ids at the tail -- the
@@ -928,6 +928,22 @@ MINIMUM_FILES = 1850
 # TASK-39135 review r12s-rev3 (2026-11-07): append the focus-reset and the
 # new-pane control nodes at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1852
+# TASK-39142 / TASK-38993 / TASK-39136 (2026-11-07): append the inspector
+# workflow file's 18 tests, the llama.cpp snapshot file's [size0] and its 13
+# plain tests, and TASK-38953's 13 Settings sweep nodes at the tail, one
+# entry each. The floor is the measured entry count.
+MINIMUM_FILES = 1897
+# Review r12l-rev1 (2026-11-07): append the inspector focus carriers file's 15
+# nodes and the Console full config preparation file at the tail, out of the
+# recovered-suites job (the census holds bootstrap_profile files). The floor
+# is the measured entry count.
+MINIMUM_FILES = 1913
+# Round-12 restack (2026-11-09, dev 3a6498ae14): every round-12 block above
+# was written before dev's blocks above joined, so each floor here counts
+# dev's six net entries too; the two TASK-39142 / review r12l-rev1 blocks were
+# also written before the other round-12 branches' tail entries, which follow
+# theirs and are counted in both. The stacked census was then re-dealt over
+# 36 shards.
 
 
 def read_census(path: Path) -> list[str]:

@@ -147,14 +147,15 @@ cron entry on `dev`.
   derived-artifact checks. As amended on 2026-09-27 that was two fast lanes
   (at most two runners at a time), three runners with the one routine
   path-scoped guard (perf-guard), instead of approximately thirteen. It has
-  grown since: the UI lane currently runs 32 shards, with at most 17 UI jobs running at once (TASK-37236, TASK-37266..37268 and the
+  grown since: the UI lane currently runs 36 shards, with at most 18 UI jobs running at once (TASK-37236, TASK-37266..37268 and the
   dated capacity amendments below), the Console P0 gate is a third lane (TASK-33621.27), and the PR
   Fast Lane's admission-sensitive half (two jobs since TASK-35575, three since Roleplay frame B2b), the Dreams
   tracking tests, the Dreams and Guardian boundary contracts, the
-  Architecture guard contracts and the architecture-review tests are jobs
-  of their own (TASK-34916, TASK-34929, TASK-34986, TASK-38989, PR #3399),
-  so an ordinary unlabeled,
-  non-GGUF PR now requests 26 test runners in parallel, 27 with perf-guard
+  Architecture guard contracts, the architecture-review tests and the
+  recovered suites are jobs of their own (TASK-34916, TASK-34929,
+  TASK-34986, TASK-38989, PR #3399, owner decision 2026-11-06), so an
+  ordinary unlabeled,
+  non-GGUF PR now requests 28 test runners in parallel, 29 with perf-guard
   (see the dated notes below).
 - That figure is not a global maximum. The two path-scoped GGUF
   evidence matrices can add six jobs, and a synchronize event on a PR carrying
@@ -402,13 +403,14 @@ Even ideal balance at 27 shards has a lower-bound forecast of 1027.70 seconds un
 
 ## Amendment (2026-10-28, TASK-37266..37268): enroll native publication and export controls
 
-Current UI lane: 32 shards. The current total is 41 eligible test jobs per PR
+Current UI lane: 36 shards. The current total is 46 eligible test jobs per PR
 (2026-11-02: includes the third admission-sensitive lane; 2026-11-06: and the
 Architecture guard contracts job, TASK-38989, and the architecture-review
 tests' own job, `pr-fast-lane-arch`, split out of the PR Fast Lane at its
-35-min cap, PR #3399).
-The `max-parallel: 17` ceiling, peak 23 application test runners (24 with
-Perf Guard), minimal dependencies, serial execution, 20-minute job cap,
+35-min cap, PR #3399; 2026-11-07: and `recovered-suites` and four more UI
+shards, below).
+As of this amendment, the `max-parallel: 17` ceiling (18 since 2026-11-07,
+below), minimal dependencies, serial execution, 20-minute job cap,
 180-second test timeout and fail-closed required aggregation remain unchanged.
 All 1,140 inherited selectors remain exactly once. The 43 new concrete native
 cases and the previously unenrolled canonical-class governance control bring
@@ -448,3 +450,38 @@ fails when it is not `success`. On PR #3334's run 41169081459 lane 2 with these
 suites hit its 35-min cap at 99% (about 17 CI-min for 211 mounted tests, 485 s
 serial locally). One more runner per PR: 24 concurrent test runners, 25 with
 perf-guard, 35 eligible test jobs.
+
+2026-11-07 (owner decision 2026-11-06; TASK-39142, TASK-39043, TASK-39049,
+TASK-38976): a job of its own, `recovered-suites` ("PR lane (recovered
+suites)"), runs the non-UI suites that were red in no PR lane and are runnable
+again (TASK-38111, TASK-38973, TASK-38756), serially under
+`--storage-lease-guard` with the same install line, 20-min cap and
+`--timeout=180`; the required check `needs` it and fails when it is not
+`success`. It keeps them out of the Dreams boundary job, which keeps its
+margin, and out of pr-fast-lane, at its 35-min cap. One more runner per PR:
+27 concurrent test runners, 28 with perf-guard. (The peak-runner sentence of
+the 2026-10-28 amendment above predates the Architecture guard and
+architecture-review jobs, which already made it 26.)
+
+2026-11-07 (TASK-39144; owner decision 2026-11-06: re-deal by measured weight
+first, add shards only if that cannot keep the 5-min margin): the UI lane runs
+34 shards. Per-entry weights from 22 PR runs' shard logs (each entry at its
+slowest), with round 12's new and untimed entries at their local serial
+seconds, put 452 pytest min over the census: a 14.1-min floor per shard at 32,
+about 15.8 min a job with setup, so no order of 32 reaches 15. At 34,
+`scripts/ui_lane_shard_replay.py --rebalance` (79 swaps in all) projects
+15.0 min a job on every shard with those entries at their local seconds, and
+about 14.7 at the median CI-to-local ratio (0.73) measured on twelve timed
+entries; 35 shards would project about 14.6.
+
+2026-11-07, later (TASK-39144, owner decision 2026-11-07: "36 shards, 18 at
+once"): once the other round-12 branches' tail entries joined, the census was
+estimated at about 465 worst-case pytest min, so 34 shards would project about
+15.3 min a job and no re-deal would reach 15. The UI lane runs 36 shards with
+`max-parallel: 18`: still two waves of UI jobs, so no wall-clock change per
+PR, and one more peak runner (28 concurrent test runners, 29 counting
+perf-guard; 46 eligible test jobs). Measured on the stacked census (1913
+entries, on dev 3a6498ae14, 2026-11-09), with weights from the 22 latest PR
+runs whose UI shards all finished and 92 untimed entries at their local serial
+seconds: 430 worst-case pytest min, and `--rebalance 12.7` projects 13.1-14.4
+min a job across the 36 shards.

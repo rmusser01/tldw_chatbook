@@ -427,8 +427,42 @@ def _allow_test_external_root(app: _IngestRunnerHarness, root: Path) -> None:
     service._descriptor_for = descriptor
 
 
+#: The Media DBs ``_make_db`` opened in the running test of this module, or
+#: None outside one (another module that imports ``_make_db`` keeps none).
+_OPENED_MEDIA_DBS: list[MediaDatabase] | None = None
+
+
 def _make_db(tmp_path: Path, name: str = "library_ingest.db") -> MediaDatabase:
-    return MediaDatabase(tmp_path / name, client_id="f3-runner-test")
+    db = MediaDatabase(tmp_path / name, client_id="f3-runner-test")
+    if _OPENED_MEDIA_DBS is not None:
+        _OPENED_MEDIA_DBS.append(db)
+    return db
+
+
+@pytest.fixture(autouse=True)
+def _close_the_stores_each_test_opens(monkeypatch):
+    """Close the test's stores, so ``--storage-lease-guard`` sees no live lease.
+
+    TASK-39049: 128 tests left their ``_make_db`` handle open, and three left
+    a WorkspaceDB handle that a research retry opened on the loop's executor
+    thread. Both stores keep every thread's handle in their connection
+    registry, opened with ``check_same_thread=False`` (WorkspaceDB since
+    TASK-39117), so ``close_idle_connections()`` closes them all from here.
+    """
+    global _OPENED_MEDIA_DBS
+    _OPENED_MEDIA_DBS = []
+    workspaces = []
+    opened = WorkspaceDB._on_connection_opened
+
+    def record(self, conn):
+        workspaces.append(self)
+        opened(self, conn)
+
+    monkeypatch.setattr(WorkspaceDB, "_on_connection_opened", record)
+    yield
+    stores, _OPENED_MEDIA_DBS = _OPENED_MEDIA_DBS, None
+    for store in (*stores, *workspaces):
+        store.close_idle_connections()
 
 
 def _write_text_file(tmp_path: Path, name: str, content: str) -> Path:
