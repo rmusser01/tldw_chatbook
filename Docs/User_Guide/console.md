@@ -787,7 +787,15 @@ An address typed without `http://` or `https://` is read as **s** reads it.
 `localhost`, `127.0.0.1` or `[::1]`, such as `localhost:8080`, is read as
 `http://`, so for vLLM **Save endpoint & use model** writes
 `http://localhost:8080/v1/chat/completions`. Any other address typed without
-a scheme, such as `gpu-box.lan:8080`, reads "Invalid URL", for llama.cpp too.
+a scheme, such as `gpu-box.lan:8080`, reads "Invalid URL", for llama.cpp too,
+and the Endpoint line of the chat's settings summary reads "Invalid (a remote
+address needs http:// or https://)": add the scheme, as in
+`http://gpu-box.lan:8080`. Console never
+contacts such an address for llama.cpp, wherever it comes from: the chat
+(including one saved before Chat settings refused the address),
+`[api_settings.llama_cpp]`, `[console] llama_cpp_base_url_override`,
+`TLDW_CONSOLE_LLAMA_CPP_BASE_URL`, or a llama.cpp custom endpoint, which is
+skipped. A send reads "Provider blocked: invalid llama.cpp base URL."
 A value typed without a scheme and without a port is shown as "invalid
 endpoint" unless it is on this computer (`localhost`, any `127.x.x.x` address
 or `[::1]`), because it could be a key pasted into the field.
