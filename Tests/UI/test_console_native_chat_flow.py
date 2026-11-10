@@ -6948,6 +6948,7 @@ async def test_console_selected_message_copy_action_uses_app_clipboard():
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
@@ -7191,6 +7192,7 @@ async def test_console_selected_message_copy_action_works_from_keyboard():
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.focus()
         await _wait_for_focus(console.app, pilot, transcript)
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
         await pilot.press("down")
         await _wait_for_selector(
             console, pilot, f"#console-message-action-copy-{message.id}"
@@ -8983,6 +8985,7 @@ async def test_console_more_menu_click_away_closes_without_action():
         )
         await console._sync_native_console_chat_ui()
         transcript = console.query_one(ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
         opener = f"#console-message-action-more-{message.id}"
@@ -9061,6 +9064,7 @@ async def test_console_selected_message_delete_action_removes_message_from_trans
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
@@ -9125,6 +9129,7 @@ async def test_console_original_attempt_delete_clears_parent_and_descendant_prev
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{parent.id}")
         transcript.select_message(parent.id)
         await console._sync_native_console_chat_ui()
         await _choose_message_more_action(console, pilot, parent.id, "delete")
@@ -9175,6 +9180,7 @@ async def test_console_delete_confirmation_resets_when_selection_changes():
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{first_message.id}")
         transcript.select_message(first_message.id)
         await console._sync_native_console_chat_ui()
         await _choose_message_more_action(console, pilot, first_message.id, "delete")
