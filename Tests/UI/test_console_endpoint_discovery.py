@@ -1,6 +1,7 @@
 """Named endpoint discovery through the mounted parent settings modal."""
 
 import asyncio
+import time
 from dataclasses import replace
 
 import pytest
@@ -83,24 +84,61 @@ def _modal(app, *, provider="llama_cpp", tester=None):
     )
 
 
-async def _pick_in_pick_mode(app, pilot, *keys: str) -> None:
-    """Pick mode is open: type ``keys`` (if any) in Find, then Enter."""
-    from tldw_chatbook.Widgets.Console.console_model_popover import (
-        ConsoleModelPopover,
-    )
+async def _until(pilot, predicate, what: str, *, state=None) -> None:
+    """Pump until ``predicate()`` holds, or fail naming ``what`` (TASK-39167).
 
-    for _ in range(30):
+    ``state``, if given, is called on failure and its result is reported.
+    """
+    timeout = 15.0
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() > deadline:
+            seen = f": {state()!r}" if state is not None else ""
+            pytest.fail(f"{what} never happened within {timeout:g} s{seen}")
         await pilot.pause(0.02)
-        if isinstance(app.screen, ConsoleModelPopover):
-            break
-    assert isinstance(app.screen, ConsoleModelPopover) and app.screen._pick_only
+
+
+def _mounted(screen, selector: str, kind):
+    """``screen``'s ``selector`` once it has mounted, else None."""
+    found = next(iter(screen.query(selector).results(kind)), None)
+    return found if found is not None and found.is_mounted else None
+
+
+async def _pick_in_pick_mode(app, pilot, *keys: str) -> None:
+    """Pick mode is open: type ``keys`` (if any) in Find, then Enter.
+
+    TASK-39167: waits for the switcher's Find to mount, not just the push,
+    and for Enter's own target. Enter acts on the highlighted row, and a
+    press that lands before the rows are built refuses with nothing picked.
+    """
+    picker, find = await _mounted_pick_popover(app, pilot)
+    assert picker._pick_only
     await app.workers.wait_for_complete()
-    await pilot.press(*keys, "enter")
+    if keys:
+        await pilot.press(*keys)
+
+    def pickable():
+        row = picker.highlighted_row()
+        return (
+            picker._query == find.value
+            and row is not None
+            and bool(row.model)
+            and picker._selectable(row)
+        )
+
+    await _until(
+        pilot,
+        pickable,
+        "the pick-mode switcher highlighting a pickable pair",
+        state=lambda: (find.value, picker._query, picker.highlighted_row()),
+    )
+    await pilot.press("enter")
     await pilot.pause()
 
 
 async def _settled(modal, pilot):
-    for _ in range(30):
+    deadline = time.monotonic() + 15.0
+    while time.monotonic() < deadline:
         await pilot.pause(0.02)
         identity = modal._current_connection_probe_identity()
         evidence = (
@@ -137,11 +175,22 @@ async def test_create_endpoint_returns_to_responsive_settings_with_settled_evide
     modal = _modal(app, tester=connection)
     async with app.run_test(size=(160, 48)) as pilot:
         await app.push_screen(modal)
-        await pilot.pause()
+        await _until(
+            pilot,
+            lambda: _mounted(modal, "#console-settings-endpoint-new", Button),
+            "the settings modal's New endpoint button mounting",
+        )
         modal.query_one("#console-settings-endpoint-new", Button).press()
-        await pilot.pause()
+        # TASK-39167: the template modal is pushed before it has composed.
+        await _until(
+            pilot,
+            lambda: (
+                isinstance(app.screen, ConsoleEndpointTemplateModal)
+                and _mounted(app.screen, "#endpoint-template-create", Button)
+            ),
+            "the endpoint template modal composing its fields",
+        )
         template = app.screen
-        assert isinstance(template, ConsoleEndpointTemplateModal)
         template.query_one("#endpoint-template-name", Input).value = "Report probe"
         template.query_one(
             "#endpoint-template-url", Input
@@ -151,15 +200,15 @@ async def test_create_endpoint_returns_to_responsive_settings_with_settled_evide
         # TASK-33006.4: the created entry opens pick mode on itself; the
         # pick (the entry with the template's model) lands on a pair.
         await _pick_in_pick_mode(app, pilot)
-        for _ in range(30):
-            await pilot.pause(0.02)
-            if (
+        await _until(
+            pilot,
+            lambda: (
                 app.screen is modal
                 and modal._active_provider == "custom-ep:report-probe"
-            ):
-                break
-        assert app.screen is modal
-        assert modal._active_provider == "custom-ep:report-probe"
+            ),
+            "the settings modal returning on the created endpoint",
+            state=lambda: (app.screen, modal._active_provider),
+        )
         evidence = await _settled(modal, pilot)
         assert evidence.endpoint == outcome.endpoint
         assert evidence.model_ids == outcome.model_ids
@@ -174,10 +223,12 @@ async def test_create_endpoint_returns_to_responsive_settings_with_settled_evide
         streaming = modal.query_one("#console-settings-streaming", Select)
         before = streaming.value
         streaming.value = "off" if before == "on" else "on"
-        await pilot.pause()
-        assert modal._streaming_draft is (streaming.value == "on") and (
-            streaming.value != before
+        await _until(
+            pilot,
+            lambda: modal._streaming_draft is (streaming.value == "on"),
+            "the streaming draft following its Select",
         )
+        assert streaming.value != before
 
 
 @pytest.mark.asyncio
