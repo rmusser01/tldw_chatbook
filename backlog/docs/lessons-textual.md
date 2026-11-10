@@ -10,6 +10,15 @@ decays into folklore, and folklore gets ignored. If you add one, bring the incid
 
 ---
 
+## Native focus can change before the Inspector has recorded or painted it
+
+**TASK-39402.127, 2026-11-10.** An original-order Console replay saw
+Session Settings focused while the rail still recorded Sources. A separate
+replay saw the correct scroll-owner class while its underline was still `none`.
+When a mounted test needs recovery history or the painted cue, wait for that
+state as well as `app.focused`. Capture the focused action before removing it
+so the test supplies the history its fallback assertion requires.
+
 ## A widget `query_one` can find has not necessarily composed its own children
 
 **TASK-36382, 2026-10-23.** `test_unfed_remount_restores_depth_and_running_state`

@@ -510,20 +510,26 @@ async def test_n_and_p_are_rail_local_no_wrap_and_editable_input_keeps_printable
 
         body.can_focus = True
         body.focus()
+        collapse = rail.query_one("#console-inspector-rail-collapse", Button)
         await _wait_for_right_rail_condition(
             pilot,
-            lambda: pilot.app.focused is body,
-            description="focused Inspector outer body",
+            lambda: (
+                pilot.app.focused is body
+                and "underline" in str(collapse.styles.text_style)
+            ),
+            description="focused Inspector outer body and painted owner cue",
         )
-        collapse = rail.query_one("#console-inspector-rail-collapse", Button)
         assert "underline" in str(collapse.styles.text_style)
         await pilot.press("n")
+        external_header = sources.parent.children[0]
         await _wait_for_right_rail_condition(
             pilot,
-            lambda: pilot.app.focused is sources.viewport,
-            description="next navigation to Sources",
+            lambda: (
+                pilot.app.focused is sources.viewport
+                and "underline" in str(external_header.styles.text_style)
+            ),
+            description="next navigation to Sources and painted owner cue",
         )
-        external_header = sources.parent.children[0]
         assert "underline" in str(external_header.styles.text_style)
 
         await pilot.press("p")
@@ -1306,15 +1312,23 @@ async def test_disappearing_target_recovers_next_then_previous_and_keeps_outside
         middle.focus()
         await _wait_for_right_rail_condition(
             pilot,
-            lambda: pilot.app.focused is middle,
-            description="middle recovery target focused",
+            lambda: (
+                pilot.app.focused is middle
+                and rail._section_focus_history.get(section.section_id, (None, ()))[0]
+                is middle
+            ),
+            description="middle target focused and captured for recovery",
         )
         await middle.remove()
         section.request_reconcile()
         await _wait_for_right_rail_condition(
             pilot,
-            lambda: pilot.app.focused is last,
-            description="next recovery target",
+            lambda: (
+                pilot.app.focused is last
+                and rail._section_focus_history.get(section.section_id, (None, ()))[0]
+                is last
+            ),
+            description="next recovery target focused and captured",
         )
 
         await last.remove()
@@ -1414,8 +1428,12 @@ async def test_inactive_section_history_cannot_recover_after_focus_moves_elsewhe
         settings_action.focus()
         await _wait_for_right_rail_condition(
             pilot,
-            lambda: pilot.app.focused is settings_action,
-            description="focus moved to a different Inspector section",
+            lambda: (
+                pilot.app.focused is settings_action
+                and rail._section_focus_history.get(settings.section_id, (None, ()))[0]
+                is settings_action
+            ),
+            description="focus and recovery history moved to Session Settings",
         )
 
         assert set(rail._section_focus_history) == {settings.section_id}
@@ -1444,8 +1462,12 @@ async def test_empty_owner_is_settled_absence_with_one_outer_fallback():
         source_action.focus()
         await _wait_for_right_rail_condition(
             pilot,
-            lambda: pilot.app.focused is source_action,
-            description="empty-owner focused action",
+            lambda: (
+                pilot.app.focused is source_action
+                and rail._section_focus_history.get(sources.section_id, (None, ()))[0]
+                is source_action
+            ),
+            description="empty-owner action focused and captured for recovery",
         )
 
         owner = sources.parent
@@ -1602,6 +1624,7 @@ async def test_structural_run_recompose_restores_same_stable_action_id():
         _assert_recovery_references_are_current(rail)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_structural_control_and_boundary_removal_recovers_without_stale_reentry():
     async with make_console_pilot(size=(160, 45)) as pilot:
