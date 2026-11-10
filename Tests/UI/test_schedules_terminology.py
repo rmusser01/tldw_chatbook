@@ -108,6 +108,7 @@ async def _mounted_workbench(pilot):
 # edit/mark/enable refusals still call it, and the test above covers it.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_create_toast_uses_the_scheduled_task_noun():
     app = _App()

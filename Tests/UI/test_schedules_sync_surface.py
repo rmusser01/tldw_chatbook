@@ -88,6 +88,7 @@ async def _sync_via_action(pilot, workbench):
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_sync_that_transfers_nothing_says_so():
     app = _App(_SyncService(SyncOutcome("ok", pulled=0, pushed=0)))
@@ -104,6 +105,7 @@ async def test_sync_that_transfers_nothing_says_so():
         assert not any(m.startswith("Sync completed") for m in messages), messages
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_sync_that_transfers_reports_counts():
     app = _App(_SyncService(SyncOutcome("ok", pulled=2, pushed=1)))
@@ -127,6 +129,7 @@ async def test_sync_that_transfers_reports_counts():
         assert _format_local_timestamp("2026-08-28T12:00:00+00:00") in rendered
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_sync_reports_failure_not_a_noop():
     """Review F3: the engine swallows server errors internally; the UI
@@ -149,6 +152,7 @@ async def test_failed_sync_reports_failure_not_a_noop():
         assert not any("nothing to pull or push" in n.message for n in notifications)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_sync_also_surfaces_phase_errors():
     """Final review finding 6: `_on_sync_failed` used to drop
@@ -181,6 +185,7 @@ async def test_failed_sync_also_surfaces_phase_errors():
         assert also[0].severity == "warning"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_not_applicable_sync_says_so():
     app = _App(_SyncService(SyncOutcome("not_applicable")))
@@ -196,6 +201,7 @@ async def test_not_applicable_sync_says_so():
         assert any("Sync skipped" in m for m in messages), messages
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_sync_key_agrees_with_the_collapsed_bar():
     """Review F10: with a notifications service but NO active server id,

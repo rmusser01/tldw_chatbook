@@ -275,6 +275,7 @@ async def test_server_owner_requires_an_active_server_id():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_select_task_updates_detail():
     """Selecting a task row updates the detail pane with task information."""
@@ -299,6 +300,7 @@ async def test_console_follow_selector_exists():
         assert pilot.app.screen.query_one("#schedules-follow-in-console") is not None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_task_detail_renders_selected_task():
     """The TaskDetail widget renders the selected reminder's metadata."""
@@ -3249,6 +3251,7 @@ async def test_lifecycle_toggle_on_server_owned_row_survives_a_racing_pull(tmp_p
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_task_inspector_renders_metadata():
     """The TaskInspector widget shows sync, last-run, owner, and conflict text."""
@@ -3276,6 +3279,7 @@ async def test_task_inspector_renders_metadata():
         assert "conflict" not in conflict_card.classes
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_task_inspector_empty_state_distinguishes_no_selection():
     """31712 AC#6: "no task selected" now shows a distinct placeholder
@@ -3359,6 +3363,7 @@ class WorkbenchTestAppWithFailingService(ConsolidatedCSSApp):
     scheduling_service = FailingMockSchedulingService()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delete_button_opens_confirmation_dialog():
     """Clicking the Delete button opens the delete confirmation dialog."""
@@ -3379,6 +3384,7 @@ async def test_delete_button_opens_confirmation_dialog():
         assert isinstance(pilot.app.screen, DeleteConfirmationDialog)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ctrl_d_opens_confirmation_dialog():
     """The d binding opens the delete confirmation dialog for the selected task."""
@@ -3395,6 +3401,7 @@ async def test_ctrl_d_opens_confirmation_dialog():
         assert isinstance(pilot.app.screen, DeleteConfirmationDialog)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_empty_queue_shows_friendly_empty_state():
     """An empty queue shows the friendly empty-queue copy."""
@@ -3426,6 +3433,7 @@ async def test_no_task_selected_shows_friendly_copy():
         assert "press n" in empty_state.visual.plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_status_badge_has_expected_class_for_waiting_task():
     """The status badge carries the CSS class matching the task status."""
@@ -3440,6 +3448,7 @@ async def test_status_badge_has_expected_class_for_waiting_task():
         assert "waiting" in badge.classes
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_inspector_shows_distinct_metadata():
     """The inspector surfaces sync version, server id, last run, and owner."""
@@ -3462,6 +3471,7 @@ async def test_inspector_shows_distinct_metadata():
         assert "user-1 / server srv-123" in owner.visual.plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conflict_card_shows_for_conflict_status():
     """The inspector conflict card renders when the task status is CONFLICT."""
@@ -3568,6 +3578,7 @@ async def test_load_tasks_service_error_notifies_and_uses_empty_state():
 # receives a `ScheduledTask` projection at all and deleted its
 # projection-rendering layer; `TaskInspector.set_task` alone stays
 # general-purpose for a `ScheduledTask` projection today.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlist_projection_excluded_from_unified_queue():
     """A watchlist projection never appears in the unified Queue list."""
@@ -3636,6 +3647,7 @@ class WorkbenchTestAppWithToggleFailingService(ConsolidatedCSSApp):
     scheduling_service = ToggleFailingMockSchedulingService()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_load_tasks_service_error_keeps_the_last_good_rows():
     """UAT Major 5: a service failure AFTER data was loaded must not
@@ -3814,6 +3826,7 @@ class WorkbenchTestAppWithControlledRefresh(ConsolidatedCSSApp):
         self.scheduling_service = ControlledRefreshSchedulingService()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delete_confirmation_runs_delete_requested_flow():
     """Confirming the delete dialog triggers the full DeleteTaskRequested flow."""
@@ -3839,6 +3852,7 @@ async def test_delete_confirmation_runs_delete_requested_flow():
         assert pilot.app.scheduling_service.deleted_ids == ["task-1"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workbench_deletes_task_and_notifies_on_success():
     """The workbench calls delete_reminder and surfaces a success notification."""
@@ -3859,6 +3873,7 @@ async def test_workbench_deletes_task_and_notifies_on_success():
         assert table.row_count == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delete_mutation_refresh_cannot_repaint_after_newer_user_refresh():
     """A delete reconciliation cannot overwrite a newer grouped refresh."""
@@ -3906,6 +3921,7 @@ async def test_delete_mutation_refresh_cannot_repaint_after_newer_user_refresh()
         assert "Newest user snapshot" in str(table.get_row_at(0)[1])
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workbench_notifies_on_delete_failure():
     """The workbench surfaces an error notification when delete_reminder fails."""
@@ -3927,6 +3943,7 @@ async def test_workbench_notifies_on_delete_failure():
         assert table.row_count == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_enable_disable_buttons_update_reminder():
     """Enable/Disable buttons call the scheduling service and notify the user."""
@@ -3959,6 +3976,7 @@ async def test_enable_disable_buttons_update_reminder():
         assert notifications[1].severity == "information"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_create_reminder_action_saves_new_reminder():
     """The c binding opens the reminder form; saving calls the scheduling service."""
@@ -3993,6 +4011,7 @@ async def test_create_reminder_action_saves_new_reminder():
         assert any(n.message == "Scheduled task created." for n in notifications)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_edit_reminder_action_updates_existing_reminder():
     """Clicking Edit opens the form pre-filled; saving calls update_reminder."""
@@ -4220,6 +4239,7 @@ def test_post_reminder_dispatched_posts_the_message():
     assert posted[0].task_id == "task-7"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reminder_dispatched_message_reaches_the_workbench_through_a_live_pump():
     """Review round 1 finding 3: the three other fanout tests each pin
@@ -4853,6 +4873,7 @@ async def test_mark_all_read_hidden_when_nothing_unread():
         assert button.display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_all_read_visible_when_a_definition_has_unread_results():
     """redesign PR-2, Task 3: the rail action is shown only once the
@@ -4869,6 +4890,7 @@ async def test_mark_all_read_visible_when_a_definition_has_unread_results():
         assert button.display is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conflicts_badge_pushes_conflicts_overlay_with_painted_content():
     """redesign PR-4, Task 1: the status strip's conflicts badge mirrors
@@ -4917,6 +4939,7 @@ async def test_conflicts_badge_pushes_conflicts_overlay_with_painted_content():
         assert pilot.app.screen is workbench
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conflict_resolution_buttons_click_target_is_already_3_rows():
     """Finding 6/Major 10 (root-causes.md, task-3): root-causes' own
@@ -4987,6 +5010,7 @@ async def test_conflicts_badge_defaults_to_no_count():
         assert str(badge.label) == "Conflicts"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_results_badge_shows_unread_count_and_pushes_global_overlay():
     """redesign PR-4, task 2: the rail's `Results (N)` affordance mirrors
@@ -5814,6 +5838,7 @@ class _PolicyRefusedService(_MockSchedulingServiceMixin):
         return self._server_permission_denied
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_header_resolves_local_only_when_probe_is_policy_refused():
     """task-31798 AC#1/#2: once the mount-time reachability probe has
@@ -5874,6 +5899,7 @@ class _PendingProbeService(_MockSchedulingServiceMixin):
         return self._server_permission_denied
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_header_stays_checking_while_probe_unresolved_without_permission_denial():
     """task-31798: the `server_reachable is None` header branch must ONLY
@@ -5926,6 +5952,7 @@ class _EmptyThenOneReminderService(_MockSchedulingServiceMixin):
         return task
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_first_row_added_to_empty_queue_is_not_truncated():
     """task-31799: the first row inserted into a previously-empty Schedule
