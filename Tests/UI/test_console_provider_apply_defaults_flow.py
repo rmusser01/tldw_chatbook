@@ -186,7 +186,7 @@ def _restore_console_record(app, store, conversation_id: str, record):
     return resumed_store, resumed
 
 
-def _console_app():
+def _console_app(*, retire_chachanotes_db=False):
     app = _build_test_app(
         config_overrides={
             "chat_defaults": {"provider": "llama_cpp", "model": "model-a"},
@@ -207,7 +207,7 @@ def _console_app():
     persist_seeded_config(
         app, "chat_defaults", "api_settings.llama_cpp", "api_settings.vllm"
     )
-    attach_chachanotes_db(app)
+    attach_chachanotes_db(app, retire_with_app=retire_chachanotes_db)
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "model-a"
     app.providers_models = {
@@ -1929,10 +1929,16 @@ async def test_vllm_console_real_metadata_conflict_blocks_detached_send(
 ) -> None:
     """A concurrent SQLite winner survives while the adopted session fails closed."""
 
+    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
     from tldw_chatbook.UI.Navigation.vllm_handoff import VllmConsoleIntent
 
-    app = _console_app()
+    # This test owns the one claim; mount/resume timers must not replay it.
+    consume_intent = ConsoleSessionController.consume_pending_vllm_console_intent
+    monkeypatch.setattr(
+        ConsoleSessionController, "consume_pending_vllm_console_intent", lambda self: False
+    )
+    app = _console_app(retire_chachanotes_db=True)
     _, target = _install_ready_vllm_target(app)
     harness = _ConsoleFlowHarness(app)
 
@@ -1976,7 +1982,7 @@ async def test_vllm_console_real_metadata_conflict_blocks_detached_send(
             VllmConsoleIntent.from_target(target),
         )
 
-        assert console._session.consume_pending_vllm_console_intent() is False
+        assert consume_intent(console._session) is False
         durable = app.chachanotes_db.get_conversation_by_id(conversation_id)
         assert durable is not None
         assert durable.get("metadata") == winner_metadata
@@ -1996,6 +2002,9 @@ async def test_vllm_console_real_metadata_conflict_blocks_detached_send(
             environ={},
             chat_api_call_fn=fake_chat_api_call,
         )
+        monkeypatch.setattr(
+            gateway, "_schedule_context_window_refresh", lambda _target: None
+        )
         controller.provider_gateway = gateway
         try:
             detached = controller.resolve_turn_configuration_snapshot(session.id)
@@ -2009,6 +2018,8 @@ async def test_vllm_console_real_metadata_conflict_blocks_detached_send(
                 "Must never reach the configured vLLM endpoint.",
                 session_id=session.id,
             )
+            assert store.session_ephemeral_endpoint_policy(session.id) == policy
+            assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
             assert result.accepted is False
             assert calls == []
             assert all(
