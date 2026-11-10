@@ -4,7 +4,7 @@ title: "save_pending_reply saves an automatic turn's reply row but does not adop
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-08 06:54
-updated_date: 2026-11-10 17:19
+updated_date: 2026-11-10 19:59
 labels:
 - follow-up
 - console
@@ -63,4 +63,9 @@ Found in round 12 of the 2026-10-23 burn-down (review r12p-rev2 of TASK-39119, r
 **Covering runs.** `Tests/Chat/test_automatic_wake_recovery.py` 9 passed. `Tests/Chat/test_console_fleet_wake.py` + `test_console_goal_dispatch.py` + `test_console_chat_start.py` (`-n 4`, load ~65): 229 passed, 2 failed (`test_repeated_start_cannot_reprovision_an_accepted_attempt`, `test_goal_authorization_cannot_be_forged_or_moved_to_another_session`); both fail the same way with this change reverted (a storage `PermissionError` at `controller_submit` in this sandbox), so they are not this change's.
 
 **Size.** `Tests/Architecture/test_module_size_ratchet.py`: controller row 29176 -> 29183 (+7, exact; owner waiver).
+**Review r13p-rev1 M3 (2026-11-10).**
+- The controller's closed-chat branch is now pinned by a `close` parameter on `test_a_wake_whose_owner_moves_during_its_reply_save_is_refused`. While the save is held, the chat is closed with `begin_session_close` then `finalize_session_close`.
+- The wake's `submit_draft` ends "Session closed.", not BLOCKED, and never reaches the provider. The saved row stays in the database unadopted.
+- With the branch removed, the test is red: the turn ends with "The chat changed while the reply was being saved; response was not sent.".
+- Timing (`-n 4`, load ~35-56): about 1.1 s.
 <!-- SECTION:NOTES:END -->

@@ -16,7 +16,7 @@ from Tests.Chat.test_console_fleet_wake import (
     _terminal_subagent_run,
 )
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Chat.console_fleet_wake import ConsoleFleetWakeCoordinator
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -183,14 +183,16 @@ async def test_recovery_failure_explains_results_in_a_later_resumed_session(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("move", ["binding", "persistence"])
+@pytest.mark.parametrize("move", ["binding", "persistence", "close"])
 async def test_a_wake_whose_owner_moves_during_its_reply_save_is_refused(rig, move):
     """TASK-39159: a wake's pre-provider reply save (TASK-39119) adopted the
     saved row only when the chat's binding was unchanged, but went on to the
     provider either way, so the reply streamed into a row whose saved copy was
     not linked to it. The save is held while the chat is rebound (or its
     persistence replaced), as a manual turn's mix-in attempt would be refused.
-    Every turn that reaches the provider must stream into an adopted row."""
+    Every turn that reaches the provider must stream into an adopted row.
+    A plain close in that window (review r13p-rev1 M3) ends the turn as a
+    closed session, not as a refusal written into the closed chat."""
     chacha, _, runs_db, store, session, gateway, _, controller = rig
     try:
         persistence = store.persistence
@@ -217,6 +219,19 @@ async def test_a_wake_whose_owner_moves_during_its_reply_save_is_refused(rig, mo
             adopted_at_entry.append(reply.persisted_message_id is not None)
 
         gateway.on_stream = provider_entered
+        outcomes: list[object] = []
+        real_submit = controller.submit_draft
+
+        async def recorded_submit(*args, **kwargs):
+            try:
+                result = await real_submit(*args, **kwargs)
+            except BaseException as exc:
+                outcomes.append(exc)
+                raise
+            outcomes.append(result)
+            return result
+
+        controller.submit_draft = recorded_submit
         _parent, run_id = _terminal_subagent_run(runs_db, session.id)
         replacement(rig).on_fleet_drained(  # Wired on the test's loop.
             _drain(session.id, _survivor(run_id, session_id=session.id))
@@ -226,10 +241,31 @@ async def test_a_wake_whose_owner_moves_during_its_reply_save_is_refused(rig, mo
             if move == "binding":
                 store.rebind_persisted_conversation(session.id, None)
                 store.rebind_persisted_conversation(session.id, session.id)
-            else:
+            elif move == "persistence":
                 store.persistence = ChatPersistenceService(chacha)
+            else:
+                ticket = controller.begin_session_close(
+                    session.id,
+                    expected_revision=controller.lifecycle_impact(
+                        session_id=session.id
+                    ).revision,
+                )
+                controller.finalize_session_close(ticket)
+                assert all(row.id != session.id for row in store.sessions())
         finally:
             release.set()
+
+        if move == "close":
+            assert await _settle(lambda: outcomes, 10), "the wake turn never ended"
+            assert adopted_at_entry == [] and gateway.payloads == []
+            (outcome,) = outcomes
+            assert getattr(outcome, "visible_copy", outcome) == "Session closed.", outcome
+            assert outcome.terminal_status is not ConsoleRunStatus.BLOCKED, outcome
+            row = chacha.get_connection().execute(
+                "SELECT conversation_id, content FROM messages WHERE id=?", (saved[0],)
+            ).fetchone()
+            assert tuple(row) == (session.id, ""), row
+            return
 
         refused = "The chat changed while the reply was being saved; response was not sent."
 
