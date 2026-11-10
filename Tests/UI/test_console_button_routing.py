@@ -47,6 +47,7 @@ from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_workspace_context_rail import (
     _base_grouped_workspace_state,
     _browser_row,
+    _wait_for_condition,
 )
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -199,7 +200,7 @@ def _browser_config(app) -> dict:
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(
-    tmp_path, request
+    tmp_path, request, monkeypatch
 ):
     """Pressing the star persists through `conversation_local_marks_service`.
 
@@ -222,13 +223,29 @@ async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(
 
     async with host.run_test(size=_ROUTING_SIZE) as pilot:
         console = await _mounted_console(host, pilot)
-        await _sync_tray(console, pilot, _base_grouped_workspace_state(rows=rows))
+        state = _base_grouped_workspace_state(rows=rows)
+        monkeypatch.setattr(
+            console._workspace, "_build_console_workspace_context_state", lambda: state
+        )
+        console._sync_console_workspace_context()
 
         # TASK-23200: the per-row star button became an asterisk that opens
         # the row action menu. The durable write this test guards is now
         # reached through the menu's Favourite entry, which routes into the
         # same `_toggle_console_conversation_star` branch.
-        opener = console.query_one("#console-conversation-actions-0", Button)
+        def find_opener():
+            return next(
+                (
+                    button
+                    for button in console.query(".console-conversation-actions")
+                    if button.conversation_id == "conv-star-1"
+                ),
+                None,
+            )
+
+        await _wait_for_condition(pilot, lambda: find_opener() is not None, timeout=4.0)
+        opener = find_opener()
+        assert opener is not None
         assert opener.disabled is False
         assert opener.conversation_id == "conv-star-1"
 
@@ -248,7 +265,8 @@ async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(
 
         # Choosing it again unstars: the branch reads current truth from the
         # service, not from whatever the row was painted with.
-        await _sync_tray(console, pilot, _base_grouped_workspace_state(rows=rows))
+        console._sync_console_workspace_context()
+        await pilot.pause()
         console.on_conversation_action_chosen(
             ConversationActionChosen(
                 ACTION_UNFAVORITE,
