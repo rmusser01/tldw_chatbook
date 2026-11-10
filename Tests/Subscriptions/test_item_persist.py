@@ -6,12 +6,18 @@ from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 
 @pytest.fixture
 def db(tmp_path):
-    return SubscriptionsDB(str(tmp_path / "subs.db"), client_id="test")
+    db = SubscriptionsDB(str(tmp_path / "subs.db"), client_id="test")
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 @pytest.fixture
 def source_id(db):
-    return db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    return db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f", auto_pause_threshold=10
+    )
 
 
 def test_persists_full_column_set(db, source_id):

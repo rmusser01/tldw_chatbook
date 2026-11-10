@@ -9,6 +9,7 @@ the real production path.
 
 import asyncio
 import uuid
+from contextlib import closing
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -212,16 +213,17 @@ def test_reuse_consequences_name_the_watchlist_that_will_be_billed():
     assert "remove" not in stop.lower(), stop
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_source_check_default_matches_the_constant(tmp_path):
     """The seed passes no cadence, so every demo source inherits the
     `subscriptions.check_frequency` column default; the disclosure's
     "hourly" is pinned to what a real `create_source` row stores."""
-    db = _db(tmp_path)
-    local = LocalWatchlistsService(db_factory=lambda: db)
-    row = await local.create_source(dict(DEMO_SOURCES[0]))
-    stored = db.get_subscription(int(row["source_id"]))
-    assert stored["check_frequency"] == DEMO_SOURCE_CHECK_SECONDS
+    with closing(_db(tmp_path)) as db:
+        local = LocalWatchlistsService(db_factory=lambda: db)
+        row = await local.create_source(dict(DEMO_SOURCES[0]))
+        stored = db.get_subscription(int(row["source_id"]))
+        assert stored["check_frequency"] == DEMO_SOURCE_CHECK_SECONDS
 
 
 @pytest.mark.asyncio

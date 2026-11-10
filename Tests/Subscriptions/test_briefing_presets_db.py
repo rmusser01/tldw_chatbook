@@ -270,8 +270,8 @@ def test_list_briefing_scripts_returns_newest_first_by_identity():
 def test_list_briefing_scripts_is_scoped_to_its_own_briefing():
     db = SubscriptionsDB(":memory:", "test")
     watchlist_id = WatchlistBundleService(db).create(name="w")["id"]
-    briefing_a = db.insert_briefing(watchlist_id)
-    briefing_b = db.insert_briefing(watchlist_id)
+    briefing_a = db.insert_briefing(watchlist_id, status="complete")
+    briefing_b = db.insert_briefing(watchlist_id, status="complete")
 
     script_a = db.insert_briefing_script(
         briefing_a, preset_id=None, preset_name="p", roster_snapshot_json="[]"
@@ -463,7 +463,10 @@ def _seed_items(db, count):
     """Insert `count` bare `subscription_items` rows; return their ids in
     insertion (== AUTOINCREMENT) order."""
     source_id = db.add_subscription(
-        name="Feed", type="rss", source="https://feed.example/f"
+        name="Feed",
+        type="rss",
+        source="https://feed.example/f",
+        auto_pause_threshold=10,
     )
     ids = []
     with db.transaction() as conn:

@@ -28,6 +28,7 @@ from __future__ import annotations
 import os
 import stat
 import xml.etree.ElementTree as ET
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import Mock
@@ -60,12 +61,24 @@ def _db(tmp_path: Path) -> SubscriptionsDB:
     return SubscriptionsDB(tmp_path / "subs.db", "test")
 
 
+@pytest.fixture
+def db(tmp_path: Path):
+    with closing(_db(tmp_path)) as db:
+        yield db
+
+
 def _make_watchlist(db: SubscriptionsDB, name: str = "w") -> int:
     return WatchlistBundleService(db).create(name=name)["id"]
 
 
-def _make_briefing(db: SubscriptionsDB, watchlist_id: int, *, created_at: str) -> int:
-    briefing_id = db.insert_briefing(watchlist_id)
+def _make_briefing(
+    db: SubscriptionsDB,
+    watchlist_id: int,
+    *,
+    created_at: str,
+    status: str = "generating",
+) -> int:
+    briefing_id = db.insert_briefing(watchlist_id, status=status)
     with db.transaction() as conn:
         conn.execute(
             "UPDATE briefings SET created_at = ? WHERE id = ?",
@@ -91,6 +104,7 @@ def _seed_episode(
     preset_name: str = "Two Host Debate",
     write_real_file: bool = True,
     file_path: str | None = None,
+    briefing_status: str = "generating",
     covers_from_ts: str | None = None,
 ) -> tuple[int, Path]:
     """Build one full watchlist -> briefing -> script -> complete-audio chain.
@@ -102,7 +116,9 @@ def _seed_episode(
     Returns:
         `(audio_id, source_path)`.
     """
-    briefing_id = _make_briefing(db, watchlist_id, created_at=created_at)
+    briefing_id = _make_briefing(
+        db, watchlist_id, created_at=created_at, status=briefing_status
+    )
     if covers_from_ts is not None:
         db.update_briefing(briefing_id, covers_from_ts=covers_from_ts)
     script_id = _make_script(db, briefing_id, preset_name=preset_name)
@@ -130,7 +146,7 @@ def _seed_episode(
 
 
 def test_happy_path_writes_feed_xml_plus_one_file_per_episode_and_returns_the_count(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, db
 ):
     """The end-to-end deliverable: two real episodes must produce a
     `feed.xml` naming exactly two `<item>`s, exactly two audio files
@@ -139,15 +155,16 @@ def test_happy_path_writes_feed_xml_plus_one_file_per_episode_and_returns_the_co
     landed on disk -- not just that the call returns without raising.
     """
     _patch_user_data_dir(monkeypatch, tmp_path)
-    db = _db(tmp_path)
     watchlist_id = _make_watchlist(db, "Morning AI Brief")
     audio_dir = briefing_audio.briefing_audio_dir()
 
     _seed_episode(
-        db, watchlist_id, audio_dir=audio_dir, created_at="2026-01-01 00:00:00"
+        db, watchlist_id, audio_dir=audio_dir, created_at="2026-01-01 00:00:00",
+        briefing_status="complete",
     )
     _seed_episode(
-        db, watchlist_id, audio_dir=audio_dir, created_at="2026-01-02 00:00:00"
+        db, watchlist_id, audio_dir=audio_dir, created_at="2026-01-02 00:00:00",
+        briefing_status="complete",
     )
 
     destination = tmp_path / "export"
@@ -211,7 +228,7 @@ def test_length_bytes_matches_the_actual_copied_destination_files_size(
 
 
 def test_filenames_combine_stem_and_audio_id_so_identical_titles_cannot_collide(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, db
 ):
     """Two episodes sharing the exact same `preset_name` must still get
     two DISTINCT on-disk filenames -- if `_episode_filename` used the
@@ -219,7 +236,6 @@ def test_filenames_combine_stem_and_audio_id_so_identical_titles_cannot_collide(
     overwrite the first's, and the export would report success while
     actually losing an episode."""
     _patch_user_data_dir(monkeypatch, tmp_path)
-    db = _db(tmp_path)
     watchlist_id = _make_watchlist(db)
     audio_dir = briefing_audio.briefing_audio_dir()
 
@@ -229,6 +245,7 @@ def test_filenames_combine_stem_and_audio_id_so_identical_titles_cannot_collide(
         audio_dir=audio_dir,
         created_at="2026-01-01 00:00:00",
         preset_name="Same Title",
+        briefing_status="complete",
     )
     _seed_episode(
         db,
@@ -236,6 +253,7 @@ def test_filenames_combine_stem_and_audio_id_so_identical_titles_cannot_collide(
         audio_dir=audio_dir,
         created_at="2026-01-02 00:00:00",
         preset_name="Same Title",
+        briefing_status="complete",
     )
 
     destination = tmp_path / "export"
@@ -254,7 +272,7 @@ def test_filenames_combine_stem_and_audio_id_so_identical_titles_cannot_collide(
 
 
 def test_episode_titles_lead_with_the_date_so_identical_presets_are_distinguishable(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, db
 ):
     """Task 4 review round 1: `preset_name` alone made every episode
     rendered from the same preset identical in a podcast client's episode
@@ -262,7 +280,6 @@ def test_episode_titles_lead_with_the_date_so_identical_presets_are_distinguisha
     to expose. Leading the title with the publish date fixes this
     directly."""
     _patch_user_data_dir(monkeypatch, tmp_path)
-    db = _db(tmp_path)
     watchlist_id = _make_watchlist(db)
     audio_dir = briefing_audio.briefing_audio_dir()
 
@@ -272,6 +289,7 @@ def test_episode_titles_lead_with_the_date_so_identical_presets_are_distinguisha
         audio_dir=audio_dir,
         created_at="2026-01-01 00:00:00",
         preset_name="Same Preset",
+        briefing_status="complete",
     )
     _seed_episode(
         db,
@@ -279,6 +297,7 @@ def test_episode_titles_lead_with_the_date_so_identical_presets_are_distinguisha
         audio_dir=audio_dir,
         created_at="2026-01-02 00:00:00",
         preset_name="Same Preset",
+        briefing_status="complete",
     )
 
     destination = tmp_path / "export"
@@ -382,7 +401,7 @@ def test_an_unsafe_file_path_is_skipped_without_any_filesystem_access(
 
 
 def test_a_vanished_source_file_is_skipped_with_a_reason_and_others_still_export(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, db
 ):
     """A DB row whose `file_path` passes the safety check but no longer
     exists on disk (deleted out-of-band) must be recorded in `skipped`
@@ -390,7 +409,6 @@ def test_a_vanished_source_file_is_skipped_with_a_reason_and_others_still_export
     healthy episode must still make it into the feed (module docstring,
     decision 3: one bad episode is skipped, not fatal)."""
     _patch_user_data_dir(monkeypatch, tmp_path)
-    db = _db(tmp_path)
     watchlist_id = _make_watchlist(db)
     audio_dir = briefing_audio.briefing_audio_dir()
 
@@ -400,9 +418,11 @@ def test_a_vanished_source_file_is_skipped_with_a_reason_and_others_still_export
         audio_dir=audio_dir,
         created_at="2026-01-01 00:00:00",
         write_real_file=False,
+        briefing_status="complete",
     )
     _present_audio_id, _present_path = _seed_episode(
-        db, watchlist_id, audio_dir=audio_dir, created_at="2026-01-02 00:00:00"
+        db, watchlist_id, audio_dir=audio_dir, created_at="2026-01-02 00:00:00",
+        briefing_status="complete",
     )
 
     destination = tmp_path / "export"
@@ -418,7 +438,7 @@ def test_a_vanished_source_file_is_skipped_with_a_reason_and_others_still_export
 
 
 def test_a_malformed_briefing_created_at_is_skipped_with_a_clear_reason_others_still_export(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, db
 ):
     """Task 4 review round 1: no test previously exercised this skip path
     (`_published_from_briefing_created_at`'s `ValueError`), and its reason
@@ -428,15 +448,16 @@ def test_a_malformed_briefing_created_at_is_skipped_with_a_clear_reason_others_s
     says what actually went wrong, in plain words.
     """
     _patch_user_data_dir(monkeypatch, tmp_path)
-    db = _db(tmp_path)
     watchlist_id = _make_watchlist(db)
     audio_dir = briefing_audio.briefing_audio_dir()
 
     bad_audio_id, _bad_path = _seed_episode(
-        db, watchlist_id, audio_dir=audio_dir, created_at="not-a-timestamp"
+        db, watchlist_id, audio_dir=audio_dir, created_at="not-a-timestamp",
+        briefing_status="complete",
     )
     _good_audio_id, _good_path = _seed_episode(
-        db, watchlist_id, audio_dir=audio_dir, created_at="2026-01-02 00:00:00"
+        db, watchlist_id, audio_dir=audio_dir, created_at="2026-01-02 00:00:00",
+        briefing_status="complete",
     )
 
     destination = tmp_path / "export"
@@ -553,15 +574,17 @@ def test_a_failure_mid_write_leaves_the_previous_feed_xml_intact(tmp_path, monke
     assert not (destination / "feed.xml.partial").exists()
 
 
-def test_re_exporting_to_the_same_directory_overwrites_cleanly(tmp_path, monkeypatch):
+def test_re_exporting_to_the_same_directory_overwrites_cleanly(
+    tmp_path, monkeypatch, db
+):
     """No `"xb"`-style refusal -- the phase-2b private-write helpers must
     not be used here (Decision 2)."""
     _patch_user_data_dir(monkeypatch, tmp_path)
-    db = _db(tmp_path)
     watchlist_id = _make_watchlist(db)
     audio_dir = briefing_audio.briefing_audio_dir()
     _seed_episode(
-        db, watchlist_id, audio_dir=audio_dir, created_at="2026-01-01 00:00:00"
+        db, watchlist_id, audio_dir=audio_dir, created_at="2026-01-01 00:00:00",
+        briefing_status="complete",
     )
 
     destination = tmp_path / "export"
@@ -573,7 +596,8 @@ def test_re_exporting_to_the_same_directory_overwrites_cleanly(tmp_path, monkeyp
     assert first.episode_count == 1
 
     _seed_episode(
-        db, watchlist_id, audio_dir=audio_dir, created_at="2026-01-02 00:00:00"
+        db, watchlist_id, audio_dir=audio_dir, created_at="2026-01-02 00:00:00",
+        briefing_status="complete",
     )
 
     second = export_feed_directory(
@@ -732,14 +756,13 @@ def test_a_destination_failing_validate_path_simple_raises_before_anything_is_wr
 # multi-page walk with a handful of seeded rows rather than hundreds.
 
 
-def test_export_pages_through_more_than_one_page_of_episodes(tmp_path, monkeypatch):
+def test_export_pages_through_more_than_one_page_of_episodes(tmp_path, monkeypatch, db):
     """The literal "more episodes than one page" case: with the page size
     shrunk to 2 and 5 real episodes seeded, every one must still be
     exported -- no gaps, no silent truncation at the first page boundary.
     """
     _patch_user_data_dir(monkeypatch, tmp_path)
     monkeypatch.setattr(briefing_export, "_EPISODES_PAGE_SIZE", 2)
-    db = _db(tmp_path)
     watchlist_id = _make_watchlist(db)
     audio_dir = briefing_audio.briefing_audio_dir()
 
@@ -750,6 +773,7 @@ def test_export_pages_through_more_than_one_page_of_episodes(tmp_path, monkeypat
             audio_dir=audio_dir,
             created_at=f"2026-01-{n + 1:02d} 00:00:00",
             preset_name=f"Preset {n}",
+            briefing_status="complete",
         )[0]
         for n in range(5)
     ]

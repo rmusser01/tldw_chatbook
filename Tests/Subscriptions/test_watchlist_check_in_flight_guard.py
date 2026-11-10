@@ -39,6 +39,7 @@ whose file another thread can open.
 from __future__ import annotations
 
 import asyncio
+from contextlib import closing
 from types import SimpleNamespace
 
 import pytest
@@ -297,10 +298,16 @@ async def test_distinct_sources_still_check_concurrently(tmp_path, monkeypatch):
 # --- AC#3: nothing can strand a source as "in flight" ------------------------
 
 
+@pytest.fixture
+def db(tmp_path):
+    with closing(SubscriptionsDB(tmp_path / "subs.db", "test")) as db:
+        yield db
+
+
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_a_failed_check_releases_the_guard(tmp_path, monkeypatch):
+async def test_a_failed_check_releases_the_guard(db, monkeypatch):
     """A fetch that raises must not leave the pair claimed forever."""
-    db = SubscriptionsDB(tmp_path / "subs.db", "test")
     url = "https://example.com/page"
     source_id = db.add_subscription(name="Watched page", type="url", source=url)
     service = LocalWatchlistsService(db_factory=lambda: db)

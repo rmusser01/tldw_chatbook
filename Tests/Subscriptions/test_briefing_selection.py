@@ -65,7 +65,7 @@ def test_queue_flag_round_trips_through_the_normalizer():
     must carry it, or every downstream consumer sees un-queued items."""
     db = SubscriptionsDB(":memory:", "test")
     source_id = db.add_subscription(
-        name="ArXiv", type="rss", source="https://a.example/f"
+        name="ArXiv", type="rss", source="https://a.example/f", auto_pause_threshold=10
     )
     with db.transaction() as conn:
         cursor = conn.execute(
@@ -219,7 +219,10 @@ def test_get_briefing_returns_none_for_a_missing_id():
 def _new_source(db, watchlist_id, name):
     """Add a subscription and attach it to a watchlist."""
     source_id = db.add_subscription(
-        name=name, type="rss", source=f"https://{name}.example/feed.xml"
+        name=name,
+        type="rss",
+        source=f"https://{name}.example/feed.xml",
+        auto_pause_threshold=10,
     )
     WatchlistBundleService(db).add_source(watchlist_id, source_id)
     return source_id
@@ -228,7 +231,10 @@ def _new_source(db, watchlist_id, name):
 def _detached_source(db, name):
     """Add a subscription that is not (yet) in any watchlist."""
     return db.add_subscription(
-        name=name, type="rss", source=f"https://{name}.example/feed.xml"
+        name=name,
+        type="rss",
+        source=f"https://{name}.example/feed.xml",
+        auto_pause_threshold=10,
     )
 
 

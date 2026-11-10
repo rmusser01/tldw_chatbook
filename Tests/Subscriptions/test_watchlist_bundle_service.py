@@ -8,7 +8,11 @@ from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundle
 
 @pytest.fixture
 def db(tmp_path):
-    return SubscriptionsDB(str(tmp_path / "subs.db"), client_id="test")
+    db = SubscriptionsDB(str(tmp_path / "subs.db"), client_id="test")
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 @pytest.fixture
@@ -33,6 +37,7 @@ def test_name_collision_is_case_insensitive_and_suffixes(service):
     assert third["name"] == "UNSORTED (3)"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("policy", "outcome", "expected_name"),
     [
@@ -69,6 +74,7 @@ def test_create_with_sources_applies_explicit_collision_policy(
         assert service.list_sources(result["watchlist"]["id"]) == [requested_source]
 
 
+@pytest.mark.bootstrap_profile
 def test_create_with_sources_conflict_leaves_existing_unchanged(service, db):
     existing = service.create("Security", description="keep")
     source_id = db.add_subscription(
@@ -139,6 +145,7 @@ def test_create_with_sources_rolls_back_collection_when_source_is_missing(servic
     assert service.list_watchlists() == []
 
 
+@pytest.mark.bootstrap_profile
 def test_create_with_sources_rolls_back_collection_when_membership_insert_fails(
     service, db
 ):
@@ -163,6 +170,7 @@ def test_create_with_sources_rolls_back_collection_when_membership_insert_fails(
     assert service.list_watchlists() == []
 
 
+@pytest.mark.bootstrap_profile
 def test_create_with_sources_accepts_100_memberships_and_rejects_101(service, db):
     source_ids = [
         db.add_subscription(
@@ -193,6 +201,7 @@ def test_create_with_sources_accepts_100_memberships_and_rejects_101(service, db
     assert [row["name"] for row in service.list_watchlists()] == ["Maximum"]
 
 
+@pytest.mark.bootstrap_profile
 def test_update_sources_is_atomic_and_rejects_missing_sources(service, db):
     watchlist = service.create("Security")
     keep = db.add_subscription(
@@ -215,6 +224,7 @@ def test_update_sources_is_atomic_and_rejects_missing_sources(service, db):
     assert service.list_sources(watchlist["id"]) == [keep]
 
 
+@pytest.mark.bootstrap_profile
 def test_update_sources_rolls_back_add_when_later_remove_fails(service, db):
     watchlist = service.create("Security")
     remove = db.add_subscription(
@@ -243,6 +253,7 @@ def test_rename_also_avoids_collision(service):
     assert renamed["name"] == "security (2)"
 
 
+@pytest.mark.bootstrap_profile
 def test_membership_add_remove_and_idempotent_add(service, db):
     watchlist = service.create("Morning")
     source_id = db.add_subscription(
@@ -257,6 +268,7 @@ def test_membership_add_remove_and_idempotent_add(service, db):
     assert service.list_sources(watchlist["id"]) == []
 
 
+@pytest.mark.bootstrap_profile
 def test_source_can_belong_to_multiple_watchlists(service, db):
     first = service.create("Morning")
     second = service.create("Security")
@@ -269,6 +281,7 @@ def test_source_can_belong_to_multiple_watchlists(service, db):
     assert service.list_sources(second["id"]) == [source_id]
 
 
+@pytest.mark.bootstrap_profile
 def test_delete_removes_membership_but_not_sources(service, db):
     watchlist = service.create("Morning")
     source_id = db.add_subscription(
@@ -336,6 +349,7 @@ def test_rename_to_own_case_variant_has_no_suffix(service):
     assert renamed["name"] == "security"
 
 
+@pytest.mark.bootstrap_profile
 def test_list_source_rows_returns_names_and_types(service, db):
     watchlist = service.create("Morning")
     a = db.add_subscription(name="ArXiv: AI", type="rss", source="https://a.example/f")
@@ -356,6 +370,7 @@ def test_list_source_rows_is_empty_for_a_watchlist_with_no_sources(service):
     assert service.list_source_rows(watchlist["id"]) == []
 
 
+@pytest.mark.bootstrap_profile
 def test_list_source_rows_uses_a_single_query(service, db, monkeypatch):
     watchlist = service.create("Morning")
     for index in range(6):
@@ -402,6 +417,7 @@ class _CountingConnection:
         return getattr(self._inner, name)
 
 
+@pytest.mark.bootstrap_profile
 def test_list_all_source_rows_returns_every_source_sorted_by_name(service, db):
     b = db.add_subscription(name="Bravo", type="rss", source="https://b.example/f")
     a = db.add_subscription(name="alpha", type="url", source="https://a.example/")
@@ -415,6 +431,7 @@ def test_list_all_source_rows_is_empty_with_no_sources(service):
     assert service.list_all_source_rows() == []
 
 
+@pytest.mark.bootstrap_profile
 def test_list_all_source_rows_uses_a_single_query(service, db, monkeypatch):
     for index in range(6):
         db.add_subscription(
@@ -427,6 +444,7 @@ def test_list_all_source_rows_uses_a_single_query(service, db, monkeypatch):
     assert counting.execute_count == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_list_unassigned_source_rows_excludes_sources_in_any_watchlist(service, db):
     watchlist = service.create("Morning")
     assigned = db.add_subscription(
@@ -442,6 +460,7 @@ def test_list_unassigned_source_rows_excludes_sources_in_any_watchlist(service, 
     assert rows[0]["name"] == "Krebs"
 
 
+@pytest.mark.bootstrap_profile
 def test_list_unassigned_source_rows_is_empty_when_everything_is_assigned(service, db):
     watchlist = service.create("Morning")
     source_id = db.add_subscription(
@@ -452,6 +471,7 @@ def test_list_unassigned_source_rows_is_empty_when_everything_is_assigned(servic
     assert service.list_unassigned_source_rows() == []
 
 
+@pytest.mark.bootstrap_profile
 def test_list_unassigned_source_rows_uses_a_single_query(service, db, monkeypatch):
     watchlist = service.create("Morning")
     for index in range(6):
@@ -467,6 +487,7 @@ def test_list_unassigned_source_rows_uses_a_single_query(service, db, monkeypatc
     assert counting.execute_count == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_list_watchlists_for_source_is_the_mirror_of_list_sources(service, db):
     """Review wave, M5: one query for "which watchlists is this in".
 
@@ -500,6 +521,7 @@ def test_list_watchlists_for_source_is_the_mirror_of_list_sources(service, db):
         ) is expected
 
 
+@pytest.mark.bootstrap_profile
 def test_list_watchlists_for_source_is_empty_for_an_unassigned_source(service, db):
     source_id = db.add_subscription(
         name="Loose", type="rss", source="https://c.example/f"

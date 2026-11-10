@@ -32,7 +32,13 @@ def _make_watchlist(db: SubscriptionsDB, name: str = "w") -> int:
     return WatchlistBundleService(db).create(name=name)["id"]
 
 
-def _make_briefing(db: SubscriptionsDB, watchlist_id: int, *, created_at: str) -> int:
+def _make_briefing(
+    db: SubscriptionsDB,
+    watchlist_id: int,
+    *,
+    created_at: str,
+    status: str = "generating",
+) -> int:
     """Create a `briefings` row and pin its `created_at` explicitly.
 
     `update_briefing`'s allowlist deliberately excludes `created_at` (it is
@@ -44,7 +50,7 @@ def _make_briefing(db: SubscriptionsDB, watchlist_id: int, *, created_at: str) -
     resolution, and this suite must prove an ordering rule (newest briefing
     first) that a same-second default would make flaky.
     """
-    briefing_id = db.insert_briefing(watchlist_id)
+    briefing_id = db.insert_briefing(watchlist_id, status=status)
     with db.transaction() as conn:
         conn.execute(
             "UPDATE briefings SET created_at = ? WHERE id = ?",
@@ -89,13 +95,16 @@ def _chain(
     briefing_created_at: str,
     preset_name: str = "p",
     file_path: str = "/tmp/episode.mp3",
+    briefing_status: str = "generating",
 ) -> tuple[int, int, int]:
     """Build one full watchlist -> briefing -> script -> complete-audio chain.
 
     Returns:
         `(briefing_id, script_id, audio_id)`.
     """
-    briefing_id = _make_briefing(db, watchlist_id, created_at=briefing_created_at)
+    briefing_id = _make_briefing(
+        db, watchlist_id, created_at=briefing_created_at, status=briefing_status
+    )
     script_id = _make_script(db, briefing_id, preset_name=preset_name)
     audio_id = _make_complete_audio(db, script_id, file_path=file_path)
     return briefing_id, script_id, audio_id
@@ -111,10 +120,12 @@ def test_returns_audio_from_both_briefings_newest_briefing_first_by_identity():
     watchlist_id = _make_watchlist(db)
 
     _older_briefing, _older_script, older_audio = _chain(
-        db, watchlist_id, briefing_created_at="2026-01-01 00:00:00"
+        db, watchlist_id, briefing_created_at="2026-01-01 00:00:00",
+        briefing_status="complete",
     )
     _newer_briefing, _newer_script, newer_audio = _chain(
-        db, watchlist_id, briefing_created_at="2026-01-02 00:00:00"
+        db, watchlist_id, briefing_created_at="2026-01-02 00:00:00",
+        briefing_status="complete",
     )
 
     result = db.list_watchlist_audio_episodes(watchlist_id)
@@ -132,10 +143,12 @@ def test_orders_by_briefings_created_at_not_audio_created_at():
     watchlist_id = _make_watchlist(db)
 
     newer_briefing_id = _make_briefing(
-        db, watchlist_id, created_at="2026-01-02 00:00:00"
+        db, watchlist_id, created_at="2026-01-02 00:00:00",
+        status="complete",
     )
     older_briefing_id = _make_briefing(
-        db, watchlist_id, created_at="2026-01-01 00:00:00"
+        db, watchlist_id, created_at="2026-01-01 00:00:00",
+        status="complete",
     )
 
     newer_briefing_script = _make_script(db, newer_briefing_id)
@@ -250,7 +263,12 @@ def test_limit_returns_exactly_limit_rows():
     watchlist_id = _make_watchlist(db)
     limit = 3
     for n in range(limit + 5):
-        _chain(db, watchlist_id, briefing_created_at=f"2026-01-{n + 1:02d} 00:00:00")
+        _chain(
+            db,
+            watchlist_id,
+            briefing_created_at=f"2026-01-{n + 1:02d} 00:00:00",
+            briefing_status="complete",
+        )
 
     assert len(db.list_watchlist_audio_episodes(watchlist_id, limit=limit)) == limit
 
@@ -264,7 +282,12 @@ def test_offset_pages_through_every_row_without_gaps_or_repeats():
     db = SubscriptionsDB(":memory:", "test")
     watchlist_id = _make_watchlist(db)
     audio_ids = [
-        _chain(db, watchlist_id, briefing_created_at=f"2026-01-{n + 1:02d} 00:00:00")[2]
+        _chain(
+            db,
+            watchlist_id,
+            briefing_created_at=f"2026-01-{n + 1:02d} 00:00:00",
+            briefing_status="complete",
+        )[2]
         for n in range(7)
     ]
     expected_newest_first = list(reversed(audio_ids))
