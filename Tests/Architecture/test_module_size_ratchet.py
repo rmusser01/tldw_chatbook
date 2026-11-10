@@ -262,7 +262,9 @@ _BUDGETS: dict[str, int] = {
     # a wake or goal iteration whose chat moved during its reply save is refused.
     # 2026-11-12, restack onto dev e0186fa10a (owner size waiver): dev's
     # 28,734 plus TASK-39159's +8, measured.
-    "tldw_chatbook/Chat/console_chat_controller.py": 28742,
+    # 2026-11-10, TASK-39155 (owner size waiver): 29183 -> 29184 (+1, exact),
+    # a session close in progress counts as an explicit cancellation.
+    "tldw_chatbook/Chat/console_chat_controller.py": 28743,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.

@@ -25669,6 +25669,7 @@ class ConsoleChatController:
         return bool(
             self._shutdown_requested.is_set()
             or (cancel_event is not None and cancel_event.is_set())
+            or session_id in self._session_close_generations  # TASK-39155
             or not any(row.id == session_id for row in self.store.sessions())
         )
 
