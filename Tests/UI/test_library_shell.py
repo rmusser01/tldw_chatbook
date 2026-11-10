@@ -27,6 +27,10 @@ from textual.errors import NoWidget
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.background_signals import (
+    await_background_task,
+    wait_for_background_signal,
+)
 from Tests.UI.consolidated_css import (
     APP_STYLESHEETS,
     ConsolidatedCSSApp,
@@ -3760,6 +3764,7 @@ async def test_lasting_setup_escape_waits_during_checking_before_any_exit(
     app = _build_test_app()
     _seed_conversations(app, [], notes=[])
     app.notes_sync_runtime_owner = _Runtime()
+    app.collections_capture_scope_service = SimpleNamespace(active_authority=None)
     host = LibraryHarness(app)
 
     async with host.run_test(size=(100, 30)) as pilot:
@@ -3774,16 +3779,19 @@ async def test_lasting_setup_escape_waits_during_checking_before_any_exit(
         controller.set_setup("display_name", "Research")
         controller.set_setup("folder", str(tmp_path))
         task = asyncio.create_task(controller.check_setup())
-        await started.wait()
+        try:
+            await wait_for_background_signal(started, task, what="lasting setup check")
+            await screen.action_library_notes_escape()
 
-        await screen.action_library_notes_escape()
-
-        assert screen._notes_state.view == "lasting_add"
-        assert controller.snapshot.phase == "checking"
-        assert screen._library_notes_footer_shortcuts() == (("wait", "current step"),)
-        assert abandoned == []
-        release.set()
-        await task
+            assert screen._notes_state.view == "lasting_add"
+            assert controller.snapshot.phase == "checking"
+            assert screen._library_notes_footer_shortcuts() == (
+                ("wait", "current step"),
+            )
+            assert abandoned == []
+        finally:
+            release.set()
+            await await_background_task(task, what="lasting setup check")
         await screen.action_library_notes_escape()
         assert abandoned == ["provisional-root"]
 

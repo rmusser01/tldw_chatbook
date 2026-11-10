@@ -4284,6 +4284,8 @@ async def test_named_post_commit_cancellation_restores_exact_screen_and_runtime(
 
     roleplay_unmounted = asyncio.Event()
     removal_suspended = asyncio.Event()
+    removal_gate = asyncio.get_running_loop().create_future()
+    post_commit: asyncio.Task[object] | None = None
     store = ConsoleChatStore()
     prior = store.create_session(title="Prior")
     unrelated = store.create_session(title="Unrelated")
@@ -4344,11 +4346,13 @@ async def test_named_post_commit_cancellation_restores_exact_screen_and_runtime(
             return self.candidate
 
         async def _remove_promoted_screen_caller(self, caller):
+            nonlocal post_commit
+            post_commit = asyncio.current_task()
             await TldwCli._remove_promoted_screen_caller(self, caller)
             assert roleplay_unmounted.is_set()
             assert not caller.is_running and caller.parent is None
             removal_suspended.set()
-            await asyncio.Future()
+            await removal_gate
 
     app = _App()
     request = CharacterConversationActivationRequest(
@@ -4368,15 +4372,24 @@ async def test_named_post_commit_cancellation_restores_exact_screen_and_runtime(
                 app, request, asyncio.Event(), lambda _phase: None
             )
         )
-        await removal_suspended.wait()
-        post_commit = next(
-            task
-            for task in asyncio.all_tasks()
-            if task.get_name() == "character_conversation_post_commit"
-        )
-        post_commit.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await activation
+        try:
+            await wait_for_background_signal(
+                removal_suspended, activation, what="Roleplay caller removal"
+            )
+            assert post_commit is not None
+            assert post_commit.get_name() == "character_conversation_post_commit"
+            post_commit.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await await_background_task(activation, what="Roleplay rollback")
+        finally:
+            # Cancel at the fake gate so an in-flight Textual removal can finish.
+            removal_gate.cancel()
+            if not activation.done():
+                activation.cancel()
+                try:
+                    await await_background_task(activation, what="Roleplay cleanup")
+                except asyncio.CancelledError:
+                    pass
         await pilot.pause()
 
         assert post_commit.cancelled()
