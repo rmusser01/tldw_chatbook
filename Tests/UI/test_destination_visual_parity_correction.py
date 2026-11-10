@@ -318,10 +318,13 @@ def _assert_ascii_workbench_contract(
 
 
 def _visible_static_text(screen) -> str:
+    # A Static inside a hidden container is not visible either (review
+    # r13c-rev2): honour every ancestor's display, not only the widget's own.
     return " ".join(
         getattr(widget.renderable, "plain", str(widget.renderable))
         for widget in screen.query(Static)
-        if widget.display and hasattr(widget, "renderable")
+        if hasattr(widget, "renderable")
+        and all(getattr(node, "display", True) for node in widget.ancestors_with_self)
     )
 
 
@@ -1716,9 +1719,12 @@ async def test_schedules_screen_matches_approved_control_plane_columns():
             "Task Detail",
             "No scheduled tasks yet",
             "Inspector",
-            "No conflict",
+            "Select a task to see sync, conflict, and run details.",
         ):
             assert expected in visible_text
+        # TASK-39170 (review r13c-rev2): with no task the inspector shows its
+        # empty state; the conflict card and its "No conflict" stay hidden.
+        assert "No conflict" not in visible_text
         assert "Last pull:" not in visible_text
         assert "Last push:" not in visible_text
         visible_buttons = _visible_button_labels(screen)

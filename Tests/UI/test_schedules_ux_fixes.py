@@ -16,6 +16,7 @@ from textual.app import ComposeResult
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Input, Static
 
+from tldw_chatbook.Scheduling.models import ReminderTask, ScheduleKind
 from tldw_chatbook.UI.Screens.scheduling.conflicts_tab import _conflict_type_label
 from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import ReminderForm
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
@@ -167,12 +168,38 @@ class _PanesBeforeFirstTaskHarness(ConsolidatedCSSApp):
 async def test_detail_and_inspector_open_in_their_empty_state_before_any_task() -> None:
     """TASK-39170 (review r13c-rev1): before the queue's first ``set_task``,
     both panes show the empty state ``set_task(None)`` paints, not a blank
-    form ("-" rows and a "No conflict" card) for a task nobody selected."""
+    form ("-" rows and a "No conflict" card) for a task nobody selected.
+    The first selection must then reveal both panes' content (r13c-rev2):
+    composing it hidden left ``set_task`` as its only way back on screen."""
     app = _PanesBeforeFirstTaskHarness()
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(160, 60)) as pilot:
         await pilot.pause()
         assert app.query_one("#scheduling-task-detail-empty-state").display
         assert not app.query_one("#scheduling-task-detail-metadata").display
         assert app.query_one("#scheduling-task-inspector-empty-state").display
         assert not app.query_one("#scheduling-inspector-metadata").display
         assert not app.query_one("#scheduling-conflict-card").display
+
+        task = ReminderTask(
+            id="task-1",
+            title="Nightly check",
+            schedule_kind=ScheduleKind.RECURRING,
+            cron="0 * * * *",
+            timezone="UTC",
+        )
+        app.query_one(TaskDetail).set_task(task)
+        app.query_one(TaskInspector).set_task(task)
+        await pilot.pause()
+        for empty_state in (
+            "#scheduling-task-detail-empty-state",
+            "#scheduling-task-inspector-empty-state",
+        ):
+            assert not app.query_one(empty_state).display, empty_state
+        for content in (
+            "#scheduling-task-detail-metadata",
+            "#scheduling-inspector-metadata",
+            "#scheduling-conflict-card",
+        ):
+            widget = app.query_one(content)
+            assert widget.display, content
+            assert widget.region.area > 0, content
