@@ -1910,6 +1910,7 @@ class TestIngestJobOptions:
 
         assert options["translation_target_language"] == "en"
 
+    @pytest.mark.bootstrap_profile
     def test_stale_translate_under_transcribe_cpp_is_ignored_not_fatal(
         self,
     ) -> None:
