@@ -673,6 +673,57 @@ def _excluded_root(config, owner, path, *, kind, local_id=""):
     )
 
 
+@dataclass(frozen=True)
+class _LocalSQLite:
+    """One exact SQLite store under the user data dir, with its sidecars,
+    that centralized backup never captures (TASK-39110; ``notes.sync_state``
+    was the first).
+
+    ``reason`` is the refusal code. ``excluded`` False declares the store
+    without excluding it: present files stay explicit ``unsupported`` rows,
+    which block a complete preview, until a capture owner replaces it.
+    """
+
+    owner_id: str
+    filename: str
+    reason: str
+    excluded: bool = True
+    activation_required: bool = False
+
+    def discover(self, config):
+        database = user_data_dir(config) / self.filename
+        items = tuple(
+            _excluded_root(
+                config,
+                self.owner_id,
+                Path(str(database) + suffix),
+                kind="file",
+                local_id=suffix,
+            )
+            for suffix in ("", "-wal", "-shm", "-journal")
+        )
+        if self.excluded:
+            return items
+        return tuple(
+            replace(item, status="unsupported" if item.metadata else "unused")
+            if item.status == "intentionally_excluded"
+            else item
+            for item in items
+        )
+
+    def schema_policy(self):
+        return None
+
+    def validate(self, candidate):
+        return (self.reason,)
+
+    def capture(self, item, destination, cancel):
+        raise ValueError(self.reason)
+
+    def relocate(self, candidate, mapping):
+        raise ValueError(self.reason)
+
+
 class _Generated(_RawDeclaration):
     def discover(self, config):
         context = discovery_context(config)
@@ -1108,5 +1159,19 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             "generation.styles",
             leaf="image_generation_styles",
             tree=True,
+        ),
+        # TASK-39110: Personal Context's two databases. The interview drafts
+        # are local-only by policy; the repository's capture (and its key
+        # custody) waits for its own design task (owner decision 2026-11-06).
+        _LocalSQLite(
+            "personal_context.interview_drafts",
+            "tldw_chatbook_personal_context_interviews.db",
+            "personal_context_interview_drafts_excluded",
+        ),
+        _LocalSQLite(
+            "personal_context.repository",
+            "tldw_chatbook_personal_context.db",
+            "personal_context_repository_capture_unsupported",
+            excluded=False,
         ),
     )

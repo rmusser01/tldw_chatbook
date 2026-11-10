@@ -64,7 +64,11 @@ from tldw_chatbook.Backup_Recovery.participants import (
     core_transaction,
     register_core_connection,
 )
-from .base_db import registry_acquisition, sqlite_connection_quiescence_registry
+from .base_db import (
+    _QuiescentSQLiteConnection,
+    registry_acquisition,
+    sqlite_connection_quiescence_registry,
+)
 from .private_sqlite import backup_connection_to_private, connect_private_sqlite
 from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
 from tldw_chatbook.Utils.fts5_match_forms import (
@@ -1233,8 +1237,13 @@ class MediaDatabase:
                     detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
                     check_same_thread=False,
                     timeout=10,
+                    # TASK-39118: as ChaChaNotes, each cursor holds a registry
+                    # use until its results are consumed, so the quit's idle
+                    # close skips a read in flight instead of closing under it.
+                    factory=_QuiescentSQLiteConnection,
                 )
                 register_core_connection(self, conn)
+                conn.attach_quiescence_registry(self._connection_quiescence)
                 try:
                     core_access(self)
                 except BaseException:
@@ -1348,6 +1357,19 @@ class MediaDatabase:
             sqlite3.IntegrityError: Specifically re-raised if a sync validation
                                     trigger (defined in schema) fails.
         """
+        # TASK-39118: one use across the getter and the statement, so the
+        # quit's idle close cannot land between them; the cursor then holds
+        # its own use until its results are consumed.
+        registry = self._connection_quiescence
+        use = registry.begin_use()
+        try:
+            return self._execute_query(query, params, commit=commit)
+        finally:
+            registry.end_use(use)
+
+    def _execute_query(
+        self, query: str, params: tuple | None, *, commit: bool
+    ) -> sqlite3.Cursor:
         conn = self.get_connection()
         try:
             cursor = conn.cursor()

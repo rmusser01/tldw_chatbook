@@ -6792,6 +6792,9 @@ class ConsoleRuntime:
         # the other thread's connection.
         if runs_db is not None:
             try:
+                close_idle = getattr(runs_db, "close_idle_connections", None)
+                if callable(close_idle):  # TASK-39117: every thread's idle handle
+                    await asyncio.to_thread(close_idle)
                 runs_db.close()
             except Exception:  # noqa: BLE001 - same
                 logger.opt(exception=True).warning(

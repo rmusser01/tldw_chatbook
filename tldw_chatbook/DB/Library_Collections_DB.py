@@ -491,11 +491,12 @@ class LibraryCollectionsDB(SQLiteStoreKernel, BaseDB):
         # Must precede super().__init__: BaseDB.__init__ calls
         # _initialize_schema(), which already needs the held connection.
         self._init_store_kernel()
+        self._join_connection_registry(db_path)  # quit's idle close (TASK-39117)
         super().__init__(db_path, client_id)
 
     def _open_connection(self) -> sqlite3.Connection:
         """Open through BaseDB's db.base path (ADR-353 provenance section)."""
-        return BaseDB._get_connection(self)
+        return BaseDB._get_connection(self, check_same_thread=False)
 
     def _enable_wal(self, conn: sqlite3.Connection) -> None:
         """Enable WAL despite a concurrent opener briefly holding the file."""

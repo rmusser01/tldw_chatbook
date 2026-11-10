@@ -1013,3 +1013,369 @@ class TestRedactionOrderAndPathBoundaries:
         assert redact_user_paths("/srv/appdata/db.sqlite") == "~/db.sqlite"
         # A sibling that merely shares the prefix must survive intact.
         assert redact_user_paths("/srv/appdata-backup/db") == "/srv/appdata-backup/db"
+
+
+# ---------------------------------------------------------------------------
+# TASK-39123: the credentials-v2 trace projection. Its tests live here, beside
+# the v1 projection's pin, because this file runs on a PR lane.
+# Owner decision (2026-11-06): "Mask v1 on read: new traces are written under
+# v2; stored v1 traces keep their version tag, but every read, export and
+# share re-applies the v2 masks, so old keys never surface. No stored data is
+# rewritten."
+# ---------------------------------------------------------------------------
+
+_TRACE_KEY_PREFIXES = (
+    _synthetic("sk", "_live_"),
+    _synthetic("sk", "_test_"),
+    _synthetic("rk", "_live_"),
+    _synthetic("rk", "_test_"),
+)
+_TRACE_KEY_IDS = ("sk-live", "sk-test", "rk-live", "rk-test")
+
+
+@pytest.mark.parametrize("prefix", _TRACE_KEY_PREFIXES, ids=_TRACE_KEY_IDS)
+@pytest.mark.parametrize(
+    "shape", ["prose", "tool-result-string", "tool-result-value", "nested-json"]
+)
+def test_trace_credentials_v2_masks_bare_underscore_keys(prefix, shape) -> None:
+    import json
+
+    from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
+
+    key = prefix + _UNDERSCORE_KEY_BODY
+    value = {
+        "prose": f"payment retry failed with {key} for job 7",
+        "tool-result-string": json.dumps({"stripe": key}),
+        "tool-result-value": {"stripe": key},
+        "nested-json": {"messages": [{"role": "user", "content": f"key is {key}"}]},
+    }[shape]
+
+    result = CredentialSanitizer().sanitize(value)
+    stored = json.dumps(result.value)
+
+    assert (key in stored, "[credential omitted]" in stored) == (False, True)
+    assert result.detector_version == "credentials-v2"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "sk_live_mode is off for job 7",
+        "rk_test_ fixture loaded",
+        "sk_live_mode_enabled_for_every_customer_account",
+        "desk_live_" + _UNDERSCORE_KEY_BODY,
+        "SK_LIVE_" + _UNDERSCORE_KEY_BODY,
+    ],
+    ids=(
+        "short-word",
+        "bare-prefix",
+        "underscore-identifier",
+        "prefix-inside-word",
+        "uppercase",
+    ),
+)
+def test_trace_credentials_v2_keeps_identifiers_that_share_the_prefix(raw) -> None:
+    from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
+
+    assert CredentialSanitizer().sanitize(raw).value == raw
+
+
+def test_trace_credentials_v1_projection_stays_byte_identical() -> None:
+    """Stored v1 artifacts are compared with this projection; it never grows."""
+    from tldw_chatbook.Utils.log_sanitizer import sanitize_trace_credentials_v1
+
+    line = f"payment retry failed with {_TRACE_KEY_PREFIXES[0]}{_UNDERSCORE_KEY_BODY}"
+    assert sanitize_trace_credentials_v1(line) == line
+
+
+def _stored_v1_trace(
+    db, *, user_text: str, response: bytes, pii: bool = False, cut: str | None = None
+):
+    """Store one completed native call under a credentials-v1 policy, as an
+    app before TASK-39123 did: its provider-response artifact holds a bare key
+    that v1 never masked. Returns (assistant message id, policy id, artifact id).
+    """
+    from tldw_chatbook.Chat.console_semantic_revision import (
+        project_semantic_revision_provider_message,
+    )
+    from tldw_chatbook.Chat.console_trace_models import (
+        FrozenTracePolicy,
+        SemanticRevisionRef,
+        TraceCallState,
+        TraceContentRef,
+        new_opaque_id,
+    )
+    from tldw_chatbook.Chat.console_trace_redaction import (
+        BUILTIN_PII_RULESET_REVISION_ID,
+        redact_pii_value,
+    )
+    from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
+
+    repository = ConsoleTraceRepository()
+    conversation_id = db.add_conversation({"title": "stored v1 trace"})
+
+    def message(sender, content, parent=None):
+        message_id = db.add_message(
+            {
+                "conversation_id": conversation_id,
+                "sender": sender,
+                "content": content,
+                "parent_message_id": parent,
+            }
+        )
+        row = db.get_connection().execute(
+            """SELECT revision_id FROM console_trace_semantic_revisions
+                WHERE source_message_id = ? ORDER BY revision_sequence DESC""",
+            (message_id,),
+        ).fetchone()
+        return message_id, str(row[0])
+
+    user_id, user_revision = message("user", user_text)
+    assistant_id, _assistant_revision = message("assistant", "answer", user_id)
+    policy = FrozenTracePolicy(
+        new_opaque_id(),
+        "credentials-v1",
+        pii,
+        BUILTIN_PII_RULESET_REVISION_ID if pii else None,
+    )
+    at = "2026-11-01T00:00:00Z"
+    with db.transaction(immediate=True) as cursor:
+        repository.ensure_policy(cursor, policy)
+        if pii:
+            # Spans as a v1 write froze them: over the v1 projection, which
+            # is the raw message, since v1 leaves a bare underscore key alone.
+            source = project_semantic_revision_provider_message(
+                cursor,
+                revision_id=user_revision,
+                expected_conversation_id=conversation_id,
+            )
+            redaction = redact_pii_value(source)
+            spans: dict[str, list] = {}
+            for item in redaction.field_redactions:
+                spans.setdefault(item.field_path, []).append(item.span)
+            assert spans
+            if cut is not None:
+                # A custom rule's span frozen beside the built-in one, in the
+                # same field (one string here): it may land inside a key.
+                import dataclasses
+                import re
+
+                ((field_path, found),) = spans.items()
+                found.extend(
+                    dataclasses.replace(
+                        found[0], start_codepoint=m.start(), end_codepoint=m.end()
+                    )
+                    for m in re.finditer(cut, user_text)
+                )
+            for field_path, items in spans.items():
+                repository.ensure_redaction_spans(
+                    cursor,
+                    policy_id=policy.policy_id,
+                    semantic_revision_id=user_revision,
+                    artifact_id=None,
+                    field_path=field_path,
+                    spans=items,
+                )
+        segment = repository.create_segment(cursor)
+        owner = repository.attach_owner(
+            cursor, conversation_id=conversation_id, root_segment_id=segment.segment_id
+        )
+        surface = repository.append_surface_node(
+            cursor,
+            segment_id=segment.segment_id,
+            sequence=0,
+            predecessor_node_id=None,
+            component_kind="message",
+            reference=SemanticRevisionRef(user_revision),
+        )
+        header = repository.create_or_reuse_request_header(
+            cursor,
+            provider_name="openai",
+            model_name="gpt-test",
+            route_identity="fresh",
+            endpoint_identity="https://api.openai.com/v1",
+            generation_parameters={"streaming": False},
+            adapter_defaults={},
+            response_format={},
+            reasoning_controls={},
+            components=(),
+        )
+        call = repository.reserve_call(
+            cursor,
+            owner_id=owner.owner_id,
+            segment_id=segment.segment_id,
+            turn_id=user_id,
+            run_id="run-v1",
+            call_sequence=0,
+            idempotency_key="stored-v1-trace",
+            policy_id=policy.policy_id,
+        )
+        repository.bind_call(
+            cursor,
+            call_id=call.call_id,
+            surface_node_id=surface.node_id,
+            request_header_id=header.header_id,
+            provider_name="openai",
+            model_name="gpt-test",
+            route_identity="fresh",
+        )
+        for target in (TraceCallState.DISPATCH_STARTED, TraceCallState.RESPONSE_STARTED):
+            repository.advance_call_state(
+                cursor,
+                call_id=call.call_id,
+                target=target,
+                occurred_at=at,
+                integrity_state="complete",
+            )
+        artifact = repository.store_sanitized_artifact(
+            cursor,
+            sanitized_bytes=response,
+            media_type="application/json",
+            normalization_version="provider-response-v1",
+        )
+        repository.store_response_link(
+            cursor,
+            call_id=call.call_id,
+            response=TraceContentRef(artifact.artifact_id, "provider_response"),
+        )
+        repository.advance_call_state(
+            cursor,
+            call_id=call.call_id,
+            target=TraceCallState.COMPLETE,
+            occurred_at=at,
+            usage={"provider": "openai", "model": "gpt-test", "output": 1},
+            integrity_state="complete",
+        )
+        repository.append_event(
+            cursor,
+            segment_id=segment.segment_id,
+            sequence=0,
+            event_type="call_boundary",
+            call_id=call.call_id,
+        )
+    return assistant_id, policy.policy_id, artifact.artifact_id
+
+
+def _at_rest(db, policy_id: str, artifact_id: str):
+    connection = db.get_connection()
+    return (
+        connection.execute(
+            "SELECT credential_filter_version FROM console_trace_policies WHERE policy_id = ?",
+            (policy_id,),
+        ).fetchone()[0],
+        bytes(
+            connection.execute(
+                "SELECT sanitized_bytes FROM console_trace_artifacts WHERE artifact_id = ?",
+                (artifact_id,),
+            ).fetchone()[0]
+        ),
+    )
+
+
+@pytest.mark.parametrize("prefix", _TRACE_KEY_PREFIXES, ids=_TRACE_KEY_IDS)
+def test_stored_v1_trace_is_masked_on_read_export_and_share_but_not_rewritten(
+    tmp_path, prefix
+) -> None:
+    import json
+
+    from tldw_chatbook.Chat.console_exchange_export import project_exchange_export
+    from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
+    from tldw_chatbook.Chat.console_trace_projection import project_capture_for_viewer
+    from tldw_chatbook.Chat.trace_export_profiles import (
+        TraceExportProfile,
+        TraceViewerProfile,
+    )
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    key = prefix + _UNDERSCORE_KEY_BODY
+    response = json.dumps(
+        {"role": "assistant", "content": f"use {key}", "tool_calls": []},
+        separators=(",", ":"),
+    ).encode()
+    db = CharactersRAGDB(tmp_path / "trace.sqlite", "stored-v1")
+    try:
+        assistant_id, policy_id, artifact_id = _stored_v1_trace(
+            db, user_text=f"my key is {key}", response=response
+        )
+        before = _at_rest(db, policy_id, artifact_id)
+        (call,) = ConsoleTraceNativeReader(db).read_calls(assistant_id)
+        disclosed = {
+            # The Conversation Inspector's read, both viewer profiles.
+            **{
+                f"read-{profile.value}": repr(
+                    project_capture_for_viewer(call.capture, profile)
+                )
+                for profile in TraceViewerProfile
+            },
+            # Export to a file and share to the clipboard both write this text
+            # (Widgets/Console/console_exchange_export_dialog.py).
+            **{
+                f"export-{profile.value}": project_exchange_export(
+                    call.capture, profile
+                ).json_text
+                for profile in TraceExportProfile
+            },
+        }
+        after = _at_rest(db, policy_id, artifact_id)
+    finally:
+        db.close()
+
+    assert {name: key in text for name, text in disclosed.items()} == {
+        name: False for name in disclosed
+    }
+    assert "[credential omitted]" in disclosed["export-full_trace"]
+    # Nothing at rest moved: the policy keeps its v1 tag, the artifact its bytes.
+    assert before == after == ("credentials-v1", response)
+
+
+def test_stored_v1_pii_masks_still_land_with_the_v2_key_mask(tmp_path) -> None:
+    """A v1 policy's frozen PII spans index the v1 projection. Re-sanitizing
+    under v2 first would shift them off the e-mail address."""
+    from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    key = _TRACE_KEY_PREFIXES[0] + _UNDERSCORE_KEY_BODY
+    db = CharactersRAGDB(tmp_path / "trace.sqlite", "stored-v1-pii")
+    try:
+        assistant_id, _policy_id, _artifact_id = _stored_v1_trace(
+            db,
+            user_text=f"key {key} then mail ada@example.com please",
+            response=b'{"content":"ok","role":"assistant"}',
+            pii=True,
+        )
+        (call,) = ConsoleTraceNativeReader(db).read_calls(assistant_id)
+    finally:
+        db.close()
+
+    assert call.capture.request.get("messages_payload") == [
+        {
+            "role": "user",
+            "content": "key [credential omitted] then mail [PII omitted] please",
+        }
+    ]
+
+
+def test_stored_v1_custom_span_inside_a_key_leaves_no_key_fragment(tmp_path) -> None:
+    """TASK-39123 review r12b-rev1: a frozen span that cuts a bare key (here a
+    custom digit rule) split it into fragments the v2 masks no longer match.
+    The span is widened over the key, so the read shows no fragment."""
+    from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    key = _TRACE_KEY_PREFIXES[0] + "DONOTUSE" + "123456" + "EXAMPLEONLYabcdefghij"
+    db = CharactersRAGDB(tmp_path / "trace.sqlite", "stored-v1-cut")
+    try:
+        assistant_id, _policy_id, _artifact_id = _stored_v1_trace(
+            db,
+            user_text=f"key {key} then mail ada@example.com please",
+            response=b'{"content":"ok","role":"assistant"}',
+            pii=True,
+            cut=r"\d{4,}",
+        )
+        (call,) = ConsoleTraceNativeReader(db).read_calls(assistant_id)
+    finally:
+        db.close()
+
+    assert call.capture.request.get("messages_payload") == [
+        {"role": "user", "content": "key [PII omitted] then mail [PII omitted] please"}
+    ]

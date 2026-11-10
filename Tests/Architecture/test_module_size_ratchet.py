@@ -190,7 +190,10 @@ _BUDGETS: dict[str, int] = {
     # raises a barrier, skips a busy store, bounds its checkpoint wait.
     # 2026-11-06, TASK-39047 (owner size waiver): 2200 -> 2203 (+3) -- the
     # quit's idle close covers media, Dreams and Guardian too.
-    "tldw_chatbook/app_lifecycle.py": 2203,
+    # 2026-11-06, TASK-39117 (owner size waiver): 2203 -> 2207 (+4) -- the
+    # quit's idle close also covers the Workspace, Library Collections and
+    # notifications stores.
+    "tldw_chatbook/app_lifecycle.py": 2207,
     # TASK-33011: TldwCli's screen navigation moved verbatim out of app.py
     # (NavigationMixin); governed there, so governed here.
     # TASK-34000.27 (2026-10-09): 1110 -> 1195 (+85), owner decision
@@ -886,7 +889,12 @@ _BUDGETS: dict[str, int] = {
     # thread's handle joins the file's registry, closed idle at quit.
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
     # 9453 -> 9534 (+81), TASK-38588 purges stale FTS tokens on a media overwrite.
-    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9534,
+    # 2026-11-06, TASK-39118 (owner size waiver): 9453 -> 9475 (+22) -- media
+    # cursors and execute_query hold a registry use, so the quit's idle close
+    # skips a bare read in flight.
+    # 2026-11-09, round-12 restack onto dev 3a6498ae14 (owner size waiver):
+    # dev's 9,534 plus TASK-39118's +22.
+    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9556,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
     # 2026-10-29, TASK-33622.6 (owner decision: raise with a dated comment):
     # 8747 -> 8763 (+16). The flat Conversations lane filters its rows and
@@ -964,7 +972,13 @@ _BUDGETS: dict[str, int] = {
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
     # the agent bridge gets the services bundle's storage (+1).
-    "tldw_chatbook/Chat/console_runtime.py": 7040,
+    # 2026-11-07, TASK-39117 (owner size waiver): 7069 -> 7072 (+3) -- the
+    # runtime's dispose closes every thread's idle AgentRunsDB handle.
+    # 2026-11-09, round-12 restack onto dev 3a6498ae14 (owner size waiver):
+    # dev's 7,046 plus TASK-39117's +3.
+    # 2026-11-10, restack onto dev e78b62f0e7 (owner size waiver): dev's 7,040
+    # plus TASK-39117's +3; exact measurement.
+    "tldw_chatbook/Chat/console_runtime.py": 7043,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-337 amendment 2026-10-27). The proof itself lives in
@@ -976,7 +990,10 @@ _BUDGETS: dict[str, int] = {
     # live row count (dead sequences inside the range count too).
     # 2026-10-31, PR3298 user size waiver: +31 to select the completed proof
     # by exact descriptors and its permitted start before full validation.
-    "tldw_chatbook/Chat/console_trace_service.py": 6587,
+    # 2026-11-07, TASK-39123 (owner size waiver): 6587 -> 6600 (+13) -- the
+    # replay and surface-prefix comparisons accept a turn stored under an
+    # older readable credential projection (review r12b-rev2).
+    "tldw_chatbook/Chat/console_trace_service.py": 6600,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6049,

@@ -77,6 +77,7 @@ class ClientNotificationsDB(SQLiteStoreKernel, BaseDB):
         # eagerly for :memory: below) already needs a connection.
         self._memory_conn: sqlite3.Connection | None = None
         self._init_store_kernel()
+        self._join_connection_registry(db_path)  # quit's idle close (TASK-39117)
         # TASK-21105: file-backed schema creation is deferred to the first
         # connection (initialize_schema=False below). Construction resolves
         # the path only; no file/WAL sidecars are created until first
@@ -135,7 +136,7 @@ class ClientNotificationsDB(SQLiteStoreKernel, BaseDB):
         # (MRO), whose _get_connection calls _open_connection back -- the
         # recursion this line caused before the explicit target (ADR-353
         # provenance pattern).
-        conn = BaseDB._get_connection(self)
+        conn = BaseDB._get_connection(self, check_same_thread=False)
         register_core_connection(self, conn)
         try:
             core_access(self)

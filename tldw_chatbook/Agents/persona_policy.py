@@ -59,10 +59,9 @@ def parse_persona_policy_from_rules(
     cleaned: list[dict[str, object]] = []
     for entry in rules or ():
         if not isinstance(entry, Mapping):
-            # TASK-39060: constant message; the forwarder appends the class.
-            logger.bind(exception_type=type(entry).__name__).warning(
-                "Dropping non-mapping persona policy rule"
-            )
+            # TASK-39127: a data type is not an error class, so nothing is
+            # bound (the forwarder would append it as one).
+            logger.warning("Dropping a non-mapping policy rule")
             continue
         try:
             from tldw_chatbook.tldw_api.character_persona_schemas import (

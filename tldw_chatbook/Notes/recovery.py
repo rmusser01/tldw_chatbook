@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
 
+from tldw_chatbook.Backup_Recovery.config_adapter import _LocalSQLite
 from tldw_chatbook.Backup_Recovery.models import (
     OwnerAdapter,
     StorageItem,
@@ -100,42 +101,6 @@ class _FileNotesAdapter(_SQLiteDeclaration):
             )
 
 
-@dataclass(frozen=True)
-class _DeviceStateExclusion:
-    """Device-local roots, receipts and operation authority are never portable."""
-
-    owner_id: str = "notes.sync_state"
-    activation_required: bool = False
-
-    def discover(self, config):
-        from tldw_chatbook.Backup_Recovery.config_adapter import _excluded_root
-        from tldw_chatbook.Backup_Recovery.profile_paths import user_data_dir
-
-        database = user_data_dir(config) / "tldw_chatbook_notes_sync_state.db"
-        return tuple(
-            _excluded_root(
-                config,
-                self.owner_id,
-                Path(str(database) + suffix),
-                kind="file",
-                local_id=suffix or "",
-            )
-            for suffix in ("", "-wal", "-shm", "-journal")
-        )
-
-    def schema_policy(self):
-        return None
-
-    def validate(self, candidate):
-        return ("notes_device_state_excluded",)
-
-    def capture(self, item, destination, cancel):
-        raise ValueError("notes_device_state_excluded")
-
-    def relocate(self, candidate, mapping):
-        raise ValueError("notes_device_state_excluded")
-
-
 def recovery_adapters() -> tuple[OwnerAdapter, ...]:
     return (
         _FileNotesAdapter(
@@ -147,7 +112,12 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             (),
             optional_default=True,
         ),
-        _DeviceStateExclusion(),
+        # Device-local roots, receipts and operation authority are never portable.
+        _LocalSQLite(
+            "notes.sync_state",
+            "tldw_chatbook_notes_sync_state.db",
+            "notes_device_state_excluded",
+        ),
         _SyncBindings(),
     )
 

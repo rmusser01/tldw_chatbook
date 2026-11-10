@@ -97,6 +97,8 @@ CORE_OWNER_CASES = (
             "detect_types": sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
             "check_same_thread": False,
             "timeout": 10,
+            # TASK-39118: cursor-use tokens, as ChaChaNotes.
+            "factory": base_db._QuiescentSQLiteConnection,
         },
         {"foreign_keys": 1, "journal_mode": "wal"},
         True,
@@ -129,7 +131,17 @@ CORE_OWNER_CASES = (
         {"journal_mode": "wal", "synchronous": 1},
         True,
     ),
-    OwnerCase("rag_indexing", RAG_Indexing_DB, "db.rag_indexing", {}, {}, False),
+    # TASK-39117: the kernel opener passes check_same_thread=False once the
+    # store joins its file's registry. (This case is red on dev for another
+    # reason: the module no longer imports connect_private_sqlite itself.)
+    OwnerCase(
+        "rag_indexing",
+        RAG_Indexing_DB,
+        "db.rag_indexing",
+        {"check_same_thread": False},
+        {},
+        False,
+    ),
 )
 
 

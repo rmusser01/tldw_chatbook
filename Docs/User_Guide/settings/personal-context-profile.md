@@ -347,6 +347,11 @@ Personal Context merge or resolution action in Settings.
 - Stored profile values, proposal bodies, drafts, conflict artifacts, and
   transport envelopes are encrypted at rest. Logs and diagnostics contain
   bounded status and IDs, not profile values or raw interview answers.
+- Backups: encrypted interview drafts stay on this device and are never
+  included in a backup; a backup preview lists them as excluded. The Personal
+  Context database itself cannot be backed up yet: a preview lists it as
+  unsupported, so a backup of a profile that has used Personal Context is
+  reported as incomplete.
 - Encryption does not hide all metadata, such as object counts and update
   timing. Under `server_trusted_v1`, the authorized home server can decrypt
   syncable content and re-encrypt it with its own keys. HTTPS protects that

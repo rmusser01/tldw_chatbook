@@ -5,15 +5,54 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 from tldw_chatbook.Utils.log_sanitizer import (
     REDACTION_MARKER,
     sanitize_trace_credentials_v1,
+    sanitize_trace_credentials_v2,
+    trace_credentials_v2_spans,
 )
 
-CREDENTIAL_FILTER_VERSION = "credentials-v1"
+#: TASK-39123: new traces are stored under v2. Stored v1 policies keep their
+#: tag and still read; every read, export and share re-applies the v2 masks.
+CREDENTIAL_FILTER_VERSION = "credentials-v2"
+#: Rule for adding a version: each newer projection must mask everything the
+#: older ones do, and be idempotent (v2 = v1 + bare underscore keys). Only then
+#: does ``ConsoleTraceService._durable_reference_matches``, which retries a
+#: surface-prefix match under every readable version, accept nothing new; and
+#: ``trace_policies_agree`` / the v2 re-mask on read rely on the same rule.
+_CREDENTIAL_PROJECTIONS = {
+    "credentials-v1": sanitize_trace_credentials_v1,
+    CREDENTIAL_FILTER_VERSION: sanitize_trace_credentials_v2,
+}
+#: Every credential filter version a stored trace policy can be read under.
+READABLE_CREDENTIAL_FILTER_VERSIONS = frozenset(_CREDENTIAL_PROJECTIONS)
+
+
+def trace_policies_agree(left: object, right: object) -> bool:
+    """Whether two frozen trace policies disclose alike (TASK-39123).
+
+    PII settings must match exactly. Credential versions agree when equal,
+    or when both are readable: every read re-applies the current masks, so
+    a turn stored under v1 continues under v2 (owner decision 2026-11-06).
+
+    Args:
+        left: A ``FrozenTracePolicy``.
+        right: Another ``FrozenTracePolicy``.
+
+    Returns:
+        True when one may continue the other's surface.
+    """
+    versions = {left.credential_filter_version, right.credential_filter_version}
+    return (
+        left.pii_redaction_enabled == right.pii_redaction_enabled
+        and left.pii_ruleset_revision_id == right.pii_ruleset_revision_id
+        and (len(versions) == 1 or versions <= READABLE_CREDENTIAL_FILTER_VERSIONS)
+    )
+
+
 CREDENTIAL_SANITIZER_UNAVAILABLE = "credential_sanitizer_unavailable"
 DEFAULT_CREDENTIAL_MAX_NODES = 100_000
 DEFAULT_CREDENTIAL_MAX_DEPTH = 64
@@ -452,15 +491,35 @@ def redact_pii_value(
     )
 
 
+def _widen_over_v2_credentials(
+    text: str, spans: Sequence[PIIRedactionSpan]
+) -> tuple[PIIRedactionSpan, ...]:
+    """Widen each span that cuts a v2-only key to cover the whole key."""
+    keys = trace_credentials_v2_spans(text)
+    widened = []
+    for span in spans:
+        start, end = span.start_codepoint, span.end_codepoint
+        for key_start, key_end in keys:
+            if key_start < end and start < key_end:
+                start, end = min(start, key_start), max(end, key_end)
+        widened.append(replace(span, start_codepoint=start, end_codepoint=end))
+    return tuple(widened)
+
+
 def apply_frozen_pii_masks(
     value: object,
     field_masks: Mapping[str, Sequence[PIIRedactionSpan]],
+    *,
+    widen_over_v2_credentials: bool = False,
 ) -> object:
     """Apply persisted masks to a fresh projection without rerunning detection.
 
     Args:
         value: Fresh JSON-like projection of the original frozen source.
         field_masks: Content-free structured paths and immutable codepoint ranges.
+        widen_over_v2_credentials: For a stored v1 policy (TASK-39123): a span
+            that cuts a key the v2 projection masks is widened over the key,
+            so the masks the caller applies next leave no fragment.
 
     Returns:
         A new projection with every persisted mask applied.
@@ -482,6 +541,8 @@ def apply_frozen_pii_masks(
             if spans is None:
                 return item
             used.add(path)
+            if widen_over_v2_credentials:
+                spans = _widen_over_v2_credentials(item, spans)
             return apply_pii_mask(item, spans)
         if isinstance(item, Mapping):
             if any(type(key) is not str for key in item):
@@ -493,6 +554,8 @@ def apply_frozen_pii_masks(
                 key_spans = masks.get(key_path)
                 if key_spans is not None:
                     used.add(key_path)
+                    if widen_over_v2_credentials:
+                        key_spans = _widen_over_v2_credentials(key, key_spans)
                     masked_key = apply_pii_mask(key, key_spans)
                 else:
                     masked_key = key
@@ -520,6 +583,7 @@ class CredentialSanitizer:
         "_max_depth",
         "_max_nodes",
         "_max_text_codepoints",
+        "_version",
     )
 
     def __init__(
@@ -529,6 +593,7 @@ class CredentialSanitizer:
         max_nodes: int = DEFAULT_CREDENTIAL_MAX_NODES,
         max_depth: int = DEFAULT_CREDENTIAL_MAX_DEPTH,
         max_text_codepoints: int = DEFAULT_CREDENTIAL_MAX_TEXT_CODEPOINTS,
+        version: str = CREDENTIAL_FILTER_VERSION,
     ) -> None:
         """Create a bounded credential sanitizer.
 
@@ -537,11 +602,16 @@ class CredentialSanitizer:
             max_nodes: Maximum aggregate container, key, and scalar nodes inspected.
             max_depth: Maximum recursive JSON-like value depth inspected.
             max_text_codepoints: Maximum code points inspected in any one string.
+            version: Credential projection to apply. Only the reader of a stored
+                v1 policy's frozen PII spans asks for ``credentials-v1``, and
+                it re-applies the current masks afterwards (TASK-39123).
 
         Raises:
-            ValueError: If a work limit is invalid or known values exceed the
-                bounded detector budget.
+            ValueError: If a work limit or version is invalid, or known values
+                exceed the bounded detector budget.
         """
+        if version not in _CREDENTIAL_PROJECTIONS:
+            raise ValueError("version")
 
         for limit, name in (
             (max_nodes, "max_nodes"),
@@ -561,6 +631,7 @@ class CredentialSanitizer:
         self._max_nodes = max_nodes
         self._max_depth = max_depth
         self._max_text_codepoints = max_text_codepoints
+        self._version = version
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}()"
@@ -580,12 +651,14 @@ class CredentialSanitizer:
                 available=False,
                 value=None,
                 omission_reason_code=CREDENTIAL_SANITIZER_UNAVAILABLE,
+                detector_version=self._version,
             )
         return CredentialSanitizationResult(
             available=True,
             value=sanitized,
             omission_reason_code=None,
             redacted=redacted,
+            detector_version=self._version,
         )
 
     def _sanitize(
@@ -705,7 +778,7 @@ class CredentialSanitizer:
                 value = value.replace(credential, _OMITTED_TEXT)
         if _SECRET_TEXT.search(value):
             value = _SECRET_TEXT.sub(_OMITTED_TEXT, value)
-        return sanitize_trace_credentials_v1(value).replace(
+        return _CREDENTIAL_PROJECTIONS[self._version](value).replace(
             REDACTION_MARKER, _OMITTED_TEXT
         )
 

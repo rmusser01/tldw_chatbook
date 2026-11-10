@@ -1533,6 +1533,7 @@ async def test_normal_console_multiple_native_rounds(
     subsequent_turn=False,
     replay_fault=None,
     known_credential="",
+    upgraded_from_v1=False,
 ):
     import io
     import json
@@ -1630,6 +1631,18 @@ async def test_normal_console_multiple_native_rounds(
 
                     result = replace(
                         result, content="Read file value: " + known_credential
+                    )
+                if upgraded_from_v1:
+                    from dataclasses import replace
+
+                    # A bare key v1 never masked (split so no line holds it).
+                    result = replace(
+                        result,
+                        content="env STRIPE="
+                        + "sk"
+                        + "_live_"
+                        + "DONOTUSEEXAMPLEONLY"
+                        + "a1B2c3D4e5" * 2,
                     )
                 return result
 
@@ -2153,6 +2166,21 @@ async def test_normal_console_multiple_native_rounds(
     # Keep the repository's socket guard: unlike a blanket replacement it
     # permits Windows asyncio's socketpair bootstrap, while denying egress.
     assert not network_guard.is_allowed() and not network_guard.is_loopback_only()
+    pre_upgrade = pytest.MonkeyPatch()
+    if upgraded_from_v1:
+        # TASK-39123: the first turn as an app before the upgrade wrote it --
+        # a credentials-v1 policy, and v1 masks behind the default sanitizer.
+        from tldw_chatbook.Chat import console_trace_redaction
+        from tldw_chatbook.Utils.log_sanitizer import sanitize_trace_credentials_v1
+
+        pre_upgrade.setattr(
+            console_chat_controller, "CREDENTIAL_FILTER_VERSION", "credentials-v1"
+        )
+        pre_upgrade.setitem(
+            console_trace_redaction._CREDENTIAL_PROJECTIONS,
+            console_trace_redaction.CREDENTIAL_FILTER_VERSION,
+            sanitize_trace_credentials_v1,
+        )
     try:
         with (
             patch.object(socket, "getaddrinfo", denied),
@@ -2163,6 +2191,7 @@ async def test_normal_console_multiple_native_rounds(
             result = await controller.submit_draft(
                 "Inspect agents twice, then finish.", session_id=session.id
             )
+        pre_upgrade.undo()
         assert result.accepted and result.provider_started
         if fault is not None and fault not in {
             "private_projection",
@@ -2375,16 +2404,17 @@ async def test_normal_console_multiple_native_rounds(
                     if request.get("system_message")
                     else []
                 ) + request["messages_payload"]
-                if known_credential:
+                if known_credential or upgraded_from_v1:
                     from tldw_chatbook.Chat.console_trace_redaction import (
                         CredentialSanitizer,
                     )
 
+                    # The read re-applies v2 masks, whatever the stored version.
                     expected = CredentialSanitizer(
-                        known_credentials=(known_credential,)
+                        known_credentials=(known_credential,) if known_credential else ()
                     ).sanitize(sent["messages"])
                     assert expected.available and rows == expected.value
-                    assert known_credential not in repr(call.capture)
+                    assert (known_credential or "sk_live_") not in repr(call.capture)
                 else:
                     assert rows == sent["messages"]
                 assert (
@@ -2402,6 +2432,7 @@ async def test_normal_console_multiple_native_rounds(
                         )
                     )
     finally:
+        pre_upgrade.undo()
         if replay_fault in {"completed_attachment", "recorded_round", "replay_order"}:
             # A refused initial trace keeps the existing pending-dispatch guard.
             assert store.dispatch_recovery_for_session(session.id) is not None
@@ -2460,7 +2491,7 @@ async def test_live_native_capture_failed_request_retry(tmp_path, monkeypatch, m
 @pytest.mark.asyncio
 @pytest.mark.parametrize("detail", ["safe", "full"])
 async def test_normal_manual_completed_history_and_new_native_rounds(
-    tmp_path, monkeypatch, detail, replay_fault=None, known_credential=""
+    tmp_path, monkeypatch, detail, replay_fault=None, known_credential="", upgraded=False
 ):
     import os
     from pathlib import Path
@@ -2484,6 +2515,7 @@ async def test_normal_manual_completed_history_and_new_native_rounds(
             subsequent_turn=True,
             replay_fault=replay_fault,
             known_credential=known_credential,
+            upgraded_from_v1=upgraded,
         )
     finally:
         config.save_setting_to_cli_config("console", "exchange_capture", old_enabled)
@@ -2528,6 +2560,22 @@ async def test_completed_replay_known_credential_manual_rounds(
         monkeypatch,
         detail,
         known_credential="syntheticOpaqueCredentialValue42",
+    )
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.owned_http_client
+@pytest.mark.asyncio
+@pytest.mark.parametrize("detail", ["safe", "full"])
+async def test_completed_replay_continues_a_turn_traced_under_credentials_v1(
+    tmp_path, monkeypatch, detail
+):
+    """TASK-39123 review r12b-rev2: the first turn's tool results hold a bare
+    key and were traced under credentials-v1 (pre-upgrade); the next turn,
+    under the v2 default, replays its rounds and matches its surface prefix
+    against those stored v1 bytes. It must dispatch, not refuse."""
+    await test_normal_manual_completed_history_and_new_native_rounds(
+        tmp_path, monkeypatch, detail, upgraded=True
     )
 
 

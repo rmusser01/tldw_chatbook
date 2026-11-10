@@ -247,6 +247,57 @@ def test_buddy_seed_reads_resources_from_zip_traversable(components, monkeypatch
 
 
 @pytest.mark.parametrize(
+    "filename", ["../escape.png", "/escape.png", "nested/escape.png"]
+)
+def test_buddy_seed_rejects_non_flat_asset_paths(components, monkeypatch, filename):
+    """TASK-39124: a bundled filename that is not one flat name is refused
+    before it is read, and nothing is published."""
+    import json
+
+    db, _service, _coordinator, root = components
+    resource_root = _copied_bundle(root, monkeypatch)
+    (resource_root.parent / "escape.png").write_bytes(
+        (resource_root / "alert-idle-1.png").read_bytes()
+    )
+    (resource_root / "nested").mkdir()
+    (resource_root / "nested/escape.png").write_bytes(b"x")
+    declarations = json.loads((resource_root / "assets.json").read_bytes())
+    declarations[0]["filename"] = (
+        str(resource_root.parent / "escape.png") if filename == "/escape.png" else filename
+    )
+    (resource_root / "assets.json").write_text(json.dumps(declarations))
+    monkeypatch.setattr(
+        library_module,
+        "publish_persona_visual",
+        lambda *args, **kwargs: pytest.fail("invalid asset reached publication"),
+    )
+    with pytest.raises(ValueError):
+        install(components)
+    assert _buddy_rows(db) == 0
+
+
+def test_buddy_seed_rejects_symlinked_resource_leaf(components, monkeypatch):
+    """TASK-39124: the seed reads each bundled leaf without following a link."""
+    db, _service, _coordinator, root = components
+    resource_root = _copied_bundle(root, monkeypatch)
+    resource = resource_root / "alert-idle-1.png"
+    external = root / "external.png"
+    resource.replace(external)
+    try:
+        resource.symlink_to(external)
+    except OSError:
+        pytest.skip("symlink creation unavailable")
+    monkeypatch.setattr(
+        library_module,
+        "publish_persona_visual",
+        lambda *args, **kwargs: pytest.fail("linked asset reached publication"),
+    )
+    with pytest.raises(ValueError):
+        install(components)
+    assert _buddy_rows(db) == 0
+
+
+@pytest.mark.parametrize(
     "field,value",
     [("renderer_type", "html"), ("animations", {}), ("unknown_field", True)],
 )

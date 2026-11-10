@@ -710,6 +710,19 @@ def _open_indexing_db(path: Path) -> Optional[Any]:
             return None
 
 
+def _retire_indexing_db(indexing_db: Any | None) -> None:
+    """Close every thread's idle handle of an installed indexing DB (TASK-39117).
+
+    The embedding cache can open handles on executor threads; this owner's
+    close used to reach only its own thread's. A handle in use stays open.
+    """
+    from ..DB.RAG_Indexing_DB import RAGIndexingDB
+
+    if type(indexing_db) is RAGIndexingDB:
+        RAGIndexingDB.close_idle_connections(indexing_db)
+        RAGIndexingDB.close(indexing_db)
+
+
 def _attach_embedding_cache_store(service: Any, indexing_db: Optional[Any]) -> None:
     """Expose the caller's indexing DB as the wrapper's embedding cache.
 
@@ -1268,11 +1281,8 @@ class IngestionIndexer:
                     )
                 finally:
                     try:
-                        # Retire only this worker's exact installed SQLite cache.
-                        from ..DB.RAG_Indexing_DB import RAGIndexingDB
-
-                        if type(self._indexing_db) is RAGIndexingDB:
-                            RAGIndexingDB.close(self._indexing_db)
+                        # Retire this worker's exact installed SQLite cache.
+                        _retire_indexing_db(self._indexing_db)
                     finally:
                         with self._state_lock:
                             self._pending -= len(batch)
@@ -1799,9 +1809,40 @@ async def backfill_semantic_index(
     record_source_paths(
         service, (getattr(db, "db_path", None) for db in (media_db, chachanotes_db))
     )
+    owned_db = None
     if indexing_db is None:
-        indexing_db = _default_indexing_db()
+        indexing_db = owned_db = _default_indexing_db()
+    try:
+        return await _backfill_with(
+            service,
+            indexing_db,
+            summary,
+            media_db=media_db,
+            chachanotes_db=chachanotes_db,
+            item_types=item_types,
+            page_size=page_size,
+            batch_size=batch_size,
+            progress_callback=progress_callback,
+            reconcile_for_recovery=reconcile_for_recovery,
+        )
+    finally:
+        # TASK-39117: the DB this call opened is retired on every thread.
+        _retire_indexing_db(owned_db)
 
+
+async def _backfill_with(
+    service: Any,
+    indexing_db: Any | None,
+    summary: dict[str, Any],
+    *,
+    media_db: Any | None,
+    chachanotes_db: Any | None,
+    item_types: Sequence[str],
+    page_size: int,
+    batch_size: int,
+    progress_callback: Callable[[dict[str, Any]], None] | None,
+    reconcile_for_recovery: bool,
+) -> dict[str, Any]:
     if reconcile_for_recovery:
         from .recovery import rebuild_projection
 

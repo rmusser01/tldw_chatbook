@@ -21,6 +21,7 @@ from tldw_chatbook.Chat.console_trace_redaction import (
     CREDENTIAL_SANITIZER_UNAVAILABLE,
     PII_DETECTOR_UNAVAILABLE,
     PIIRedactionSpan,
+    READABLE_CREDENTIAL_FILTER_VERSIONS,
     CredentialSanitizer,
     CredentialSanitizationResult,
     apply_frozen_pii_masks,
@@ -390,7 +391,22 @@ def project_semantic_revision_trace_message(
         policy_id=policy_id,
         response_call=response_call,
     )
-    credential_projection = CredentialSanitizer().sanitize(projected)
+    # TASK-39123: a stored older policy's frozen PII spans index the projection
+    # of its own credential version, so they apply to that one; the current
+    # masks then go on top, below. Every other read uses the current masks.
+    legacy_spans = (
+        policy.pii_redaction_enabled
+        and revision.live_message_id is not None
+        and policy.credential_filter_version != CREDENTIAL_FILTER_VERSION
+        and policy.credential_filter_version in READABLE_CREDENTIAL_FILTER_VERSIONS
+    )
+    credential_projection = CredentialSanitizer(
+        version=(
+            policy.credential_filter_version
+            if legacy_spans
+            else CREDENTIAL_FILTER_VERSION
+        )
+    ).sanitize(projected)
     if not credential_projection.available or not isinstance(
         credential_projection.value, dict
     ):
@@ -435,9 +451,19 @@ def project_semantic_revision_trace_message(
                 row.detector_version,
             )
         )
-    masked = apply_frozen_pii_masks(projected, by_path)
+    masked = apply_frozen_pii_masks(
+        projected, by_path, widen_over_v2_credentials=legacy_spans
+    )
     if not isinstance(masked, dict):
         raise ValueError("semantic_revision_materialization_unavailable")
+    if legacy_spans:
+        remasked = CredentialSanitizer().sanitize(masked)
+        if not remasked.available or not isinstance(remasked.value, dict):
+            return {
+                "role": revision.normalized_role,
+                "content": f"[{CREDENTIAL_SANITIZER_UNAVAILABLE}]",
+            }
+        masked = remasked.value
     return masked
 
 
@@ -919,7 +945,9 @@ class SemanticRevisionCoordinator:
         supported = tuple(
             policy
             for policy in pending
-            if policy.credential_filter_version == CREDENTIAL_FILTER_VERSION
+            # TASK-39123: stored v1 policies still bind; what they materialize
+            # carries the current (v2) masks.
+            if policy.credential_filter_version in READABLE_CREDENTIAL_FILTER_VERSIONS
             and (
                 (
                     not policy.pii_redaction_enabled
