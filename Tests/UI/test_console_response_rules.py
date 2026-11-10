@@ -206,23 +206,43 @@ async def test_actual_stop_after_generation_cancels_rule_check(tmp_path):
         case.rules.evaluator.assess = held
         case.composer.load_draft("Explain another result")
         case.console.query_one("#console-send-message", Button).press()
-        for _ in range(60):
-            await case.pilot.pause()
-            if entered.is_set():
-                break
-        assert entered.is_set(), case.controller.run_state
+        # TASK-39166: bounded waits on each step's own state, not 60 and 10
+        # pilot turns.
+        await _until_set(entered, "the held rule check's assessment")
         before = len(case.requests)
         assert (
             case.chats.get_message(case.chats.active_leaf(case.session_id)).status
             == "complete"
         )
+        stop = case.console.query_one("#console-stop-generation", Button)
+
+        def stop_under_pointer():
+            # pilot.click aims at the region's origin and reports whether the
+            # button was the widget there; a Stop not laid out yet misses.
+            if not (stop.display and not stop.disabled and stop.region.area):
+                return False
+            try:
+                return case.host.get_widget_at(*stop.region.offset)[0] is stop
+            except NoWidget:
+                return False
+
+        await _until(
+            stop_under_pointer,
+            "the Stop button laid out under the pointer",
+            lambda: case.pilot.pause(0.01),
+        )
         assert await case.pilot.click("#console-stop-generation")
-        for _ in range(10):
-            await case.pilot.pause()
+        await _until(
+            lambda: case.rules.state(case.session_id).phase == "idle",
+            "Stop cancelling the held rule check (phase idle)",
+        )
         release.set()
         assert case.rules.state(case.session_id).phase == "idle"
         assert len(case.requests) == before
-        assert case.host.focused is case.composer
+        await _until(
+            lambda: case.host.focused is case.composer,
+            "focus returning to the composer after Stop",
+        )
 
 
 @pytest.mark.asyncio
@@ -239,38 +259,48 @@ async def test_fixture_failure_retires_held_transport(tmp_path, transport):
 
     entered, release = asyncio.Event(), ObservedRelease()
     failure = AssertionError("response-rule setup failed before its release block")
-    # TASK-39166: bound the teardown that must retire the held transport, not
-    # the mount before it (a 10 s bound on both ran out in the mount under load).
+    rescued = []
+
+    async def release_after_bound():
+        # TASK-39166: bound the teardown that must retire the held transport.
+        # A cancel cannot: ConsoleRuntime.dispose() waits out a helper's
+        # physical exit by design and re-raises the cancel only afterwards,
+        # so an unreleased helper hold ran to the 300 s pytest timeout. Past
+        # the bound the test frees the hold itself and fails naming it.
+        await asyncio.sleep(_STATE_SECONDS)
+        if not release.is_set():
+            rescued.append(release.task)
+            release.set()
+
+    rescue = None
     try:
-        async with asyncio.timeout(None) as teardown:
-            with pytest.raises(AssertionError) as caught:
-                async with mounted_rules_console(tmp_path) as case:
-                    if transport == "helper":
-                        seed_answer(case)
-                        case.helper_entered, case.helper_release = entered, release
-                        draft = "/omfg Include evidence in the answer"
-                    else:
-                        case.primary_entered, case.primary_release = entered, release
-                        draft = "Explain another result"
-                    case.composer.load_draft(draft)
-                    case.console.query_one("#console-send-message", Button).press()
-                    await _until_set(entered, f"the {transport} transport's request")
-                    assert release.task is not None and not release.task.done()
-                    assert not release.is_set()
-                    teardown.reschedule(
-                        asyncio.get_running_loop().time() + _STATE_SECONDS
-                    )
-                    raise failure
-            assert caught.value is failure
-            assert release.is_set()
-            assert release.task.done()
-            assert case.rules.helpers.unsettled_count == 0
-    except TimeoutError:
-        pytest.fail(
+        with pytest.raises(AssertionError) as caught:
+            async with mounted_rules_console(tmp_path) as case:
+                if transport == "helper":
+                    seed_answer(case)
+                    case.helper_entered, case.helper_release = entered, release
+                    draft = "/omfg Include evidence in the answer"
+                else:
+                    case.primary_entered, case.primary_release = entered, release
+                    draft = "Explain another result"
+                case.composer.load_draft(draft)
+                case.console.query_one("#console-send-message", Button).press()
+                await _until_set(entered, f"the {transport} transport's request")
+                assert release.task is not None and not release.task.done()
+                assert not release.is_set()
+                rescue = asyncio.create_task(release_after_bound())
+                raise failure
+        assert not rescued, (
             f"the fixture's teardown did not retire the held {transport} transport "
-            f"within {_STATE_SECONDS:g} s (released={release.is_set()}, "
-            f"task={release.task!r})"
+            f"within {_STATE_SECONDS:g} s; the test released it (task={rescued[0]!r})"
         )
+        assert caught.value is failure
+        assert release.is_set()
+        assert release.task.done()
+        assert case.rules.helpers.unsettled_count == 0
+    finally:
+        if rescue is not None:
+            rescue.cancel()
 
 
 @pytest.mark.asyncio
@@ -299,10 +329,14 @@ async def test_workspace_command_opens_same_manager_in_registered_scope(tmp_path
         case.composer.load_draft("/rules workspace")
         await case.pilot.pause()
         assert await case.pilot.click("#console-send-message")
-        for _ in range(15):
-            await case.pilot.pause()
-            if isinstance(case.host.screen, ResponseRulesModal):
-                break
+        # Mounted, not just pushed: is_mounted turns True only after on_mount's
+        # awaited reload, so the test cannot end with the modal mid-mount.
+        await _until(
+            lambda: isinstance(case.host.screen, ResponseRulesModal)
+            and case.host.screen.is_mounted,
+            "the /rules workspace command's ResponseRulesModal mounting",
+            lambda: case.pilot.pause(0.01),
+        )
         assert isinstance(case.host.screen, ResponseRulesModal), (
             case.chats.active_session_id,
             case.rules.scopes(session.id),
@@ -740,7 +774,9 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("sync", ["recovery-and-resume", "full-ui", "full-ui-held"])
+@pytest.mark.parametrize(
+    "sync", ["recovery-and-resume", "full-ui", "full-ui-held", "coachmark"]
+)
 async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypatch, sync):
     """TASK-35444, TASK-35645: display syncs never wait while a rebuild holds config.
 
@@ -755,7 +791,10 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
     ("full-ui-held"), or before the recovery sync and a screen resume
     ("recovery-and-resume", one mount for both). Queued refreshes get loop
     turns inside the hold too. The watch (TASK-39166) records where the UI
-    thread was waiting.
+    thread was waiting. "coachmark" (TASK-39166): a tab sync that sees the
+    session count reach two shows the fleet coach-mark, whose copy reads the
+    parallel-run cap; it waited in ``load_settings()`` through
+    ``_ensure_console_chat_controller`` under load.
     """
     from tldw_chatbook import config
 
@@ -786,7 +825,14 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
         started = []  # when the hold began
         holder.start()
         try:
-            if sync == "recovery-and-resume":
+            if sync == "coachmark":
+                await settle(case.console)
+                await case.console._sync_console_native_session_tabs()  # seeds the count
+                assert len(case.chats.sessions()) == 1
+                case.chats.create_session(activate=False)
+                start_rebuild()
+                await case.console._sync_console_native_session_tabs()
+            elif sync == "recovery-and-resume":
                 await settle(case.console)
                 start_rebuild()
                 region.sync_recovery()
@@ -848,6 +894,16 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
             release.set()
             holder.join(3)
         assert not holder.is_alive() and not watch.is_alive()
+        if sync == "coachmark":
+            # Deferred, not dropped: the coach-mark shows once the hold ends.
+            banner = case.console.query_one("#console-fleet-coachmark")
+            await _until(
+                lambda: banner.styles.display == "block",
+                "the fleet coach-mark showing after the release",
+            )
+            assert "in parallel" in str(
+                case.console.query_one("#console-fleet-coachmark-text").renderable
+            )
         if sync.startswith("full-ui"):
             # Deferred, not dropped: any whole-sync replay finishes after release.
             await settle(case.console)

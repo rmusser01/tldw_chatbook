@@ -11930,6 +11930,17 @@ class ChatScreen(BaseAppScreen):
             return
         if self._console_fleet_coachmark_seen():
             return
+        self._show_fleet_coachmark(surface)
+
+    @spend.retry_after_config_rebuild
+    def _show_fleet_coachmark(self, surface: ConsoleSessionSurface) -> None:
+        """Show the coach-mark; its cap reads config (TASK-39166).
+
+        ``_ensure_console_chat_controller`` resyncs the provider selection,
+        which reads ``load_settings()`` live for a disk-loaded snapshot. While
+        a config rebuild holds it, the show runs 0.2 s later instead of the
+        tab sync waiting for the rebuild on the UI loop.
+        """
         max_parallel_runs = self._ensure_console_chat_controller().max_parallel_runs
         surface.show_fleet_coachmark(
             f"Each tab runs its own agent — up to {max_parallel_runs} in "
