@@ -49,7 +49,8 @@ Mutation-verified (both reds observed before commit):
 import asyncio
 import json
 import sqlite3
-from contextlib import contextmanager
+import sys
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 import pytest
@@ -134,25 +135,34 @@ def _seed_chacha(tmp_path, notes, conversations, name="chacha.db"):
 
 
 @pytest.fixture
-def corpus(tmp_path):
+def corpus(tmp_path, monkeypatch):
     """Three documents of each type, in a real media DB and a real chacha DB."""
     media_path, media_ids = _seed_media(tmp_path, 3)
     chacha_path, note_ids, conv_ids = _seed_chacha(tmp_path, notes=3, conversations=3)
-    return {
-        "media_path": media_path,
-        "chacha_path": chacha_path,
-        "media": [str(i) for i in media_ids],
-        "note": [str(i) for i in note_ids],
-        "conversation": [str(i) for i in conv_ids],
-    }
+    services = ExitStack()
+    try:
+        yield {
+            "media_path": media_path,
+            "chacha_path": chacha_path,
+            "media": [str(i) for i in media_ids],
+            "note": [str(i) for i in note_ids],
+            "conversation": [str(i) for i in conv_ids],
+            "own_service": services.enter_context,
+        }
+    finally:
+        # Mock embeddings own no GPU resources and need no CUDA discovery.
+        with monkeypatch.context() as teardown:
+            teardown.setitem(sys.modules, "torch", None)
+            services.close()
 
 
 def _service_for(corpus, **kwargs):
-    return _make_service(
+    service = _make_service(
         media_db_path=corpus["media_path"],
         chachanotes_db_path=corpus["chacha_path"],
         **kwargs,
     )
+    return corpus["own_service"](service)
 
 
 def _entry(source_type, ids):
@@ -190,6 +200,7 @@ def warnings_captured():
 # --- The guard: hybrid is admitted, keyword still refuses -------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_hybrid_with_an_allowlist_no_longer_raises(corpus):
     """The whole point of B1: a scoped hybrid search is a legal request."""
     service = _service_for(corpus)
@@ -206,6 +217,7 @@ def test_hybrid_with_an_allowlist_no_longer_raises(corpus):
     assert _source_ids(results) == [corpus["media"][0]]
 
 
+@pytest.mark.bootstrap_profile
 def test_keyword_mode_with_an_allowlist_still_raises(corpus):
     """Declared non-goal, pinned so it cannot drift open unnoticed.
 
@@ -227,6 +239,7 @@ def test_keyword_mode_with_an_allowlist_still_raises(corpus):
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_an_empty_allowlist_is_still_no_allowlist_for_every_mode(corpus):
     """`None`/`{}` must keep every mode byte-for-byte as it was."""
     service = _service_for(corpus)
@@ -255,6 +268,7 @@ def test_an_empty_allowlist_is_still_no_allowlist_for_every_mode(corpus):
 # a comprehension gets written as a genexp by accident.
 
 
+@pytest.mark.bootstrap_profile
 def test_a_one_shot_allowlist_survives_the_cache_key_pass(corpus):
     """A generator allowlist must scope the search, not silently open it."""
     service = _service_for(corpus)
@@ -270,6 +284,7 @@ def test_a_one_shot_allowlist_survives_the_cache_key_pass(corpus):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_one_shot_id_values_survive_the_cache_key_pass(corpus):
     """Same hazard one level down: the ids themselves may be a generator."""
     service = _service_for(corpus)
@@ -288,6 +303,7 @@ def test_one_shot_id_values_survive_the_cache_key_pass(corpus):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_a_one_shot_scope_never_caches_unscoped_rows_under_its_key(corpus):
     """The cache is where a drained scope does lasting damage.
 
@@ -331,6 +347,7 @@ def test_a_one_shot_scope_never_caches_unscoped_rows_under_its_key(corpus):
         ),
     ],
 )
+@pytest.mark.bootstrap_profile
 def test_an_empty_entry_in_a_union_is_rejected(corpus, malformed):
     """An AND-group that restricts nothing is a caller defect, not a scope.
 
@@ -350,6 +367,7 @@ def test_an_empty_entry_in_a_union_is_rejected(corpus, malformed):
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_a_source_type_with_no_sub_leg_is_named_in_a_warning(corpus, warnings_captured):
     """A silently empty keyword leg is the worst possible symptom.
 
@@ -409,6 +427,7 @@ def _hybrid_keyword_rows(service, allowlist, top_k=10, **kwargs):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_out_of_scope_media_is_absent_from_a_scoped_hybrid_search(corpus):
     service = _service_for(corpus)
     in_scope = corpus["media"][1]
@@ -421,6 +440,7 @@ def test_out_of_scope_media_is_absent_from_a_scoped_hybrid_search(corpus):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_out_of_scope_notes_are_absent_from_a_scoped_hybrid_search(corpus):
     service = _service_for(corpus)
     in_scope = corpus["note"][2]
@@ -432,6 +452,7 @@ def test_out_of_scope_notes_are_absent_from_a_scoped_hybrid_search(corpus):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_out_of_scope_conversations_are_absent_from_a_scoped_hybrid_search(corpus):
     service = _service_for(corpus)
     in_scope = corpus["conversation"][0]
@@ -443,6 +464,7 @@ def test_out_of_scope_conversations_are_absent_from_a_scoped_hybrid_search(corpu
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_each_entry_filters_its_own_sub_leg(corpus):
     """The union case: one entry per type, each carrying ITS OWN ids.
 
@@ -462,6 +484,7 @@ def test_each_entry_filters_its_own_sub_leg(corpus):
     assert set(_types(results)) == {"media", "note"}
 
 
+@pytest.mark.bootstrap_profile
 def test_the_media_id_filter_survives_the_int_vs_str_boundary(corpus):
     """`EffectiveScope` carries ids as STRINGS; `Media.id` is an INTEGER.
 
@@ -484,6 +507,7 @@ def test_the_media_id_filter_survives_the_int_vs_str_boundary(corpus):
 # --- Fail-closed: an unnamed sub-leg is skipped, not run unfiltered ---------
 
 
+@pytest.mark.bootstrap_profile
 def test_fail_closed_skips_the_sub_legs_the_scope_does_not_name(corpus, monkeypatch):
     """A scope naming only notes must never QUERY media or conversations.
 
@@ -527,6 +551,7 @@ def test_fail_closed_skips_the_sub_legs_the_scope_does_not_name(corpus, monkeypa
     assert _source_ids(results) == [corpus["note"][0]]
 
 
+@pytest.mark.bootstrap_profile
 def test_a_notes_only_scope_never_opens_the_media_database(corpus, monkeypatch):
     """The skipped sub-leg's cost includes the connection it never opens."""
     service = _service_for(corpus)
@@ -547,6 +572,7 @@ def test_a_notes_only_scope_never_opens_the_media_database(corpus, monkeypatch):
     assert set(_types(results)) == {"note"}
 
 
+@pytest.mark.bootstrap_profile
 def test_a_media_only_scope_never_opens_the_chacha_database(corpus, monkeypatch):
     service = _service_for(corpus)
 
@@ -564,6 +590,7 @@ def test_a_media_only_scope_never_opens_the_chacha_database(corpus, monkeypatch)
     assert set(_types(results)) == {"media"}
 
 
+@pytest.mark.bootstrap_profile
 def test_a_scope_naming_no_selected_sub_leg_degrades_the_keyword_leg(
     corpus, monkeypatch
 ):
@@ -597,6 +624,7 @@ def test_a_scope_naming_no_selected_sub_leg_degrades_the_keyword_leg(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_a_scope_with_zero_ids_for_its_type_returns_no_rows(corpus, monkeypatch):
     """An entry naming a type with an EMPTY id set matches nothing.
 
@@ -620,6 +648,7 @@ def test_a_scope_with_zero_ids_for_its_type_returns_no_rows(corpus, monkeypatch)
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_a_scope_the_keyword_leg_cannot_enforce_fails_closed(corpus, monkeypatch):
     """An allowlist key no sub-leg can express must not be ignored.
 
@@ -651,6 +680,7 @@ def test_a_scope_the_keyword_leg_cannot_enforce_fails_closed(corpus, monkeypatch
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_the_selection_and_the_scope_intersect(corpus):
     """`keyword_source_types` and the scope are both narrowing, never widening."""
     service = _service_for(corpus)
@@ -670,6 +700,7 @@ def test_the_selection_and_the_scope_intersect(corpus):
     assert _source_ids(results) == [corpus["note"][0]]
 
 
+@pytest.mark.bootstrap_profile
 def test_no_allowlist_leaves_the_keyword_leg_exactly_as_it_was(corpus):
     """Backward-compat pin: every pre-B1 caller keeps today's composition."""
     service = _service_for(corpus)
@@ -700,6 +731,7 @@ def _index_media_chunk(service, source_id, text):
     _index_chunk(service, "media", source_id, text)
 
 
+@pytest.mark.bootstrap_profile
 def test_the_semantic_leg_is_scoped_by_the_same_allowlist(corpus):
     """Both legs, not just the new one.
 
@@ -727,6 +759,7 @@ def test_the_semantic_leg_is_scoped_by_the_same_allowlist(corpus):
     assert _source_ids(results) == [in_scope]
 
 
+@pytest.mark.bootstrap_profile
 def test_a_multi_entry_allowlist_excludes_out_of_scope_vector_rows(corpus):
     """The union case's ROW pin, not just its call-mechanics pin.
 
@@ -764,6 +797,7 @@ def test_a_multi_entry_allowlist_excludes_out_of_scope_vector_rows(corpus):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_a_multi_entry_allowlist_queries_the_store_once_per_entry(corpus):
     """The semantic leg's union convention, unchanged: one query per entry.
 
@@ -853,6 +887,7 @@ class _RecordingPool:
         return _RecordingCursor(self._conn.cursor(), self._log)
 
 
+@pytest.mark.bootstrap_profile
 def test_a_thousand_note_ids_bind_as_one_json_parameter(corpus, monkeypatch):
     """SQLite's variable cap is a real ceiling; json_each is the precedent.
 
@@ -891,6 +926,7 @@ def test_a_thousand_note_ids_bind_as_one_json_parameter(corpus, monkeypatch):
     assert json.loads(params[1]) == sorted(ids)
 
 
+@pytest.mark.bootstrap_profile
 def test_a_thousand_conversation_ids_bind_as_one_json_parameter(corpus, monkeypatch):
     """The third sub-leg, asserted on its own SQL rather than by analogy.
 
@@ -933,10 +969,16 @@ def test_a_thousand_conversation_ids_bind_as_one_json_parameter(corpus, monkeypa
 
     # The follow-up statement is bounded by the surviving conversations, so
     # the 1500 absent ids never reach it as placeholders either.
-    messages = [(s, p) for s, p in executed if "m.conversation_id IN" in s]
-    assert len(messages) == 1 and len(messages[0][1]) == 2, messages
+    messages = [
+        p
+        for s, p in executed
+        if "JOIN json_each(?) selected ON m.conversation_id = selected.value" in s
+    ]
+    assert len(messages) == 1 and len(messages[0]) == 4, messages
+    assert json.loads(messages[0][0]) == [corpus["conversation"][1]]
 
 
+@pytest.mark.bootstrap_profile
 def test_the_media_sub_leg_binds_its_ids_as_one_json_parameter(corpus):
     """Same discipline on the media sub-leg, asserted on the real SQL."""
     service = _service_for(corpus)
@@ -960,6 +1002,7 @@ def test_the_media_sub_leg_binds_its_ids_as_one_json_parameter(corpus):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_no_allowlist_leaves_the_media_sql_without_an_id_filter(corpus):
     """The unscoped query shape must not grow a filter it does not need."""
     service = _service_for(corpus)
@@ -1115,6 +1158,7 @@ def test_no_allowlist_keeps_the_legacy_key_byte_identical():
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_two_scopes_do_not_share_a_cached_hybrid_result(corpus):
     """End to end: the second scoped search must not be served the first's rows."""
     service = _service_for(corpus, enable_cache=True)
