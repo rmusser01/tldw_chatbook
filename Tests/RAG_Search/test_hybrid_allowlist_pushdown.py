@@ -1190,6 +1190,7 @@ def test_two_scopes_do_not_share_a_cached_hybrid_result(corpus):
 # --- The class the runtime actually resolves --------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_the_runtime_service_class_accepts_a_scoped_hybrid_search(corpus):
     """`EnhancedRAGServiceV2` overrides `search()` with an explicit signature.
 
@@ -1202,7 +1203,9 @@ def test_the_runtime_service_class_accepts_a_scoped_hybrid_search(corpus):
         EnhancedRAGServiceV2,
     )
 
-    service = EnhancedRAGServiceV2(config=_service_for(corpus).config)
+    service = corpus["own_service"](
+        EnhancedRAGServiceV2(config=_service_for(corpus).config)
+    )
 
     results = asyncio.run(
         service.search(
