@@ -392,6 +392,11 @@ DREAMS_BOUNDARY_TARGETS = (
     # TASK-38966: the QwenCloud provider contract file, red on dev in no PR
     # lane. Pure, 7 tests; 2.7 s at -n 4 on dev, 1.8-2.1 s serial (load 36-38).
     "Tests/Chat/test_qwencloud_provider_contract.py",
+    # TASK-39149: the Trace export's bare sk_/rk_ key masking and its pin that
+    # the classes masked before still are, red on dev in no PR lane. Pure, no
+    # config read, so among the sandboxed targets.
+    "Tests/Chat/test_trace_v2_collaboration.py::test_bare_underscore_keys_are_masked_wherever_sk_dash_keys_are",
+    "Tests/Chat/test_trace_v2_collaboration.py::test_the_credential_classes_masked_before_are_still_masked",
     # TASK-38985: the Library modal dismissal contracts and launch inventory,
     # red on dev in no PR lane. ~2 min serial (140.2, 114.6 and 101.6 s with
     # this step's command, load 20-34 on 18 CPUs), whole file: the UI census

@@ -1109,7 +1109,9 @@ jobs:
       # TASK-38966 appends the QwenCloud provider contract file (pure, ~2 s
       # serial), red on dev in no lane. TASK-39043 (owner decision 2026-11-06:
       # only its two small files here) appends the Console sync maintenance
-      # file and the automatic wake recovery file.
+      # file and the automatic wake recovery file. TASK-39149 adds the Trace
+      # export's two credential-masking nodes (pure, no config read, ~5 s
+      # serial) among the sandboxed targets, before the bootstrap-profile ones.
       - name: Run Dreams and Guardian boundary contracts
         if: ${{ !cancelled() }}
         run: |
@@ -1141,6 +1143,8 @@ jobs:
             Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py \
             Tests/LLM_Management/test_vllm_profiles.py \
             Tests/Chat/test_qwencloud_provider_contract.py \
+            Tests/Chat/test_trace_v2_collaboration.py::test_bare_underscore_keys_are_masked_wherever_sk_dash_keys_are \
+            Tests/Chat/test_trace_v2_collaboration.py::test_the_credential_classes_masked_before_are_still_masked \
             Tests/UI/test_library_modal_dismissal.py \
             Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_single_app_route_cycle \
             Tests/Web_Server/test_mobile_service.py \
