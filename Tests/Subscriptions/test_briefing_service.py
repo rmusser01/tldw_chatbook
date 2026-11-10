@@ -1084,19 +1084,18 @@ async def test_the_claim_is_released_after_a_chat_failure(db):
 
 
 @pytest.mark.asyncio
-async def test_the_claim_is_released_when_a_db_error_escapes(tmp_path, monkeypatch):
+@pytest.mark.bootstrap_profile
+async def test_the_claim_is_released_when_a_db_error_escapes(db, monkeypatch):
     """A stuck claim would wedge scheduling for this watchlist forever --
     worse than the bug this design fixes -- so a genuine DB error escaping
     must still release it."""
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
 
-    closed_connection = db._get_connection()
-    closed_connection.close()
+    closed_connection = db.conn
+    db.close()
     monkeypatch.setattr(db, "_get_connection", lambda: closed_connection)
-    db._local = threading.local()  # evict every thread's cached (open) connection
 
     with pytest.raises(sqlite3.ProgrammingError):
         await generate_briefing(db, watchlist, chat=_FakeChat())
@@ -1105,14 +1104,14 @@ async def test_the_claim_is_released_when_a_db_error_escapes(tmp_path, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_a_concurrent_generation_for_the_same_watchlist_is_refused(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_a_concurrent_generation_for_the_same_watchlist_is_refused(db):
     """Pins that the claim is held THROUGH the chat call (released in
     `finally`, not right before it): with a slow, real overlapping first
     call still mid-flight, a second concurrent `generate_briefing` for the
     SAME watchlist must be refused rather than run alongside it -- the
     double-LLM-call / double-watermark-write bug this design exists to
     prevent."""
-    db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
@@ -1126,14 +1125,14 @@ async def test_a_concurrent_generation_for_the_same_watchlist_is_refused(tmp_pat
         return CANNED_BODY
 
     first = asyncio.ensure_future(generate_briefing(db, watchlist, chat=_slow_chat))
-    await entered.wait()
-
-    assert watchlist in active_briefing_claims()
-    with pytest.raises(GenerationInFlightError, match=str(watchlist)):
-        await generate_briefing(db, watchlist, chat=_FakeChat())
-
-    release.set()
-    row = await first
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        assert watchlist in active_briefing_claims()
+        with pytest.raises(GenerationInFlightError, match=str(watchlist)):
+            await generate_briefing(db, watchlist, chat=_FakeChat())
+    finally:
+        release.set()
+        row = await asyncio.wait_for(first, timeout=5)
     assert row["status"] == "complete"
     assert watchlist not in active_briefing_claims()
 
