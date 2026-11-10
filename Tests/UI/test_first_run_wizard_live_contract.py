@@ -2019,10 +2019,15 @@ async def test_rerun_over_settings_start_chatting_navigates_to_chat(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_mounted_wizard_producer_to_console_consumer_preserves_user_work(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    _prepare_clean_environment(monkeypatch, tmp_path)
+    cache = tmp_path / "xdg-cache"
+    cache.mkdir()
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
     _persist_complete_custom_provider_setup()
     app = _build_test_app(first_run_setup_completed=True)
     app._initial_tab_value = "chat"
@@ -2078,10 +2083,15 @@ async def test_mounted_wizard_producer_to_console_consumer_preserves_user_work(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_mounted_wizard_stage_failure_leaves_console_and_focus_unchanged(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    _prepare_clean_environment(monkeypatch, tmp_path)
+    cache = tmp_path / "xdg-cache"
+    cache.mkdir()
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
     _persist_complete_custom_provider_setup()
     app = _build_test_app(first_run_setup_completed=True)
     app._initial_tab_value = "chat"
@@ -2121,13 +2131,18 @@ async def test_mounted_wizard_stage_failure_leaves_console_and_focus_unchanged(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_mounted_wizard_saved_pair_change_retires_intent_without_touching_console(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """A saved provider/model change after Start chatting never applies the
     stale handoff (TASK-34100.5: the fence is the saved pair, not the config
     generation; an unrelated write lets the handoff apply instead)."""
-    _prepare_clean_environment(monkeypatch, tmp_path)
+    cache = tmp_path / "xdg-cache"
+    cache.mkdir()
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
     _persist_complete_custom_provider_setup()
     app = _build_test_app(first_run_setup_completed=True)
     app._initial_tab_value = "chat"
