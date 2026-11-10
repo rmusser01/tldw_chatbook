@@ -9524,6 +9524,7 @@ async def test_console_selected_message_save_as_action_opens_modal():
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
@@ -9566,6 +9567,7 @@ async def test_capture_note_action_saves_the_answer_and_its_receipt_opens_it():
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
@@ -9625,6 +9627,7 @@ async def _open_save_as_modal_for_message(host, pilot, console, role, content):
     await console._sync_native_console_chat_ui()
 
     transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+    await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
     transcript.select_message(message.id)
     await console._sync_native_console_chat_ui()
     await _wait_for_selector(
