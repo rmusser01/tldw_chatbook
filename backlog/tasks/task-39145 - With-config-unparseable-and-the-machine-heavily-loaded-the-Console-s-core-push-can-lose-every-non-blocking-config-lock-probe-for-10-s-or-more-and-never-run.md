@@ -4,7 +4,7 @@ title: "With config unparseable and the machine heavily loaded, the Console's co
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-07 02:28
-updated_date: '2026-11-07 22:08'
+updated_date: '2026-11-10 00:39'
 labels:
 - follow-up
 - console
@@ -40,7 +40,7 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-1
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 With config unparseable and the config locks held continuously by failing off-loop reads (held deterministically in a test), the core push still completes, or reaches a defined state the user can see, within one bounded period; the test is red on dev
-- [x] #2 Lock contention no longer costs a whole FULL sync replay per attempt; replays are counted in the test, before and after
+- [x] #2 While config.toml cannot be parsed, refused core pushes stop owing whole FULL sync replays once the refusal episode passes about 3 s (until then each refused attempt still costs one, as on dev), and ordinary contention with a parseable file never stops replaying; replays are counted in the test, before and after the stop (amended 2026-11-09, owner decision)
 - [x] #3 `test_an_unparseable_config_leaves_an_idle_console_idle` and the TASK-38967 replay pins stay green, and the unparseable-config test passes 10 of 10 at `-n 4` at load 40 or more, with the load recorded
 <!-- AC:END -->
 
@@ -50,63 +50,41 @@ Possible directions (not required): a cold read that does not hold the config lo
 
 Owner decision (2026-11-07): "Bounded stop + notice: after a bounded wait (a few seconds), stop retrying and show a visible notice in the Console's status area, e.g. 'Config file can't be read — showing the last loaded settings.' It clears on the next good load. Honest, simple, keeps the lock guarantee."
 
-1. Keep TASK-36511's guarantee: the push still runs only while it holds both config locks.
-2. In `config_sync.sync_console_core_state`, a lost probe no longer replays the whole FULL. It schedules one push-only retry (`CORE_PUSH_RETRY_DELAY`, 0.5 s), at most `CORE_PUSH_RETRIES` (6) per episode, so it stops about 3 s after the first refusal. A won probe ends the episode. The cold-read deferral (one whole replay per cold episode) is unchanged.
-3. At the stop, if the last config bootstrap failed to parse (`config.get_config_load_failure()`), record `_CONFIG_CACHE_INSTALLS` and show one alert segment on the status strip ("Config file can't be read: showing the last loaded settings"), once per episode. Once the install counter moves (a good load), the next FULL, control-bar sync or successful readiness read clears it and starts a new episode.
-4. Tests, red on base: a real failing read parked inside `_preserve_corrupt_config_aside` holds both locks; the push stops within the bound without any whole replay, and the notice appears once. After a good load the notice clears and the next push runs. Update the TASK-36511 pin's contention leg to the new rule.
-5. Update the Console User Guide's status-strip copy.
+Owner decision (2026-11-09), on the contradiction with dev 0aa96f8d1b (ADR-121 amendment): "Dev's rule, keep stop+notice". The chosen option read: "Keep dev's whole-screen refresh path and owed handoff; round 12 only counts the refused refreshes, stops after ~3 s and shows the notice, cleared on the next good load. No retry timer. Each refused attempt still costs a whole refresh until the stop. TASK-39145's 'no whole refresh' criterion is amended."
+
+1. A refused core push behaves as on dev: it owes the CORE handoff, retires it with `owed=True` and calls `replay_whole_console_sync`. The coalesced callback makes the one guarded attempt, and nothing pushes before warmTrue. Remove the push-only retry timer, `_retry_core_push_later`, `retry_console_core_push` and the `retry` keyword.
+2. Bound only an unreadable file. While `config.get_config_load_failure()` is set, the first refusal opens an episode on `config_sync._clock`. A refusal `CORE_REFUSAL_EPISODE_SECONDS` (3.0) or more later stops owing the replay and shows the status-strip notice, once. A pushed core state ends the episode. A good load (the install count moves) clears the notice and starts a new episode. With a parseable file a refusal always replays. The install count is read before the parse failure (M3).
+3. Tests: dev's two contract tests pass unchanged. New tests drive every refusal by hand on a replaced clock, each red under a temporary edit.
 
 ## Implementation Notes
 
 Owner decision (2026-11-07): "Bounded stop + notice: after a bounded wait (a few seconds), stop retrying and show a visible notice in the Console's status area, e.g. 'Config file can't be read — showing the last loaded settings.' It clears on the next good load. Honest, simple, keeps the lock guarantee."
 
+Owner decision (2026-11-09), resolving the contradiction with dev 0aa96f8d1b (the ADR-121 amendment, whose tests pin a whole replay and an owed CORE handoff for a refused push): "Dev's rule, keep stop+notice". The chosen option read: "Keep dev's whole-screen refresh path and owed handoff; round 12 only counts the refused refreshes, stops after ~3 s and shows the notice, cleared on the next good load. No retry timer. Each refused attempt still costs a whole refresh until the stop. TASK-39145's 'no whole refresh' criterion is amended." AC#2 is amended to match.
+
 **Approach** (`UI/Console_Modules/config_sync.py`):
-- **Lock guarantee kept.** The push still runs only while it holds both config locks, probed without blocking (TASK-36511).
-- **No whole replay on contention.** `sync_console_core_state` used to call `replay_whole_console_sync` when it lost the probe. It now owes one push-only retry (`retry_console_core_push`, `CORE_PUSH_RETRY_DELAY = 0.5` s). The cold-read deferral (one whole replay per cold episode) is unchanged.
-- **The bound.** At most `CORE_PUSH_RETRIES = 6` retries per episode (about 3 s); the 7th lost probe stops the retries. A won probe ends the episode and stops any owed retry.
-- **The notice.** At the stop, if the last config bootstrap failed to parse (`config.get_config_load_failure()`), the push records `_CONFIG_CACHE_INSTALLS` and shows one alert segment on the status strip: "Config file can't be read: showing the last loaded settings". It matches the strip's "Emergency stop: runs and schedules held" grammar, and segment labels are markup-escaped on render. Later lost probes in the same episode neither retry nor re-show it.
-- **Clearing.** `sync_config_unreadable_notice` is the one rule: once the install count moves (any good load), it clears the segment and starts a new episode. FULL syncs (`sync_console_core_state`), control-bar syncs (`run_console_presentation_sync`) and a successful readiness read (`_refresh`) all call it. It queries the DOM only while a notice is shown or being cleared.
-- **The segment** lives on `ConsoleStatusChips` (`sync_config_unreadable`, `CONSOLE_CONFIG_UNREADABLE_STRIP_LABEL`). `chat_screen.py` is untouched.
+- **Dev's rule.** A refused core push behaves exactly as on dev: it owes the CORE handoff, retires it with `owed=True` and calls `replay_whole_console_sync`. The coalesced callback makes the one guarded attempt, and nothing pushes before warmTrue. The push still runs only while it holds both config locks (TASK-36511).
+- **Removed.** Round 12's push-only retry timer is gone: `CORE_PUSH_RETRY_DELAY`, `CORE_PUSH_RETRIES`, `_end_core_push_contention`, `_retry_core_push_later`, `retry_console_core_push` and the `retry` keyword. The keystroke census wrapper is back to dev's version.
+- **The bound.** `_refusal_owes_replay` decides whether a refusal still owes its replay.
+  - Only while `config.get_config_load_failure()` is set: the first refusal opens an episode on `config_sync._clock`.
+  - A refusal `CORE_REFUSAL_EPISODE_SECONDS` (3.0) or more after it stops owing the replay and records `_CONFIG_CACHE_INSTALLS`, read before the parse failure (M3). That shows the status-strip notice "Config file can't be read: showing the last loaded settings" once; later refusals in the episode neither replay nor re-show it.
+  - A core push that runs ends the episode.
+  - With a parseable file a refusal always replays and never shows the notice.
+- **Clearing.** `sync_config_unreadable_notice` is the one rule: once the install count moves (a good load), it clears the notice and starts a new episode. FULL and control-bar syncs and a successful readiness read call it.
+- **Notice segment.** Unchanged: it lives on `ConsoleStatusChips` (`sync_config_unreadable`).
 
-**Tests.**
-- New: `Tests/UI/test_console_projection_reads_off_loop.py::test_a_core_push_held_off_by_failing_reads_stops_and_says_so`.
-  - A real failing `load_settings(True)` is parked inside `_preserve_corrupt_config_aside`, holding both config locks. Every retry is fired by hand (no clock).
-  - It checks that 1 + 6 lost probes stop with no push and no whole-sync replay, that the notice shows once, and that a later FULL probe changes nothing.
-  - Then a good load: the next push runs and the notice clears.
-  - Red with this task's product changes reverted: `probe 1 lost the config locks and scheduled no push retry (whole-sync replays requested: 1)`. Before, every lost probe requested a whole-sync replay; after, 0 over the episode's 7 probes (AC#2).
-- Changed: `test_the_core_state_push_never_waits_for_or_rebuilds_config` (TASK-36511). Its contention leg now expects one push-only retry timer and no whole replay, which is AC#2. Its lock assertions are unchanged.
+**Tests** (`Tests/UI/test_console_projection_reads_off_loop.py`). Dev's `test_the_core_state_push_never_waits_for_or_rebuilds_config`, `test_a_finite_checked_reader_leaves_a_core_push_release_window` and `Tests/Backup_Recovery/test_canvas_policy_worker.py::test_stock_canvas_poll_leaves_the_retired_read_callback_handoff` pass unchanged; the first is restored to dev's text. Each new test drives every refusal by hand on a replaced `config_sync._clock`:
+- `test_refused_core_pushes_stop_replaying_an_unreadable_config_and_say_so` (mounted). A real failing read is parked inside `_preserve_corrupt_config_aside`, holding both locks. 15 refusals 0.2 s apart each owe a replay; the refusal at 3.0 s does not and shows the notice; a later refusal changes nothing. Then a good load: the notice clears and the next push runs.
+  - Red on dev's `config_sync.py`: "refused pushes kept owing whole replays past the episode".
+  - Red with the good-load clear disabled: "the notice outlived a good config load".
+- `test_parseable_contention_never_stops_the_whole_replay`: 40 refusals over 8 s all replay, with no notice. Red with the parse-failure check removed: "parseable contention stopped replaying after 15".
+- `test_a_won_push_starts_a_new_refusal_episode`: a push between refusals restarts the episode. Red with the reset removed: "a refusal after a won push was charged to the old episode".
+- `test_an_install_landing_at_the_stop_never_leaves_the_notice_up` (M3). Red with the read order swapped: "the notice outlived the good install that landed at the stop".
 
-**AC#3.**
-- The whole file passed at `-n 4` (22 passed, load 28-34), including `test_an_unparseable_config_leaves_an_idle_console_idle` and the TASK-38967 replay pins.
-- The unparseable-config test passed 10 of 10 at `-n 4` under a temporary `parametrize('_rep', range(10))`, removed afterwards. The 1-minute load average, sampled every 10 s, stayed at 42-47 (background `Tests/CI` runs held it there). An earlier 10-of-10 run saw load 31-46.
+**AC#3.** The unparseable-config test and the new mounted test, each under a temporary `parametrize('_rep', range(10))` (removed afterwards), ran together at `-n 4`: 20 passed. The 1-minute load average, sampled every 10 s, was 40.4-94.6 throughout (background `Tests/CI` runs held it up).
 
-**Docs.** `Docs/User_Guide/console.md`, Quirks & troubleshooting: what the notice means and when it clears.
+**Superseded.** Round 12's earlier push-only retry design (reviews r12p-rev1 I2/M1/M2/M3 and r12p-rev2 I2/M2) is replaced by the above. Its pause-flag and FULL-probe counting no longer exist, and its census-wrapper change was reverted.
 
-**Covering runs (`-n 4`, through run.sh).**
-- Head: 557 passed, 30 failed. Base 8b762b52fa, same files: 567 passed, 19 failed. The files: the off-loop file, status chips, emergency stop, chip overflow, status row collapse, workbench contract, cost chip screen, mode strip, config-sync cadence, readiness projection, pending-facts cold readiness, cost config retry, checked display scope, temporary status copy, first-persistence attribution, Backup_Recovery config-sync lifetime, status chips cost, display contention, timer-path inventory, module size ratchet, layer direction.
-- Only on head: 9 `test_console_cost_chip_screen.py` nodes and 2 `test_console_cost_config_source_retry.py` nodes timed out waiting for 'warm reply' at load 60+. On a rerun of both files: 39 passed, 1 failed (`test_idle_draft_edit_burst_coalesces_one_cost_refresh`). Alone, that node failed once on base and passed twice on head. The timer-path inventory and workbench-contract failures fail on base too.
-- `Tests/CI`: 1220 passed, 1 skipped. Preflight passed. `bootbudget.sh`: 32 passed.
-- The new test takes about 21 s alone. Its file is a whole-file UI census entry.
+**Docs.** `Docs/User_Guide/console.md`, Quirks & troubleshooting: "it keeps trying for about three seconds, then stops trying and shows this notice once".
 
-
-**Review r12p-rev1 (2026-11-08).**
-- **I2.** The mounted test was flaky: 2 of 5 runs failed at "the first push after a good load did not run". The live Console's own reads can hold a lock at the single probe after the good load; the product then rightly owes a retry, which the test never fired. The test now fires each owed retry by hand, with a short pause between them, until the push runs (bounded at 40). 20 of 20 at `-n 4`, load 47-57.
-- **M1.** A retry landing during a maintenance pause dropped the probe it owed: neither flag that `_console_sync_maintenance_resume` reads was set. It now sets `_console_sync_requested`, so the resume replays a FULL.
-- **M2.**
-  - Only the push's own retries (`sync_console_core_state(..., retry=True)`) count toward the bound. FULL probes meanwhile neither count nor schedule a second timer, so a 0.2 s poll can no longer use up the bound in about 1.4 s.
-  - A stop with no parse failure ends its episode (the count resets to 0), so later, unrelated contention owes retries again. A stop with a parse failure stays stopped until the next good load.
-  - The User Guide's "about three seconds" holds: the bound is 6 retries 0.5 s apart.
-- **M3.** The stop reads `_CONFIG_CACHE_INSTALLS` before `get_config_load_failure()`. A good install landing between them makes the recorded count stale, so the next notice sync clears the notice.
-- **New tests in the same file** (fake-screen unit tests, a real lock held on another thread):
-  - `test_only_the_push_own_retries_count_and_a_silent_stop_ends_the_episode`. On cebb6681b1's `config_sync.py`: red, `no push retry was owed` (the FULL probes had used up the bound). Under single reverts on head: without the episode reset, `a silent stop kept its episode, so later contention owed no retry`; without the pause flag, `a retry dropped during a maintenance pause...`.
-  - `test_an_install_landing_at_the_stop_never_leaves_the_notice_up`. On cebb6681b1: red, `the notice outlived the good install that landed at the stop`.
-- **Run:** the whole off-loop file passed at `-n 4` (24 passed, load 47-54).
-
-
-**Review r12p-rev2 (2026-11-08).**
-- **I2.** `Tests/Performance/test_console_keystroke_work_census.py`'s `counted_core_state` wrapper took only `screen`, so `retry_console_core_push`'s `sync_console_core_state(screen, retry=True)` raised TypeError, and the typing nodes perf-guard runs failed 7 of 12 node-runs. The wrapper now passes `**kwargs` through and counts only calls without `retry` as full syncs.
-  - Whole file 4 times at `-n 4` (load 57-69): 9 passed, 2 failed each time.
-  - The 2 are `test_console_storage_units_stay_within_their_ratchets[untested|tested]` ("trace GC pass os_opens: 57 > ceiling 54 x 1.05"), which fail the same way on base 8b762b52fa with the same command.
-- **M2.** After a silent stop, no retry timer is owed and FULL syncs are stubbed, so the mounted test's post-load loop could idle. It now calls `sync_console_core_state(console)` itself when no retry is owed.
-
-Files: `tldw_chatbook/UI/Console_Modules/config_sync.py`, `tldw_chatbook/UI/Console_Modules/console_spend_projection.py`, `tldw_chatbook/Widgets/Console/console_status_chips.py`, `Tests/UI/test_console_projection_reads_off_loop.py`, `Tests/Performance/test_console_keystroke_work_census.py`, `Docs/User_Guide/console.md`.
+Files: `tldw_chatbook/UI/Console_Modules/config_sync.py`, `tldw_chatbook/UI/Console_Modules/console_spend_projection.py`, `tldw_chatbook/Widgets/Console/console_status_chips.py`, `Tests/UI/test_console_projection_reads_off_loop.py`, `Tests/Performance/test_console_keystroke_work_census.py` (reverted to dev), `Docs/User_Guide/console.md`.

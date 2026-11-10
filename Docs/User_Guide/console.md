@@ -1507,8 +1507,9 @@ this tab's in-flight run, use **Stop**, **Ctrl+G**, or `/stop` instead.
 - **The status strip says "Config file can't be read: showing the last loaded
   settings".** Your `config.toml` has a syntax error, so the Console keeps
   using the settings it last loaded. When repeated failed reads of the file
-  keep the Console from refreshing your provider and model choice, it retries
-  for about three seconds, then stops and shows this notice once. Fix the file
+  keep the Console from refreshing your provider and model choice, it keeps
+  trying for about three seconds, then stops trying and shows this notice
+  once. Fix the file
   (a copy of the unreadable version is kept beside it); the notice clears once
   the file loads again, and the next refresh picks up your settings.
 - **The status strip shows no "Context" figure.** While the model's context
