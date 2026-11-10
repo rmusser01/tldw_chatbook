@@ -24440,13 +24440,13 @@ async def test_library_shell_blank_title_save_round_trip_agrees_with_the_row(
             pilot,
             lambda: bool(patched_rows()) and patched_rows()[0]["title"] == "Untitled",
             message=lambda: (
-                "The list row patched from the session snapshot disagrees with "
-                "the persisted row's name "
-                f"({[row.get('title') for row in patched_rows()]!r} vs "
-                "'Untitled')."
+                "The saved note vanished from the list cache."
+                if not patched_rows()
+                else "The list row patched from the session snapshot disagrees "
+                "with the persisted row's name "
+                f"({patched_rows()[0]['title']!r} vs 'Untitled')."
             ),
         )
-        assert patched_rows(), "The saved note vanished from the list cache."
 
 
 @pytest.mark.asyncio
@@ -32868,7 +32868,15 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
     initial_size: tuple[int, int],
     same_side_sizes: tuple[tuple[int, int], ...],
     expected_compact: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # r13l-rev1/rev2: the edit below must stay a DIRTY draft across the
+    # resizes; its 2 s autosave (capped by a 10 s max wait) used to land
+    # mid-resize. Push both out of reach for this test.
+    monkeypatch.setattr(library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 3600.0)
+    monkeypatch.setattr(
+        library_screen_module, "LIBRARY_NOTES_AUTOSAVE_MAX_WAIT_SECONDS", 3600.0
+    )
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryHarness(app)
@@ -32892,17 +32900,7 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
         body.scroll_to(y=8, animate=False, immediate=True)
         body.focus()
         await pilot.pause()
-        # r13l-rev1: the edit autosaves after its debounce, which used to land
-        # mid-resize (baseline, dirty and status moved). Let it land first, so
-        # the resizes are the only thing measured.
-        await _wait_for_condition(
-            pilot,
-            lambda: (
-                screen._library_note_session.snapshot is not None
-                and not screen._library_note_session.snapshot.dirty
-            ),
-            message="The edited note never autosaved.",
-        )
+        assert screen._library_note_session.snapshot.dirty, "the edit is a dirty draft"
         before = (
             screen._notes_state.stage,
             screen._library_notes_active_region(),
