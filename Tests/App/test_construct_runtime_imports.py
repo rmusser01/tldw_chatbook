@@ -102,6 +102,10 @@ ALLOWED_CONSTRUCT_IMPORTS: frozenset[str] = frozenset(
         "tldw_chatbook.Research_Workspace.server_adapter",
         "tldw_chatbook.tldw_api.exceptions",
         "tldw_chatbook.tldw_api.notes_workspace_limits",
+        # The typed services bundle (ADR-250), published at the end of
+        # composition by `_publish_application_services`. Standard library
+        # only at module level; every service type is a TYPE_CHECKING import.
+        "tldw_chatbook.app_services",
     }
 )
 

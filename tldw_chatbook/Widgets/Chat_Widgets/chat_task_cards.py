@@ -4,9 +4,9 @@ from textual.app import ComposeResult
 from textual.containers import Container, Vertical
 from textual.css.query import NoMatches
 from textual.message import Message
+from textual.widgets import Static
 
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
-from tldw_chatbook.Widgets.Chat_Widgets.chat_resume_panel import ChatResumePanel
 from tldw_chatbook.Widgets.Chat_Widgets.skill_install_confirm_card import (
     SkillInstallConfirmCard,
 )
@@ -16,6 +16,33 @@ from tldw_chatbook.Widgets.Chat_Widgets.skill_script_confirm_card import (
 from tldw_chatbook.Widgets.Chat_Widgets.watchlists_operation_card import (
     WatchlistsOperationCard,
 )
+
+
+# Folded in from chat_resume_panel.py (its only importer) to shed one module
+# from the _ui_ready census (ADR-097) for app_services (ADR-250).
+class ChatResumePanel(Container):
+    """Inline resume summary that keeps the current task visible in chat."""
+
+    def compose(self) -> ComposeResult:
+        yield Static("Current task", id="resume-title")
+        yield Static("", id="resume-summary")
+        yield Static("", id="resume-last-step")
+        yield Static("", id="resume-diff-summary")
+        yield Static("", id="resume-next-action")
+
+    def on_mount(self) -> None:
+        self.display = False
+
+    def set_resume_state(self, task_state) -> None:
+        """Update the panel with the latest task summary."""
+        self.display = task_state.has_resume_content()
+        if not task_state.has_resume_content():
+            return
+
+        self.query_one("#resume-summary", Static).update(task_state.summary)
+        self.query_one("#resume-last-step", Static).update(task_state.last_step)
+        self.query_one("#resume-diff-summary", Static).update(task_state.diff_summary)
+        self.query_one("#resume-next-action", Static).update(task_state.next_action)
 
 
 class ChatTaskCards(Container):

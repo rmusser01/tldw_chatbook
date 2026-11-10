@@ -1738,3 +1738,52 @@ class TestFirstRunIndexingIsNotReportedAsFailure:
         assert notes and notes[-1][0] == "failure", (
             f"a real failure was downgraded on a configured install: {notes}"
         )
+
+
+@pytest.mark.unit
+class TestBackfillCliStorage:
+    """TASK-36947.7 (ADR-250 s6): the backfill CLI opens only the databases its
+    item types read, through the shared factory, and closes them in a finally."""
+
+    @staticmethod
+    def _run(tmp_path, monkeypatch, argv, seen, *, fail=False):
+        import tldw_chatbook.config as config
+        from tldw_chatbook.Chat.console_library_policy import (
+            ConsoleLibraryMigrationSeed,
+        )
+        from tldw_chatbook.RAG_Search import backfill
+
+        async def fake_backfill(**kwargs):
+            seen.update(kwargs)
+            if fail:
+                raise RuntimeError("backfill failed")
+            return {"status": "ok", "failed": 0}
+
+        monkeypatch.setattr(backfill, "semantic_indexing_available", lambda: True)
+        monkeypatch.setattr(backfill, "backfill_semantic_index", fake_backfill)
+        monkeypatch.setattr(config, "get_media_db_path", lambda: tmp_path / "media.db")
+        monkeypatch.setattr(
+            config, "get_chachanotes_db_path", lambda: tmp_path / "chachanotes.db"
+        )
+        monkeypatch.setattr(
+            config,
+            "load_console_library_migration_seed",
+            lambda *_a, **_k: ConsoleLibraryMigrationSeed(auto_retrieve_on_send=False),
+        )
+        return backfill.main(argv)
+
+    def test_opens_only_what_the_types_need_and_closes_it(self, tmp_path, monkeypatch):
+        seen = {}
+        assert self._run(tmp_path, monkeypatch, ["--types", "media"], seen) == 0
+
+        assert seen["chachanotes_db"] is None
+        assert isinstance(seen["media_db"], MediaDatabase)
+        assert getattr(seen["media_db"]._local, "conn", None) is None
+
+    def test_closes_the_databases_when_the_backfill_raises(self, tmp_path, monkeypatch):
+        seen = {}
+        with pytest.raises(RuntimeError, match="backfill failed"):
+            self._run(tmp_path, monkeypatch, ["--types", "note"], seen, fail=True)
+
+        assert seen["media_db"] is None
+        assert getattr(seen["chachanotes_db"]._local, "conn", None) is None
