@@ -338,7 +338,7 @@ def seed_domain(name, owner):
         )
         note = owner.add_note("nebula note", "Soft deleted durable note")
         owner.soft_delete_note(note, 1)
-        owner.create_flashcard_asset(
+        owner.learning.create_flashcard_asset(
             original_filename="asset.bin",
             mime_type="application/octet-stream",
             content=b"\x00asset\xff",

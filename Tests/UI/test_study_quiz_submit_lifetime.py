@@ -160,8 +160,8 @@ async def test_obsolete_submit_preserves_current_attempt_and_exact_draft(
 ):
     client = SubmitClient(failure)
     db = CharactersRAGDB(db_path=":memory:", client_id="task-36930")
-    local_quiz = db.create_quiz(name="Local current quiz")
-    db.create_question(
+    local_quiz = db.learning.create_quiz(name="Local current quiz")
+    db.learning.create_question(
         quiz_id=local_quiz,
         question_type="fill_blank",
         question_text="Local current question",
@@ -202,9 +202,9 @@ async def test_obsolete_submit_preserves_current_attempt_and_exact_draft(
                 for notice in app.notices
             )
             if transition == "runtime-local":
-                records = db.list_attempts(quiz_id=local_quiz)["items"]
+                records = db.learning.list_attempts(quiz_id=local_quiz)["items"]
                 assert len(records) == 1 and str(records[0]["id"]) == before["attempt"]
-                stored = db.get_attempt(records[0]["id"], include_answers=True)
+                stored = db.learning.get_attempt(records[0]["id"], include_answers=True)
                 assert stored["completed_at"] is None and stored["answers"] == []
                 assert before["question"] == "Local current question"
                 assert not before["controls"]["submit-quiz-answer-button"]
@@ -249,8 +249,8 @@ async def test_submit_history_completion_cannot_publish_after_runtime_reset(
     client.history_failure = history_failure
     client.submit_release.set()
     db = CharactersRAGDB(db_path=":memory:", client_id="task-36930-history")
-    quiz = db.create_quiz(name="Local current quiz")
-    db.create_question(
+    quiz = db.learning.create_quiz(name="Local current quiz")
+    db.learning.create_question(
         quiz_id=quiz,
         question_type="fill_blank",
         question_text="Local",

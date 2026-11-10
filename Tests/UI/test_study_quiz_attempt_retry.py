@@ -47,10 +47,10 @@ async def test_attempt_submission_preserves_answers_grading_and_history(
     request, question_count, initial_answer, retry_answer, expected_score
 ):
     db = CharactersRAGDB(db_path=":memory:", client_id="study-attempt-retry")
-    quiz_id = db.create_quiz(name="Retry practice")
+    quiz_id = db.learning.create_quiz(name="Retry practice")
     earlier_id = None
     if question_count == 2:
-        earlier_id = db.create_question(
+        earlier_id = db.learning.create_question(
             quiz_id=quiz_id,
             question_type="fill_blank",
             question_text="Two plus two",
@@ -58,7 +58,7 @@ async def test_attempt_submission_preserves_answers_grading_and_history(
             points=1,
             order_index=0,
         )
-    final_id = db.create_question(
+    final_id = db.learning.create_question(
         quiz_id=quiz_id,
         question_type="fill_blank",
         question_text="Four plus four",
@@ -109,7 +109,7 @@ async def test_attempt_submission_preserves_answers_grading_and_history(
                 {"question_id": final_id, "user_answer": initial_answer}
             ]
             if retry_answer is not None:
-                unsubmitted = db.get_attempt(attempt_id, include_answers=True)
+                unsubmitted = db.learning.get_attempt(attempt_id, include_answers=True)
                 assert unsubmitted["completed_at"] is None
                 assert unsubmitted["answers"] == []
                 assert local.payloads == [initial_payload]
@@ -135,7 +135,7 @@ async def test_attempt_submission_preserves_answers_grading_and_history(
                 else [initial_payload, final_payload]
             )
             assert local.payloads == expected_payloads
-            stored = db.get_attempt(
+            stored = db.learning.get_attempt(
                 attempt_id, include_questions=True, include_answers=True
             )
             assert stored["completed_at"] is not None

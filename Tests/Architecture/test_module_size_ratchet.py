@@ -799,7 +799,10 @@ _BUDGETS: dict[str, int] = {
     # close_connection forgets a handle quiescence already retired.
     # TASK-38955 review fix, same waiver: 25861 -> 25870 (+9) --
     # close_idle_connections for the quit close.
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25870,  # 2026-11-03: +3 shared store-error import (TASK-36949.5)
+    # 2026-11-03: +3 shared store-error import (TASK-36949.5).
+    # 2026-11-06, TASK-36949.2: 25870 -> 23519; the 63 learning methods moved
+    # to DB/learning_repository.py.
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 23519,
     #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
     #: The OS notification defaults add 12 lines; pin the exact measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.

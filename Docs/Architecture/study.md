@@ -9,7 +9,7 @@ This document describes the Study destination: its sections and their honest pan
 | Screen | `UI/Screens/study_screen.py`, `study_scope_models.py` | `StudyScreen(BaseAppScreen)`; `STUDY_INITIAL_SECTIONS` (dashboard, paths, flashcards, quizzes, mindmaps, course, guides, learning_map); origins `{home, library}` |
 | Surface | `UI/Study_Window.py`, `UI/Study_Modules/flashcards_handler.py`, `quizzes_handler.py`, `Widgets/Study/study_dashboard.py`, `quiz_session_widget.py` | `StudyWindow`, `StudyFlashcardsController` (SM-2 submission discipline), `StudyQuizzesController` |
 | Services | `Study_Interop/` | `LocalStudyService` / `ServerStudyService` / mode-aware `StudyScopeService` (+ quiz variants), normalizers, recovery adapter |
-| Persistence | `DB/ChaChaNotes_DB.py` | the learning tables (see below); SRS updates; due queries |
+| Persistence | `DB/learning_repository.py` | `LearningRepository`, reached as `CharactersRAGDB.learning`: runs on that database's connection and inside its `transaction()`; SRS updates; due queries. The learning tables (see below) stay in the ChaChaNotes schema |
 | Library handoff | `Library/library_shell_state.py`, `Widgets/Library/library_entry_canvases.py`, `UI/Library_Modules/screen_constants.py` | the Study rail section + the "Continue in Study" staging canvas |
 | Entries | `app_destinations.py::open_study_screen`, `app.py` due-count provider, `Home/dashboard_state.py` | three staged handoff channels; Home's flashcards-due row |
 

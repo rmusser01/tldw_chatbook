@@ -401,8 +401,8 @@ async def test_start_completion_cannot_adopt_a_reset_context(
 ):
     client = ScopedClient()
     db = CharactersRAGDB(db_path=":memory:", client_id="task-36899")
-    local_quiz_id = db.create_quiz(name="Local only quiz")
-    db.create_question(
+    local_quiz_id = db.learning.create_quiz(name="Local only quiz")
+    db.learning.create_question(
         quiz_id=local_quiz_id,
         question_type="fill_blank",
         question_text="Local question",
@@ -452,7 +452,7 @@ async def test_start_completion_cannot_adopt_a_reset_context(
             assert submit.disabled
             submit.press()
             await settle(app, pilot)
-            assert db.list_attempts(quiz_id=local_quiz_id) == {"items": [], "count": 0}
+            assert db.learning.list_attempts(quiz_id=local_quiz_id) == {"items": [], "count": 0}
             assert client.submissions == []
             assert any("21" in notice and "context" in notice for notice in app.notices)
             # The settled old admission must not strand the new context.
@@ -479,7 +479,7 @@ async def test_start_completion_cannot_adopt_a_reset_context(
                 == "Score: 1 / 1"
             )
             if transition == "runtime-local":
-                attempts = db.list_attempts(quiz_id=local_quiz_id)["items"]
+                attempts = db.learning.list_attempts(quiz_id=local_quiz_id)["items"]
                 assert len(attempts) == 1 and attempts[0]["score"] == 1
                 assert client.submissions == []
             else:
