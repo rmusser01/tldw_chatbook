@@ -173,20 +173,22 @@ async def test_actual_composer_refusal_preserves_draft_and_rules_is_native(tmp_p
             assert calls == []
         composer.load_draft("/rules")
         console.query_one("#console-send-message", Button).press()
-        for _ in range(12):
-            await pilot.pause()
-            if isinstance(host.screen, ResponseRulesModal):
-                break
-        assert isinstance(host.screen, ResponseRulesModal)
+        # TASK-39166: bounded waits on each step's state (the modal mounted,
+        # not just pushed; then the Console and its composer focus back).
+        await _until(
+            lambda: isinstance(host.screen, ResponseRulesModal)
+            and host.screen.is_mounted,
+            "/rules mounting the Response rules manager",
+            lambda: pilot.pause(0.01),
+        )
         assert host.screen.scope.kind == "chat"
         assert calls == []
         await pilot.press("escape")
-        for _ in range(8):
-            await pilot.pause()
-            if host.screen is console:
-                break
-        assert host.screen is console
-        assert host.focused is composer
+        await _until(
+            lambda: host.screen is console and host.focused is composer,
+            "Escape returning to the Console with the composer focused",
+            lambda: pilot.pause(0.01),
+        )
 
 
 @pytest.mark.asyncio
@@ -353,29 +355,43 @@ async def test_chat_and_canonical_settings_open_the_same_scoped_manager(tmp_path
 
     async with mounted_rules_console(tmp_path, (120, 35)) as case:
         case.console.action_open_console_session_settings()
-        for _ in range(30):
-            await case.pilot.pause()
-            if case.host.screen.query("#console-settings-response-rules"):
-                break
+        # TASK-39166: bounded waits on each step's state, not pilot-turn counts.
+        step = lambda: case.pilot.pause(0.01)  # noqa: E731
+        await _until(
+            lambda: bool(case.host.screen.query("#console-settings-response-rules")),
+            "the session settings' Response rules button",
+            step,
+        )
         case.host.screen.query_one("#console-settings-response-rules", Button).press()
-        for _ in range(10):
-            await case.pilot.pause()
-        assert isinstance(case.host.screen, ResponseRulesModal)
+        await _until(
+            lambda: isinstance(case.host.screen, ResponseRulesModal)
+            and case.host.screen.is_mounted,
+            "the chat-scoped Response rules manager mounting",
+            step,
+        )
         assert case.host.screen.scope == case.rules.scopes(case.session_id)[0]
         await case.pilot.press("escape")
-        await case.pilot.pause()
+        await _until(
+            lambda: not isinstance(case.host.screen, ResponseRulesModal),
+            "Escape closing the chat-scoped manager",
+            step,
+        )
         await case.host.pop_screen()
         settings = SettingsScreen(case.app)
         settings.apply_navigation_context({"category": "hooks"})
         await case.host.push_screen(settings)
-        for _ in range(20):
-            await case.pilot.pause()
-            if settings.query("#settings-response-rules"):
-                break
+        await _until(
+            lambda: bool(settings.query("#settings-response-rules")),
+            "the Hooks category's Response rules button",
+            step,
+        )
         settings.query_one("#settings-response-rules", Button).press()
-        for _ in range(10):
-            await case.pilot.pause()
-        assert isinstance(case.host.screen, ResponseRulesModal)
+        await _until(
+            lambda: isinstance(case.host.screen, ResponseRulesModal)
+            and case.host.screen.is_mounted,
+            "the global Response rules manager mounting",
+            step,
+        )
         assert case.host.screen.scope.kind == "global"
         assert case.host.screen.runtime is case.rules
 
@@ -395,15 +411,21 @@ async def test_canonical_settings_opens_global_rules_before_console_visit(tmp_pa
     settings.apply_navigation_context({"category": "hooks"})
     try:
         async with ManagerHost(settings).run_test(size=(120, 35)) as pilot:
-            for _ in range(25):
-                await pilot.pause()
-                if settings.query("#settings-response-rules"):
-                    break
+            # TASK-39166: bounded waits on each step's state. The modal must be
+            # mounted, not just pushed: under load the test ended with its
+            # Selects still mounting, and teardown raised NoMatches from them.
+            await _until(
+                lambda: bool(settings.query("#settings-response-rules")),
+                "the Hooks category's Response rules button",
+                lambda: pilot.pause(0.01),
+            )
             settings.query_one("#settings-response-rules", Button).press()
-            for _ in range(30):
-                await pilot.pause()
-                if isinstance(settings.app.screen, ResponseRulesModal):
-                    break
+            await _until(
+                lambda: isinstance(settings.app.screen, ResponseRulesModal)
+                and settings.app.screen.is_mounted,
+                "the Response rules manager mounting",
+                lambda: pilot.pause(0.01),
+            )
             assert isinstance(settings.app.screen, ResponseRulesModal)
             modal = settings.app.screen
             assert modal.scope.kind == "global"
@@ -428,11 +450,7 @@ async def test_active_run_copy_takes_priority_over_an_earlier_rule_verdict(tmp_p
         case.composer.load_draft("Explain another result")
         case.console.query_one("#console-send-message", Button).press()
         try:
-            for _ in range(60):
-                await case.pilot.pause()
-                if entered.is_set():
-                    break
-            assert entered.is_set(), case.controller.run_state
+            await _until_set(entered, "the held primary request")  # TASK-39166
             # The held provider has sent no chunk yet, so the run's own copy
             # is the pre-first-chunk wording (077e5bfa09 moved streaming copy
             # to Agent.console_run_feedback_copy), never the rule verdict.
@@ -465,9 +483,13 @@ async def test_violation_status_opens_rules_with_disable_action(tmp_path):
         case.console.query_one(
             "#console-status-text", ConsoleStatusText
         ).action_open_segment("run")
-        for _ in range(12):
-            await case.pilot.pause()
-        assert isinstance(case.host.screen, ResponseRulesModal)
+        # TASK-39166: mounted means on_mount's reload set the Disable action.
+        await _until(
+            lambda: isinstance(case.host.screen, ResponseRulesModal)
+            and case.host.screen.is_mounted,
+            "the run segment opening the Response rules manager",
+            lambda: case.pilot.pause(0.01),
+        )
         assert not case.host.screen.query_one("#rr-disable", Button).disabled
 
 
