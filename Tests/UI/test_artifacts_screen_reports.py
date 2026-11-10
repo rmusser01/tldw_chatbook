@@ -97,6 +97,7 @@ async def _preview_report(screen, pilot, briefing_id: int) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_empty_state_offers_demo_cta():
     app = _build_test_app(configured_default="artifacts")
     async with _open_artifacts(app) as (screen, pilot):
@@ -106,6 +107,7 @@ async def test_empty_state_offers_demo_cta():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_seeded_reports_list_rows_with_open_button():
     app = _build_test_app(configured_default="artifacts")
     briefing_id = _seed_report(app)
@@ -124,6 +126,7 @@ async def test_seeded_reports_list_rows_with_open_button():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_audio_row_shows_play_button():
     app = _build_test_app(configured_default="artifacts")
     briefing_id = _seed_report(app)
@@ -160,6 +163,7 @@ async def test_audio_row_shows_play_button():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_demo_cta_starts_the_detached_demo_task():
     """Qodo #10: the CTA starts the service-owned task; it never runs the
     demo inside a screen worker (unmount would cancel it mid-seed)."""
@@ -192,6 +196,7 @@ async def test_demo_cta_starts_the_detached_demo_task():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_demo_cta_tooltip_is_the_shared_consequence_copy():
     """TASK-34000.23 (AC#4): the Artifacts CTA's tooltip is the same
     consequence copy the Library confirm shows, from one shared source --
@@ -216,6 +221,7 @@ async def test_demo_cta_tooltip_is_the_shared_consequence_copy():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_failed_report_keeps_demo_retry_cta():
     """A failed brief leaves a report row, so the empty-state branch is gone;
     the demo CTA must still be reachable (the failure toast says "run the demo
@@ -229,6 +235,7 @@ async def test_failed_report_keeps_demo_retry_cta():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_completed_report_hides_demo_cta():
     """A completed report means the user succeeded -- no retry CTA is shown
     (the empty-state CTA belongs to the no-reports and no-success states)."""
@@ -240,6 +247,7 @@ async def test_completed_report_hides_demo_cta():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_older_success_then_new_failure_keeps_retry_cta():
     """Qodo #4 (PR #2460): a historical success must not suppress the retry CTA
     when the NEWEST run failed. The gate tracks the latest report's status, not
@@ -263,6 +271,7 @@ async def test_older_success_then_new_failure_keeps_retry_cta():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_successful_retry_refreshes_rows_and_drops_cta():
     """Qodo #5 (PR #2460): a retry that completes while Artifacts stays open must
     refresh the rows on task completion -- the failed row + retry CTA give way to
@@ -305,6 +314,7 @@ async def test_successful_retry_refreshes_rows_and_drops_cta():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_import_precondition_is_explained_and_empty_copy_is_honest():
     """The Import button is permanently disabled, so the empty-state copy must
     not tell users to "import an artifact", and the disabled control must
@@ -323,6 +333,7 @@ async def test_import_precondition_is_explained_and_empty_copy_is_honest():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_report_preview_header_uses_formatted_timestamp():
     """Qodo #3 (PR #2460): the preview header renderable must format the
     timestamp (local, minute precision) -- never render raw microsecond ISO."""
@@ -369,6 +380,7 @@ async def test_kept_report_row_shows_kept_badge(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_unkept_report_row_has_no_kept_badge():
     app = _build_test_app(configured_default="artifacts")
     briefing_id = _seed_report(app)
@@ -379,6 +391,7 @@ async def test_unkept_report_row_has_no_kept_badge():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_view_button_previews_report_body_in_detail_pane():
     app = _build_test_app(configured_default="artifacts")
     briefing_id = _seed_report(app)
@@ -396,6 +409,7 @@ async def test_view_button_previews_report_body_in_detail_pane():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_clear_preview_restores_previous_pane():
     app = _build_test_app(configured_default="artifacts")
     briefing_id = _seed_report(app)
@@ -409,6 +423,7 @@ async def test_clear_preview_restores_previous_pane():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_open_button_deep_links_to_watchlists_artifacts_pane():
     app = _build_test_app(configured_default="artifacts")
     briefing_id = _seed_report(app)
@@ -450,6 +465,7 @@ async def test_keep_button_keeps_previewed_report_and_flips_badge(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_keep_button_disabled_without_chacha_handle():
     app = _build_test_app(configured_default="artifacts")  # no chachanotes_db
     briefing_id = _seed_report(app)
@@ -474,6 +490,7 @@ async def test_keep_button_disabled_for_failed_report_preview(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_export_button_pushes_file_save_dialog():
     app = _build_test_app(configured_default="artifacts")
     briefing_id = _seed_report(app)
@@ -491,6 +508,7 @@ async def test_export_button_pushes_file_save_dialog():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_write_report_export_file_writes_markdown_document(tmp_path):
     app = _build_test_app(configured_default="artifacts")
     briefing_id = _seed_report(app)
@@ -548,6 +566,7 @@ def _seed_audio_report(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_play_button_validates_path_and_plays_normalized_result(
     tmp_path, monkeypatch
 ):
@@ -573,6 +592,7 @@ async def test_play_button_validates_path_and_plays_normalized_result(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_play_button_missing_file_warns_through_the_validator(monkeypatch):
     """Qodo #1: a missing file is the validator's rejection, surfaced as the
     existing "no longer exists" warning -- and nothing is handed to the
@@ -620,6 +640,7 @@ async def _press_play_and_read_refusal(app, screen, pilot, briefing_id, played):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_play_button_refuses_a_row_outside_the_audio_dir(tmp_path, monkeypatch):
     """A cached row whose path now points outside `briefing_audio_dir()` is
     refused with a literal toast that never carries the path."""
@@ -673,6 +694,7 @@ def _captured_logs():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_play_button_plays_a_relative_row_from_inside_the_audio_dir(
     tmp_path, monkeypatch
 ):
@@ -706,6 +728,7 @@ async def test_play_button_plays_a_relative_row_from_inside_the_audio_dir(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_play_button_never_plays_a_relative_row_from_the_working_directory(
     tmp_path, monkeypatch
 ):
@@ -738,6 +761,7 @@ async def test_play_button_never_plays_a_relative_row_from_the_working_directory
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_play_button_never_hands_a_dash_leading_name_to_the_player_as_an_option(
     tmp_path, monkeypatch
 ):
@@ -796,6 +820,7 @@ async def test_play_button_never_hands_a_dash_leading_name_to_the_player_as_an_o
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_play_button_refuses_a_symlink_that_escapes_the_audio_dir(
     tmp_path, monkeypatch
 ):
@@ -852,6 +877,7 @@ async def test_kept_badge_is_exact_per_row_not_page_bound(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_unmount_tears_down_daily_reports_and_preview_workers():
     """Qodo #15: unmount cancels BOTH new worker paths and invalidates
     their in-flight apply callbacks (generation bump), so a late
