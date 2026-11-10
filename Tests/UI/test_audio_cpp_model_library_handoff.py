@@ -576,6 +576,7 @@ def test_panel_snapshot_roundtrips_invalid_url_but_strips_credential_metadata() 
     assert "invalid.example" not in repr(snapshot)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("selector", "widget_type", "value"),
@@ -625,6 +626,7 @@ async def test_one_mounted_draft_action_advances_revision_exactly_once(
         assert panel.draft_snapshot().draft_revision == after
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_value_identical_widget_echo_does_not_advance_revision() -> None:
     """A framework echo of an unchanged value is not a semantic action."""
@@ -648,6 +650,7 @@ async def test_value_identical_widget_echo_does_not_advance_revision() -> None:
         assert panel.draft_snapshot().draft_revision == before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("selector", "value"),
@@ -689,6 +692,7 @@ async def test_exact_model_or_voice_action_advances_revision_once(
         assert panel.draft_snapshot().draft_revision == before + 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action", ("revert", "restore_defaults"))
 async def test_reset_action_advances_revision_exactly_once(action: str) -> None:
