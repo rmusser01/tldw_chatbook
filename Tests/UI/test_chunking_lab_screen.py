@@ -308,6 +308,23 @@ def lab_app(tmp_path):
     return app
 
 
+@pytest.fixture
+def attach_lab_media(lab_app, tmp_path, request):
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
+    def attach(filename, client_id):
+        database = MediaDatabase(str(tmp_path / filename), client_id=client_id)
+
+        def retire():
+            assert database.close_idle_connections(), "Lab media store is still in use"
+
+        request.addfinalizer(retire)
+        lab_app.media_db = database
+        return database
+
+    return attach
+
+
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="Requires POSIX FIFO support")
 @pytest.mark.asyncio
 async def test_template_import_refuses_fifo_without_changing_session(
@@ -383,14 +400,13 @@ async def test_manually_mounted_lab_owns_deferred_initial_screen(lab_app):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_slow_tags_keep_unfinished_separator_after_render_reopen_and_failed_save(
-    lab_app, tmp_path
+    lab_app, attach_lab_media
 ):
     from textual.widgets import Input
 
-    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
-
-    lab_app.media_db = MediaDatabase(str(tmp_path / "tags.sqlite3"), client_id="tags")
+    attach_lab_media("tags.sqlite3", "tags")
     async with lab_app.run_test(size=(80, 24)) as pilot:
         screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
         await lab_app.push_screen(screen)
@@ -432,17 +448,16 @@ async def test_slow_tags_keep_unfinished_separator_after_render_reopen_and_faile
 
 
 @pytest.mark.asyncio
-async def test_builtin_dialog_defaults_to_copy_and_preserves_builtin(lab_app, tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_builtin_dialog_defaults_to_copy_and_preserves_builtin(
+    lab_app, attach_lab_media
+):
     from textual.widgets import Checkbox, Input
 
     from Tests.UI.test_chunking_lab_recovery_flow import wait_for_dialog
     from tldw_chatbook.Chunking.chunking_interop_library import ChunkingInteropService
-    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
-
-    lab_app.media_db = MediaDatabase(
-        str(tmp_path / "builtins.sqlite3"), client_id="builtin"
-    )
-    service = ChunkingInteropService(lab_app.media_db)
+    database = attach_lab_media("builtins.sqlite3", "builtin")
+    service = ChunkingInteropService(database)
     identity = service.create_template(
         "Protected",
         "Builtin description",
@@ -739,9 +754,9 @@ async def test_previous_choice_survives_reopen_without_completing_failed_batch(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(80, 24), (120, 40), (160, 50)])
-async def test_complete_workflow_viewports(lab_app, tmp_path, size):
-    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+async def test_complete_workflow_viewports(lab_app, attach_lab_media, size):
     from tldw_chatbook.Library.library_ingest_state import (
         LibraryIngestFormState,
         build_library_ingest_state,
@@ -749,8 +764,7 @@ async def test_complete_workflow_viewports(lab_app, tmp_path, size):
     from tldw_chatbook.RAG_Admin.local_rag_admin_service import LocalRAGAdminService
     from tldw_chatbook.Widgets.Library.library_ingest_canvas import LibraryIngestCanvas
 
-    database = MediaDatabase(str(tmp_path / "media.sqlite3"), client_id="lab-viewports")
-    lab_app.media_db = database
+    database = attach_lab_media("media.sqlite3", "lab-viewports")
 
     class Catalog:
         async def list_templates(self, *, mode):
@@ -989,15 +1003,16 @@ async def test_local_shortcuts_do_not_steal_editor_text(lab_app):
 
 
 @pytest.mark.asyncio
-async def test_real_library_text_save_a_and_conflict_preserve_state(lab_app, tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_real_library_text_save_a_and_conflict_preserve_state(
+    lab_app, attach_lab_media
+):
     import json
 
     from tldw_chatbook.Chunking import lab_state
-    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
     from tldw_chatbook.RAG_Admin.chunking_lab_service import TemplateSaveConflict
 
-    database = MediaDatabase(str(tmp_path / "media.sqlite3"), client_id="lab-test")
-    lab_app.media_db = database
+    database = attach_lab_media("media.sqlite3", "lab-test")
     text = "line\r\n" + "local full source " * 1800 + "exact tail"
     media_id, _, _ = database.add_media_with_keywords(
         title="Full source", media_type="document", content=text
