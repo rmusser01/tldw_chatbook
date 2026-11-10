@@ -3308,10 +3308,15 @@ async def test_preservation_veto_retains_candidate_in_review_and_tamper_blocks_a
         assert area.text == "Candidate with protected token removed"
         status = app.screen.query_one("#console-prompts-improvement-status", Static)
         apply_button.press()
-        # The refused validation ends by rewriting the status line.
+        # The refused validation rewrites the status line and releases the
+        # apply transaction. "Applying changes to the Console…" is the
+        # transaction's own status, written before validation runs, so a
+        # changed line alone is not the end (2 of 120 runs at load ~42).
         assert await until(
-            lambda: str(status.renderable) != "Review required before applying", 10
-        ), "the tampered Apply never reported its refusal"
+            lambda: not app.screen._apply_in_progress
+            and str(status.renderable) != "Review required before applying",
+            10,
+        ), f"the tampered Apply never reported its refusal: {str(status.renderable)!r}"
 
         assert driver.applies == []
         assert (
