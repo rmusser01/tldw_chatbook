@@ -88,6 +88,12 @@ Owner decision (2026-11-09), resolving the contradiction with dev 0aa96f8d1b (th
 **Docs.** `Docs/User_Guide/console.md`, Quirks & troubleshooting: "it keeps trying for about three seconds, then stops trying and shows this notice once".
 
 
+**Review r12p-rev4 (2026-11-09).**
+- **I1.** At the stop the pending CORE request and its Canvas poll token were never retired. On dev every refusal ends the token (`retire(owed=True)`), and a won push retires the request. While a token lives, `Canvas/config_policy._poll_runtime_canvas_enabled` declines the Canvas policy watcher's background poll; the reviewer's probe showed a token alive 9 s past the stop. A refusal that owes no replay now retires the pending "core" request outright (`retire()`), as ADR-121's staged handoff says a dropped replay does.
+  - The mounted test now begins the handoff as a replayed FULL's warm-up would (`_begin_console_config_handoffs`) before the stopping refusal. It asserts that afterwards "core" is gone from `_console_config_handoffs` and no Canvas poll handoff for the screen remains.
+  - Red on b383409739: "the stop left the CORE handoff owed".
+- **M1.** After the stop nothing schedules a sync (no retry timer, by the owner's ruling), so on an idle Console the notice can outlive a fixed file until the next sync. The User Guide now says the next refresh clears it and picks up the settings, and that on an idle Console this may wait for the user's next action there. The `console_status_chips.py` comment uses the stop wording.
+
 **TASK-39043's lifetime file (recorded here, 2026-11-09).** `Tests/Backup_Recovery/test_console_config_sync_lifetime.py` had 9 red nodes on plain dev 3a6498ae14 (9 failed, 18 passed): `test_console_busy_config_locks_defer_both_refresh_callers` (6 cases), `test_console_refresh_retries_after_native_pause_without_stale_state[native-canceled|native-duplicates]` and `test_console_native_retry_uses_one_screen_owned_timer[timer-retry]`.
 - Cause: dev 0aa96f8d1b moved the coalesced callback to `config_sync.run_coalesced_control_bar_sync`, which reads `screen._console_sync_in_progress`. The `Surface` stub screen has no such attribute (ChatScreen sets it in `__init__`), so the read fell through to the class and raised.
 - Fix: the stub now sets `_console_sync_in_progress = False`, following TASK-38973's rule of naming instance state. The fix is in the double only; no node showed a product defect.

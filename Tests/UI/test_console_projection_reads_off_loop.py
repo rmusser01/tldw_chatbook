@@ -1343,11 +1343,27 @@ async def test_refused_core_pushes_stop_replaying_an_unreadable_config_and_say_s
                     assert len(replays) == step + 1, "a refusal owed no whole replay"
                     now[0] += 0.2
                 assert not notice_visible(), "the notice showed inside the episode"
+                # The replayed FULL's warm-up begins the owed CORE handoff, as
+                # its prepare does, before its own probe is refused.
+                [(_core, token)] = config_sync._begin_console_config_handoffs(
+                    console, spend.ConsoleReadinessConfigProjection.for_screen(console)
+                )
+                assert token is not None and token.active, "no Canvas poll handoff"
                 config_sync.sync_console_core_state(console)  # Past the episode.
                 assert len(replays) == steps, (
                     "refused pushes kept owing whole replays past the episode"
                 )
                 assert notice_visible(), "the refusals stopped without saying why"
+                # r12p-rev4 I1: a dropped replay retires the handoff, or the
+                # Canvas policy poll stays declined while its token lives.
+                from tldw_chatbook.Canvas import config_policy
+
+                assert "core" not in console._console_config_handoffs, (
+                    "the stop left the CORE handoff owed"
+                )
+                assert not token.active and not any(
+                    issued.owner is console for issued in config_policy._poll_handoffs
+                ), "the stop left a Canvas poll handoff registered"
                 config_sync.sync_console_core_state(console)  # A later refusal.
                 assert len(replays) == steps and shown == [True], shown
                 assert pushes == []

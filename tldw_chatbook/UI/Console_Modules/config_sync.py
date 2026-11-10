@@ -518,6 +518,11 @@ def sync_console_core_state(screen) -> None:
                         request.retire()
                 return
     if not _refusal_owes_replay(screen):
+        # No replay owes it: a dropped replay retires the handoff and its
+        # Canvas poll token (ADR-121 staged handoff; r12p-rev4).
+        request = getattr(screen, "_console_config_handoffs", {}).get("core")
+        if request is not None:
+            request.retire()
         return
     request = _owe_console_config_sync(screen, "core")
     if request is not None and request.token is not None:
