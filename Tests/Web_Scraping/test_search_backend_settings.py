@@ -330,6 +330,7 @@ def test_setup_rejects_empty_userinfo_and_backslash(monkeypatch, value):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_probe_does_not_log_untrusted_provider_payload(monkeypatch):
     from loguru import logger
 
@@ -338,11 +339,11 @@ def test_probe_does_not_log_untrusted_provider_payload(monkeypatch):
     )
     monkeypatch.setenv("GOOGLE_SEARCH_API_KEY", "sentinel-secret")
     monkeypatch.setenv("GOOGLE_SEARCH_ENGINE_ID", "engine")
-    response = Mock()
-    response.json.return_value = {
-        "items": [],
-        "unexpected": "sentinel-secret untrusted-body",
-    }
+    response = api.requests.Response()
+    response.status_code = 200
+    response.headers["Content-Type"] = "application/json"
+    response._content = b'{"items":[],"unexpected":"sentinel-secret untrusted-body"}'
+    response._content_consumed = True
     monkeypatch.setattr(api.requests, "get", Mock(return_value=response))
     messages = []
     sink = logger.add(lambda message: messages.append(str(message)))
