@@ -29,12 +29,14 @@ from tldw_chatbook.Workspaces.display_state import (
 )
 
 
-def _registry(tmp_path: Path) -> LocalWorkspaceRegistryService:
+def _registry(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> LocalWorkspaceRegistryService:
     # Custom database namespaces are caller-owned under ADR-029.
     tmp_path.mkdir(mode=0o700, parents=True, exist_ok=True)
-    return LocalWorkspaceRegistryService(
-        WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
-    )
+    db = WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
+    request.addfinalizer(db.close)
+    return LocalWorkspaceRegistryService(db)
 
 
 def test_console_workspace_state_explains_missing_service() -> None:
@@ -50,10 +52,12 @@ def test_console_workspace_state_explains_missing_service() -> None:
     assert "service not ready" in state.recovery_copy.lower()
 
 
-def test_console_scope_shows_readable_label_not_raw_uuid(tmp_path: Path) -> None:
+def test_console_scope_shows_readable_label_not_raw_uuid(
+    tmp_path: Path, request
+) -> None:
     """TASK-373/387: the rail Scope shows a human-readable label with the raw
     conversation id kept as a hover detail, not the raw UUID in the primary row."""
-    service = _registry(tmp_path)
+    service = _registry(tmp_path, request)
     service.ensure_default_workspace()
     conversation_id = "d1ebe478-c825-46b6-83b3-d5901d7bb3a1"
 
@@ -74,8 +78,10 @@ def test_console_scope_shows_readable_label_not_raw_uuid(tmp_path: Path) -> None
     assert empty.scope_detail == ""
 
 
-def test_console_workspace_state_explains_no_active_workspace(tmp_path: Path) -> None:
-    service = _registry(tmp_path)
+def test_console_workspace_state_explains_no_active_workspace(
+    tmp_path: Path, request
+) -> None:
+    service = _registry(tmp_path, request)
     service.ensure_default_workspace()
 
     state = build_console_workspace_state(
@@ -96,8 +102,9 @@ def test_console_workspace_state_explains_no_active_workspace(tmp_path: Path) ->
 
 def test_console_workspace_state_allows_default_conversation_in_fallback_state(
     tmp_path: Path,
+    request,
 ) -> None:
-    service = _registry(tmp_path)
+    service = _registry(tmp_path, request)
 
     state = build_console_workspace_state(
         registry_service=service,
@@ -114,8 +121,9 @@ def test_console_workspace_state_allows_default_conversation_in_fallback_state(
 
 def test_console_workspace_state_reports_active_workspace_and_runtime(
     tmp_path: Path,
+    request,
 ) -> None:
-    service = _registry(tmp_path)
+    service = _registry(tmp_path, request)
     service.create_workspace(
         workspace_id="ws-a",
         name="Research Sprint",
@@ -162,9 +170,10 @@ def test_console_workspace_state_reports_active_workspace_and_runtime(
 
 def test_console_workspace_state_renders_the_off_loop_refreshed_filesystem_snapshot(
     tmp_path: Path,
+    request,
 ) -> None:
     """The pure builder renders a caller's refreshed folder-status snapshot."""
-    service = _registry(tmp_path)
+    service = _registry(tmp_path, request)
     service.create_workspace(workspace_id="ws-a", name="Research Sprint")
     service.set_active_workspace("ws-a")
     folder = tmp_path / "project"
@@ -190,10 +199,10 @@ def test_console_workspace_state_renders_the_off_loop_refreshed_filesystem_snaps
 
 
 def test_console_workspace_state_without_snapshot_never_reads_runtime_bindings_on_ui_thread(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, request
 ) -> None:
     """An omitted snapshot fails closed instead of reaching the filesystem seam."""
-    service = _registry(tmp_path)
+    service = _registry(tmp_path, request)
     service.create_workspace(workspace_id="ws-a", name="Research Sprint")
     service.set_active_workspace("ws-a")
     folder = tmp_path / "project"
@@ -238,8 +247,9 @@ def test_console_workspace_state_freezes_caller_availability_mapping() -> None:
 
 def test_console_workspace_state_enables_switching_with_multiple_workspaces(
     tmp_path: Path,
+    request,
 ) -> None:
-    service = _registry(tmp_path)
+    service = _registry(tmp_path, request)
     service.create_workspace(workspace_id="ws-a", name="Workspace A")
     service.create_workspace(workspace_id="ws-b", name="Workspace B")
     service.set_active_workspace("ws-a")
@@ -271,6 +281,7 @@ def test_safe_workspaces_treats_missing_registry_as_empty_without_warning(
 
 def test_console_workspace_state_maps_workspace_sync_status_before_promotion(
     tmp_path: Path,
+    request,
 ) -> None:
     expected_labels = {
         WorkspaceSyncStatus.NOT_CONFIGURED: "Sync: not configured",
@@ -280,7 +291,7 @@ def test_console_workspace_state_maps_workspace_sync_status_before_promotion(
     }
 
     for sync_status, expected_label in expected_labels.items():
-        service = _registry(tmp_path / sync_status.value)
+        service = _registry(tmp_path / sync_status.value, request)
         service.create_workspace(
             workspace_id=f"ws-{sync_status.value}",
             name=f"Workspace {sync_status.value}",
@@ -298,6 +309,7 @@ def test_console_workspace_state_maps_workspace_sync_status_before_promotion(
 
 def test_console_workspace_state_distinguishes_server_and_authority_readiness(
     tmp_path: Path,
+    request,
 ) -> None:
     cases = (
         (
@@ -336,7 +348,7 @@ def test_console_workspace_state_distinguishes_server_and_authority_readiness(
     )
 
     for authority, adapter_state, expected_label, expected_detail in cases:
-        service = _registry(tmp_path / authority.value)
+        service = _registry(tmp_path / authority.value, request)
         service.create_workspace(
             workspace_id=f"ws-{authority.value}",
             name=f"Workspace {authority.value}",
@@ -358,8 +370,9 @@ def test_console_workspace_state_distinguishes_server_and_authority_readiness(
 
 def test_console_workspace_state_derives_conversation_rows_from_memberships(
     tmp_path: Path,
+    request,
 ) -> None:
-    service = _registry(tmp_path)
+    service = _registry(tmp_path, request)
     service.create_workspace(workspace_id="ws-a", name="Research Sprint")
     service.set_active_workspace("ws-a")
     service.link_membership(
@@ -383,8 +396,9 @@ def test_console_workspace_state_derives_conversation_rows_from_memberships(
 
 def test_console_workspace_state_disambiguates_duplicate_conversation_titles(
     tmp_path: Path,
+    request,
 ) -> None:
-    service = _registry(tmp_path)
+    service = _registry(tmp_path, request)
     service.create_workspace(workspace_id="ws-a", name="Research Sprint")
     service.set_active_workspace("ws-a")
     service.link_membership(
@@ -423,8 +437,9 @@ def test_console_workspace_state_disambiguates_duplicate_conversation_titles(
 
 def test_console_workspace_state_exposes_handoff_transfer_policy_rows(
     tmp_path: Path,
+    request,
 ) -> None:
-    service = _registry(tmp_path)
+    service = _registry(tmp_path, request)
     service.create_workspace(workspace_id="ws-a", name="Research Sprint")
     service.set_active_workspace("ws-a")
     service.link_membership(
@@ -513,8 +528,9 @@ def test_console_workspace_state_preserves_handoff_rows_from_membership_iterator
 
 def test_console_workspace_state_exposes_acp_task_run_handoff_readiness_and_audit(
     tmp_path: Path,
+    request,
 ) -> None:
-    service = _registry(tmp_path)
+    service = _registry(tmp_path, request)
     service.create_workspace(workspace_id="ws-a", name="Research Sprint")
     service.set_active_workspace("ws-a")
 
@@ -537,8 +553,9 @@ def test_console_workspace_state_exposes_acp_task_run_handoff_readiness_and_audi
 
 def test_console_workspace_state_normalizes_acp_handoff_ready_and_blocked_states(
     tmp_path: Path,
+    request,
 ) -> None:
-    service = _registry(tmp_path)
+    service = _registry(tmp_path, request)
     service.create_workspace(workspace_id="ws-a", name="Research Sprint")
     service.set_active_workspace("ws-a")
 
@@ -617,8 +634,9 @@ def test_console_workspace_state_logs_registry_failures() -> None:
 
 def test_library_workspace_depth_state_preserves_visibility_but_blocks_cross_workspace_context(
     tmp_path: Path,
+    request,
 ) -> None:
-    service = _registry(tmp_path)
+    service = _registry(tmp_path, request)
     service.create_workspace(workspace_id="ws-a", name="Workspace A")
     service.create_workspace(workspace_id="ws-b", name="Workspace B")
     service.set_active_workspace("ws-a")
@@ -663,8 +681,9 @@ def test_library_workspace_depth_state_preserves_visibility_but_blocks_cross_wor
 
 def test_library_workspace_depth_state_recognizes_media_id_and_ignores_idless_rows(
     tmp_path: Path,
+    request,
 ) -> None:
-    service = _registry(tmp_path)
+    service = _registry(tmp_path, request)
     service.create_workspace(workspace_id="ws-a", name="Workspace A")
     service.set_active_workspace("ws-a")
     service.link_membership(
@@ -700,6 +719,7 @@ def test_library_workspace_depth_state_recognizes_media_id_and_ignores_idless_ro
 
 def test_library_item_context_handoff_gates_on_the_selected_row_only(
     tmp_path: Path,
+    request,
 ) -> None:
     """TASK-15423: one blocked row must not veto every other row's handoff.
 
@@ -711,7 +731,7 @@ def test_library_item_context_handoff_gates_on_the_selected_row_only(
     already exists on the row model; the decision must come from the
     selected row.
     """
-    service = _registry(tmp_path)
+    service = _registry(tmp_path, request)
     service.create_workspace(workspace_id="ws-a", name="Workspace A")
     service.create_workspace(workspace_id="ws-b", name="Workspace B")
     service.set_active_workspace("ws-a")
@@ -748,13 +768,14 @@ def test_library_item_context_handoff_gates_on_the_selected_row_only(
 
 def test_library_item_context_handoff_falls_back_to_the_aggregate_for_unknown_ids(
     tmp_path: Path,
+    request,
 ) -> None:
     """An item outside the row model keeps the conservative aggregate policy.
 
     Args:
         tmp_path: Registry scratch directory.
     """
-    service = _registry(tmp_path)
+    service = _registry(tmp_path, request)
     service.create_workspace(workspace_id="ws-a", name="Workspace A")
     service.set_active_workspace("ws-a")
     service.link_membership(
