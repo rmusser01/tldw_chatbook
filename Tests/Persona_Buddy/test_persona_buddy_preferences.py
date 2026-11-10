@@ -233,6 +233,8 @@ def test_never_positioned_geometry_is_distinct_from_persisted_top_left() -> None
     assert serialize_persona_buddy_preferences(defaults)["x"] == sentinel
     assert serialize_persona_buddy_preferences(defaults)["y"] == sentinel
     assert top_left.geometry == PersonaBuddyGeometry(0, 0, 28, 12)
+    with pytest.raises(ValueError, match="^persona_buddy_geometry_invalid$"):
+        PersonaBuddyGeometry(x=-1, y=0)
     assert (
         parse_persona_buddy_preferences(
             serialize_persona_buddy_preferences(top_left)

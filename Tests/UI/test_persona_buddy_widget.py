@@ -364,23 +364,30 @@ def _visual_with_frame(
 
 
 @pytest.mark.asyncio
-async def test_overlay_paints_without_flow_or_fr_budget():
+@pytest.mark.parametrize(
+    "size", [(100, 36), (160, 48), (80, 24)], ids=["100x36", "160x48", "80x24"]
+)
+async def test_overlay_paints_without_flow_or_fr_budget(size):
     assert (
         Path(persona_buddy_widget.__file__).resolve().parents[3]
         == Path(__file__).resolve().parents[2]
     )
     controller = _FakeController()
     app = _BuddyApp(controller)
-    async with app.run_test(size=(80, 24)):
+    app.AUTO_FOCUS = "#focus-probe"
+    async with app.run_test(size=size):
         buddy = app.screen.query_one(PersonaBuddyWidget)
         flow = app.screen.query_one("#buddy-flow-probe")
-        await _wait_until(lambda: buddy.region.width == 28)
+        await _wait_until(lambda: "BUDDY-A" in _compositor_text(app.screen))
         assert buddy.styles.position == "absolute"
         assert buddy.styles.overlay == "screen"
-        assert flow.region.height == 24
-        assert app.screen.query_one("#flow-end").region.bottom == 24
+        width, height = size
+        assert flow.region.height == height
+        assert app.screen.query_one("#flow-end").region.bottom == height
+        assert 0 <= buddy.region.x < buddy.region.right <= width
+        assert 0 <= buddy.region.y < buddy.region.bottom <= height
+        assert app.screen.focused is app.screen.query_one("#focus-probe", Input)
         assert "Persona Buddy" not in _compositor_text(app.screen)
-        await _wait_until(lambda: "BUDDY-A" in _compositor_text(app.screen))
 
 
 @pytest.mark.asyncio
@@ -1985,12 +1992,15 @@ async def test_resolution_is_single_owned_and_stale_completion_cannot_repaint():
 
 
 @pytest.mark.asyncio
-async def test_fresh_equivalent_snapshots_preserve_animation_deadline_and_progress():
+@pytest.mark.parametrize("loop", (False, True), ids=("non-looping", "looping"))
+async def test_fresh_equivalent_snapshots_preserve_animation_deadline_and_progress(
+    loop,
+):
     controller = _FreshEquivalentVisualController(
         animate=True,
         frames=("POLL-A", "POLL-B"),
-        durations=(180, 260),
-        loop=False,
+        durations=(180, 30_000 if loop else 260),
+        loop=loop,
     )
     app = _BuddyApp(controller)
     async with app.run_test(size=(80, 24)):
@@ -2000,6 +2010,34 @@ async def test_fresh_equivalent_snapshots_preserve_animation_deadline_and_progre
         await asyncio.sleep(0.25)
         assert buddy.frame_index == 1
         assert "POLL-B" in _compositor_text(app.screen)
+
+        accepted = buddy._accepted_render
+        assert accepted is not None
+        deadline, region = buddy._next_frame_at, buddy.region
+        timer = buddy._frame_timer
+        assert (timer is not None) is loop
+        controller.generation += 1
+        authority = buddy._resolution_authority(controller.snapshot())
+        assert authority is not None and authority != accepted.authority
+        buddy.refresh_from_controller()
+        await _wait_until(
+            lambda: buddy._accepted_render is not None
+            and buddy._accepted_render.authority == authority
+        )
+        refreshed = buddy._accepted_render
+        assert refreshed is not None and refreshed.visual is not accepted.visual
+        assert refreshed.visual_identity == accepted.visual_identity
+        assert buddy.frame_index == 1
+        assert buddy._next_frame_at == deadline
+        assert buddy._frame_timer is timer
+        assert buddy.region == region
+        assert "POLL-B" in _compositor_text(app.screen)
+
+        if loop:
+            buddy._next_frame_at = 0
+            buddy.advance_frame()
+            await _wait_until(lambda: "POLL-A" in _compositor_text(app.screen))
+            assert buddy.frame_index == 0
 
 
 @pytest.mark.asyncio

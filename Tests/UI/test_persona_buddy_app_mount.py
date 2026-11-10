@@ -272,14 +272,14 @@ async def test_navigation_replaces_screen_local_view_generation():
     async with app.run_test(size=(100, 30)):
         await _wait_until(lambda: len(list(app.screen.query(PersonaBuddyWidget))) == 1)
         first = app.screen.query_one(PersonaBuddyWidget)
+        before = app.persona_buddy_controller.current_preferences()
         replacement = _BuddyScreen(app, "replacement")
         await app.switch_screen(replacement)
         await _wait_until(lambda: len(list(replacement.query(PersonaBuddyWidget))) == 1)
         second = replacement.query_one(PersonaBuddyWidget)
         assert second is not first
         assert not first.is_attached
-
-        before = app.persona_buddy_controller.current_preferences()
+        assert app.persona_buddy_controller.current_preferences() == before
         stale_before = first._working_preferences
         await first.close_and_persist()
         first.action_toggle_collapse()

@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 from PIL import Image
+from rich.console import Console
 from textual.app import ComposeResult
 from textual.screen import Screen
 
@@ -345,6 +346,15 @@ async def test_state_idle_portrait_fallback_never_blanks(tmp_path: Path) -> None
     assert fallback.frames[0].paint_digest
     assert fallback.cache_identity is not None
     assert fallback.cache_identity.portrait_id == "local-portrait"
+    frame = fallback.frames[0]
+    console = Console(color_system="truecolor")
+    assert any(
+        segment.text.strip()
+        and segment.style is not None
+        and segment.style.color is not None
+        and segment.style.color.triplet == (120, 90, 210)
+        for segment in console.render(frame.renderable)
+    )
 
 
 @pytest.mark.asyncio
