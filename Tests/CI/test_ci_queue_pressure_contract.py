@@ -560,16 +560,15 @@ RECOVERED_SUITES_TARGETS = (
     # cases patch get_user_data_dir, and with no app_config the Buddy-preference
     # migration returns before its writer (library.migrate_legacy_selection).
     "Tests/Persona_Visual/test_builtin_pixel_migu_buddy.py",
-    # TASK-39119: the wake and goal-iteration reply pins, by node (the three
-    # fleet-wake nodes run their bodies in private-profile children; the
-    # goal-dispatch file is bootstrap_profile). Four other fleet-wake nodes
+    # TASK-39119: the wake reply pins, by node (the three fleet-wake nodes run
+    # their bodies in private-profile children). Four other fleet-wake nodes
     # ride pr-fast-lane; none of these does. Guard-clean, ~55 s serial.
     "Tests/Chat/test_console_fleet_wake.py::test_a_wake_takes_no_mixin_anchor_from_an_earlier_unsaved_user_row",
     "Tests/Chat/test_console_fleet_wake.py::test_a_failed_wake_reply_is_saved_as_failed",
     "Tests/Chat/test_console_fleet_wake.py::test_a_wake_reply_is_the_durable_active_leaf",
-    "Tests/Chat/test_console_goal_dispatch.py::test_a_goal_iteration_takes_no_mixin_anchor_from_an_unsaved_earlier_turn",
-    "Tests/Chat/test_console_goal_dispatch.py::test_a_failed_goal_iteration_reply_is_saved_as_failed",
-    "Tests/Chat/test_console_goal_dispatch.py::test_a_goal_iteration_reply_is_the_durable_active_leaf",
+    # TASK-39168: the goal-dispatch file whole (bootstrap_profile), in place of
+    # TASK-39119's three goal-iteration reply-pin nodes.
+    "Tests/Chat/test_console_goal_dispatch.py",
     # TASK-39119: the goal recovery file (bootstrap_profile, 4 tests, ~19 s
     # serial), which caught a regression this round and ran on no lane.
     "Tests/Chat/test_console_goal_recovery.py",
@@ -582,6 +581,9 @@ RECOVERED_SUITES_TARGETS = (
     "Tests/Chat/test_console_edit_resend.py",
     "Tests/Chat/test_console_regenerate_branching.py",
     "Tests/Chat/test_console_chat_controller.py::test_review_hook_gives_a_mutating_builtin_the_mutation_effect",
+    # TASK-39163: the automatic Library preparation file (bootstrap_profile,
+    # 90 tests), which ran on no lane. Guard-clean.
+    "Tests/Chat/test_console_automatic_library_preparation.py",
 )
 DREAMS_ADMISSION_TARGETS = (
     "Tests/Dreams/test_boot_dispatch_admission.py",
