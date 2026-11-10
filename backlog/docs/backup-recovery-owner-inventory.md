@@ -3155,8 +3155,12 @@ The owner chose each package's cohort on 2026-11-10:
   secrets." Installed here, below.
 - **Personal Context:** the 2026-11-06 ruling stands: "Capture it: back up the
   database and design key custody so a restore can read it — a larger feature that
-  needs its own design task." The capture waits for TASK-39148's design; the
-  Personal Context rows and the two `personal_context.*` owners above are unchanged.
+  needs its own design task." TASK-39148's design (`Docs/superpowers/specs/2026-11-10-personal-context-backup-key-custody-design.md`) was approved on
+  2026-11-10 ("Approve all 11"); by its decision 1 the profile key travels as a
+  credential record inside the encrypted archive, only when a backup includes
+  credentials. The Personal Context rows and the two `personal_context.*` owners
+  above stay as they are until its implementation tasks (TASK-40133 to TASK-40138)
+  land.
 
 ### `persona.actor_packs`
 
