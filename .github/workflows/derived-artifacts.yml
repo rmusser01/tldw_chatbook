@@ -1679,3 +1679,70 @@ jobs:
           WAIT_RUN: ${{ inputs.wait_run }}
         run: python3 scripts/merge_queue.py
 
+  library-shell-dev:
+    needs: [preflight]
+    # TASK-39153 (owner decision 2026-11-10, "Push-to-dev job only"):
+    # Tests/UI/test_library_shell.py runs whole, split by node, on every push
+    # to dev, and never on a pull request. It is ~100-150 serial minutes
+    # (TASK-39152's three whole-file runs; TASK-39153's notes), too much for
+    # the 36-shard UI lane's room, so a regression shows up within one merge
+    # instead of on the PR. NOT in the aggregate's needs and not a required
+    # context: a red shard never blocks a PR. No schedule: a `schedule`
+    # trigger only runs the default branch's (main's) copy of this file.
+    #
+    # Each shard collects the file and runs every 14th node
+    # (scripts/library_shell_push_shard.py, round-robin in collection order,
+    # so one slow test's parametrized cases spread out), leaving out the
+    # product-defect nodes listed in scripts/library_shell_push_deselect.txt.
+    # Replayed from those runs' per-node times (each node at its slowest of
+    # three), 14 shards carry at most 11.3 local pytest minutes, about 14 min
+    # with setup at CI's measured 1.0x-of-local upper bound: 6 min under the
+    # cap. All 14 run locally with these commands (7 at once, load 33-49)
+    # took 5.1-8.0 pytest min a shard. Seven at once, so a dev push borrows
+    # half the runners a PR's UI lane does; the run takes two waves. A newer
+    # push to dev cancels it (the workflow's concurrency rule), like every
+    # push run.
+    #
+    # Same minimal dependency set, serial pytest and flags as ui-fast-lane;
+    # the file's module bootstrap_profile marker is its isolation (TASK-39141).
+    name: Library shell (push to dev)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      # Report every shard, so one red shard does not hide another.
+      fail-fast: false
+      max-parallel: 7
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
+      - name: Install fast-lane dependencies
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
+
+      - name: Run the Library shell shard
+        run: |
+          # Written to files first so a failing collection or a stale deselect
+          # entry fails the step (bash -e) instead of yielding an empty list.
+          pytest --collect-only -q Tests/UI/test_library_shell.py \
+            > "$RUNNER_TEMP/library-shell-collected.txt"
+          python scripts/library_shell_push_shard.py \
+            "${{ strategy.job-index }}" "${{ strategy.job-total }}" \
+            "$RUNNER_TEMP/library-shell-collected.txt" \
+            > "$RUNNER_TEMP/library-shell-shard.txt"
+          mapfile -t SHARD < "$RUNNER_TEMP/library-shell-shard.txt"
+          # An empty shard would make bare `pytest` collect the whole tree.
+          test "${#SHARD[@]}" -gt 0
+          echo "Library shell shard $(( ${{ strategy.job-index }} + 1 ))/${{ strategy.job-total }}: ${#SHARD[@]} nodes."
+          pytest "${SHARD[@]}" \
+            --timeout=180 \
+            --durations=0 --durations-min=0 \
+            --tb=short

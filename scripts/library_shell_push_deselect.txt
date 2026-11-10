@@ -1,0 +1,28 @@
+# Nodes of Tests/UI/test_library_shell.py the push-to-dev job leaves out
+# (TASK-39153, read by scripts/library_shell_push_shard.py). One node id per
+# line, each under a comment line saying why. A listed id the file no longer
+# collects fails the job. Remove a line when its fix lands.
+# product defect, TASK-39152 notes
+Tests/UI/test_library_shell.py::test_library_emergency_real_guards_keep_specific_action_authoritative[cancel]
+# product defect, TASK-39152 notes
+Tests/UI/test_library_shell.py::test_library_starter_hidden_route_focuses_compact_rail_without_search
+# product defect, TASK-39152 notes
+Tests/UI/test_library_shell.py::test_library_media_list_focuses_first_row_and_arrow_keys_move_it
+# product defect, TASK-39152 notes
+Tests/UI/test_library_shell.py::test_library_media_tab_away_survives_a_background_recompose_within_the_settle_window
+# product defect, TASK-39152 notes
+Tests/UI/test_library_shell.py::test_library_media_entry_focus_survives_three_chained_recomposes
+# product defect, TASK-39152 notes
+Tests/UI/test_library_shell.py::test_library_notes_list_focuses_first_row_and_arrow_keys_move_it
+# product defect, TASK-39152 notes
+Tests/UI/test_library_shell.py::test_library_note_footer_covers_navigator_create_sync_and_exit
+# product defect, TASK-39152 notes
+Tests/UI/test_library_shell.py::test_library_note_footer_tracks_editor_states_and_ancillary_contents
+# product defect, TASK-39152 notes
+Tests/UI/test_library_shell.py::test_library_shell_note_save_then_back_refreshes_list_title_and_age
+# product defect, TASK-39152 notes
+Tests/UI/test_library_shell.py::test_library_shell_restored_media_viewer_fetches_detail_on_mount
+# product defect, TASK-39152 notes
+Tests/UI/test_library_shell.py::test_library_shell_restored_media_viewer_with_deleted_item_shows_recovery
+# product defect, TASK-34000.60 (TASK-39152 notes)
+Tests/UI/test_library_shell.py::test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
