@@ -968,6 +968,9 @@ def test_folder_siblings_reuse_one_real_verified_snapshot(
             open_count += 1
         return real_open(path, flags)
 
+    monkeypatch.setattr(
+        parakeet_external, "os", SimpleNamespace(**vars(parakeet_external.os))
+    )
     monkeypatch.setattr(parakeet_external.os, "open", counted_open)
     try:
         first = app._build_local_stt_dispatch(
