@@ -598,6 +598,11 @@ async def test_existing_chat_action_routes_ignore_later_new_chat_default() -> No
     boundary without inventing a test-only session constructor.
     """
 
+    from tldw_chatbook.Chat.console_prompt_mixins import (
+        MixinAttemptSnapshot,
+        MixinAttemptWrite,
+    )
+
     app = _console_app(retire_chachanotes_db=True)
     harness = _ConsoleFlowHarness(app)
     async with harness.run_test(size=(120, 42)) as pilot:
@@ -621,11 +626,18 @@ async def test_existing_chat_action_routes_ignore_later_new_chat_default() -> No
             source_session.id,
             role=ConsoleMessageRole.USER,
             content="Keep this chat's provider.",
+            persist=True,
         )
+        assert store.get_message(user.id).persisted_message_id is not None
         failed = store.append_message(
             source_session.id,
             role=ConsoleMessageRole.ASSISTANT,
             content="",
+            persist=True,
+        )
+        await controller.prompt_mixin_service().accept_attempt(
+            source_session.id,
+            MixinAttemptWrite(str(uuid4()), user.id, failed.id, MixinAttemptSnapshot()),
         )
         store.mark_message_failed(failed.id)
 
