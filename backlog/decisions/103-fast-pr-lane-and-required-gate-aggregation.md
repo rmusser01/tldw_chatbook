@@ -475,9 +475,13 @@ about 14.7 at the median CI-to-local ratio (0.73) measured on twelve timed
 entries; 35 shards would project about 14.6.
 
 2026-11-07, later (TASK-39144, owner decision 2026-11-07: "36 shards, 18 at
-once"): once the other round-12 branches' tail entries join, the census
-carries about 465 worst-case pytest min, so 34 shards project about 15.3 min a
-job and no re-deal reaches 15. The UI lane runs 36 shards with `max-parallel:
-18`: still two waves of UI jobs, so no wall-clock change per PR, and one more
-peak runner (28 concurrent test runners, 29 counting perf-guard; 46
-eligible test jobs). The coordinator re-deals the census again on the stacked tip.
+once"): once the other round-12 branches' tail entries joined, the census was
+estimated at about 465 worst-case pytest min, so 34 shards would project about
+15.3 min a job and no re-deal would reach 15. The UI lane runs 36 shards with
+`max-parallel: 18`: still two waves of UI jobs, so no wall-clock change per
+PR, and one more peak runner (28 concurrent test runners, 29 counting
+perf-guard; 46 eligible test jobs). Measured on the stacked census (1913
+entries, on dev 3a6498ae14, 2026-11-09), with weights from the 22 latest PR
+runs whose UI shards all finished and 92 untimed entries at their local serial
+seconds: 430 worst-case pytest min, and `--rebalance 12.7` projects 13.1-14.4
+min a job across the 36 shards.
