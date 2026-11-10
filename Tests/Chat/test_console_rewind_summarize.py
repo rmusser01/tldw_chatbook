@@ -1045,8 +1045,24 @@ def _seed_durable_conversation(store, session_id):
     return tuple(rows)
 
 
+_DURABLE_DBS: list[CharactersRAGDB] = []
+
+
+@pytest.fixture(autouse=True)
+def _close_durable_dbs():
+    """Close each test's durable store on the thread that opened it.
+
+    TASK-39154: the recovered-suites lane runs under --storage-lease-guard,
+    which failed every `_durable_controller` test on its open SQLite lease.
+    """
+    yield
+    while _DURABLE_DBS:
+        _DURABLE_DBS.pop().close()
+
+
 def _durable_controller(tmp_path, *, gateway=None):
     db = CharactersRAGDB(tmp_path / "rewind-summary.sqlite", "rewind-summary")
+    _DURABLE_DBS.append(db)
     store = ConsoleChatStore(persistence=ChatPersistenceService(db))
     session = store.create_session()
     store.persist_session_if_needed(session.id)
@@ -2161,7 +2177,7 @@ async def test_native_message_id_key_stripped_before_provider():
     assert all("_native_message_id" not in row for row in captured)
 
 
-def test_compacted_summary_precedes_run_local_startup_rider(tmp_path):
+def test_compacted_summary_precedes_run_local_startup_rider(tmp_path, monkeypatch, request):
     from tldw_chatbook.Agents.agent_models import AgentConfig
     from tldw_chatbook.Agents.agent_service import AgentService
     from tldw_chatbook.Agents.project_instruction_resolver import (
@@ -2170,7 +2186,21 @@ def test_compacted_summary_precedes_run_local_startup_rider(tmp_path):
     )
     from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.store_kernel import SQLiteStoreKernel
 
+    # TASK-39154: close the run and workspace stores this turn opens, so the
+    # recovered-suites lane's --storage-lease-guard sees no live lease.
+    stores = []
+    opened = SQLiteStoreKernel._on_connection_opened
+
+    def record(self, conn):
+        stores.append(self)
+        opened(self, conn)
+
+    monkeypatch.setattr(SQLiteStoreKernel, "_on_connection_opened", record)
+    request.addfinalizer(
+        lambda: [store.close_idle_connections() for store in stores]
+    )
     calls = []
     service = AgentService(
         AgentRunsDB(tmp_path / "runs.db", client_id="test"),
