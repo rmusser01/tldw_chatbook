@@ -125,6 +125,7 @@ async def test_concurrent_run_rejected_until_physical_child_stops(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "body,text,code",
     [
@@ -148,7 +149,7 @@ async def test_concurrent_run_rejected_until_physical_child_stops(
             "a" * 15000,
             "intermediate_limit",
         ),
-        pytest.param(
+        (
             {
                 "chunking": {"method": "words"},
                 "postprocessing": [
@@ -160,7 +161,6 @@ async def test_concurrent_run_rejected_until_physical_child_stops(
             },
             "a" * 10000,
             "intermediate_limit",
-            marks=pytest.mark.bootstrap_profile,
         ),
         (
             {
@@ -311,17 +311,10 @@ async def test_extract_prescan_bounds_matches_and_cumulative_capture_bytes(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "case",
-    [
-        "sample",
-        pytest.param("tokens", marks=pytest.mark.bootstrap_profile),
-        "format",
-        "overlap",
-        "merge",
-        "sections",
-        "stage-count",
-    ],
+    ["sample", "tokens", "format", "overlap", "merge", "sections", "stage-count"],
 )
 async def test_admitted_resource_stress_records_real_child_peak_rss(
     case, record_property
