@@ -171,7 +171,11 @@ Today the keyring account is derived from the path (F2), so a different path nev
 - If nothing authenticates, the staged reference becomes the marker `recovery:setup_required:<reason>`, which records the restore case. The database then names no account and stays locked.
 - An isolated restore cannot write the keyring (F12), so it stamps the marker too. The isolated copy never names the live profile's account.
 - The staged reference is always rewritten, either to a fresh account or to the marker; capture's `exclude` treatment does not apply here.
-  - The same holds before readable restores ship: until then, a restore publishes the repository with the marker, so no restored database ever names an existing account.
+  - **Landing order.** Before readable restores ship, no restore publishes the repository.
+    - The live database is left byte-for-byte untouched, and the archive keeps the captured copy.
+    - The restore plan says Personal Context will not be restored.
+    - Replace restores start publishing it, with a fresh account or the marker, when readable restores ship. Isolated restores start when the restore-without-a-key handling ships.
+    - A restore that will leave Personal Context locked says so in its plan before it runs.
 - After publication, restore opens the database read-only and authenticates its manifest head again. If that fails, it deletes only the account it just created, and Personal Context stays locked (Q2 copy below).
 
 **Operations that change or delete an account.** The first link's key replace (`repository.py:2612-2618`) and Remove local profile (`:4994-4997`) change or delete only the account this database names, and only after that account's key has authenticated this database.
@@ -356,16 +360,18 @@ Filed 2026-11-10 after approval, in this order. Each delivers one testable outco
    - Outcome: a preview of a profile with Personal Context is complete.
    - The archive holds the lock-safe, schema-validated database in the "Personal Context" group.
    - An archive that includes credentials holds the key as a credential record. One that does not keeps the reference unchanged and says its key is not included.
-   - Until readable restores ship, a restore publishes the repository with the marker, so this task is safe on its own.
+   - Until readable restores ship, no restore publishes the repository. The live database is left unchanged, the archive keeps its copy, and the plan says Personal Context was not restored. This keeps the task safe on its own.
    - Capture refuses while a first link is in flight.
    - As an interim guard, Personal Context sync does not resume after any restore until the restored generation is reviewed.
 3. **TASK-40135, "A replace restore makes restored Personal Context records readable."** (AC#3: a restore that reads its records.)
-   - Outcome: after a replace restore onto the same or a different machine or path, Personal Context opens and lists the restored records.
+   - Outcome: replace restores now publish the repository. After one onto the same or a different machine or path, Personal Context opens and lists the restored records.
+   - When no key authenticates, the database is published with the marker `recovery:setup_required:<reason>`, and every table except `profile_meta.key_account` is unchanged. The plan says before the restore runs that Personal Context will end locked.
    - When a key authenticates, it goes into a fresh account. The restored database names an account no other database names, and any pre-existing keyring entry is unchanged.
    - A same-device replace restore from a backup without credentials reads its records. That backup's preview says it is readable only on this device, and only until Personal Context is linked or removed.
    - A later rollback opens the original records, even after the restored profile has linked or been removed.
 4. **TASK-40136, "A restore without a usable Personal Context key keeps the data and says what to do."** (AC#3: key unavailable.)
    - Covers four cases: a key-less archive on another machine, an isolated profile, no secure keyring, and a key mismatch.
+   - Isolated restores now publish the repository, with the marker (decision 6).
    - Outcome: no keyring entry is created. Every table except `key_account` is unchanged, `key_account` carries the marker with its reason, and Personal Context is locked with that reason, including after a restart.
    - The restore plan and the Settings panel show the Q2 copy, and the User Guide is updated.
 5. **TASK-40137, "A restored Personal Context does not resume its old link."**

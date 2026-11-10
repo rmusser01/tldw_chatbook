@@ -19,6 +19,7 @@ references:
 - Docs/superpowers/specs/2026-11-10-personal-context-backup-key-custody-design.md
 dependencies:
 - TASK-40134
+- TASK-40135
 ---
 
 ## Description
@@ -35,7 +36,8 @@ Filed in round 13 of the 2026-10-23 burn-down from TASK-39148's owner-approved d
 
 **Approved design.**
 - **Which restores force a fresh link.** A restore that publishes `personal_context.repository` or `runtime.sync_state`.
-  - An automation-only restore publishes `runtime.sync_state` (the "automation" group, `Backup_Recovery/data_groups.py:172-177`) and can rewind `personal_context_link_state` under a live repository.
+  - An automation-only restore publishes `runtime.sync_state` (the "automation" group, `Backup_Recovery/data_groups.py:172-177`) and can rewind `personal_context_link_state` under a live repository. This already applies under TASK-40134 alone.
+  - Restores that publish the repository exist only once TASK-40135 lands, hence the dependency.
   - Every restore binds all activation-required owners in `finalize_candidate` (`publication.py:592-604`, called from `replacement.py:1682` and `isolated_restore.py:260`).
   - So TASK-40134's interim guard already keeps sync off after every restore until review. This task pins the two kinds above, using `execution_allowed` on `personal_context.repository` and `runtime.sync_state` (`activation.py:224-227`), like the precedents at `app.py:4717` and `app_service_wiring.py:3348`.
 - **Force a fresh link.** For those restores, the review clears that server profile's Personal Context link state, so the next **Link to home server** is a fresh reviewed first link. A restore that publishes neither owner leaves the link state as it was.

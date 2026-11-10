@@ -4,7 +4,7 @@ title: "Personal Context's repository database cannot be captured by a backup, a
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-08 06:54
-updated_date: 2026-11-10 18:23
+updated_date: 2026-11-10 19:03
 labels:
 - follow-up
 - backup
@@ -123,10 +123,17 @@ Follow-ups:
 - **New profiles.** Creating or re-creating a profile writes a new, unused key account and never adopts an existing one (TASK-40133).
 - **Restore marker.** A restore that installs no key stamps the `recovery:setup_required` marker, recording the reason, and leaves every other table unchanged.
 - **Task split.**
-  - TASK-40134 is safe on its own: until readable restores ship, a restore stamps the marker.
+  - TASK-40134 is safe on its own, through the restore change revised in rev3 below.
   - The same-device key-less restore criterion and the "readable only on this device, and only until Personal Context is linked or removed" preview copy moved to TASK-40135.
   - The same-PR landing note was dropped.
 - **Mismatch.** A manifest-authentication failure at open reports a key mismatch.
 - **Fresh link.** It is scoped to restores that publish the repository or `runtime.sync_state`.
 - **Citations.** They now point at `publication.py:592-604`.
+
+**Review r13k-rev3 fixes (2026-11-10).** The review found one Important and two Minor issues, and all are fixed. The decisions' text is unchanged.
+- **TASK-40134.** Until readable restores ship, no restore publishes the repository. The live database is left byte-for-byte unchanged, the archive keeps its copy, and the plan says Personal Context was not restored.
+- **TASK-40135.** Replace restores now publish the repository, and a restore that will end locked is announced in the plan before it runs.
+- **TASK-40136.** Isolated restores now publish the repository.
+- **TASK-40137.** It now depends on TASK-40135.
+- **Markers.** Every marker a task writes has the form `recovery:setup_required:<reason>`, and the marker criteria compare "every table except `profile_meta.key_account`".
 <!-- SECTION:NOTES:END -->
