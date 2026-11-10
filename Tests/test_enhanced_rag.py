@@ -182,73 +182,72 @@ async def test_enhanced_chunking():
             logger.info(f"  Parent text: {parent_text[:150]}...")
 
 
-@_requires_embeddings
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_enhanced_rag_service():
-    """Test the enhanced RAG service."""
-    from tldw_chatbook.RAG_Search.simplified import create_rag_service, RAGConfig
+async def test_enhanced_rag_service(tmp_path, monkeypatch):
+    """Index child chunks and expand a semantic result to its parent text."""
+    import sys
 
-    logger.info("\n=== Testing Enhanced RAG Service ===")
-
-    # Create service with enhanced profile for parent retrieval.
-    # Use the deterministic mock backend so this test stays offline and
-    # isolated from EmbeddingFactory patches in the wider suite.
-    config = RAGConfig()
-    config.embedding.model = "mock"
-    config.vector_store.type = "in_memory"
-
-    service = create_rag_service(
-        profile_name="hybrid_enhanced",  # This profile has parent retrieval
-        config=config,
+    from tldw_chatbook.RAG_Search import config_profiles
+    from tldw_chatbook.RAG_Search.simplified import create_rag_service
+    from tldw_chatbook.RAG_Search.simplified.config import (
+        EmbeddingConfig,
+        RAGConfig,
+        VectorStoreConfig,
     )
 
-    content = create_test_document()
-
-    # Test indexing with parent retrieval
-    logger.info("\n1. Indexing document with parent retrieval...")
-    result = await service.index_document_with_parents(
-        doc_id="test_doc_001",
-        content=content,
-        title="Annual Report 2024",
-        metadata={"type": "annual_report", "year": 2024, "department": "finance"},
-        use_structural_chunking=True,
+    manager = config_profiles.get_profile_manager(profiles_dir=tmp_path / "profiles")
+    monkeypatch.setattr(config_profiles, "_GLOBAL_PROFILE_MANAGER", manager)
+    config = RAGConfig(
+        embedding=EmbeddingConfig(model="mock", device="cpu"),
+        vector_store=VectorStoreConfig(type="memory"),
     )
+    # Bind every possible keyword path to this test even though its search is semantic.
+    config.search.media_db_path = tmp_path / "absent-media.db"
+    config.search.chachanotes_db_path = tmp_path / "absent-chacha.db"
+    config.search.prompts_db_path = tmp_path / "absent-prompts.db"
 
-    logger.info(f"Indexing result: {result}")
-
-    # Test search with context expansion
-    logger.info("\n2. Testing search with context expansion...")
-    queries = [
-        "quarterly revenue growth",
-        "customer satisfaction score",
-        "investment plans for R&D",
-    ]
-
-    for query in queries:
-        logger.info(f"\nSearching for: '{query}'")
-
-        # Search without expansion
-        results_basic = await service.search(
-            query=query, top_k=2, search_type="semantic"
+    service = create_rag_service(profile_name="hybrid_enhanced", config=config)
+    try:
+        result = await service.index_document_with_parents(
+            doc_id="test_doc_001",
+            content=create_test_document(),
+            title="Annual Report 2024",
+            metadata={"type": "annual_report", "year": 2024, "department": "finance"},
+            use_structural_chunking=True,
         )
+        assert result.success and result.chunks_created > 0
+        assert result.metadata["parent_chunks_created"] > 0
+        assert set(result.to_dict()) == {
+            "doc_id",
+            "chunks_created",
+            "time_taken",
+            "success",
+            "error",
+        }
 
-        # Search with expansion (enhanced service should expand context automatically)
-        # The hybrid_enhanced profile has parent retrieval enabled
-        results_expanded = await service.search(
-            query=query, top_k=2, search_type="semantic"
-        )
-
-        logger.info(f"Basic results: {len(results_basic)} chunks")
-        logger.info(f"Expanded results: {len(results_expanded)} chunks")
-
-        # Compare first result
-        if results_basic and results_expanded:
-            basic_len = len(results_basic[0].document)
-            expanded_len = len(results_expanded[0].document)
-            logger.info(f"Context expansion: {basic_len} chars -> {expanded_len} chars")
-
-            if results_expanded[0].metadata.get("context_expanded"):
-                logger.info("✓ Context successfully expanded to parent chunk")
+        for query in (
+            "quarterly revenue growth",
+            "customer satisfaction score",
+            "investment plans for R&D",
+        ):
+            basic = await service.search(query=query, top_k=2, search_type="semantic")
+            expanded = await service.search_with_context_expansion(
+                query=query, top_k=2, search_type="semantic"
+            )
+            assert basic, query
+            assert [item.id for item in expanded] == [item.id for item in basic]
+            assert any(
+                item.metadata.get("context_expanded")
+                and item.document == item.metadata["parent_chunk_text"]
+                for item in expanded
+            ), query
+    finally:
+        # The mock embeddings wrapper still checks CUDA on normal close.
+        # Its no-Torch branch leaves the service's real cleanup in place.
+        with monkeypatch.context() as cleanup:
+            cleanup.setitem(sys.modules, "torch", None)
+            service.close()
 
 
 @_requires_embeddings
