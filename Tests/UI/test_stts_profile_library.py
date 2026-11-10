@@ -4294,7 +4294,9 @@ class _ReviewPushAbort(BaseException):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_reference_export_defaults_sanitized_and_bundle_requires_ack(
+    request,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -4342,7 +4344,9 @@ async def test_reference_export_defaults_sanitized_and_bundle_requires_ack(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_bundle_export_failure_never_surfaces_private_canaries(
+    request,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -4399,7 +4403,9 @@ async def test_bundle_export_failure_never_surfaces_private_canaries(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_import_warns_before_picker_and_stale_successor_requires_reconfirm(
+    request,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -4460,7 +4466,9 @@ async def test_import_warns_before_picker_and_stale_successor_requires_reconfirm
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_import_review_cancel_invalidates_handle_without_committing(
+    request,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -4495,7 +4503,9 @@ async def test_import_review_cancel_invalidates_handle_without_committing(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_repeated_import_cancels_release_completed_invalidation_tasks(
+    request,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -4538,7 +4548,8 @@ async def test_repeated_import_cancels_release_completed_invalidation_tasks(
 
 
 @pytest.mark.asyncio
-async def test_unmount_racing_existing_invalidation_joins_once_and_releases_task() -> (
+@private_profile_test
+async def test_unmount_racing_existing_invalidation_joins_once_and_releases_task(request) -> (
     None
 ):
     profile = _profile(0)
@@ -4576,7 +4587,8 @@ async def test_unmount_racing_existing_invalidation_joins_once_and_releases_task
 
 
 @pytest.mark.asyncio
-async def test_completed_invalidation_cannot_clear_a_replacement_task() -> None:
+@private_profile_test
+async def test_completed_invalidation_cannot_clear_a_replacement_task(request) -> None:
     profile = _profile(0)
     bundle_service = _BundleUIService(profile)
     handle = bundle_service.reviews[0].handle
@@ -4615,7 +4627,9 @@ async def test_completed_invalidation_cannot_clear_a_replacement_task() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure_type", (RuntimeError, _ReviewPushAbort))
+@private_profile_test
 async def test_import_review_push_failure_invalidates_handle_exactly_once(
+    request,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     failure_type: type[BaseException],
@@ -4659,7 +4673,8 @@ async def test_import_review_push_failure_invalidates_handle_exactly_once(
 
 
 @pytest.mark.asyncio
-async def test_cancelled_handle_cleanup_joins_without_masking_cancellation() -> None:
+@private_profile_test
+async def test_cancelled_handle_cleanup_joins_without_masking_cancellation(request) -> None:
     profile = _profile(0)
     bundle_service = _BundleUIService(profile)
     handle = bundle_service.reviews[0].handle
@@ -4692,7 +4707,9 @@ async def test_cancelled_handle_cleanup_joins_without_masking_cancellation() -> 
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_unmount_invalidates_handle_returned_by_late_inspection(
+    request,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
