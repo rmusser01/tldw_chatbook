@@ -212,7 +212,7 @@ def test_checking_citations_is_an_active_console_run_status():
     assert ConsoleRunStatus.CHECKING_CITATIONS in CONSOLE_ACTIVE_RUN_STATUSES
 
 
-def _build_console_send_test_app(*args, **kwargs):
+def _build_console_send_test_app(*args, retire_chachanotes_db=False, **kwargs):
     """Build a factory app that can actually complete a Console send.
 
     TASK-21590. `_build_test_app` boots with ``chachanotes_db = None``, so the
@@ -232,7 +232,7 @@ def _build_console_send_test_app(*args, **kwargs):
     See `attach_chachanotes_db` for why the attached DB is `:memory:`.
     """
     app = _build_test_app(*args, **kwargs)
-    attach_chachanotes_db(app)
+    attach_chachanotes_db(app, retire_with_app=retire_chachanotes_db)
     return app
 
 

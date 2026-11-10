@@ -42,6 +42,10 @@ _created_dirs: list[Path] = []
 # by the caller that supplied them.
 _created_databases: list[Any] = []
 
+# Explicitly enrolled in-memory ChaChaNotes attachments, retired after the
+# mounted runtime and its native executor work. Other attachments are local.
+_attached_chachanotes_databases: list[Any] = []
+
 # Exact constructor apps and lock handles; replacements remain caller-owned.
 _created_apps: list[TldwCli] = []
 _created_instance_locks: list[Any] = []
@@ -180,7 +184,9 @@ def persist_seeded_config(app, *sections: str) -> None:
     assert save_settings_to_cli_config(values, delete_keys=deletes)
 
 
-def attach_chachanotes_db(app, *, client_id: str = "test-client"):
+def attach_chachanotes_db(
+    app, *, client_id: str = "test-client", retire_with_app: bool = False
+):
     """Give a factory-built app the durable ChaChaNotes DB a real send needs.
 
     TASK-21590. `_build_test_app` patches `get_chachanotes_db_lazy` to `None`,
@@ -209,6 +215,8 @@ def attach_chachanotes_db(app, *, client_id: str = "test-client"):
     Args:
         app: A `_build_test_app` product, not yet mounted.
         client_id: Client id recorded on the DB's rows.
+        retire_with_app: Register this exact DB for teardown after runtime and
+            executor retirement. Other injected DBs remain caller-owned.
 
     Returns:
         The `CharactersRAGDB` now assigned to ``app.chachanotes_db``.
@@ -216,6 +224,8 @@ def attach_chachanotes_db(app, *, client_id: str = "test-client"):
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
     db = CharactersRAGDB(":memory:", client_id)
+    if retire_with_app:
+        _attached_chachanotes_databases.append(db)
     app.chachanotes_db = db
     return db
 
@@ -235,11 +245,18 @@ def drain_created_dirs() -> int:
     a test that builds several apps leaks nothing. Close the exact eager
     database caches created by the factory first, even when the app was never
     mounted or a test subsequently replaced one of its database attributes.
-    Other injected or lazy service owners keep their existing cleanup boundary.
+    Explicitly enrolled in-memory attachments close here after async owner
+    retirement. Other injected or lazy services retain their cleanup boundary.
 
     Returns:
         The number of directories removed.
     """
+    while _attached_chachanotes_databases:
+        database = _attached_chachanotes_databases[-1]
+        with database.quiesce_connections(timeout_seconds=2.0):
+            pass
+        _attached_chachanotes_databases.pop()
+
     while _created_databases:
         database = _created_databases[-1]
         database.close()

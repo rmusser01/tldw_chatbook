@@ -15,6 +15,10 @@ import pytest
 from textual.containers import Vertical
 from textual.widgets import Input, Static
 
+from Tests.UI.background_signals import (
+    await_background_task,
+    wait_for_background_signal,
+)
 from tldw_chatbook.UI.Screens.personas_screen import (
     PersonasScreen,
     _CenterViewMountUnavailable,
@@ -165,17 +169,30 @@ async def test_concurrent_first_use_builds_and_mounts_one_view(monkeypatch):
         assert len(list(screen.query(PersonasCharacterEditorWidget))) == 1
 
 
-@pytest.mark.bootstrap_profile
-async def test_concurrent_caller_waits_until_mounted_view_is_hydrated(monkeypatch):
-    """A queryable-but-unready body must not escape the per-view lock."""
-    from Tests.UI.app_factory import _build_test_app
+@pytest.fixture
+def deferred_center_app(mock_app_instance, monkeypatch):
+    """Mount the real destination with unrelated startup reads supplied by fakes."""
+    from Tests.UI.roleplay_frame_harness import PersonasTestApp, seed_mock_characters
+    from tldw_chatbook.LLM_Calls import anthropic_subscription
 
-    app = _build_test_app()
-    async with app.run_test(size=(235, 52)) as pilot:
+    seed_mock_characters(monkeypatch, [])
+    mock_app_instance.ensure_actor_pack_recovery = None
+    monkeypatch.setattr(
+        anthropic_subscription,
+        "subscription_credential_status",
+        lambda *, background=False: "missing",
+    )
+    return PersonasTestApp(mock_app_instance)
+
+
+@pytest.mark.bootstrap_profile
+async def test_concurrent_caller_waits_until_mounted_view_is_hydrated(
+    monkeypatch, deferred_center_app
+):
+    """A queryable-but-unready body must not escape the per-view lock."""
+    async with deferred_center_app.run_test(size=(235, 52)) as pilot:
         await pilot.pause()
-        screen = PersonasScreen(app)
-        await app.push_screen(screen)
-        await pilot.pause()
+        screen = deferred_center_app.screen
         slot = screen.query_one("#personas-character-editor-slot", Vertical)
         real_mount = slot.mount
         real_hydrate = screen._hydrate_center_view
@@ -199,15 +216,27 @@ async def test_concurrent_caller_waits_until_mounted_view_is_hydrated(monkeypatc
         monkeypatch.setattr(slot, "mount", mount_then_pause)
         monkeypatch.setattr(screen, "_hydrate_center_view", fail_first_hydration)
         first = asyncio.create_task(screen._ensure_center_view("character-editor"))
-        await mounted.wait()
-        second = asyncio.create_task(screen._ensure_center_view("character-editor"))
-        await asyncio.sleep(0)
-        escaped_before_hydration = second.done()
-        release.set()
+        second = None
+        try:
+            await wait_for_background_signal(
+                mounted, first, what="first deferred character editor mount"
+            )
+            second = asyncio.create_task(screen._ensure_center_view("character-editor"))
+            await asyncio.sleep(0)
+            escaped_before_hydration = second.done()
+        finally:
+            release.set()
+            try:
+                first_result = await await_background_task(
+                    first, what="first deferred character editor mount"
+                )
+            finally:
+                if second is not None:
+                    ready = await await_background_task(
+                        second, what="second deferred character editor mount"
+                    )
 
-        assert await first is None
-        ready = await second
-
+        assert first_result is None
         assert not escaped_before_hydration
         assert isinstance(ready, PersonasCharacterEditorWidget)
         assert ready.is_mounted
@@ -259,16 +288,13 @@ async def test_transient_mount_failure_remains_retryable(monkeypatch):
 
 
 @pytest.mark.bootstrap_profile
-async def test_unmount_during_population_blocks_stale_hydration(monkeypatch):
+async def test_unmount_during_population_blocks_stale_hydration(
+    monkeypatch, deferred_center_app
+):
     """A mount finishing after lifecycle invalidation is removed, not hydrated."""
-    from Tests.UI.app_factory import _build_test_app
-
-    app = _build_test_app()
-    async with app.run_test(size=(235, 52)) as pilot:
+    async with deferred_center_app.run_test(size=(235, 52)) as pilot:
         await pilot.pause()
-        screen = PersonasScreen(app)
-        await app.push_screen(screen)
-        await pilot.pause()
+        screen = deferred_center_app.screen
         slot = screen.query_one("#personas-persona-editor-slot", Vertical)
         real_mount = slot.mount
         started = asyncio.Event()
@@ -283,13 +309,20 @@ async def test_unmount_during_population_blocks_stale_hydration(monkeypatch):
         monkeypatch.setattr(slot, "mount", delayed_mount)
         monkeypatch.setattr(screen, "_hydrate_center_view", hydrate)
         population = asyncio.create_task(screen._ensure_center_view("persona-editor"))
-        await started.wait()
-        generation = screen._center_view_lifecycle_generation
+        try:
+            await wait_for_background_signal(
+                started, population, what="deferred persona editor population"
+            )
+            generation = screen._center_view_lifecycle_generation
 
-        await screen.on_unmount()
-        assert screen._center_view_lifecycle_generation == generation + 1
-        release.set()
-        assert await population is None
+            await screen.on_unmount()
+            assert screen._center_view_lifecycle_generation == generation + 1
+        finally:
+            release.set()
+            populated = await await_background_task(
+                population, what="deferred persona editor population"
+            )
+        assert populated is None
 
         hydrate.assert_not_called()
         assert not list(screen.query(PersonaProfileEditorWidget))

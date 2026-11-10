@@ -14,6 +14,7 @@ from Tests.UI.background_signals import (
     BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
     await_background_task,
     wait_for_background_signal,
+    wait_for_signal,
 )
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from tldw_chatbook.Widgets.Console.response_rules_modal import ResponseRulesModal
@@ -465,11 +466,13 @@ async def test_dirty_escape_discards_only_after_confirmation(native):
 @pytest.mark.parametrize("concurrent_edit", [False, True])
 @pytest.mark.parametrize("size", [(80, 24), (120, 35)])
 async def test_saved_edit_stays_selected_and_pinned_for_next_manager_action(
-    native, action, size, concurrent_edit
+    native, action, size, concurrent_edit, monkeypatch
 ):
     import asyncio
+    from contextlib import AsyncExitStack, suppress
 
     from textual.widgets import OptionList, Static
+    from textual.worker import WorkerCancelled
 
     from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
@@ -482,7 +485,35 @@ async def test_saved_edit_stays_selected_and_pinned_for_next_manager_action(
     scope = rules.scopes(session.id)[0]
     modal = ResponseRulesModal(scope, rules.store, rules)
     host = ManagerHost(modal)
-    async with host.run_test(size=size) as pilot:
+    dispatched, entered, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    save_workers = []
+    run_worker = modal.run_worker
+
+    def capture_save(work, *args, **kwargs):
+        worker = run_worker(work, *args, **kwargs)
+        if worker.node is modal and worker.group == "response-rule-editor":
+            save_workers.append((worker, work))
+            dispatched.set()
+        return worker
+
+    async def settle_after_host_close():
+        # A queued press may dispatch while the host is unwinding after a timeout.
+        for worker, work in save_workers:
+            try:
+                with suppress(WorkerCancelled):
+                    await await_background_task(
+                        asyncio.create_task(worker.wait()),
+                        what="the Save worker after host shutdown",
+                    )
+            finally:
+                if worker.is_finished:
+                    # Textual may cancel before ever awaiting the original coroutine.
+                    work.close()
+
+    async with AsyncExitStack() as lifetime:
+        capture = lifetime.enter_context(monkeypatch.context())
+        lifetime.push_async_callback(settle_after_host_close)
+        pilot = await lifetime.enter_async_context(host.run_test(size=size))
         for _ in range(8):
             await pilot.pause()
         modal.query_one("#rr-title", Input).value = "Edited evidence definition"
@@ -493,30 +524,43 @@ async def test_saved_edit_stays_selected_and_pinned_for_next_manager_action(
                 break
         tested = modal.tested
         assert tested.rule.revision == 2 and tested.validation is not None
-        entered, release = asyncio.Event(), asyncio.Event()
-        original_db_call = rules.run_db_call
+        if concurrent_edit:
+            original_db_call = rules.run_db_call
 
-        async def held_post_save_read(call, *args, **kwargs):
-            value = await original_db_call(call, *args, **kwargs)
-            if concurrent_edit and call == rules.store.list_drafts:
-                entered.set()
-                await release.wait()
-            return value
+            async def held_post_save_read(call, *args, **kwargs):
+                value = await original_db_call(call, *args, **kwargs)
+                if call == rules.store.list_drafts:
+                    entered.set()
+                    await release.wait()
+                return value
 
-        rules.run_db_call = held_post_save_read
-        try:
+            capture.setattr(modal, "run_worker", capture_save)
+            with monkeypatch.context() as gate:
+                gate.setattr(rules, "run_db_call", held_post_save_read)
+                completion = None
+                try:
+                    modal.query_one("#rr-save", Button).press()
+                    await wait_for_signal(dispatched, what="the queued Save dispatch")
+                    worker, _ = save_workers[0]
+                    completion = asyncio.create_task(worker.wait())
+                    await wait_for_background_signal(
+                        entered, completion, what="the Save worker's post-commit draft read"
+                    )
+                    assert rules.store.list_bindings(scope)[0].revision == 2
+                    modal.query_one("#rr-title", Input).value = "Newer untested draft"
+                finally:
+                    release.set()
+                    if completion is not None:
+                        await await_background_task(completion, what="the Save worker")
+            assert len(save_workers) == 1
+            capture.undo()
+            save_workers.clear()
+        else:
             modal.query_one("#rr-save", Button).press()
-            if concurrent_edit:
-                await entered.wait()
-                assert rules.store.list_bindings(scope)[0].revision == 2
-                modal.query_one("#rr-title", Input).value = "Newer untested draft"
-        finally:
-            release.set()
-        for _ in range(20):
-            await pilot.pause()
-            if not modal._busy and rules.store.list_bindings(scope)[0].revision == 2:
-                break
-        rules.run_db_call = original_db_call
+            for _ in range(20):
+                await pilot.pause()
+                if not modal._busy and rules.store.list_bindings(scope)[0].revision == 2:
+                    break
         saved_selection = modal._selected
         committed = rules.store.list_bindings(scope)[0]
         assert saved_selection == tested.rule

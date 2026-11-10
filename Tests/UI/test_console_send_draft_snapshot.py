@@ -16,6 +16,7 @@ import pytest
 from textual.events import Key
 from textual.widgets import Button
 
+from Tests.UI.background_signals import await_background_task, wait_for_background_signal
 from Tests.UI.pump_probe import console_attach_ended
 from Tests.UI.test_console_native_chat_flow import (
     BlockedGateway,
@@ -63,8 +64,8 @@ async def _wait_for_text(console, pilot, needle: str, tries: int = 40) -> None:
     raise AssertionError(f"timed out waiting for {needle!r}")
 
 
-def _ready_openai_app(monkeypatch, reply: str):
-    app = _build_console_send_test_app()
+def _ready_openai_app(monkeypatch, reply: str, *, retire_chachanotes_db=False):
+    app = _build_console_send_test_app(retire_chachanotes_db=retire_chachanotes_db)
     # This in-memory composer harness has no durable trace repository.
     # Exercise ordinary sending with the supported capture-off setting.
     from tldw_chatbook import config as config_module
@@ -355,7 +356,7 @@ async def test_console_armed_unknown_tokenless_send_snapshots_before_skill_await
     hooks configured nothing is reviewed, so it does not re-check the draft.
     """
 
-    app = _ready_openai_app(monkeypatch, "unused")
+    app = _ready_openai_app(monkeypatch, "unused", retire_chachanotes_db=True)
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -416,10 +417,18 @@ async def test_console_armed_unknown_tokenless_send_snapshots_before_skill_await
             console.handle_console_send_message(Button.Pressed(send_button))
         )
 
-        await entered.wait()
-        release.set()
+        try:
+            await wait_for_background_signal(
+                entered, send_task, what="tokenless send skill read"
+            )
+            release.set()
+            sent = await await_background_task(send_task, what="tokenless send")
+        finally:
+            release.set()
+            if not send_task.done():
+                await await_background_task(send_task, what="tokenless send cleanup")
 
-        assert await send_task, notices
+        assert sent, notices
         assert len(requests) == 1
         assert requests[0].draft == armed
         assert composer.draft_text() == " suffix"
