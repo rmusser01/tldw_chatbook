@@ -895,7 +895,8 @@ MINIMUM_FILES = 1820
 # case at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1821
 # TASK-39146 (2026-11-07): append the cancelled-dialog-wait file (nine
-# cases, about 10 s) at the tail. The floor is the measured entry count.
+# cases at insertion, eight since dev deleted media_viewer_panel.py; about
+# 10 s) at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1822
 # TASK-38977 (2026-11-07): append the five Prompts modal and response-rule
 # copy/gateway nodes at the tail. The floor is the measured entry count.
