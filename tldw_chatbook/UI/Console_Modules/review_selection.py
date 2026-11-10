@@ -406,12 +406,12 @@ def prepare_console_turn_undo(provider: Any, run_id: str) -> ConsoleTurnUndoPlan
     ]
     root_labels = tuple(
         str(row["root"]) if leaf_labels.count(label) > 1 else label
-        for (row, _paths), label in zip(rows_paths, leaf_labels)
+        for (row, _paths), label in zip(rows_paths, leaf_labels, strict=False)
     )
     edited_keys: set[tuple[str, str]] = set()
     edited_labels: list[str] = []
     disk_state: list[tuple[str, str, str]] = []
-    for (row, paths), root_label in zip(rows_paths, root_labels):
+    for (row, paths), root_label in zip(rows_paths, root_labels, strict=False):
         root = str(row["root"])
         preflight = provider.preflight_revert(row, list(paths))
         disk_state.extend(
@@ -465,14 +465,14 @@ def apply_console_turn_undo(provider: Any, plan: ConsoleTurnUndoPlan) -> list:
     outcomes: list = []
     multi_root = len(plan.rows_paths) > 1
     for index, ((row, paths), root_label) in enumerate(
-        zip(plan.rows_paths, plan.root_labels)
+        zip(plan.rows_paths, plan.root_labels, strict=False)
     ):
         try:
             row_outcomes = provider.revert(row, list(paths))
         except Exception as exc:  # noqa: BLE001 - retain earlier disk outcomes
             error = f"not processed: {str(exc)[:240]}"
             for (_pending_row, pending_paths), pending_label in zip(
-                plan.rows_paths[index:], plan.root_labels[index:]
+                plan.rows_paths[index:], plan.root_labels[index:], strict=False
             ):
                 outcomes.extend(
                     RevertOutcome(

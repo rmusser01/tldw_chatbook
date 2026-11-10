@@ -1719,3 +1719,20 @@ returned planning, six settlement controls and the Git-backed correction journey
 Independent review confirmed the final fixes and the test-only delta. The larger
 MCP comparison reproduced the same eight adjacent failures on the original
 candidate, and those cases remain unqualified. PR-head CI remains open under AC23.
+
+### Exact-head CI follow-up for PR #3480
+
+Derived Artifacts run 42666948278 failed before the PR test lanes because
+two backlog records claimed TASK-39147. The earlier native rebuild keeps
+that ID. The later review-recovery task is TASK-40127 under the TASK-19601
+owner rule. The original checker now passes both the filename and
+frontmatter scan on the repair tree.
+
+The full pinned Ruff scan found the inherited B905 and PLE1205 overages on
+dev too. The repair retains used aliases, makes the existing zip behavior
+explicit, and preserves both Console log messages and the diagnostic sink.
+The exact scan passes the original F and ratchet limits. The tab-sync
+fixture now represents the missing workflow row. The compact setup probe
+checks the actual worker namespace while retaining the original alias,
+issued request and physical return checks. Existing ADRs 355 and 356 apply.
+Exact PR-head CI and AC23 remain open.

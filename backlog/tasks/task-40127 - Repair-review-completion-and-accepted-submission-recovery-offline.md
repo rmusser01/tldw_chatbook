@@ -1,5 +1,5 @@
 ---
-id: TASK-39147
+id: TASK-40127
 title: Repair multi-model review completion and accepted-submission recovery
 status: Done
 created_date: 2026-11-07 18:40
@@ -113,3 +113,10 @@ UI31 model-switch focus fixture (2026-11-09): af5185ab normal Derived Artifacts4
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Renumbering provenance
+
+Formerly TASK-39147. This review-recovery task was filed on 2026-11-07 at
+18:40. The native workflow rebuild was filed at 15:27 and keeps TASK-39147
+under the TASK-19601 owner rule. Historical commits and private evidence paths
+retain their original identifiers.

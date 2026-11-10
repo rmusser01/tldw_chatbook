@@ -17919,7 +17919,7 @@ class ChatScreen(BaseAppScreen):
                         or len(current_sessions) != len(membership)
                         or any(
                             current is not captured or current.id != session_id
-                            for (session_id, captured), current in zip(membership, current_sessions)
+                            for (session_id, captured), current in zip(membership, current_sessions, strict=False)
                         )
                     ):
                         continue

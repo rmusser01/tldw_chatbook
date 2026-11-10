@@ -6,8 +6,8 @@ import asyncio
 from inspect import getattr_static
 
 from tldw_chatbook.Agents.activation import (
-    callable_source_current as _function_unchanged,
-    capture_callable_source as _function_record,
+    callable_source_current as _function_unchanged,  # noqa: F401 - original source check import
+    capture_callable_source as _function_record,  # noqa: F401 - original source record import
 )
 from tldw_chatbook.Agents.execution_capacity import (
     WorkOrigin,
@@ -18,7 +18,7 @@ from tldw_chatbook.Agents.execution_capacity import (
 from tldw_chatbook.Agents.ordinary_tree import (
     OrdinaryTurn as _OrdinaryTurn,
     capture_ordinary_personal_service as _capture_personal_service,
-    encode_ordinary_receipt as _json,
+    encode_ordinary_receipt as _json,  # noqa: F401 - original receipt encoder import
 )
 from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
 from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint, WorktreeScope

@@ -1,4 +1,4 @@
-# TASK-39147: review completion recovery
+# TASK-40127: review completion recovery
 
 Base: `a0ae30b7ed9c313fe19cb3a0da5d95ebde182385` (current-dev checkout from the November 7 comparison).
 Initial scope: offline submission recovery, preserving accepted decisions, permissions, accounting and sealing. Later sections record individually authorized live scopes. The current goal authorizes completion and merge after verification; prior request allowances remain consumed.
@@ -93,7 +93,7 @@ Credential-scanned evidence, immutable source receipts, errors and assessment:
 The archived runner is the corrected offline version, not an assertion of the
 exact code used by the consumed live invocation. Pytest's original exit-zero
 observation is not diagnostic success. `assessment.json` records the failed
-qualification of this diagnostic explicitly. TASK-39147 remains open.
+qualification of this diagnostic explicitly. TASK-40127 remains open.
 
 ## Subsequent production investigation and fixes (offline)
 
@@ -722,7 +722,7 @@ owner-authorized local review replaces Qodo. Dev remains the reviewed rebase
 base `36a21dc4d270940e3576b49487a71b37c78896f8`; review threads are empty and
 the merge queue is on.
 
-TASK-39147 AC11 is checked and the implementation task is Done. The PR is not
+TASK-40127 AC11 is checked and the implementation task is Done. The PR is not
 yet merged: this documentation-only closeout requires independent delta review,
 its own normal CI and queue merge. Application source, tests and workflows are
 unchanged by closeout, so their existing review and qualification remain
@@ -797,7 +797,7 @@ Changed-code formatting and whitespace pass. Whole-file Ruff retains its one
 pre-existing B905 finding and existing formatting differences; neither is
 claimed clean. Private source/log/validation evidence is retained under
 `recovered-final60-20261108/ui3-observer-20261109/`. The delta needs independent
-review and fresh normal CI before queue admission. TASK-39147's earlier Done
+review and fresh normal CI before queue admission. TASK-40127's earlier Done
 status and green `69bdd` CI remain historical evidence, not admission for this
 repair. Application source, workflows, live qualification and prior evidence
 are unchanged. No new ADR under ADR-281/063/131, no manual CI rerun, and zero

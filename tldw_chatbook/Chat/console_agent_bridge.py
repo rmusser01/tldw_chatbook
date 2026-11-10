@@ -87,7 +87,6 @@ from tldw_chatbook.Agents.agent_models import (
     RunOutcome,
     SkillFileBindings,
     ToolCall,
-    ToolCatalogEntry,
     ToolOutcome,
     ToolResult,
     ToolReviewValue,

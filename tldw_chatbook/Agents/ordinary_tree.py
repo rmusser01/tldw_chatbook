@@ -11,10 +11,6 @@ from threading import Lock
 
 from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
 
-from .activation import (
-    callable_source_current as _function_unchanged,
-    capture_callable_source as _function_record,
-)
 from .execution_capacity import CapacityRefused, WorkOrigin
 
 

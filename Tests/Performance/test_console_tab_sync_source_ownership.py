@@ -119,6 +119,7 @@ def make_screen():
     owner.store = make_store("first")
     owner.surface = Surface()
     owner.query_one = lambda *_: owner.surface
+    owner.query = lambda _selector: ()  # This fixture has no workflow line.
     owner._ensure_console_chat_store = lambda: owner.store
     owner.ensure_calls = []
     owner._session = SimpleNamespace(

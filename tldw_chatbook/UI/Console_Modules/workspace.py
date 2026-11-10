@@ -8574,8 +8574,7 @@ class ConsoleWorkspaceController:
                     return
                 except Exception as exc:  # noqa: BLE001 - surfaced to the user
                     logger.error(
-                        "Console conversation rename failed: exception_type={}",
-                        type(exc).__name__,
+                        f"Console conversation rename failed: exception_type={type(exc).__name__}"
                     )
                     if cancelled:
                         raise asyncio.CancelledError
@@ -8701,8 +8700,7 @@ class ConsoleWorkspaceController:
                 return
             except Exception as exc:  # noqa: BLE001 - surfaced to the user
                 logger.error(
-                    "Console conversation delete failed: exception_type={}",
-                    type(exc).__name__,
+                    f"Console conversation delete failed: exception_type={type(exc).__name__}"
                 )
                 self.app_instance.notify(f"Could not delete {label}.", severity="error")
                 return

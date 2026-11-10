@@ -6,7 +6,7 @@
 
 **What worked.** Pass selected Main and Core together in the child's `PYTHONPATH`, including every independently constructed/filtered environment. Verify the actual environment builder followed by a fresh interpreter's metadata lookup; avoid importing product code merely to prove a path. Keep before/after source bindings and preserve older results with their narrower provenance scope. The repaired original UI-ready and preimport checks passed; the strict Windows eager-import check still failed at `688 < 688`, so correcting provenance did not turn an unrelated failure green. See `Docs/superpowers/qa/2026-11-06-console-approval-resync/ci-boundary-followup.md` and its source manifest.
 
-## An empty rejection ledger does not identify a submission failure (TASK-39147, 2026-11-07)
+## An empty rejection ledger does not identify a submission failure (TASK-40127, 2026-11-07)
 
 **Incident.** DeepSeek accepted findings, then three dispatched submissions failed
 and its review stopped without coverage or rejection entries. Its retained trace
@@ -24878,7 +24878,7 @@ Run on its own at load average 34, the resize loop ended 9.3 s after mount. In a
 - Pass a diagnostic as a callable (`message=lambda: ...`), so it reports the state at the timeout.
 - Show each case red on the buggy tree before trusting it green.
 
-## Review handoff needs an authorized structured read path (TASK-39147, 2026-11-07)
+## Review handoff needs an authorized structured read path (TASK-40127, 2026-11-07)
 
 A 60-request Console review sealed all three children, but the coordinator could
 not finish: its primary recipe instructed verifier-only calls, and its legal
@@ -25171,7 +25171,7 @@ old/new owner-key delta before publication. Review added/removed keys as well as
 changed common rows; a matching drift count is not evidence that every owner was read.
 
 
-### Pin the runner that supplies an immutable build version (TASK-39147, 2026-11-08)
+### Pin the runner that supplies an immutable build version (TASK-40127, 2026-11-08)
 
 Run42493042973 passed all15 test jobs and the repaired static gates, then failed
 setup-python because ubuntu-latest selected26.04 while immutable Mermaid inputs

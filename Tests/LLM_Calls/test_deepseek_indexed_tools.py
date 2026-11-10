@@ -1,4 +1,4 @@
-"""Replay the indexed non-streaming tool call captured by TASK-39147."""
+"""Replay the indexed non-streaming tool call captured by TASK-40127."""
 
 import json
 from copy import deepcopy

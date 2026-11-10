@@ -5785,7 +5785,7 @@ saving. Parallel capture runs need separate HOME/profile directories: a capture
 that resets its profile wipes a concurrent run's.
 
 
-## A missing one-use runner is not proof its allowance is unused (TASK-39147, 2026-11-08)
+## A missing one-use runner is not proof its allowance is unused (TASK-40127, 2026-11-08)
 
 While PR3473 waited for CI, three prepared qualification scopes under /private/tmp
 disappeared; their cause and exact deletion time remain unknown. Recovery did not
