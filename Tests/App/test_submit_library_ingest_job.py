@@ -214,6 +214,7 @@ def test_research_prepare_persists_exact_authority_without_dispatch(
     ingest_store.close()
 
 
+@pytest.mark.bootstrap_profile
 def test_ordinary_submission_is_never_dispatch_held(tmp_path: Path) -> None:
     """The eligibility barrier is opt-in for Research preparation only."""
 
@@ -1166,6 +1167,7 @@ def test_headless_missing_vad_is_model_not_installed_without_acquisition(
     assert selected_path not in str(failed.error_detail)
 
 
+@pytest.mark.bootstrap_profile
 def test_folder_and_retry_context_keep_one_external_scope(tmp_path: Path) -> None:
     app = _minimal_app(media_db=object())
     folder = tmp_path / "batch"
@@ -1261,6 +1263,7 @@ def test_registry_releases_batch_scope_only_after_last_sibling_is_terminal(
     assert service.active_snapshots[-1] == set()
 
 
+@pytest.mark.bootstrap_profile
 def test_folder_submission_keeps_scope_while_terminal_siblings_are_constructed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2870,6 +2873,7 @@ class TestIngestDoneProgress:
         assert progress["message"].startswith(INGEST_DUPLICATE_PROGRESS_PREFIX)
 
 
+@pytest.mark.bootstrap_profile
 def test_submit_refuses_active_local_duplicate_before_second_append(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -3014,6 +3018,7 @@ async def test_remote_research_dispatch_rechecks_qualified_identity_before_servi
     assert "captured Server workspace authority" in failed.error
 
 
+@pytest.mark.bootstrap_profile
 def test_terminal_local_job_does_not_block_reingestion(tmp_path: Path) -> None:
     app = _minimal_app(media_db="present")
     source = tmp_path / "a.txt"
@@ -3028,6 +3033,7 @@ def test_terminal_local_job_does_not_block_reingestion(tmp_path: Path) -> None:
     assert second.job_id != first.job_id
 
 
+@pytest.mark.bootstrap_profile
 def test_local_active_job_does_not_block_server_submission(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -3066,6 +3072,7 @@ def test_submit_refuses_active_server_duplicate_before_remote_call(
     remote.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 def test_folder_refusal_occurs_before_any_admitted_child(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -3081,7 +3088,7 @@ def test_folder_refusal_occurs_before_any_admitted_child(
     admitted = MagicMock()
     monkeypatch.setattr(app, "_submit_library_ingest_job_admitted", admitted)
     uuid4 = MagicMock()
-    monkeypatch.setattr(app_module.uuid, "uuid4", uuid4)
+    monkeypatch.setattr(ingest_queue_module, "uuid", SimpleNamespace(uuid4=uuid4))
     app._parakeet_submitting_scope_ids = {"existing-scope"}
     sync_scopes = MagicMock()
     monkeypatch.setattr(app, "_sync_parakeet_source_scopes", sync_scopes)
@@ -3102,6 +3109,7 @@ def test_folder_refusal_occurs_before_any_admitted_child(
     sync_scopes.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 def test_confirmed_folder_routes_every_member_once_without_reentry(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -3154,6 +3162,7 @@ def test_confirmed_folder_routes_every_member_once_without_reentry(
     assert len(admitted_calls) == admitted_count
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("mutation", ["added", "removed", "changed"])
 def test_folder_candidate_mutation_refuses_stale_consent_before_any_child(
     monkeypatch: pytest.MonkeyPatch,
@@ -3194,6 +3203,7 @@ def test_folder_candidate_mutation_refuses_stale_consent_before_any_child(
     admitted.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 def test_new_active_match_absent_from_consent_refuses_before_any_child(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -3229,6 +3239,7 @@ def test_new_active_match_absent_from_consent_refuses_before_any_child(
     admitted.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 def test_consent_scope_allows_matching_job_to_finish_before_second_press(
     tmp_path: Path,
 ) -> None:
@@ -3254,6 +3265,7 @@ def test_consent_scope_allows_matching_job_to_finish_before_second_press(
     assert submitted.job_id != active.job_id
 
 
+@pytest.mark.bootstrap_profile
 def test_direct_refusal_is_privacy_safe_and_starts_no_work(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
