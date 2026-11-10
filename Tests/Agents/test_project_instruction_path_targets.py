@@ -20,6 +20,7 @@ def _target(path: Path, kind: str) -> ToolPathTarget:
     return ToolPathTarget(path=path.resolve(), kind=kind)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("name", ["fs_read", "fs_write", "fs_edit"])
 def test_local_file_tools_report_exact_targets(tmp_path, name):
     provider = _local_provider(tmp_path)
@@ -30,6 +31,7 @@ def test_local_file_tools_report_exact_targets(tmp_path, name):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_local_list_reports_directory_target(tmp_path):
     provider = _local_provider(tmp_path)
 
@@ -38,6 +40,7 @@ def test_local_list_reports_directory_target(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("name", "args"),
     [
@@ -66,6 +69,7 @@ PATCH = """\
 """
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("dry_run", [False, True])
 def test_patch_reports_every_create_and_modify_target_for_real_and_dry_run(
     tmp_path, dry_run
@@ -80,6 +84,7 @@ def test_patch_reports_every_create_and_modify_target_for_real_and_dry_run(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("diff_text", "reason"),
     [
@@ -110,6 +115,7 @@ def _git_repo(tmp_path: Path) -> Path:
     return root
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("name", "args"),
     [
@@ -129,6 +135,7 @@ def test_unfiltered_git_operations_report_only_repository_root(tmp_path, name, a
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("name", ["git_diff", "git_log"])
 @pytest.mark.parametrize(
     ("path", "scope"),
@@ -155,6 +162,7 @@ def test_path_filtered_git_operations_report_repository_through_target_scope(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_git_blame_reports_repository_through_file_parent(tmp_path):
     root = _git_repo(tmp_path)
     provider = _local_provider(root)
@@ -164,6 +172,7 @@ def test_git_blame_reports_repository_through_file_parent(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("name", "args"),
     [
@@ -219,7 +228,9 @@ def test_builtin_file_tools_map_selected_binding_targets(
         "tldw_chatbook.Tools.file_operation_tools.allowed_file_roots",
         lambda **_kwargs: (selected,),
     )
-    provider = BuiltinToolProvider(instruction_root=selected)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    provider = BuiltinToolProvider(instruction_root=selected, sandbox_root=scratch)
 
     assert provider.path_targets(f"builtin:{name}", {argument: str(target)}) == (
         _target(target, kind),
@@ -247,7 +258,9 @@ def test_builtin_other_authorized_binding_is_outside_instruction_scope(
         "tldw_chatbook.Tools.file_operation_tools.allowed_file_roots",
         lambda **_kwargs: (selected, other),
     )
-    provider = BuiltinToolProvider(instruction_root=selected)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    provider = BuiltinToolProvider(instruction_root=selected, sandbox_root=scratch)
 
     assert provider.path_targets(f"builtin:{name}", {argument: str(target)}) == (
         _target(target, "outside"),
