@@ -467,6 +467,7 @@ async def test_queued_summary_refuses_sibling_descendant_path_change(
 ):
     """Membership is insufficient when the selected prompt stays on a new branch."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
@@ -479,6 +480,7 @@ async def test_queued_summary_refuses_sibling_descendant_path_change(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("keep sibling draft")
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{ids['a1'].id}")
         transcript.select_message(ids["a1"].id)
         await pilot.pause()
         assert transcript.selected_message_id == ids["a1"].id
@@ -489,11 +491,15 @@ async def test_queued_summary_refuses_sibling_descendant_path_change(
         )
         monkeypatch.setattr(controller, "summarize_from", summarize)
         queued: list = []
-        monkeypatch.setattr(
-            console,
-            "run_worker",
-            lambda coroutine, **_kwargs: queued.append(coroutine),
-        )
+        real_run_worker = console.run_worker
+
+        def capture_summary(coroutine, **kwargs):
+            if kwargs.get("group") == f"console-run-{session.id}":
+                queued.append(coroutine)
+                return None
+            return real_run_worker(coroutine, **kwargs)
+
+        monkeypatch.setattr(console, "run_worker", capture_summary)
         notices: list[tuple[str, str]] = []
         app.notify = lambda text, **kwargs: notices.append(
             (str(text), kwargs.get("severity", ""))
@@ -703,6 +709,7 @@ async def test_summary_worker_uses_bounded_terminal_copy_and_preserves_ui_state(
 ):
     """Terminal handling must never echo transcript content or edit the UI."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
@@ -719,6 +726,7 @@ async def test_summary_worker_uses_bounded_terminal_copy_and_preserves_ui_state(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("private draft must stay")
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{ids['a1'].id}")
         transcript.select_message(ids["a1"].id)
         await pilot.pause()
         assert transcript.selected_message_id == ids["a1"].id
@@ -767,6 +775,7 @@ async def test_summary_worker_refocuses_after_unexpected_error_without_leaking_i
 ):
     """An unexpected exception must not leak its content into recovery copy."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
@@ -777,6 +786,7 @@ async def test_summary_worker_refocuses_after_unexpected_error_without_leaking_i
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("keep")
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{ids['a1'].id}")
         transcript.select_message(ids["a1"].id)
         await pilot.pause()
         assert transcript.selected_message_id == ids["a1"].id
@@ -1041,6 +1051,7 @@ async def test_console_command_rewind_pushes_modal_with_newest_first_rows():
 async def test_rewind_callback_refuses_sibling_descendant_path_change(monkeypatch):
     """A modal-open branch switch must fail even when its prompt stays on-path."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
@@ -1053,7 +1064,9 @@ async def test_rewind_callback_refuses_sibling_descendant_path_change(monkeypatc
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("keep callback draft")
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{ids['a1'].id}")
         transcript.select_message(ids["a1"].id)
+        assert transcript.selected_message_id == ids["a1"].id
         await pilot.pause()
 
         await console._console_command_rewind(CommandParse("command", "rewind", ""))
