@@ -1,11 +1,11 @@
 ---
 id: TASK-40132
 title: "Back up Plugins: capture the plugin registry, package bytes and plugin data instead of leaving them unsupported"
-status: Done
+status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-10 16:15
-updated_date: 2026-11-10 19:31
+updated_date: 2026-11-10 20:26
 labels:
 - follow-up
 - backup
@@ -38,14 +38,14 @@ Today every one of these producers sits in the backup review's conservative `uns
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 A backup preview of a profile with an installed plugin and plugin data shows the plugins root as captured, not unsupported: the registry database, the package bytes and every plugin data root
-- [x] #2 Only a lock file or in-flight acquisition state is left out of the capture, each named in the notes with its reason and shown in the preview as excluded; anything else under the plugins root is captured
-- [x] #3 The registry database is captured consistently, like the other SQLite owners (schema catalog, WAL folded), with a test that is red before the change
-- [x] #4 While a plugin process or another plugin data writer is running, capture either waits for it to stop or is refused with a reason the preview shows, so no capture holds half-written plugin data; a test shows it
-- [x] #5 A restore puts the registry, packages and data back byte for byte. The plugin system then reports its documented state for a missing keyring marker, and the user sees copy that says what to do; no plugin data is lost. Tests cover both
-- [x] #6 The owner inventory doc's Plugins rows and the backup User Guide page describe the new behaviour
-- [x] #7 After a restore, the plugin service refuses to run plugins until plugin authority recovery completes, which approves them; a test shows both
-- [x] #8 A restore into a separate profile refuses the plugins owner with the reason owner_relocation_unverified, and a same-profile restore is unaffected; a test shows both
+- [ ] #1 A backup preview of a profile with an installed plugin and plugin data shows the plugins root as captured, not unsupported: the registry database, the package bytes and every plugin data root
+- [ ] #2 Only runtime.lock and, inside staging, the host git/SSH configuration copies (host-git-config, host-ssh-*), repository.git and content/ are left out of the capture, each named in the notes with its reason and shown in the preview as excluded; anything else under the plugins root, including staging snapshots and acquisition custody records, is captured
+- [ ] #3 The registry database is captured consistently, like the other SQLite owners (schema catalog, WAL folded), with a test that is red before the change
+- [ ] #4 While a plugin process or another plugin data writer is running, capture either waits for it to stop or is refused with a reason the preview shows, so no capture holds half-written plugin data; a test shows it
+- [ ] #5 A restore puts the registry, packages and data back byte for byte. The plugin system then reports its documented state when the keyring marker is missing or does not match the restored files, and the user sees copy that says truthfully what works (an in-place restore with plugins unchanged since the backup needs only Unlock) and what does not yet (the other cases keep plugins off, with their files and data on disk), with no step that dead-ends; no plugin data is lost. Tests cover both
+- [ ] #6 The owner inventory doc's Plugins rows and the backup User Guide page describe the new behaviour
+- [ ] #7 After a restore, the plugin service refuses to run plugins until plugin authority recovery completes, which approves them; a test shows both
+- [ ] #8 A restore into a separate profile refuses the plugins owner with the reason owner_relocation_unverified, and a same-profile restore is unaffected; a test shows both
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -93,6 +93,11 @@ Checked on worktree base 42fc21939d (dev ae9f9e8d21 plus the filing commit), 202
 - The refusal ceiling (runtime.lock held until quit) is accepted; the preview reason copy and the User Guide state it.
 
 Q3 and Q4 added criteria #7 and #8.
+
+Review r13g-rev1 (2026-11-10) owner decisions, via the coordinator's AskUserQuestion, recorded verbatim:
+
+- D1 staging: "Only what recovery needs (Recommended)" — "Capture snapshot/ and the custody records. Exclude host-git-config, host-ssh-*, repository.git and content/, shown as excluded in the preview. Git-installed plugins stay recoverable, and no SSH, git or credential config goes into archives." (Supersedes Q1 for those staging members; AC#2 rewritten to match.)
+- D2 recovery: "Truthful copy now, feature next (Recommended)" — "This PR states exactly what works (an in-place restore with plugins unchanged needs only Unlock) and what doesn't, with no false steps. I file a follow-up feature: a reset that keeps plugin data and re-attaches it, plus rebinding of restored data roots." (AC#5 rewritten to match; the coordinator files the feature.)
 
 **Questions as asked (kept for the record):**
 
