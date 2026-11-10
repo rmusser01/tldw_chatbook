@@ -14,6 +14,7 @@ from Tests.Chat import test_console_async_mcp_snapshot as snapshot_controls
 from tldw_chatbook.Backup_Recovery import storage_admission
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from Tests.Chat.console_controller_factory import bind_app
 
 catalog_controls = snapshot_controls.catalog_controls
 catalog_store = snapshot_controls.catalog_store
@@ -39,6 +40,7 @@ async def runtime_case(snapshot_case):
         provider_gateway=SimpleNamespace(),
         agent_runtime_enabled=False,
     )
+    bind_app(controller, runtime._app)  # test apps publish no services bundle (TASK-36947.4)
     assert controller._turn_context_provider is None
     case.controller = controller
     case.runtime = runtime
@@ -515,7 +517,12 @@ async def test_both_adapters_use_original_producer_and_preserve_distinct_inputs(
         sys.setprofile(previous)
     assert mounted_snapshot.tool_policy_profile_id == "mounted-policy"
     assert mounted_snapshot.persona_policy_rules == ({"rule_name": "mounted"},)
-    assert calls == [(case.app, case.store, case.session.id)] * 2
+    # TASK-36947.4: the runtime adapter hands the producer the controller's
+    # host (never the app); the mounted adapter still hands it the app.
+    assert calls == [
+        (case.controller._host, case.store, case.session.id),
+        (case.app, case.store, case.session.id),
+    ]
     assert len(returns) == 2
     assert returns[0] is runtime_snapshot and returns[1] is mounted_snapshot
     assert skill_workspaces == [case.session.workspace_id, case.session.workspace_id]

@@ -8,7 +8,6 @@ that patch them on ``console_chat_controller`` keep reaching them.
 from __future__ import annotations
 
 import asyncio
-import threading
 from typing import Any
 
 from tldw_chatbook.Chat.console_project_instructions import (
@@ -43,12 +42,10 @@ def build_project_dispatch_callbacks(
                 return callback()
         except RuntimeError:
             pass
-        app = controller.app
-        call_from_thread = getattr(app, "call_from_thread", None)
+        ui = controller._host
+        call_from_thread = ui.call_from_thread
         # Textual only permits call_from_thread from another thread.
-        if callable(call_from_thread) and threading.get_ident() != getattr(
-            app, "_thread_id", None
-        ):
+        if callable(call_from_thread) and not ui.on_ui_thread():
             return call_from_thread(callback)
         return callback()
 

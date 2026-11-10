@@ -68,6 +68,11 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.Chat.console_controller_factory import (
+    bind_app,
+    bind_fleet_marks,
+    bind_runtime_app,
+)
 
 
 async def _leave_console(rig) -> ConsoleRuntime:
@@ -346,7 +351,8 @@ async def test_exactly_once_across_a_refusal_a_retry_and_a_restart_headless(
             agent_runtime_enabled=False,
         )
         restart_wake = restart_controller.fleet_wake
-        restart_wake.wire(app=app)
+        bind_fleet_marks(restart_controller, app)
+        restart_wake.wire()
         assert marks.has_mark(session.id, ConversationLocalMarksService.FLEET_UNSEEN), (
             "harness precondition: the mark outlives the delivery (off-view)"
         )
@@ -427,7 +433,8 @@ async def test_legacy_crash_result_is_visible_but_cannot_borrow_a_new_chain(
             agent_runtime_enabled=False,
         )
         restart_wake = restart_controller.fleet_wake
-        restart_wake.wire(app=app)
+        bind_fleet_marks(restart_controller, app)
+        restart_wake.wire()
 
         assert restart_wake.seed_from_marks() == 1
         assert restart_wake.has_pending(session.id)
@@ -796,13 +803,15 @@ async def test_a_headless_wake_takes_the_same_agent_dispatch_and_budget(tmp_path
             agent_bridge=bridge,
             agent_runtime_enabled=True,
         )
-        controller.app = SimpleNamespace(
+        bind_app(controller, SimpleNamespace(
             call_from_thread=lambda fn, *a, **kw: fn(*a, **kw)
-        )
-        controller.fleet_wake.wire(app=app)
+        ))
+        bind_fleet_marks(controller, app)
+        controller.fleet_wake.wire()
 
         runtime = ConsoleRuntime(app=app)
         runtime.set_chat_store(store)
+        bind_runtime_app(controller, runtime)
         runtime.set_chat_controller(controller)
         view = _mounted_view()
         generation = runtime.attach_view(view)

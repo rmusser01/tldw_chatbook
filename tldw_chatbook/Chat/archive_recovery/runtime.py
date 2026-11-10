@@ -32,7 +32,7 @@ from .contracts import (
     RecoveryOutcome,
     RestoreScope,
 )
-from .coordinator import ArchiveRecoveryCoordinator
+from .coordinator import ArchiveRecoveryCoordinator, app_recovery_operations
 from .result_store import MAX_RESULT_BYTES, ArchiveResultStore, argument_digest
 from .search_service import ArchiveSearchService
 
@@ -117,15 +117,34 @@ class _RestoreRequest(BaseModel):
 class ArchiveRecoveryRuntime:
     """One application owner; every asynchronous method runs on its loop."""
 
-    def __init__(self, app: Any) -> None:
-        self.app = app
+    def __init__(
+        self,
+        *,
+        notify: Callable[..., object],
+        read_archive_services: Callable[[], tuple[Any, Any]],
+        read_target: Callable[[str], Awaitable[Any]],
+        execute_restore: Callable[..., Awaitable[Any]],
+    ) -> None:
+        """Own recovery for one application through narrow callables (TASK-36947.4).
+
+        Args:
+            notify: The app's ``notify``.
+            read_archive_services: The local conversation service and the
+                workspace registry, read when a search runs.
+            read_target: Read a conversation's current recovery target.
+            execute_restore: Run one confirmed restore.
+        """
+        self._notify = notify
+        self._read_archive_services = read_archive_services
         try:
             self.loop = asyncio.get_running_loop()
         except RuntimeError:
             self.loop = None
         self.owner_thread = get_ident()
         self.results = ArchiveResultStore()
-        self.coordinator = ArchiveRecoveryCoordinator(app, self.results)
+        self.coordinator = ArchiveRecoveryCoordinator(
+            self.results, read_target=read_target, execute_restore=execute_restore
+        )
         self.prepare_view: Callable[[], Awaitable[None]] | None = None
         self.present_results: Callable[[ArchiveRecoveryPresentation], object] | None = (
             None
@@ -153,6 +172,18 @@ class ArchiveRecoveryRuntime:
         self._deliveries: dict[str, set[asyncio.Task]] = {}
         self._presentations: dict[str, deque[ArchiveRecoveryPresentation]] = {}
 
+    @classmethod
+    def for_app(cls, app: Any) -> ArchiveRecoveryRuntime:
+        """The runtime over ``app``'s services, read late as before."""
+        return cls(
+            notify=lambda message, **kwargs: app.notify(message, **kwargs),
+            read_archive_services=lambda: (
+                app.local_chat_conversation_service,
+                app.workspace_registry_service,
+            ),
+            **app_recovery_operations(app),
+        )
+
     def _settled(self, receipt: RecoveryOperationSnapshot) -> None:
         """Retain one delivery per coordinator settlement, independently of views."""
         task = asyncio.create_task(self._deliver_completion(receipt))
@@ -179,7 +210,7 @@ class ArchiveRecoveryRuntime:
         if receipt.admitted and outcome:
             # These strings contain only app-generated outcome text, never stored
             # titles, transcript bodies or exception details. No navigation/send.
-            self.app.notify(
+            self._notify(
                 f"{outcome.message} Chat: {'restored' if outcome.chat_changed else 'unchanged'}. "
                 f"Workspace: {'restored' if outcome.workspace_changed else 'unchanged'}.",
                 markup=False,
@@ -373,10 +404,7 @@ class ArchiveRecoveryRuntime:
                     "invalid_argument", "Recovery cursor filters changed"
                 )
             request = original
-        service = ArchiveSearchService(
-            self.app.local_chat_conversation_service,
-            self.app.workspace_registry_service,
-        )
+        service = ArchiveSearchService(*self._read_archive_services())
 
         async def read() -> Any:
             kwargs = {"after": anchor, "expected_workspace_digest": digest}

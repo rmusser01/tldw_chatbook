@@ -23,7 +23,7 @@ class ConsoleGoalStatus(ModalScreen[None]):
         super().__init__()
         self.coordinator, self.goal_id = coordinator, goal_id
         self.review_changes = review_changes
-        self.app_instance = app_instance or coordinator.controller.app
+        self.app_instance = app_instance
         self.snapshot = None
         self._unsubscribe = None
         self._review_identity = None
@@ -267,7 +267,7 @@ class ConsoleGoalStatus(ModalScreen[None]):
             if action == "retry-setup":
                 await asyncio.shield(
                     self.coordinator.launch(
-                        goal.request, goal.launch_id, app=self.app_instance
+                        goal.request, goal.launch_id, app=self.app_instance or self.app
                     )
                 )
             elif action in {"pause", "stop", "remove"}:
@@ -338,7 +338,7 @@ class ConsoleGoalStatus(ModalScreen[None]):
         try:
             await asyncio.shield(
                 self.coordinator.resume(
-                    goal.id, expected_revision=goal.revision, app=self.app_instance
+                    goal.id, expected_revision=goal.revision, app=self.app_instance or self.app
                 )
             )
         except Exception as exc:  # noqa: BLE001 - owner retains paused state on failure

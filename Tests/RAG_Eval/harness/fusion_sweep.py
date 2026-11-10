@@ -979,7 +979,7 @@ def _build_seam(runtime: Any) -> Any:
         LibraryLocalRagSearchService,
     )
 
-    return LibraryLocalRagSearchService(runtime.app)
+    return LibraryLocalRagSearchService.from_app(runtime.app)
 
 
 def _fusion_block(row: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:

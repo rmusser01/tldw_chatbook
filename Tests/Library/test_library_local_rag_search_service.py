@@ -229,7 +229,7 @@ async def test_public_keyword_search_treats_fts_queries_as_plain_text(
 ):
     app, media_id, conversation_id = real_fts_app
 
-    result = await LibraryLocalRagSearchService(app).search(
+    result = await LibraryLocalRagSearchService.from_app(app).search(
         query,
         ("media", "conversations"),
         "search",
@@ -245,7 +245,7 @@ async def test_public_keyword_search_treats_fts_queries_as_plain_text(
 async def test_notes_keyword_search_keeps_the_plain_query_unchanged():
     notes_service = FakeNotesScopeService(rows=[])
     app = SimpleNamespace(notes_scope_service=notes_service)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     await service.search('operator "said', ("notes",), "search", top_k=5)
 
@@ -264,7 +264,7 @@ async def test_notes_keyword_search_keeps_the_plain_query_unchanged():
 async def test_prompts_keyword_search_sends_widened_match_query():
     prompt_service = FakePromptScopeService(rows=[])
     app = SimpleNamespace(prompt_scope_service=prompt_service)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     await service.search("feedback loop", ("prompts",), "search", top_k=5)
 
@@ -305,7 +305,7 @@ async def test_prompts_seam_missing_yields_unavailable_not_blocked():
     """
     notes_service = FakeNotesScopeService(rows=[])
     app = SimpleNamespace(notes_scope_service=notes_service, prompt_scope_service=None)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search("credential", ("notes", "prompts"), "search", top_k=5)
 
@@ -326,7 +326,7 @@ async def test_prompts_seam_missing_yields_unavailable_not_blocked():
 )
 async def test_public_search_rejects_unsafe_query_before_source_calls(query):
     notes_service = FakeNotesScopeService(rows=[])
-    service = LibraryLocalRagSearchService(
+    service = LibraryLocalRagSearchService.from_app(
         SimpleNamespace(notes_scope_service=notes_service)
     )
 
@@ -339,7 +339,7 @@ async def test_public_search_rejects_unsafe_query_before_source_calls(query):
 @pytest.mark.asyncio
 async def test_public_search_rejects_unsafe_query_before_semantic_service_call():
     rag_service = FakeRagService()
-    service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag_service))
+    service = LibraryLocalRagSearchService.from_app(SimpleNamespace(_rag_service=rag_service))
 
     with pytest.raises(ValueError, match="safe Library search query"):
         await service.search("<script>unsafe</script>", ("notes",), "rag", top_k=5)
@@ -370,7 +370,7 @@ async def test_search_mode_returns_rows_from_all_three_sources(conversations_db)
         chachanotes_db=db,
         notes_user_id="tester",
     )
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search(
         "credential", ("notes", "media", "conversations"), "search", top_k=5
@@ -411,7 +411,7 @@ async def test_missing_media_seam_yields_notes_and_conversations_only(conversati
         media_reading_scope_service=None,
         chachanotes_db=db,
     )
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search(
         "credential", ("notes", "media", "conversations"), "search", top_k=5
@@ -425,7 +425,7 @@ async def test_missing_media_seam_yields_notes_and_conversations_only(conversati
 @pytest.mark.asyncio
 async def test_all_seams_missing_returns_blocked_outcome():
     app = SimpleNamespace()
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search(
         "credential", ("notes", "media", "conversations"), "search", top_k=5
@@ -456,7 +456,7 @@ async def test_rag_mode_without_deps_returns_blocked_outcome_and_skips_factory(
 
     monkeypatch.setattr(rag_service_module, "get_shared_rag_service", _fail_factory)
     app = SimpleNamespace(_rag_service=None)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search("credential", ("notes",), "rag", top_k=5)
 
@@ -491,7 +491,7 @@ async def test_scope_filtering_skips_unselected_media_seam(conversations_db):
         media_reading_scope_service=media_service,
         chachanotes_db=db,
     )
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     await service.search("credential", ("notes",), "search", top_k=5)
 
@@ -511,7 +511,7 @@ async def test_end_to_end_through_run_library_rag_search(conversations_db):
         media_reading_scope_service=None,
         chachanotes_db=db,
     )
-    app.library_rag_search_service = LibraryLocalRagSearchService(app)
+    app.library_rag_search_service = LibraryLocalRagSearchService.from_app(app)
 
     request = LibraryRagSearchRequest(
         query="credential",
@@ -542,7 +542,7 @@ async def test_erroring_notes_seam_contributes_zero_rows_without_raising(
         media_reading_scope_service=None,
         chachanotes_db=db,
     )
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search(
         "credential", ("notes", "conversations"), "search", top_k=5
@@ -572,7 +572,7 @@ async def test_erroring_notes_seam_contributes_zero_rows_without_raising(
 async def test_erroring_only_seam_reports_failed_not_blocked_and_not_empty_success():
     notes_service = FakeNotesScopeService(error=RuntimeError("notes index unavailable"))
     app = SimpleNamespace(notes_scope_service=notes_service)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search("credential", ("notes",), "search", top_k=5)
 
@@ -586,7 +586,7 @@ async def test_erroring_only_seam_reports_failed_not_blocked_and_not_empty_succe
 @pytest.mark.asyncio
 async def test_unknown_scope_type_is_ignored_quietly():
     app = SimpleNamespace()
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search(
         "credential", ("workspaces", "collections"), "search", top_k=5
@@ -642,7 +642,7 @@ async def test_rag_mode_filters_semantic_rows_by_scope():
         ]
     )
     app = SimpleNamespace(_rag_service=rag_service)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search("credential", ("notes",), "rag", top_k=5)
 
@@ -690,7 +690,7 @@ async def test_rag_mode_full_scope_keeps_all_rows():
         ]
     )
     app = SimpleNamespace(_rag_service=rag_service)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search(
         "credential", ("notes", "media", "conversations"), "rag", top_k=5
@@ -719,7 +719,7 @@ async def test_rag_mode_empty_scope_does_not_filter():
         ]
     )
     app = SimpleNamespace(_rag_service=rag_service)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search("credential", (), "rag", top_k=5)
 
@@ -757,7 +757,7 @@ async def test_rag_mode_diagnostics_report_uncovered_requested_source_type():
         ]
     )
     app = SimpleNamespace(_rag_service=rag_service)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search("cake", ("notes", "media"), "rag", top_k=5)
 
@@ -796,7 +796,7 @@ async def test_rag_mode_diagnostics_report_all_covered_when_every_type_present()
         ]
     )
     app = SimpleNamespace(_rag_service=rag_service)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search("cake", ("notes", "media"), "rag", top_k=5)
 
@@ -823,7 +823,7 @@ async def test_rag_mode_diagnostics_unknown_provenance_row_does_not_count_as_cov
         ]
     )
     app = SimpleNamespace(_rag_service=rag_service)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search("cake", ("notes",), "rag", top_k=5)
 
@@ -861,7 +861,7 @@ async def test_rag_mode_diagnostics_exclude_prompts_structurally_uncoverable_und
         ]
     )
     app = SimpleNamespace(_rag_service=rag_service)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search(
         "cake", ("notes", "media", "conversations", "prompts"), "rag", top_k=5
@@ -896,7 +896,7 @@ async def test_rag_mode_diagnostics_omitted_when_rows_end_up_empty():
         stats={"count": 12},
     )
     app = SimpleNamespace(_rag_service=rag_service)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     # "notes" is requested, but the only raw result is media-provenance, so
     # the scope post-filter drops it entirely and rows == [].
@@ -924,7 +924,7 @@ async def test_rag_mode_delegates_and_maps_results():
         ]
     )
     app = SimpleNamespace(_rag_service=rag_service)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search(
         "credential", ("notes",), "rag", top_k=3, include_citations=True
@@ -984,7 +984,7 @@ async def test_rag_mode_lazily_initializes_shared_runtime(monkeypatch):
 
     monkeypatch.setattr(rag_service_module, "get_shared_rag_service", _factory)
     app = SimpleNamespace(_rag_service=None)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search("credential", ("notes",), "rag", top_k=5)
 
@@ -1010,7 +1010,7 @@ async def test_rag_mode_factory_returning_none_yields_blocked_outcome(monkeypatc
         rag_service_module, "get_shared_rag_service", lambda *a, **k: None
     )
     app = SimpleNamespace(_rag_service=None)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search("credential", ("notes",), "rag", top_k=5)
 
@@ -1038,7 +1038,7 @@ async def test_rag_mode_factory_raising_yields_blocked_outcome(monkeypatch):
         rag_service_module, "get_shared_rag_service", _exploding_factory
     )
     app = SimpleNamespace(_rag_service=None)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search("credential", ("notes",), "rag", top_k=5)
 
@@ -1061,7 +1061,7 @@ async def test_rag_mode_prefers_existing_app_rag_service(monkeypatch):
     monkeypatch.setattr(rag_service_module, "get_shared_rag_service", _fail_probe)
     injected = FakeRagService(results=[_SEMANTIC_RESULT])
     app = SimpleNamespace(_rag_service=injected)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search("credential", ("notes",), "rag", top_k=5)
 
@@ -1097,7 +1097,7 @@ async def test_concurrent_rag_queries_initialize_one_shared_service(monkeypatch)
     ingestion_indexing.reset_shared_rag_service()
     try:
         app = SimpleNamespace(_rag_service=None)
-        service = LibraryLocalRagSearchService(app)
+        service = LibraryLocalRagSearchService.from_app(app)
 
         first, second = await asyncio.gather(
             service.search("credential", ("notes",), "rag", top_k=5),
@@ -1124,7 +1124,7 @@ class FakeRagServiceWithStore(FakeRagService):
 async def test_rag_mode_empty_index_returns_distinct_empty_outcome():
     rag_service = FakeRagServiceWithStore(results=[], stats={"count": 0})
     app = SimpleNamespace(_rag_service=rag_service)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search("credential", ("notes",), "rag", top_k=5)
 
@@ -1145,7 +1145,7 @@ async def test_rag_mode_empty_index_returns_distinct_empty_outcome():
 async def test_rag_mode_zero_results_with_populated_index_stays_generic():
     rag_service = FakeRagServiceWithStore(results=[], stats={"count": 12})
     app = SimpleNamespace(_rag_service=rag_service)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search("credential", ("notes",), "rag", top_k=5)
 
@@ -1169,7 +1169,7 @@ async def test_rag_mode_zero_results_with_populated_index_stays_generic():
 )
 async def test_rag_mode_unverifiable_stats_fall_back_to_generic_empty(rag_service):
     app = SimpleNamespace(_rag_service=rag_service)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search("credential", ("notes",), "rag", top_k=5)
 
@@ -1198,7 +1198,7 @@ async def test_rag_mode_scope_filtered_to_zero_is_not_index_empty():
         stats={"count": 0},  # deliberately lying: it must never be consulted
     )
     app = SimpleNamespace(_rag_service=rag_service)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     result = await service.search("credential", ("notes",), "rag", top_k=5)
 
@@ -1360,7 +1360,7 @@ async def test_notes_keyword_search_matches_plural_and_singular_variants(
 ):
     app, plural_id, singular_id = real_notes_app
 
-    result = await LibraryLocalRagSearchService(app).search(
+    result = await LibraryLocalRagSearchService.from_app(app).search(
         query, ("notes",), "search", top_k=5
     )
 
@@ -1378,7 +1378,7 @@ async def test_media_and_conversation_keyword_search_match_plural_singular_varia
 ):
     app, media_id, conversation_id = real_fts_app
 
-    result = await LibraryLocalRagSearchService(app).search(
+    result = await LibraryLocalRagSearchService.from_app(app).search(
         query,
         ("media", "conversations"),
         "search",
@@ -1423,7 +1423,7 @@ def real_prompts_app(tmp_path):
 async def test_prompts_keyword_search_matches_plural_variant(real_prompts_app):
     app, prompt_id = real_prompts_app
 
-    result = await LibraryLocalRagSearchService(app).search(
+    result = await LibraryLocalRagSearchService.from_app(app).search(
         "feedback loop", ("prompts",), "search", top_k=5
     )
 
@@ -1441,7 +1441,7 @@ async def test_prompts_deselected_yields_zero_prompt_rows(real_prompts_app):
     app, _prompt_id = real_prompts_app
     app.notes_scope_service = FakeNotesScopeService(rows=[])
 
-    result = await LibraryLocalRagSearchService(app).search(
+    result = await LibraryLocalRagSearchService.from_app(app).search(
         "feedback loop", ("notes",), "search", top_k=5
     )
 
@@ -1519,7 +1519,7 @@ class TestLibraryRagAnswerRealRuntime:
         ingestion_indexing.set_shared_rag_service(real_service)
 
         app = SimpleNamespace()  # no _rag_service attribute at all
-        app.library_rag_search_service = LibraryLocalRagSearchService(app)
+        app.library_rag_search_service = LibraryLocalRagSearchService.from_app(app)
         request = LibraryRagSearchRequest(
             query="zanzibar quokka snorkeling manifesto",
             source_types=("notes", "media", "conversations"),
@@ -1555,7 +1555,7 @@ class TestLibraryRagAnswerRealRuntime:
         ingestion_indexing.set_shared_rag_service(_make_real_rag_service())
 
         app = SimpleNamespace()
-        app.library_rag_search_service = LibraryLocalRagSearchService(app)
+        app.library_rag_search_service = LibraryLocalRagSearchService.from_app(app)
         request = LibraryRagSearchRequest(
             query="zanzibar quokka snorkeling manifesto",
             source_types=("notes", "media", "conversations"),
@@ -1621,7 +1621,7 @@ async def test_reranking_disclosure_tag_survives_into_the_panels_result_rows(
         ]
     )
     app = SimpleNamespace(_rag_service=rag_service)
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     outcome = await run_library_rag_search(
         SimpleNamespace(library_rag_search_service=service),

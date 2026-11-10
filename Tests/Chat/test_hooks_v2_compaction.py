@@ -4,6 +4,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from Tests.Chat.console_controller_factory import bind_runtime_app
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
@@ -229,6 +230,7 @@ async def test_console_compaction_real_sqlite_commit_and_provider_fence(
     )
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     controller._agent_runtime_enabled = False
     gateway = controller.provider_gateway
@@ -543,6 +545,7 @@ async def test_previous_manual_handoff_does_not_keep_failed_operation_live(
     )
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     controller._agent_runtime_enabled = False
     from Tests.console_provider_doubles import with_destination

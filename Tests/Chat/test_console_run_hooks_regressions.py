@@ -17,6 +17,7 @@ from Tests.Chat.test_console_chat_controller import (
     _pending_image,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
+from Tests.Chat.console_controller_factory import bind_app
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -307,7 +308,7 @@ def test_all_permission_rounds_notify_once_with_truthful_view_state(
         provider_gateway=object(),
         ensure_run_hooks=lambda: hooks,
     )
-    controller.app = SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args))
+    bind_app(controller, SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args)))
     controller.set_pending_approval = lambda _payload: None
     controller.set_pending_skill_install = lambda _payload: None
     controller.set_pending_skill_script = lambda _payload: None
@@ -386,7 +387,7 @@ def test_worktree_confirmation_notifies_requesting_run_and_recovery_action(
         provider_gateway=object(),
         ensure_run_hooks=lambda: hooks,
     )
-    controller.app = SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args))
+    bind_app(controller, SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args)))
     controller.set_pending_worktree_merge = lambda _payload: None
     controller._interrupt_host.view_visible = visible
     armed = threading.Event()
@@ -521,7 +522,7 @@ def test_production_skill_approvals_keep_run_and_target_identity(kind):
         provider_gateway=object(),
         ensure_run_hooks=lambda: hooks,
     )
-    controller.app = SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args))
+    bind_app(controller, SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args)))
     controller._interrupt_host.view_visible = True
 
     def accept_install(payload):

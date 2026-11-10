@@ -26,8 +26,7 @@ def observe_watchlists_operation_result(
             if operation_id not in followed:
                 followed.append(operation_id)
         self._followed_watchlists_operation_ids = tuple(followed)
-    app = getattr(self, "app", None)
-    marshal = getattr(app, "call_from_thread", None)
+    marshal = self._host.call_from_thread
     if callable(marshal):
         marshal(self.remount_watchlists_operation_receipts)
 

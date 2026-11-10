@@ -33,6 +33,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
 )
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+from Tests.Chat.console_controller_factory import bind_app, update_app
 
 
 def _build_test_app(*args, **kwargs):
@@ -717,16 +718,16 @@ async def test_park_toast_survives_a_viewed_run_completion_re_invocation(
             is None
         )
         controller = console._ensure_console_chat_controller()
-        controller.app = host
+        bind_app(controller, host)
         store = controller.store
         viewed = store.active_session_id
         background = controller.new_session().id
         store.switch_session(viewed)  # keep viewing A
 
         notifications: list[str] = []
-        controller.app.notify = lambda message, **kwargs: notifications.append(
+        update_app(controller, notify=lambda message, **kwargs: notifications.append(
             str(message)
-        )
+        ))
 
         prior_cancel_present = background in controller._active_cancel_events
         prior_cancel_event = controller._active_cancel_events.get(background)
@@ -1718,7 +1719,7 @@ async def test_mounted_round_survives_switch_away_and_switch_back(request) -> No
         # `ChatApprovalCard.set_batch` does) from a foreign OS thread
         # without that marshal raises `RuntimeError: no running event
         # loop` (verified empirically while writing this test).
-        controller.app = host
+        bind_app(controller, host)
         store = controller.store
         session_a = store.active_session_id
         session_b = controller.new_session().id
@@ -1810,7 +1811,7 @@ async def test_new_session_clears_a_mounted_card_from_the_session_being_left(
         controller = console._ensure_console_chat_controller()
         # See the sibling test above for why this must be `host` (the
         # actually-running App), not `app_instance`.
-        controller.app = host
+        bind_app(controller, host)
         controller.mcp_approval_timeout_seconds = lambda: 30.0
         session_a = controller.store.active_session_id
 
@@ -1897,7 +1898,7 @@ async def test_background_skill_install_confirm_parks_badges_toasts_and_mounts_o
         # why this must be `host` (the actually-running App), not
         # `app_instance`: `call_from_thread` needs a real running loop to
         # marshal the worker thread's widget mutations onto.
-        controller.app = host
+        bind_app(controller, host)
         controller.skill_install_confirm_timeout_seconds = lambda: 30.0
         store = controller.store
         viewed = store.active_session_id
@@ -1905,9 +1906,9 @@ async def test_background_skill_install_confirm_parks_badges_toasts_and_mounts_o
         store.switch_session(viewed)  # keep viewing the first session
 
         notifications: list[str] = []
-        controller.app.notify = lambda message, **kwargs: notifications.append(
+        update_app(controller, notify=lambda message, **kwargs: notifications.append(
             str(message)
-        )
+        ))
 
         prior_cancel_present = background in controller._active_cancel_events
         prior_cancel_event = controller._active_cancel_events.get(background)
@@ -2005,7 +2006,7 @@ async def test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on
             is None
         )
         controller = console._ensure_console_chat_controller()
-        controller.app = host
+        bind_app(controller, host)
         controller.skill_script_confirm_timeout_seconds = lambda: 30.0
         store = controller.store
         viewed = store.active_session_id
@@ -2013,9 +2014,9 @@ async def test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on
         store.switch_session(viewed)  # keep viewing the first session
 
         notifications: list[str] = []
-        controller.app.notify = lambda message, **kwargs: notifications.append(
+        update_app(controller, notify=lambda message, **kwargs: notifications.append(
             str(message)
-        )
+        ))
 
         prior_cancel_present = background in controller._active_cancel_events
         prior_cancel_event = controller._active_cancel_events.get(background)
@@ -2114,7 +2115,7 @@ async def test_skill_install_park_toast_survives_a_re_invocation_for_the_same_ro
             is None
         )
         controller = console._ensure_console_chat_controller()
-        controller.app = host
+        bind_app(controller, host)
         controller.skill_install_confirm_timeout_seconds = lambda: 30.0
         store = controller.store
         viewed = store.active_session_id
@@ -2122,9 +2123,9 @@ async def test_skill_install_park_toast_survives_a_re_invocation_for_the_same_ro
         store.switch_session(viewed)
 
         notifications: list[str] = []
-        controller.app.notify = lambda message, **kwargs: notifications.append(
+        update_app(controller, notify=lambda message, **kwargs: notifications.append(
             str(message)
-        )
+        ))
 
         prior_cancel_present = background in controller._active_cancel_events
         prior_cancel_event = controller._active_cancel_events.get(background)
@@ -2207,7 +2208,7 @@ async def test_skill_script_park_toast_survives_a_re_invocation_for_the_same_rou
             is None
         )
         controller = console._ensure_console_chat_controller()
-        controller.app = host
+        bind_app(controller, host)
         controller.skill_script_confirm_timeout_seconds = lambda: 30.0
         store = controller.store
         viewed = store.active_session_id
@@ -2215,9 +2216,9 @@ async def test_skill_script_park_toast_survives_a_re_invocation_for_the_same_rou
         store.switch_session(viewed)
 
         notifications: list[str] = []
-        controller.app.notify = lambda message, **kwargs: notifications.append(
+        update_app(controller, notify=lambda message, **kwargs: notifications.append(
             str(message)
-        )
+        ))
 
         prior_cancel_present = background in controller._active_cancel_events
         prior_cancel_event = controller._active_cancel_events.get(background)

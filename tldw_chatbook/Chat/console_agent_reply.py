@@ -138,7 +138,7 @@ async def _run_agent_reply(
     project_activation_callback = None
     if session is not None and project_state.project_instructions_enabled:
         try:
-            registry = getattr(self.app, "workspace_registry_service", None)
+            registry = self._host.workspace_registry_service
         except Exception:
             registry = None
         try:
@@ -577,7 +577,7 @@ async def _run_agent_reply(
             frozen_workspace_roots(
                 frozen_workspace_id,
                 frozen_workspace_binding_authority,
-                registry=getattr(self.app, "workspace_registry_service", None),
+                registry=self._host.workspace_registry_service,
             )
         )
         change_roots: list = [

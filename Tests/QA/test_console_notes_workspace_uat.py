@@ -21,6 +21,7 @@ from tldw_chatbook.MCP.permission_store import (
     definition_hash,
     resolve_effective_state,
 )
+from Tests.Chat.console_controller_factory import bind_app
 
 
 UAT_MESSAGE = "Hi from tldw_Chatbook!"
@@ -83,7 +84,7 @@ class ScratchPermissionService:
 
 def _controller_with(service: ScratchPermissionService) -> ConsoleChatController:
     controller = object.__new__(ConsoleChatController)
-    controller.app = SimpleNamespace(unified_mcp_service=service)
+    bind_app(controller, SimpleNamespace(unified_mcp_service=service))
     controller._pending_approval_event = None
     controller._pending_approval_decisions = None
     return controller

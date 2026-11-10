@@ -76,6 +76,7 @@ from tldw_chatbook.Notifications import (
     ClientNotificationsService,
     EventStateRepository,
     NotificationDispatchService,
+    NotifyTarget,
     NotificationsScopeService,
     ServerNotificationsService,
 )
@@ -3947,7 +3948,9 @@ def test_app_wires_local_and_server_skills_services():
         app.local_media_reading_service.notification_dispatcher
         is app.notification_dispatch_service
     )
-    assert app.local_media_reading_service.notification_app is app
+    # TASK-36947.4: a notify-only target, not the app (the Console reaches it).
+    media_target = app.local_media_reading_service.notification_app
+    assert isinstance(media_target, NotifyTarget) and media_target is not app
     assert isinstance(app.server_research_service, ServerResearchService)
     assert isinstance(app.research_scope_service, ResearchScopeService)
     assert isinstance(app.local_research_search_service, LocalResearchSearchService)

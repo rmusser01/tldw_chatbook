@@ -85,7 +85,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Library_Modules/prompt_save_ack.py": 548,
     "tldw_chatbook/UI/Library_Modules/screen_helpers.py": 401,
     "tldw_chatbook/UI/Console_Modules/command_handoff.py": 322,
-    "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1567,
+    "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1566,
     "tldw_chatbook/UI/Library_Modules/canvas_sync.py": 1314,
     "tldw_chatbook/Notes/notes_sync_startup.py": 34,
     "tldw_chatbook/UI/Console_Modules/session_prompt_seed.py": 109,
@@ -245,9 +245,10 @@ _BUDGETS: dict[str, int] = {
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
     # 2026-11-07, TASK-39044 (owner size waiver): +7, an automatic turn drops
     # the chat's previous ordinary outcome id at acceptance.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29167,
+    "tldw_chatbook/Chat/console_chat_controller.py": 29125,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
-    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
+    # 2026-11-09, TASK-36947.4: 6298 -> 6285, the exact measurement (host reads).
+    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6285,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
     # 2026-10-31 PR3295 R1: user-waived cap; exact remembered-prompt-delta measurement.
     "tldw_chatbook/Chat/console_context_compaction.py": 4217,
@@ -944,7 +945,7 @@ _BUDGETS: dict[str, int] = {
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
     # the agent bridge gets the services bundle's storage (+1).
-    "tldw_chatbook/Chat/console_runtime.py": 7040,
+    "tldw_chatbook/Chat/console_runtime.py": 7039,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-337 amendment 2026-10-27). The proof itself lives in

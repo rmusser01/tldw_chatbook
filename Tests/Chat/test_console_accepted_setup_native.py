@@ -16,6 +16,7 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleDispatchCheckpointState,
 )
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+from Tests.Chat.console_controller_factory import bind_runtime_app
 
 pytestmark = [
     pytest.mark.asyncio,
@@ -32,6 +33,7 @@ async def test_accepted_setup_native_error_preserves_actual_outcome(
     owned_console_databases(db, controller)
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     configuration = await controller.capture_turn_configuration_snapshot("session-1")
     entered, release = asyncio.Event(), asyncio.Event()

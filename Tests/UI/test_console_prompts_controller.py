@@ -63,6 +63,9 @@ class ConsoleHarness(ConsolidatedCSSApp):
         self.app_instance = app_instance
 
     async def on_mount(self) -> None:
+        from Tests.UI.app_factory import republish_services
+
+        republish_services(self.app_instance)  # TASK-36947.4
         await self.push_screen(ChatScreen(self.app_instance))
 
 

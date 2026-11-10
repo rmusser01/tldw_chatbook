@@ -8,6 +8,7 @@ from unittest.mock import Mock
 import pytest
 
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from Tests.Chat.console_controller_factory import bind_app
 
 
 class _Card:
@@ -274,7 +275,7 @@ async def test_typed_answer_resolves_a_real_round_through_the_real_card_and_comp
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
             cards = app.query_one(ChatTaskCards)
-            controller.app = app
+            bind_app(controller, app)
             controller.set_pending_question = lambda payload: cards.sync_state(
                 TaskResumeState(pending_question=payload)
             )

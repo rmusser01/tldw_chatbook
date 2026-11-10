@@ -40,6 +40,7 @@ from tldw_chatbook.Chat.console_turn_context import (
     ConsoleTurnCustodyRequest,
 )
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+from Tests.Chat.console_controller_factory import bind_app, bind_runtime_app
 
 
 def test_view_hook_slot_keeps_canonical_model_and_historical_runtime_identity() -> None:
@@ -256,6 +257,7 @@ def _runtime_with(controller: ConsoleChatController, view: _View) -> ConsoleRunt
     """A runtime holding `controller`, attached to `view`."""
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(controller.store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     view.attachment_generation = runtime.attach_view(view)
     runtime.finish_view_reconciliation(view, view.attachment_generation)
@@ -690,7 +692,7 @@ async def test_leaving_console_does_not_resolve_a_pending_approval_round():
     controller = ConsoleChatController(store=store, provider_gateway=_StalledGateway())
     controller.mcp_approval_timeout_seconds = lambda: 60.0
     # Without an app the round never reaches the poll loop -- see `_ThreadApp`.
-    controller.app = _ThreadApp()
+    bind_app(controller, _ThreadApp())
     mounted = threading.Event()
     view = _View({"set_pending_approval": lambda payload: mounted.set()})
     runtime = _runtime_with(controller, view)
@@ -814,7 +816,7 @@ async def test_a_round_from_the_previous_visit_is_not_resurrected():
     controller = ConsoleChatController(store=store, provider_gateway=_StalledGateway())
     controller.mcp_approval_timeout_seconds = lambda: 60.0
     # Without an app the round never reaches the poll loop -- see `_ThreadApp`.
-    controller.app = _ThreadApp()
+    bind_app(controller, _ThreadApp())
     runtime = _runtime_with(controller, _View())
 
     decisions: dict[str, str] = {}
@@ -1015,6 +1017,7 @@ async def test_dispose_shuts_the_controller_down_and_closes_the_gateway():
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
     runtime.set_provider_gateway(gateway)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     runtime.attach_view(_View())
 
@@ -1043,6 +1046,7 @@ async def test_dispose_does_not_let_a_late_ensure_rebuild_the_runtime():
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
     runtime.set_provider_gateway(gateway)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     runtime.attach_view(_View())
 
@@ -1096,6 +1100,7 @@ async def test_leaving_console_does_not_close_the_provider_gateway():
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
     runtime.set_provider_gateway(gateway)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     runtime.attach_view(_View())
 

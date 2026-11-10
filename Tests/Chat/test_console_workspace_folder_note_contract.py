@@ -33,6 +33,7 @@ from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools import workspace_file_roots as roots_module
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+from Tests.Chat.console_controller_factory import bind_app, bound_app
 
 WORKSPACE_ID = "ws-proj"
 
@@ -364,7 +365,7 @@ async def test_index_scope_preparation_runs_off_loop_and_note_tracks_final_tools
     main = threading.current_thread()
     seen = []
 
-    def key_for(app, workspace, binding, root):
+    def key_for(_service, workspace, binding, root):
         seen.append(threading.current_thread())
         return ProjectIndexKey(
             "data",
@@ -382,11 +383,12 @@ async def test_index_scope_preparation_runs_off_loop_and_note_tracks_final_tools
         )
     )
     monkeypatch.setattr(runtime, "get_project_index_service", lambda app: service)
-    monkeypatch.setattr(runtime, "project_index_key", key_for)
+    # TASK-36947.4: the preparation keys off the host-resolved service.
+    monkeypatch.setattr(runtime, "project_index_key_for_service", key_for)
     controller = object.__new__(ConsoleChatController)
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         workspace_registry_service=run.service, unified_mcp_service=None
-    )
+    ))
     controller.store = SimpleNamespace(sessions=lambda: [run.session])
 
     async def mcp(*args, **kwargs):
@@ -451,7 +453,7 @@ async def test_enabled_index_preserves_saved_library_policy_and_scope(
         tmp_path, monkeypatch, native=True, automatic=automatic, access=access
     )
     try:
-        app = case.controller.app
+        app = bound_app(case.controller)
         service = await asyncio.to_thread(get_project_index_service, app)
         key = await asyncio.to_thread(
             project_index_key, app, "owned", case.aliases["owned"], tmp_path / "owned"
@@ -492,7 +494,7 @@ async def test_enabled_index_preserves_saved_library_policy_and_scope(
         assert case.session.rag_scope_holder.scope == scope
         assert len(case.service.calls) == automatic
     finally:
-        await close_project_index_service(case.controller.app)
+        await close_project_index_service(bound_app(case.controller))
         await case.controller.shutdown()
         case.runs.close()
         case.db.close()

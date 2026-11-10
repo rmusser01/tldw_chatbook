@@ -57,6 +57,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
 )
 from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
 from Tests.console_provider_doubles import provider_resolution
+from Tests.Chat.console_controller_factory import bind_app
 
 
 def _ui_module():
@@ -569,12 +570,12 @@ async def test_preview_fails_closed_when_run_log_binding_is_uncertain(
         allow_write=True,
         root_identity=controller_module._capture_project_root_identity(tmp_path),
     )
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         workspace_registry_service=SimpleNamespace(
             get_runtime_binding=lambda _binding_id: selection.binding
         ),
         unified_mcp_service=None,
-    )
+    ))
     monkeypatch.setattr(
         bridge_module,
         "build_run_log_request_plan",
@@ -666,12 +667,12 @@ async def test_controller_preview_uses_live_destination_fresh_tools_and_raw_admi
         allow_write=True,
         root_identity=controller_module._capture_project_root_identity(tmp_path),
     )
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         workspace_registry_service=SimpleNamespace(
             get_runtime_binding=lambda _binding_id: selection.binding
         ),
         unified_mcp_service=None,
-    )
+    ))
     monkeypatch.setattr(
         controller_module,
         "resolve_project_instruction_binding",
@@ -811,12 +812,12 @@ async def test_controller_preview_applies_live_skill_turn_before_admission(
         allow_write=True,
         root_identity=controller_module._capture_project_root_identity(tmp_path),
     )
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         workspace_registry_service=SimpleNamespace(
             get_runtime_binding=lambda _binding_id: selection.binding
         ),
         unified_mcp_service=None,
-    )
+    ))
     monkeypatch.setattr(
         controller_module,
         "resolve_project_instruction_binding",
@@ -923,7 +924,7 @@ async def test_preview_revalidates_authority_after_awaited_composition(
         agent_bridge=bridge,
         agent_runtime_enabled=True,
     )
-    controller.app = SimpleNamespace(workspace_registry_service=registry)
+    bind_app(controller, SimpleNamespace(workspace_registry_service=registry))
     controller._compose_agent_request_providers = compose
     monkeypatch.setattr(
         controller_module.ProjectInstructionResolver,
@@ -1013,7 +1014,7 @@ async def test_parked_session_preview_does_not_publish_global_mcp_counts(
         console_mcp_tool_count=41,
         console_mcp_not_connected_count=7,
     )
-    controller.app = app
+    bind_app(controller, app)
     selection = SimpleNamespace(
         binding=SimpleNamespace(binding_id="binding-1"),
         root=tmp_path,
@@ -1225,12 +1226,12 @@ async def test_controller_preview_does_not_advance_live_session_state(
         allow_write=True,
         root_identity=controller_module._capture_project_root_identity(tmp_path),
     )
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         workspace_registry_service=SimpleNamespace(
             get_runtime_binding=lambda _binding_id: selection.binding
         ),
         unified_mcp_service=None,
-    )
+    ))
     controller._run_state_histories[session.id] = []
     monkeypatch.setattr(
         controller_module,
@@ -1332,7 +1333,7 @@ async def test_context_preview_never_reads_project_instructions_when_agent_dispa
         agent_bridge=bridge,
         agent_runtime_enabled=runtime_enabled,
     )
-    controller.app = SimpleNamespace(workspace_registry_service=object())
+    bind_app(controller, SimpleNamespace(workspace_registry_service=object()))
     binding_resolver = Mock(
         side_effect=AssertionError("bypassed dispatch resolved project binding")
     )
@@ -1483,12 +1484,12 @@ async def test_captured_context_uses_own_session_destination_model_system_and_re
         allow_write=True,
         root_identity=controller_module._capture_project_root_identity(tmp_path),
     )
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         workspace_registry_service=SimpleNamespace(
             get_runtime_binding=lambda _binding_id: selection.binding
         ),
         unified_mcp_service=None,
-    )
+    ))
     monkeypatch.setattr(
         controller_module,
         "resolve_project_instruction_binding",
@@ -1596,12 +1597,12 @@ async def test_captured_context_uses_provider_fallbacks_for_images_and_admission
         allow_write=True,
         root_identity=controller_module._capture_project_root_identity(tmp_path),
     )
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         workspace_registry_service=SimpleNamespace(
             get_runtime_binding=lambda _binding_id: selection.binding
         ),
         unified_mcp_service=None,
-    )
+    ))
     monkeypatch.setattr(
         bridge_module,
         "build_run_log_request_plan",

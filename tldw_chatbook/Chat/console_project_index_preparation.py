@@ -13,10 +13,8 @@ if TYPE_CHECKING:
 
 def prepare_project_index_scopes(self: ConsoleChatController, admitted_roots):
     """Retire registry handles opened by scope preparation, including guards."""
-    from tldw_chatbook.Workspaces.project_index.runtime import get_project_index_service
-
     try:
-        service = get_project_index_service(self.app)
+        service = self._host.read_project_index_service()
         with service.registry_connection_scope():
             return _prepare_project_index_scopes_owned(self, admitted_roots)
     except Exception:
@@ -28,10 +26,7 @@ def _prepare_project_index_scopes_owned(self: ConsoleChatController, admitted_ro
     """Read compatible immutable scopes off-loop after exact run capture."""
     from types import MappingProxyType
     from tldw_chatbook.Tools.remote_root_types import is_remote, local_root_path
-    from tldw_chatbook.Workspaces.project_index.runtime import (
-        get_project_index_service,
-        project_index_key,
-    )
+    from tldw_chatbook.Workspaces.project_index.runtime import project_index_key_for_service
 
     scopes = {}
     service = None
@@ -44,10 +39,10 @@ def _prepare_project_index_scopes_owned(self: ConsoleChatController, admitted_ro
             root = local_root_path(
                 authority.root, site="project index scope preparation"
             )
-            key = project_index_key(
-                self.app, authority.workspace_id, authority.binding_id, root
+            service = self._host.read_project_index_service()
+            key = project_index_key_for_service(
+                service, authority.workspace_id, authority.binding_id, root
             )
-            service = get_project_index_service(self.app)
             status = service.status(key)
             compatible = status.state in {"Ready", "Partial"}
             if status.state == "Building" and status.indexed > 0:

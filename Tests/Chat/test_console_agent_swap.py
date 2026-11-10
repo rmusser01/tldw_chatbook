@@ -51,6 +51,7 @@ from Tests.Agents.test_mcp_tool_provider import (
 )
 from Tests.console_provider_doubles import provider_resolution, with_destination
 from Tests.console_provider_doubles import persisted_console_store
+from Tests.Chat.console_controller_factory import bind_app, bound_app, update_app
 
 # Real controller sends use the configuration admitted at collection time.
 # Every test here drives ConsoleChatController.submit_draft (or its queue /
@@ -1652,7 +1653,7 @@ async def test_mcp_provider_not_wired_when_no_unified_mcp_service(tmp_path):
     controller, store, _db = _controller(tmp_path, [["ok."]])
     captured = []
     controller._agent_bridge.run_reply = _capturing_run_reply(captured)
-    controller.app = _fake_app()  # no unified_mcp_service attribute at all
+    bind_app(controller, _fake_app())  # no unified_mcp_service attribute at all
 
     result = await controller.submit_draft("hi")
 
@@ -1674,7 +1675,7 @@ async def test_mcp_provider_not_wired_when_kill_switch_on(tmp_path):
         kill_switch=True,
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
     )
-    controller.app = _fake_app(service)
+    bind_app(controller, _fake_app(service))
 
     result = await controller.submit_draft("hi")
 
@@ -1692,7 +1693,7 @@ async def test_mcp_provider_not_wired_when_catalog_empty(tmp_path):
     captured = []
     controller._agent_bridge.run_reply = _capturing_run_reply(captured)
     service = FakeMCPService()  # no catalog records, no builtin inventory
-    controller.app = _fake_app(service)
+    bind_app(controller, _fake_app(service))
 
     result = await controller.submit_draft("hi")
 
@@ -1712,7 +1713,7 @@ async def test_mcp_provider_wired_when_eligible(tmp_path):
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
     )
-    controller.app = _fake_app(service)
+    bind_app(controller, _fake_app(service))
 
     result = await controller.submit_draft("hi")
 
@@ -1755,7 +1756,7 @@ async def test_review_hook_and_run_reply_share_one_builtin_gate(tmp_path, monkey
     controller, store, _db = _controller(tmp_path, [["ok."]])
     captured = []
     controller._agent_bridge.run_reply = _capturing_run_reply(captured)
-    controller.app = _fake_app()  # no unified_mcp_service -- MCP is irrelevant here
+    bind_app(controller, _fake_app())  # no unified_mcp_service -- MCP is irrelevant here
 
     sentinel = _SentinelBuiltinGate()
 
@@ -1832,7 +1833,7 @@ async def test_review_precheck_and_dispatch_share_captured_scratch(
     controller, store, _db = _controller(tmp_path, [["ok."]])
     captured = []
     controller._agent_bridge.run_reply = _capturing_run_reply(captured)
-    controller.app = _fake_app()
+    bind_app(controller, _fake_app())
     controller.request_mcp_approvals = lambda pending, **_kwargs: {
         row.call_id or row.llm_name: "approve_once" for row in pending
     }
@@ -1883,7 +1884,7 @@ async def test_mcp_tool_call_executes_end_to_end_when_state_allows(tmp_path):
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
         default_state=EffectiveToolState(state="allow", origin="tool_override"),
     )
-    controller.app = _fake_app(service)
+    bind_app(controller, _fake_app(service))
 
     result = await controller.submit_draft("please run it")
 
@@ -1914,7 +1915,7 @@ async def test_mcp_tool_call_ask_state_routes_through_review_hook_and_approves(
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
     )
-    controller.app = _fake_app(service)
+    bind_app(controller, _fake_app(service))
     controller.set_pending_approval = received.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
@@ -1966,7 +1967,7 @@ async def test_mcp_tool_call_session_approval_suppresses_card_on_next_turn(tmp_p
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
     )
-    controller.app = _fake_app(service)
+    bind_app(controller, _fake_app(service))
     controller.set_pending_approval = received.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
@@ -2026,7 +2027,7 @@ async def test_mcp_tool_call_ask_state_times_out_denies(tmp_path):
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
     )
-    controller.app = _fake_app(service)
+    bind_app(controller, _fake_app(service))
     controller.mcp_approval_timeout_seconds = lambda: 0.05
     controller.set_pending_approval = functools.partial(
         _mount_timeout_card, controller
@@ -2057,13 +2058,13 @@ async def test_mcp_tool_call_ask_state_times_out_denies(tmp_path):
 @pytest.mark.asyncio
 async def test_compose_mcp_provider_publishes_none_counts_when_no_service(tmp_path):
     controller, _store, _db = _controller(tmp_path, [["ok."]])
-    controller.app = _fake_app()  # no unified_mcp_service attribute at all
+    bind_app(controller, _fake_app())  # no unified_mcp_service attribute at all
 
     provider = await controller._compose_mcp_provider()
 
     assert provider is None
-    assert controller.app.console_mcp_tool_count is None
-    assert controller.app.console_mcp_not_connected_count is None
+    assert bound_app(controller).console_mcp_tool_count is None
+    assert bound_app(controller).console_mcp_not_connected_count is None
 
 
 @pytest.mark.asyncio
@@ -2073,26 +2074,26 @@ async def test_compose_mcp_provider_publishes_none_counts_when_kill_switch_on(tm
         kill_switch=True,
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])],
     )
-    controller.app = _fake_app(service)
+    bind_app(controller, _fake_app(service))
 
     provider = await controller._compose_mcp_provider()
 
     assert provider is None
-    assert controller.app.console_mcp_tool_count is None
-    assert controller.app.console_mcp_not_connected_count is None
+    assert bound_app(controller).console_mcp_tool_count is None
+    assert bound_app(controller).console_mcp_not_connected_count is None
 
 
 @pytest.mark.asyncio
 async def test_compose_mcp_provider_publishes_none_counts_when_catalog_empty(tmp_path):
     controller, _store, _db = _controller(tmp_path, [["ok."]])
     service = FakeMCPService()  # no catalog records, no builtin inventory
-    controller.app = _fake_app(service)
+    bind_app(controller, _fake_app(service))
 
     provider = await controller._compose_mcp_provider()
 
     assert provider is None
-    assert controller.app.console_mcp_tool_count is None
-    assert controller.app.console_mcp_not_connected_count is None
+    assert bound_app(controller).console_mcp_tool_count is None
+    assert bound_app(controller).console_mcp_not_connected_count is None
 
 
 @pytest.mark.asyncio
@@ -2105,14 +2106,14 @@ async def test_compose_mcp_provider_publishes_none_counts_when_get_kill_switch_r
         def get_kill_switch(self):
             raise RuntimeError("boom")
 
-    controller.app = _fake_app()
-    controller.app.unified_mcp_service = _RaisingService()
+    bind_app(controller, _fake_app())
+    update_app(controller, unified_mcp_service=_RaisingService())
 
     provider = await controller._compose_mcp_provider()
 
     assert provider is None
-    assert controller.app.console_mcp_tool_count is None
-    assert controller.app.console_mcp_not_connected_count is None
+    assert bound_app(controller).console_mcp_tool_count is None
+    assert bound_app(controller).console_mcp_not_connected_count is None
 
 
 @pytest.mark.asyncio
@@ -2131,17 +2132,17 @@ async def test_compose_mcp_provider_publishes_counts_when_eligible(tmp_path):
             _catalog_record("c", [_tool_dict("t3")], is_connected=True),
         ],
     )
-    controller.app = _fake_app(service)
+    bind_app(controller, _fake_app(service))
 
     provider = await controller._compose_mcp_provider()
 
     assert provider is not None
-    assert controller.app.console_mcp_tool_count == len(provider.list_catalog())
-    assert controller.app.console_mcp_tool_count == 2
+    assert bound_app(controller).console_mcp_tool_count == len(provider.list_catalog())
+    assert bound_app(controller).console_mcp_tool_count == 2
     assert (
-        controller.app.console_mcp_not_connected_count == provider.not_connected_count
+        bound_app(controller).console_mcp_not_connected_count == provider.not_connected_count
     )
-    assert controller.app.console_mcp_not_connected_count == 1
+    assert bound_app(controller).console_mcp_not_connected_count == 1
 
 
 # -- P5 review fix: the property that a sub-agent's MCP tool calls flow
@@ -2172,7 +2173,7 @@ async def test_mcp_tool_call_gates_subagent_call_same_as_primary(tmp_path):
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
     )
-    controller.app = _fake_app(service)
+    bind_app(controller, _fake_app(service))
     controller.mcp_approval_timeout_seconds = lambda: 0.05
     controller.set_pending_approval = functools.partial(
         _mount_timeout_card, controller
@@ -2224,7 +2225,7 @@ async def test_mcp_review_hook_raise_fails_open_but_invoke_gate_still_refuses(tm
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
     )
-    controller.app = _fake_app(service)
+    bind_app(controller, _fake_app(service))
 
     def _raise(_pending):
         raise RuntimeError("approval channel unavailable")

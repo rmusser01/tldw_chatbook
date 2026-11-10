@@ -1,4 +1,5 @@
 """Bounded Stop admission through the existing queue owner."""
+from Tests.Chat.console_controller_factory import bind_runtime_app, bound_app, update_app
 
 
 def test_user_work_and_chain_cap_prevent_continuation():
@@ -44,6 +45,7 @@ async def test_real_queue_stop_continuations_are_bounded(
     runtime = ConsoleRuntime(app=app)
     app.console_runtime = runtime
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     if ephemeral:
         session = store.create_session(ephemeral=True)
@@ -150,6 +152,7 @@ async def stop_case(tmp_path):
     runtime = ConsoleRuntime(app=app)
     app.console_runtime = runtime
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     entered = tmp_path / "entered"
     release = tmp_path / "release"
@@ -410,11 +413,12 @@ async def test_reviewed_plugin_drain_blocks_actual_stop_scheduler(
     installed = await case.install()
     from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 
-    case.controller.app.local_chat_conversation_service = ChatConversationService(
+    update_app(case.controller, local_chat_conversation_service=ChatConversationService(
         case.store.persistence.db
-    )
-    runtime = ConsoleRuntime(app=case.controller.app)
+    ))
+    runtime = ConsoleRuntime(app=bound_app(case.controller))
     runtime.set_chat_store(case.store)
+    bind_runtime_app(case.controller, runtime)
     runtime.set_chat_controller(case.controller)
     marker, release = tmp_path / "stop-ready", tmp_path / "stop-release"
     hook = command(
@@ -793,11 +797,12 @@ async def test_first_save_handoff_refuses_changed_authoritative_identity(
 
     case = native_console
     await case.install()
-    case.controller.app.local_chat_conversation_service = ChatConversationService(
+    update_app(case.controller, local_chat_conversation_service=ChatConversationService(
         case.store.persistence.db
-    )
-    runtime = ConsoleRuntime(app=case.controller.app)
+    ))
+    runtime = ConsoleRuntime(app=bound_app(case.controller))
     runtime.set_chat_store(case.store)
+    bind_runtime_app(case.controller, runtime)
     runtime.set_chat_controller(case.controller)
     hook = command(
         "print("

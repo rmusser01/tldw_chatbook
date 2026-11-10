@@ -22,6 +22,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
 )
 from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
 from tldw_chatbook.Workspaces.project_index.service import ProjectIndexService
+from Tests.Chat.console_controller_factory import bind_app
 
 
 def test_search_contract_is_implemented():
@@ -959,7 +960,7 @@ async def test_real_provider_registry_owner_spans_outer_close(
                 )
 
                 controller = object.__new__(ConsoleChatController)
-                controller.app = app
+                bind_app(controller, app)
                 results.append(controller._prepare_project_index_scopes(roots))
         except BaseException as error:
             errors.append(error)
@@ -1186,9 +1187,9 @@ async def test_committed_building_rows_reach_console_and_public_tool(
         monkeypatch.setattr(
             runtime, "get_project_index_service", lambda app: rig.service
         )
-        monkeypatch.setattr(runtime, "project_index_key", lambda *args: rig.key)
+        monkeypatch.setattr(runtime, "project_index_key_for_service", lambda *args: rig.key)
         controller = object.__new__(ConsoleChatController)
-        controller.app = SimpleNamespace()
+        bind_app(controller, SimpleNamespace())
         service, scopes = await asyncio.to_thread(
             controller._prepare_project_index_scopes, roots
         )
@@ -1258,9 +1259,9 @@ async def test_building_without_compatible_commits_is_not_advertised(
         monkeypatch.setattr(
             runtime, "get_project_index_service", lambda app: rig.service
         )
-        monkeypatch.setattr(runtime, "project_index_key", lambda *args: rig.key)
+        monkeypatch.setattr(runtime, "project_index_key_for_service", lambda *args: rig.key)
         controller = object.__new__(ConsoleChatController)
-        controller.app = SimpleNamespace()
+        bind_app(controller, SimpleNamespace())
         _, scopes = await asyncio.to_thread(
             controller._prepare_project_index_scopes,
             tuple(tool._admitted_roots.values()),

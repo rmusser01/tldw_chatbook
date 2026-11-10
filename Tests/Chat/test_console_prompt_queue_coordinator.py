@@ -42,6 +42,7 @@ from tldw_chatbook.Chat.console_prompt_queue_coordinator import (
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from Tests.console_provider_doubles import provider_resolution
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.Chat.console_controller_factory import bind_app, bind_runtime_app
 
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -442,6 +443,7 @@ async def test_queued_drain_enters_runtime_custody_before_controller_with_frozen
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
     runtime = ConsoleRuntime(SimpleNamespace())
     runtime.set_chat_store(store)
+    bind_app(controller, runtime._app)  # host as built at construction (TASK-36947.4)
     runtime.set_chat_controller(controller)
     accepted_requests = []
     original_accept_turn = runtime.accept_turn
@@ -804,6 +806,7 @@ async def test_preaccept_refusal_returns_claim_to_head_and_writes_no_history():
     controller, store, session_id = _arm_controller(gateway)
     runtime = ConsoleRuntime(SimpleNamespace())
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     history = RecordingPromptHistory()
     controller.prompt_history = history

@@ -270,7 +270,7 @@ def test_prompt_fixtures_are_reachable_but_four_of_five_golden_queries_are_not(
         # refuted itself twice in this arc.
         runtime.service.config.search.default_search_mode = "hybrid"
         payload = runtime.run(
-            LibraryLocalRagSearchService(runtime.app).search(
+            LibraryLocalRagSearchService.from_app(runtime.app).search(
                 PROMPT_REACHABILITY_QUERY, SOURCE_TYPES, "rag", top_k=K
             )
         )

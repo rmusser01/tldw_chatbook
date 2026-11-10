@@ -4,6 +4,7 @@ import importlib
 import sqlite3
 
 import pytest
+from Tests.Chat.console_controller_factory import bind_app
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -80,6 +81,7 @@ def build_goal_rig(stores, monkeypatch, provider=None, *, resolved=None):
         agent_bridge=bridge,
         agent_runtime_enabled=True,
     )
+    bind_app(controller, runtime._app)  # test apps publish no services bundle (TASK-36947.4)
     controller._confirm_project_instruction_dispatch = lambda notice: "proceed"
     coordinator = mod.ConsoleGoalCoordinator(controller, owner)
     controller._goal_coordinator = coordinator

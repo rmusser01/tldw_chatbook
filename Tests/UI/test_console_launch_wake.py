@@ -319,15 +319,16 @@ async def test_a_launch_delivers_a_wake_owed_from_a_previous_process(tmp_path):
             "mark -- the user has no way to learn the supervisor turn ever ran"
         )
 
-        # The app handle the launch-built controller needs. Deliberately not
-        # a view-hook slot (it is the APP, which outlives every view), and
-        # nothing else here would notice it missing: it is what carries a
-        # headless approval round's app-wide toast and its
-        # `call_from_thread` bridge (the headless-approval landing). A
+        # The host the launch-built controller needs (TASK-36947.4: built
+        # over the app by the runtime, never the app itself). Deliberately
+        # not a view-hook slot, and nothing else here would notice it
+        # missing: it carries a headless approval round's app-wide toast and
+        # its `call_from_thread` bridge (the headless-approval landing). A
         # wiring assertion, labelled as one -- the consequence itself is
         # owned by `Tests/UI/test_console_headless_approval.py`.
-        assert app.console_runtime.chat_controller.app is app, (
-            "the launch-built controller has no app handle, so a headless "
+        host = app.console_runtime.chat_controller._host
+        assert host.call_from_thread == app.call_from_thread and host.notify == app.notify, (
+            "the launch-built controller has no host bridge, so a headless "
             "approval round in a launch wake could surface nothing"
         )
 

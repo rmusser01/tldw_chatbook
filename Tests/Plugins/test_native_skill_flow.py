@@ -1,6 +1,7 @@
 """Native package behavior through the production Console skill path."""
 
 import pytest
+from Tests.Chat.console_controller_factory import bind_app
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
@@ -61,9 +62,9 @@ async def test_native_plugin_reaches_actual_console_provider_payload(
             model="m",
             skills_service=skills,
         )
-        controller.app = SimpleNamespace(
+        bind_app(controller, SimpleNamespace(
             local_skills_service=local, skills_scope_service=skills
-        )
+        ))
         raw = f"${name} inspect this change"
         result = await controller.submit_draft(raw)
         assert result.accepted is True

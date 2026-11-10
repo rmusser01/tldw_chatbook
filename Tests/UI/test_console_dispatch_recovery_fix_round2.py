@@ -16,6 +16,7 @@ from tldw_chatbook.UI.Console_Modules.dispatch_recovery import (
     ConsoleDispatchRecoveryRegion,
 )
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+from Tests.Chat.console_controller_factory import bind_runtime_app
 
 
 @pytest.mark.asyncio
@@ -35,6 +36,7 @@ async def test_mounted_retry_resumes_interrupted_postcommit_on_app_owned_control
         runtime = console._console_runtime()
         runtime.set_chat_store(store)
         runtime.set_provider_gateway(gateway)
+        bind_runtime_app(controller, runtime)
         runtime.set_chat_controller(controller)
         counts = _install_real_effect_failure(
             controller,

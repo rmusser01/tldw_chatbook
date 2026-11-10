@@ -7,7 +7,7 @@ import secrets
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -52,6 +52,14 @@ class _Operation:
     request_ids: set[str] = field(default_factory=set)
 
 
+def app_recovery_operations(app: Any) -> dict[str, Callable[..., Awaitable[Any]]]:
+    """The coordinator's storage operations as narrow callables over ``app``."""
+    return {
+        "read_target": lambda conversation_id: read_recovery_target(app, conversation_id),
+        "execute_restore": lambda *args, **kwargs: execute_restore(app, *args, **kwargs),
+    }
+
+
 class ArchiveRecoveryCoordinator:
     """Own storage until settlement, independent of waiters and mounted views.
 
@@ -61,12 +69,15 @@ class ArchiveRecoveryCoordinator:
 
     def __init__(
         self,
-        app: Any,
         results: ArchiveResultStore,
         *,
+        read_target: Callable[[str], Awaitable[Any]],
+        execute_restore: Callable[..., Awaitable[Any]],
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._app = app
+        # TASK-36947.4: narrow callables over the app, never the app itself.
+        self._read_target = read_target
+        self._execute_restore = execute_restore
         self._results = results
         self._monotonic = monotonic
         self._lock = asyncio.Lock()
@@ -371,7 +382,7 @@ class ArchiveRecoveryCoordinator:
 
     async def _prepare(self, op: _Operation, scope: RestoreScope | None) -> None:
         try:
-            current = await read_recovery_target(self._app, op.target.conversation_id)
+            current = await self._read_target(op.target.conversation_id)
             if op.result.done():
                 return
             if current != op.target:
@@ -474,8 +485,7 @@ class ArchiveRecoveryCoordinator:
             op.phase = value
 
         try:
-            result = await execute_restore(
-                self._app,
+            result = await self._execute_restore(
                 op.target,
                 scope,
                 replacement_name=op.confirmation.replacement_name,
@@ -496,7 +506,7 @@ class ArchiveRecoveryCoordinator:
             target = old.target
         try:
             read_task = asyncio.create_task(
-                read_recovery_target(self._app, target.conversation_id)
+                self._read_target(target.conversation_id)
             )
             self._tasks[read_task] = old
             read_task.add_done_callback(self._forget_task)

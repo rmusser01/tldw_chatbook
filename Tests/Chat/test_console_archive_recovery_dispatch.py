@@ -12,6 +12,7 @@ from Tests.Chat.test_archive_recovery_operations import (
 )
 from tldw_chatbook.Chat.archive_recovery.contracts import ArchiveRecoveryError
 from tldw_chatbook.Chat.archive_recovery.runtime import ArchiveRecoveryRuntime
+from Tests.Chat.console_controller_factory import bind_app, bind_runtime_app
 
 # Native Windows profile admission precedes the fake gateway; this is a
 # bounded integration wait, not the archive service operation deadline.
@@ -23,7 +24,7 @@ async def test_search_publishes_typed_app_record_and_manual_refs_stay_manual(
     recovery_stores,
 ):
     app, cid, _ = recovery_stores
-    runtime = ArchiveRecoveryRuntime(app)
+    runtime = ArchiveRecoveryRuntime.for_app(app)
     presentations = []
     runtime.present_results = presentations.append
     result = await runtime.search("source", {}, model_visible=False)
@@ -49,7 +50,7 @@ async def test_search_publishes_typed_app_record_and_manual_refs_stay_manual(
 @pytest.mark.asyncio
 async def test_unknown_fields_and_foreign_cursor_refused(recovery_stores):
     app, _, _ = recovery_stores
-    runtime = ArchiveRecoveryRuntime(app)
+    runtime = ArchiveRecoveryRuntime.for_app(app)
     for args in ({"conversation_id": "raw"}, {"cursor": "invented"}):
         with pytest.raises(ArchiveRecoveryError):
             await runtime.search("source", args, model_visible=True)
@@ -255,6 +256,7 @@ async def test_real_console_native_dispatch_waits_for_exact_confirmation(
             else LibraryRagToolProvider(None)
         ),
     )
+    bind_app(controller, owner._app)  # host as built at construction (TASK-36947.4)
     owner.set_chat_controller(controller)
     controller._archive_recovery_runtime = recovery
     approval_ready = asyncio.Event()
@@ -366,7 +368,7 @@ async def test_real_console_native_dispatch_waits_for_exact_confirmation(
         )
 
         app.conversation_local_marks_service = ConversationLocalMarksService(db)
-        controller.fleet_wake.wire(app=app)
+        controller.fleet_wake.wire()
         proof = recovery.issue_user_proof(source.id)
         # Try carrying a genuine UI-issued proof into the real unattended
         # producer; admission must still honor the executed wake origin.
@@ -635,7 +637,7 @@ async def test_search_respects_both_real_database_thread_owners(
         return search(self, *args, **kwargs)
 
     monkeypatch.setattr(ArchiveSearchService, "search", observed)
-    runtime = ArchiveRecoveryRuntime(app)
+    runtime = ArchiveRecoveryRuntime.for_app(app)
     try:
         result = await runtime.search("source", {}, model_visible=True)
         assert result["items"][0]["conversation_id"] == cid
@@ -654,7 +656,7 @@ async def test_cancelled_shutdown_joins_started_search_and_blocks_late_publicati
     recovery_stores, monkeypatch
 ):
     app, _, _ = recovery_stores
-    runtime = ArchiveRecoveryRuntime(app)
+    runtime = ArchiveRecoveryRuntime.for_app(app)
     started = threading.Event()
     release = threading.Event()
     search = ArchiveSearchService.search
@@ -742,7 +744,7 @@ async def test_native_unicode_projection_fits_entire_envelope_without_skipping_r
         )
         db.set_conversations_archived([cid], archived=True, expected_versions={cid: 1})
         expected.add(cid)
-    runtime = ArchiveRecoveryRuntime(app)
+    runtime = ArchiveRecoveryRuntime.for_app(app)
     runtime.is_answerable = lambda _: True
     provider = admitted(runtime)
     await asyncio.to_thread(provider.activate, "native-bounds")
@@ -780,6 +782,7 @@ async def test_console_terminal_session_close_revokes_recovery_state(recovery_st
     source = store.create_session(title="Source")
     controller = ConsoleChatController(store=store, provider_gateway=None)
     owner.set_chat_store(store)
+    bind_app(controller, owner._app)  # host as built at construction (TASK-36947.4)
     owner.set_chat_controller(controller)
     runtime = owner.ensure_archive_recovery()
     await runtime.search(source.id, {}, model_visible=False)
@@ -847,7 +850,7 @@ async def test_shutdown_joins_first_search_already_owned_by_session_close(
     recovery_stores, monkeypatch, cancel_waiters
 ):
     app, _, _ = recovery_stores
-    runtime = ArchiveRecoveryRuntime(app)
+    runtime = ArchiveRecoveryRuntime.for_app(app)
     started, release = threading.Event(), threading.Event()
     original = ArchiveSearchService.search
 
@@ -915,6 +918,7 @@ async def test_first_queue_edit_initializes_recovery_for_the_existing_controller
     app, _, _ = recovery_stores
     owner = app.console_runtime = ConsoleRuntime(app)
     controller = SimpleNamespace()
+    bind_runtime_app(controller, owner)
     owner.set_chat_controller(controller)
     assert owner._archive_recovery is None
     editor = ConsolePromptQueueUIController.__new__(ConsolePromptQueueUIController)

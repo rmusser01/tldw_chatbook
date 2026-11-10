@@ -118,7 +118,7 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory() as tmp:
         runtime = build_eval_runtime(corpus, tmp)
-        seam = LibraryLocalRagSearchService(runtime.app)
+        seam = LibraryLocalRagSearchService.from_app(runtime.app)
         lookup = slug_lookup_from(runtime.slug_to_source)
         cfg = runtime.service.config.search
         original = getattr(cfg, "default_search_mode", None)

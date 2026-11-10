@@ -4,6 +4,7 @@ import hashlib
 import json
 
 import pytest
+from Tests.Chat.console_controller_factory import update_app
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -605,7 +606,7 @@ raise SystemExit(0 if value == 'valid\\n' else 7)
     )
     controller._agent_bridge._skills_service = scope
     controller.set_pending_skill_script = lambda *args, **kwargs: None
-    controller.app.unified_mcp_service = _FakeService(state=ALLOW)
+    update_app(controller, unified_mcp_service=_FakeService(state=ALLOW))
     from tldw_chatbook.Tools import workspace_file_roots
 
     monkeypatch.setattr(workspace_file_roots, "_registry_factory", lambda: registry)
@@ -798,7 +799,7 @@ async def test_configured_local_goal_live(stores, monkeypatch, tmp_path):
     )
     controller._agent_bridge._skills_service = scope
     controller.set_pending_skill_script = lambda *args, **kwargs: None
-    controller.app.unified_mcp_service = _FakeService(state=ALLOW)
+    update_app(controller, unified_mcp_service=_FakeService(state=ALLOW))
     from tldw_chatbook.Tools import workspace_file_roots
 
     monkeypatch.setattr(workspace_file_roots, "_registry_factory", lambda: registry)

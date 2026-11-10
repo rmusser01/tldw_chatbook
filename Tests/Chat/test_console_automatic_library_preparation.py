@@ -72,6 +72,7 @@ from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalControlle
 from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
     build_library_rag_evidence_bundle,
 )
+from Tests.Chat.console_controller_factory import bind_app
 
 # These controllers read canonical hook authority before sending. Keep the
 # selected private config profile, as the existing marked recovery cases do.
@@ -426,7 +427,7 @@ def _capturing_controller(store, gateway, app) -> ConsoleChatController:
             capture_console_prepared_evidence_for_chat, app
         ),
     )
-    controller.app = app
+    bind_app(controller, app)
     return controller
 
 
@@ -533,7 +534,7 @@ def _controller_for_preparation(
         provider_gateway=_StreamingFence(),
         library_preparation_timeout=timeout,
     )
-    controller.app = SimpleNamespace(library_rag_search_service=service)
+    bind_app(controller, SimpleNamespace(library_rag_search_service=service))
     return controller, store
 
 
@@ -641,7 +642,7 @@ async def _paused_queued_send(*, persistence=None, gateway=None):
     gateway = gateway or _BlockingFirstFence()
     service = _RagService(error=RuntimeError("queued retrieval failed"))
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    controller.app = SimpleNamespace(library_rag_search_service=service)
+    bind_app(controller, SimpleNamespace(library_rag_search_service=service))
 
     chain = asyncio.create_task(
         controller.run_prompt_chain("owner", session_id=session.id)
@@ -994,7 +995,7 @@ async def test_retrieval_failure_never_dispatches_provider():
     gateway = _StreamingFence()
     service = _RagService(error=RuntimeError("backend unavailable"))
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    controller.app = SimpleNamespace(library_rag_search_service=service)
+    bind_app(controller, SimpleNamespace(library_rag_search_service=service))
 
     result = await controller.submit_draft("exact user text")
 
@@ -1055,7 +1056,7 @@ async def test_a_failed_automatic_capture_sends_no_evidence():
         provider_gateway=gateway,
         automatic_evidence_capture=failing_capture,
     )
-    controller.app = _capture_app(service, "note-1")
+    bind_app(controller, _capture_app(service, "note-1"))
 
     result = await controller.submit_draft("exact user text")
 
@@ -1121,7 +1122,7 @@ async def test_repeated_successes_leave_no_preparation_or_outcome_accumulation()
     store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
     gateway = _StreamingFence()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    controller.app = SimpleNamespace(library_rag_search_service=_RagService())
+    bind_app(controller, SimpleNamespace(library_rag_search_service=_RagService()))
 
     for index in range(25):
         result = await controller.submit_draft(f"turn {index}")
@@ -1145,7 +1146,7 @@ async def test_never_and_nonordinary_text_skip_automatic_retrieval():
         service = _RagService(error=AssertionError("automatic retrieval spent"))
         gateway = _StreamingFence()
         controller = ConsoleChatController(store=store, provider_gateway=gateway)
-        controller.app = SimpleNamespace(library_rag_search_service=service)
+        bind_app(controller, SimpleNamespace(library_rag_search_service=service))
 
         result = await controller.submit_draft(draft)
 
@@ -1165,7 +1166,7 @@ async def test_explicit_staged_evidence_skips_duplicate_automatic_retrieval():
         provider_gateway=gateway,
         staged_evidence_provider=lambda _session_id: True,
     )
-    controller.app = SimpleNamespace(library_rag_search_service=service)
+    bind_app(controller, SimpleNamespace(library_rag_search_service=service))
 
     result = await controller.submit_draft("ordinary text")
 
@@ -1264,7 +1265,7 @@ async def test_queued_failure_returns_exact_claim_without_foreground_copy():
     gateway = _BlockingFirstFence()
     service = _RagService(error=RuntimeError("queued retrieval failed"))
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    controller.app = SimpleNamespace(library_rag_search_service=service)
+    bind_app(controller, SimpleNamespace(library_rag_search_service=service))
 
     chain = asyncio.create_task(
         controller.run_prompt_chain("accepted owner", session_id=session.id)
@@ -1375,7 +1376,7 @@ async def test_text_with_attachment_is_automatic_eligible_and_preserved_until_re
     controller = ConsoleChatController(
         store=store, provider_gateway=gateway, model="vision-model"
     )
-    controller.app = SimpleNamespace(library_rag_search_service=service)
+    bind_app(controller, SimpleNamespace(library_rag_search_service=service))
 
     first = await controller.submit_draft("describe attachment", session_id=session.id)
 
@@ -1398,7 +1399,7 @@ async def test_evidence_probe_error_skips_duplicate_automatic_spend():
             RuntimeError()
         ),
     )
-    controller.app = SimpleNamespace(library_rag_search_service=service)
+    bind_app(controller, SimpleNamespace(library_rag_search_service=service))
 
     result = await controller.submit_draft("ordinary text")
 
@@ -1430,7 +1431,7 @@ async def test_recovery_destination_change_pauses_without_dispatch():
     )
     service = _RagService(error=RuntimeError("first search failed"))
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    controller.app = SimpleNamespace(library_rag_search_service=service)
+    bind_app(controller, SimpleNamespace(library_rag_search_service=service))
     first = await controller.submit_draft("frozen draft")
     paused = store.preparation_for_session(first.session_id)
     service.error = None
@@ -1577,7 +1578,7 @@ async def test_queued_recovery_reclaims_same_entry_then_advances_without_spin(ac
     gateway = _BlockingFirstFence()
     service = _RagService(error=RuntimeError("queued retrieval failed"))
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    controller.app = SimpleNamespace(library_rag_search_service=service)
+    bind_app(controller, SimpleNamespace(library_rag_search_service=service))
 
     chain = asyncio.create_task(
         controller.run_prompt_chain("owner", session_id=session.id)
@@ -1795,7 +1796,7 @@ async def test_durable_single_entry_reclaim_releases_its_chain(
     service = _RagService(error=RuntimeError("queued retrieval failed"))
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
     owned_console_databases(db, controller)
-    controller.app = SimpleNamespace(library_rag_search_service=service)
+    bind_app(controller, SimpleNamespace(library_rag_search_service=service))
     chain = asyncio.create_task(
         controller.run_prompt_chain("owner", session_id=session.id)
     )
@@ -2033,7 +2034,7 @@ async def test_recovery_uses_frozen_staged_inputs_and_leaves_new_state_staged(
         model="vision-model",
     )
     assert await controller.hook_admission_reason() is None
-    controller.app = SimpleNamespace(library_rag_search_service=service)
+    bind_app(controller, SimpleNamespace(library_rag_search_service=service))
 
     first = await controller.submit_draft("frozen draft", session_id=session.id)
     paused = store.preparation_for_session(session.id)
@@ -2087,7 +2088,7 @@ async def test_recovery_resolution_exception_pauses_without_ready_wedge(action):
     gateway = _ResolverFailureFence()
     service = _RagService(error=RuntimeError("pause first"))
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    controller.app = SimpleNamespace(library_rag_search_service=service)
+    bind_app(controller, SimpleNamespace(library_rag_search_service=service))
     first = await controller.submit_draft("frozen draft")
     paused = store.preparation_for_session(first.session_id)
     service.error = None
@@ -2161,7 +2162,7 @@ async def test_repeated_recovery_actions_return_stable_submit_results_without_ke
     store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
     service = _RagService(error=RuntimeError("pause first"))
     controller = ConsoleChatController(store=store, provider_gateway=_StreamingFence())
-    controller.app = SimpleNamespace(library_rag_search_service=service)
+    bind_app(controller, SimpleNamespace(library_rag_search_service=service))
     first = await controller.submit_draft("frozen draft")
     paused = store.preparation_for_session(first.session_id)
 
@@ -2181,7 +2182,7 @@ async def test_losing_ready_commit_cas_returns_paused_submit_result(monkeypatch)
     store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
     service = _RagService(error=RuntimeError("pause first"))
     controller = ConsoleChatController(store=store, provider_gateway=_StreamingFence())
-    controller.app = SimpleNamespace(library_rag_search_service=service)
+    bind_app(controller, SimpleNamespace(library_rag_search_service=service))
     first = await controller.submit_draft("frozen draft")
     paused = store.preparation_for_session(first.session_id)
     service.error = None
@@ -2248,7 +2249,7 @@ async def test_agent_setup_failure_never_claims_dispatch_started(monkeypatch):
     store.set_session_project_instruction_state(
         session.id, ProjectInstructionControlState.legacy_disabled()
     )
-    controller.app = SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args))
+    bind_app(controller, SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args)))
     observed = []
 
     async def fail_setup(**_kwargs):
@@ -2281,7 +2282,7 @@ async def test_actual_agent_call_observes_dispatch_started():
     store.set_session_project_instruction_state(
         session.id, ProjectInstructionControlState.legacy_disabled()
     )
-    controller.app = SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args))
+    bind_app(controller, SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args)))
 
     result = await controller.submit_draft("frozen draft", session_id=session.id)
 
@@ -2336,7 +2337,7 @@ async def test_zero_match_contribution_survives_until_provider_attempt_then_clea
 
     gateway = ContributionFence()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    controller.app = SimpleNamespace(library_rag_search_service=_RagService())
+    bind_app(controller, SimpleNamespace(library_rag_search_service=_RagService()))
 
     result = await controller.submit_draft("frozen draft")
 
@@ -2383,7 +2384,7 @@ async def test_shutdown_tracks_accepted_submit_and_rechecks_before_external_call
     store.set_session_project_instruction_state(
         session.id, ProjectInstructionControlState.legacy_disabled()
     )
-    controller.app = SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args))
+    bind_app(controller, SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args)))
     held = _CancellationResistantBoundary()
     if path == "direct":
 
@@ -2438,7 +2439,7 @@ async def test_shutdown_tracks_committing_submit_before_stream_registration(
     store = ConsoleChatStore()
     store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
     controller = ConsoleChatController(store=store, provider_gateway=_StreamingFence())
-    controller.app = SimpleNamespace(library_rag_search_service=_RagService())
+    bind_app(controller, SimpleNamespace(library_rag_search_service=_RagService()))
     held = _CancellationResistantBoundary()
 
     async def hold_history(_draft):
@@ -2491,7 +2492,7 @@ async def test_close_drops_submit_owner_before_cancelled_task_finalizer(
     store = ConsoleChatStore()
     store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
     controller = ConsoleChatController(store=store, provider_gateway=_StreamingFence())
-    controller.app = SimpleNamespace(library_rag_search_service=_RagService())
+    bind_app(controller, SimpleNamespace(library_rag_search_service=_RagService()))
     held = _CancellationResistantBoundary()
     if boundary == "history":
 
@@ -2816,7 +2817,7 @@ async def test_postaccept_cancellation_returns_exact_accepted_result(monkeypatch
     store.set_session_project_instruction_state(
         session.id, ProjectInstructionControlState.legacy_disabled()
     )
-    controller.app = SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args))
+    bind_app(controller, SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args)))
     held = _CancellationBoundary()
     if path == "direct":
 
@@ -2899,7 +2900,7 @@ async def test_off_thread_begin_shutdown_schedules_owner_loop_cancellation(
         store.set_session_project_instruction_state(
             session.id, ProjectInstructionControlState.legacy_disabled()
         )
-        controller.app = SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args))
+        bind_app(controller, SimpleNamespace(call_from_thread=lambda fn, *args: fn(*args)))
         held = _CancellationBoundary()
         if path == "direct":
 
@@ -2953,7 +2954,7 @@ def test_live_loop_shutdown_cancels_and_awaits_submit_without_asyncio_diagnostic
     session = store.create_session(session_id="live-session")
     gateway = _StreamingFence()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    controller.app = SimpleNamespace(library_rag_search_service=_RagService())
+    bind_app(controller, SimpleNamespace(library_rag_search_service=_RagService()))
     held = asyncio.Event()
 
     async def hold_history(_draft):
@@ -3032,7 +3033,7 @@ def test_closed_loop_pending_submit_is_emergency_detachment(monkeypatch, caplog)
     session = store.create_session(session_id="closed-session")
     gateway = _StreamingFence()
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    controller.app = SimpleNamespace(library_rag_search_service=_RagService())
+    bind_app(controller, SimpleNamespace(library_rag_search_service=_RagService()))
     held = asyncio.Event()
 
     async def hold_history(_draft):

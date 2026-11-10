@@ -23,6 +23,7 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_configuration_preparation import (
     ConsoleTurnCaptureSelection,
 )
+from Tests.Chat.console_controller_factory import bind_app
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
@@ -31,6 +32,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 async def intent_case():
     runtime, store, session, request = complete_case()
     controller = ConsoleChatController(store=store, provider_gateway=SimpleNamespace())
+    bind_app(controller, runtime._app)  # host as built at construction (TASK-36947.4)
     runtime.set_chat_controller(controller)
     store.set_session_draft(session.id, request.draft)
     try:

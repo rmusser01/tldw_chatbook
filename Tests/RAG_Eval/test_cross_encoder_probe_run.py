@@ -538,7 +538,7 @@ def test_the_cross_encoder_probe_over_the_real_fixtures(tmp_path, capsys, monkey
             LibraryLocalRagSearchService,
         )
 
-        seam = LibraryLocalRagSearchService(runtime.app)
+        seam = LibraryLocalRagSearchService.from_app(runtime.app)
         lookup = slug_lookup_from(runtime.slug_to_source)
         queries_with_scope = tuple(
             (query, build_query_scope(runtime.slug_to_source, query))

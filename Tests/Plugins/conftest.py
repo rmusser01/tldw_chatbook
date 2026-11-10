@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from Tests.Plugins.platform_support import require_managed_runtime
+from Tests.Chat.console_controller_factory import bind_app
 
 
 @pytest.fixture
@@ -158,11 +159,11 @@ async def native_console(tmp_path, native_package):
         model="m",
         skills_service=skills,
     )
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         local_skills_service=local,
         skills_scope_service=skills,
         workspace_registry_service=registry,
-    )
+    ))
 
     async def install(*, metadata="", tools=None, enable=True):
         package = native_package()

@@ -89,6 +89,11 @@ from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
+from Tests.Chat.console_controller_factory import (
+    bind_app,
+    bind_fleet_marks,
+    bind_runtime_app,
+)
 
 
 async def _settle(predicate, seconds: float = 5.0) -> bool:
@@ -269,7 +274,8 @@ def _controller_rig(tmp_path, *, session_title="Research", ensure_run_hooks=None
         agent_runtime_enabled=False,
         ensure_run_hooks=ensure_run_hooks,
     )
-    controller.fleet_wake.wire(app=app)
+    bind_fleet_marks(controller, app)
+    controller.fleet_wake.wire()
     return chacha, app, runs_db, store, session, gateway, bridge, controller
 
 
@@ -513,9 +519,11 @@ async def test_a_survivor_settle_wakes_the_supervisor_with_a_machine_notice(
             agent_bridge=bridge,
             agent_runtime_enabled=False,
         )
-        controller.fleet_wake.wire(app=app)
+        bind_fleet_marks(controller, app)
+        controller.fleet_wake.wire()
         runtime = ConsoleRuntime(app)
         runtime.set_chat_store(store)
+        bind_app(controller, runtime._app)  # host as built at construction (TASK-36947.4)
         runtime.set_chat_controller(controller)
         screen_context_calls: list[str] = []
 
@@ -767,6 +775,7 @@ async def test_a_refused_wake_loses_nothing_and_is_retried(tmp_path, request):
     try:
         runtime = ConsoleRuntime(app)
         runtime.set_chat_store(store)
+        bind_runtime_app(controller, runtime)
         runtime.set_chat_controller(controller)
         _parent, run_id = _terminal_subagent_run(runs_db, session.id)
         app.conversation_local_marks_service.set_mark(
@@ -818,6 +827,7 @@ async def test_post_durable_runtime_failure_settles_bound_wake_once(tmp_path, re
     try:
         runtime = ConsoleRuntime(app)
         runtime.set_chat_store(store)
+        bind_runtime_app(controller, runtime)
         runtime.set_chat_controller(controller)
         _parent, run_id = _terminal_subagent_run(runs_db, session.id)
         submit_draft = controller.submit_draft

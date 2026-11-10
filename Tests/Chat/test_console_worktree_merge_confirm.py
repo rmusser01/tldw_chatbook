@@ -40,6 +40,7 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from Tests.console_provider_doubles import persisted_console_store
+from Tests.Chat.console_controller_factory import bind_app
 
 
 def _wait_until(predicate: Callable[[], bool], timeout: float = 5.0) -> None:
@@ -69,7 +70,7 @@ def make_controller() -> Callable[[], ConsoleChatController]:
     def _make() -> ConsoleChatController:
         store = persisted_console_store()
         controller = ConsoleChatController(store=store, provider_gateway=object())
-        controller.app = _FakeApp()
+        bind_app(controller, _FakeApp())
         controller.pending_worktree_merge_payloads = []
         controller.set_pending_worktree_merge = (
             controller.pending_worktree_merge_payloads.append
@@ -92,7 +93,7 @@ def make_controller() -> Callable[[], ConsoleChatController]:
 def test_no_ui_bridge_denies_immediately(make_controller):
     """Headless must fail closed at once, not block for the full timeout."""
     controller = make_controller()
-    controller.app = None
+    bind_app(controller, None)
     controller.set_pending_worktree_merge = None
     decision = controller.request_worktree_merge_confirm({"handle_id": "h1"})
     assert decision == {"allow": False}

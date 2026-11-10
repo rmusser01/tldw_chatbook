@@ -76,6 +76,7 @@ from tldw_chatbook.Chat.console_turn_preparation import (
 )
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from Tests.Chat.console_controller_factory import bind_app
 
 
 def _context(
@@ -236,7 +237,7 @@ async def test_automatic_preparation_uses_fixed_categories_and_scripted_outcomes
         provider_gateway=recorder,
         library_preparation_timeout=0.01,
     )
-    controller.app = SimpleNamespace(library_rag_search_service=recorder)
+    bind_app(controller, SimpleNamespace(library_rag_search_service=recorder))
 
     outcome = await controller.prepare_library_for_turn("preparation-1")
 

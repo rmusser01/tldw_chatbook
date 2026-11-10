@@ -42,6 +42,7 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.Chat.console_prompt_queue import PromptQueueMode
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Chat.console_prompt_queue_coordinator import _PromptChain
+from Tests.Chat.console_controller_factory import bind_app
 
 
 class _OriginalSettlementGateway:
@@ -392,7 +393,7 @@ async def test_automatic_accepted_restart_retry_requeries_durable_evidence(
     )
     session.library_policy_holder.explicitly_staged = True
     service = _RagService({"results": [_row()]})
-    controller.app = SimpleNamespace(library_rag_search_service=service)
+    bind_app(controller, SimpleNamespace(library_rag_search_service=service))
     persistence = store.persistence
     assert persistence is not None
 

@@ -55,6 +55,7 @@ from tldw_chatbook.Chat.library_preparation import (
     LibraryPreparationContribution,
     LibraryPreparationEvent,
 )
+from Tests.Chat.console_controller_factory import bind_app
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
@@ -124,11 +125,11 @@ async def test_real_persistence_retry_reuses_exact_staged_message_owners(
     db, store, controller, gateway = _controller(tmp_path)
     _set_auto_policy(store, auto_retrieve)
     if auto_retrieve is ConsoleAutoRetrieve.AUTOMATIC:
-        controller.app = SimpleNamespace(
+        bind_app(controller, SimpleNamespace(
             library_rag_search_service=_RagService(
                 result={"runtime_backend": "local", "results": [_row()]}
             )
-        )
+        ))
     persistence = store.persistence
     assert persistence is not None
     original_commit = persistence.commit_durable_turn

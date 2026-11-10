@@ -3,10 +3,11 @@
 Binds the served mobile companion surface (Phase 1b) to the real Console
 engine inside the parent process: one lazily constructed
 ``ConsoleChatController`` + persisted ``ConsoleChatStore`` + real
-``ConsoleAgentBridge`` per service instance, with a duck-typed
-``HeadlessAppContext`` standing in for the Textual App the controller's
-agent/approval paths read (construction recipe: the 2026-10-15
-mobile-engine-binding spike, Docs/superpowers/spikes/).
+``ConsoleAgentBridge`` per service instance. The controller receives a
+``ConsoleControllerHost`` with the members its agent/approval paths read
+(TASK-36947.4); a duck-typed ``HeadlessAppContext`` remains only for the
+resume helpers (construction recipe: the 2026-10-15 mobile-engine-binding
+spike, Docs/superpowers/spikes/).
 
 No Textual anywhere on this module's own paths: ``call_from_thread`` is a
 direct invocation (there is no UI loop to marshal onto), the approval
@@ -78,6 +79,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleSubmissionOrigin,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_controller_host import ConsoleControllerHost
 from tldw_chatbook.Chat.console_conversation_hydration import (
     ConversationLoadFailed,
     ConversationServiceUnavailable,
@@ -273,36 +275,21 @@ class MobileEvent:
 
 
 class HeadlessAppContext:
-    """Duck-typed stand-in for the Textual App the controller reads.
+    """Duck-typed stand-in for the App the persisted-session resume helpers read.
 
-    The agent path touches App attributes via ``getattr(..., None)`` and
-    tolerates absence; the two that MUST exist are ``unified_mcp_service``
-    (permission-store owner for the local ``fs_*`` tools — store-less means
-    fail-closed ``"ask"``) and ``workspace_registry_service`` (admitted
-    workspace roots — without it the ``fs_*`` family is never advertised).
-    ``call_from_thread`` is the only METHOD the approval path calls; off
-    the UI loop a direct invocation is correct (spike note).
-
-    The persisted-session resume machinery additionally reads
+    ``load_console_conversation_tree`` and ``hydrate_console_session`` read
     ``chachanotes_db`` and ``chat_conversation_scope_service`` (the same two
     attributes the TUI resume and the launch wake read off the real App) —
     here they point at the service's own isolated mobile chat DB, so the
-    lazy restore hydrates exactly the conversations this surface owns.
+    lazy restore hydrates exactly the conversations this surface owns. The
+    controller no longer reads it (TASK-36947.4); removing it is a follow-up.
     """
 
     def __init__(
         self,
-        workspace_registry_service: LocalWorkspaceRegistryService,
         chachanotes_db: CharactersRAGDB,
         conversation_service: ChatConversationService,
     ) -> None:
-        self.unified_mcp_service = UnifiedMCPControlPlaneService(
-            target_store=None,
-            context_store=None,
-            local_service=None,
-            server_service=None,
-        )
-        self.workspace_registry_service = workspace_registry_service
         self.chachanotes_db = chachanotes_db
         # Local-only scope service over the mobile chat DB, same shape the
         # app wires: no server service, no policy gates — mode "local" is
@@ -312,9 +299,10 @@ class HeadlessAppContext:
             server_service=None,
         )
 
-    def call_from_thread(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        """Invoke directly — there is no UI loop to marshal onto."""
-        return fn(*args, **kwargs)
+
+def _call_directly(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Invoke directly — there is no UI loop to marshal onto (spike note)."""
+    return fn(*args, **kwargs)
 
 
 @dataclass
@@ -520,13 +508,33 @@ class MobileChatService:
                 # hooks-free profile admits sends. No ``ensure_run_hooks`` is
                 # wired: mobile v1 does not fire run hooks (spike shape).
                 hook_permissions_accessor=lambda: self._ensure_hook_permissions(),
+                # The agent path needs the store-less MCP service (the permission
+                # owner for the local ``fs_*`` tools; no store means fail-closed
+                # ``"ask"``) and the registry (admitted roots; without it the
+                # ``fs_*`` family is never advertised). Every other host member
+                # and capability is absent. Two differ from the old app
+                # stand-in (TASK-36947.4): there is no project index service
+                # (the stand-in built one over the profile data dir, but no
+                # mobile binding can be index-enabled, so its scopes were
+                # always empty and the turn never received it), and Console
+                # attention and the inspector counts are not published (the
+                # stand-in only absorbed them as attributes nothing read).
+                host=ConsoleControllerHost(
+                    unified_mcp_service=UnifiedMCPControlPlaneService(
+                        target_store=None,
+                        context_store=None,
+                        local_service=None,
+                        server_service=None,
+                    ),
+                    workspace_registry_service=registry,
+                    chachanotes_db=chat_db,
+                    call_from_thread=_call_directly,
+                ),
             )
             app_context = HeadlessAppContext(
-                workspace_registry_service=registry,
                 chachanotes_db=chat_db,
                 conversation_service=conversation_service,
             )
-            controller.app = app_context
             controller.set_pending_approval = self._on_pending_approval
             self._engine = _Engine(
                 registry=registry,
@@ -1255,8 +1263,8 @@ class MobileChatService:
     def _on_pending_approval(self, payload: dict[str, Any] | None) -> None:
         """Capture callback for ``controller.set_pending_approval``.
 
-        Runs on the agent worker thread (delivered through
-        ``HeadlessAppContext.call_from_thread``); every mutation of
+        Runs on the agent worker thread (delivered through the controller
+        host's direct ``call_from_thread``); every mutation of
         loop-owned state is marshalled into the event loop.
         """
         loop = self._loop

@@ -4,6 +4,8 @@ from dataclasses import replace
 
 import pytest
 
+from Tests.Chat.console_controller_factory import bind_app
+
 pytestmark = pytest.mark.bootstrap_profile
 
 
@@ -357,7 +359,7 @@ def test_host_final_arbitration_wins_after_controller_receipt(terminal):
 
     controller, chat = _build_controller()
     session = chat.ensure_session()
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     policy = MCPInvocationPolicy(
         current=lambda: True,
         deadline=time.monotonic() + 3,
@@ -487,7 +489,7 @@ def test_reducer_failure_preserves_controller_verdict_release_and_cleanup(
 
     controller, chat = _build_controller()
     session = chat.ensure_session()
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
 
     def broken(*args, **kwargs):
         raise RuntimeError("observation unavailable")
@@ -708,7 +710,7 @@ def test_captured_legacy_flag_is_required_for_synthesized_name_identity():
 
     controller, chat = _build_controller()
     session = chat.ensure_session()
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     row = replace(_pending(), call_id="command", legacy_observation_key=True)
     controller.set_pending_approval = lambda payload: (
         controller.resolve_pending_approval(

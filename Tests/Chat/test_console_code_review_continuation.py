@@ -13,6 +13,7 @@ from tldw_chatbook.Agents.agent_models import AgentDefinition
 from tldw_chatbook.Agents.run_context import current_run_actor
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+from Tests.Chat.console_controller_factory import bind_app, bound_app
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -121,9 +122,11 @@ async def test_default_two_child_schedule(
     app.unified_mcp_service = mcp
     mounted = app.run_test(size=(100, 30))
     await mounted.__aenter__()
-    # Stands in for ChatScreen's attach: the app plus the report presenter.
+    # Stands in for the runtime-built host plus ChatScreen's attach of the
+    # report presenter (TASK-36947.4: the attach no longer hands over the app).
     from tldw_chatbook.UI.Console_Modules import wiring
 
+    bind_app(controller, app)
     wiring.attach_review_presenter(controller, app)
     controller.request_mcp_approvals = lambda calls, **kw: (
         {call.llm_name: permission_decision for call in calls}
@@ -877,7 +880,7 @@ async def test_mounted_stop_wins_while_native_reader_waits_for_ui_guard(tmp_path
             nonlocal first
             if first:
                 first = False
-                controller.app.call_from_thread(stop_before_guard)
+                bound_app(controller).call_from_thread(stop_before_guard)
             return guard(write)
 
         object.__setattr__(admitted, "guard", pending_guard)

@@ -30,6 +30,7 @@ from tldw_chatbook.Chat.console_chat_controller import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from Tests.Chat.console_controller_factory import bind_app
 
 
 class FakeApp:
@@ -59,7 +60,7 @@ def controller():
     """
     store = ConsoleChatStore()
     ctrl = ConsoleChatController(store=store, provider_gateway=object())
-    ctrl.app = FakeApp()
+    bind_app(ctrl, FakeApp())
     ctrl.set_pending_skill_install = lambda payload: None
     ctrl.skill_install_confirm_timeout_seconds = lambda: 30.0
     ctrl.session_a = store.create_session(title="A").id
@@ -375,7 +376,7 @@ def test_teardown_clear_does_not_clobber_a_newer_same_session_round_arming_mid_t
     session_a = store.create_session(title="A").id
     store.switch_session(session_a)
     app = _DeferredClearApp()
-    controller.app = app
+    bind_app(controller, app)
     mounted: list[dict | None] = []
     controller.set_pending_skill_install = mounted.append
     controller.skill_install_confirm_timeout_seconds = lambda: 30.0

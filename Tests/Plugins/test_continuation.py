@@ -4,6 +4,7 @@ import pytest
 
 from tldw_chatbook.Agents.activation import worker_guard
 from tldw_chatbook.DB.base_db import run_owned_db_call
+from Tests.Chat.console_controller_factory import bind_app, bound_app
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
@@ -601,7 +602,7 @@ async def test_actual_console_producer_persists_v2_and_controller_resumes_it(
         agent_bridge=bridge,
         skills_service=rig.skills,
     )
-    controller.app = rig.controller.app
+    bind_app(controller, bound_app(rig.controller))
     maximum = rig.service.capture_maximum("workspace-a")
     maximum["plugin_run_id"] = "pending:initial-checkpoint"
     target = ContinuationRestoreTarget(

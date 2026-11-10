@@ -22,6 +22,7 @@ from tldw_chatbook.Chat.console_runtime import (
     ConsoleRuntime,
 )
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
+from Tests.Chat.console_controller_factory import bind_runtime_app
 
 pytestmark = [
     pytest.mark.asyncio,
@@ -252,6 +253,7 @@ async def test_lifecycle_outlives_original_grace_and_repeated_cancellation_until
     owned_console_databases(db, controller)
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     grace_entered = asyncio.Event()
     if action == "dispose_early":
@@ -377,6 +379,7 @@ async def test_close_retains_issued_save_while_executor_work_is_still_queued(
     provider_calls_before = gateway.calls
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     session = store.sessions()[0]
     loop = asyncio.get_running_loop()
@@ -500,6 +503,7 @@ async def test_runtime_native_drain_ends_before_unrelated_submit_tail(
     owned_console_databases(db, controller)
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     commit_entered, commit_release, _exited, _calls = _hold_original_commit(
         monkeypatch, store, after_commit=True
@@ -555,6 +559,7 @@ async def test_cancelled_accepted_settlement_keeps_loop_and_native_owner_live_un
     owned_console_databases(db, controller)
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     # Use the supported prepared-configuration route: this control measures
     # native settlement ownership, not cold configuration/import latency.
@@ -670,6 +675,7 @@ async def test_error_after_actual_terminal_settlement_does_not_leave_preparation
     owned_console_databases(db, controller)
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     configuration = await controller.capture_turn_configuration_snapshot("session-1")
     entered, release, _exited, commit_calls = _hold_original_commit(
@@ -768,6 +774,7 @@ async def test_trace_failure_after_actual_commit_releases_owners_and_preserves_c
     owned_console_databases(db, controller)
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     configuration = await controller.capture_turn_configuration_snapshot("session-1")
     _force_capture_on(monkeypatch)
@@ -908,6 +915,7 @@ async def test_revoked_continuation_rolls_back_real_acceptance_and_releases_nati
     runtime = ConsoleRuntime(app=app)
     app.console_runtime = runtime
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     authority = [True]
     handler = command(name="Stop", effects=["continuation"])

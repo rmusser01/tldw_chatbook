@@ -5,6 +5,7 @@ import json
 from uuid import uuid4
 
 import pytest
+from Tests.Chat.console_controller_factory import bind_runtime_app
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
@@ -63,6 +64,7 @@ async def test_interrupt_once_after_seal_and_revocation(
     runtime = ConsoleRuntime(app=app)
     app.console_runtime = runtime
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     if mounted:
         runtime.attach_view(_View({}))
@@ -187,6 +189,7 @@ async def test_real_mounted_console_stop_entry_emits_interrupt(tmp_path):
     app.console_runtime = runtime
     runtime.set_chat_store(store)
     runtime.set_provider_gateway(gateway)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     marker = tmp_path / "mounted-interrupt"
     engine = runtime.ensure_hooks_v2(
@@ -274,6 +277,7 @@ async def test_mounted_stop_button_cancels_pending_stop_proposal(
     app.console_runtime = runtime
     runtime.set_chat_store(store)
     runtime.set_provider_gateway(gateway)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     entered, release = tmp_path / "stop-entered", tmp_path / "stop-release"
     handler = command(

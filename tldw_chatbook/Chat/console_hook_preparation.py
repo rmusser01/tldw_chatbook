@@ -158,7 +158,6 @@ class _HookPreparationSource:
     workspace_database: Any = field(repr=False)
     consent: Any = field(repr=False)
     authority_reader: Any = field(repr=False)
-    controller_app: Any = field(repr=False)
     context_provider: Any = field(repr=False)
 
 def capture_hook_preparation_source(self, session_id, permissions):
@@ -190,7 +189,6 @@ def capture_hook_preparation_source(self, session_id, permissions):
         getattr(registry, "db", None),
         getattr(app, "change_review_consent_service", None),
         getattr(controller, "_hook_authority_values", None),
-        getattr(controller, "app", None),
         getattr(controller, "_turn_context_provider", None),
     )
 
@@ -242,8 +240,6 @@ def require_hook_preparation_source(self, source):
             and (
                 getattr(source.controller, "store", source.store)
                 is not source.store
-                or getattr(source.controller, "app", None)
-                is not source.controller_app
                 or getattr(source.controller, "_turn_context_provider", None)
                 is not source.context_provider
                 or getattr(source.controller, "_disposed", False)
@@ -362,7 +358,8 @@ def hooks_v2_context_key(self, session_id: str):
         and type(store) is ConsoleChatStore
         and type(controller) is controller_class
         and controller.store is store
-        and controller.app is app
+        and controller._host.workspace_registry_service is registry
+        and controller._host.change_review_consent_service is consent
         and controller._turn_context_provider is None
         and type(registry) is registry_class
         and type(database) is WorkspaceDB
@@ -413,7 +410,6 @@ def hooks_v2_context_key(self, session_id: str):
             or self._chat_store is not store
             or self._chat_controller is not controller
             or controller.store is not store
-            or controller.app is not app
             or controller._turn_context_provider is not None
             or not bindings_current()
             or getattr(store.persistence, "db", None) is not chat_database

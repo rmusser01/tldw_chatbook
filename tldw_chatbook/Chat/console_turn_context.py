@@ -77,7 +77,8 @@ def read_session_change_review_admission(
     composes, on its worker instead.
 
     Args:
-        app: Owning application services (the consent service).
+        app: Owning application services (the consent service): the app, or
+            the Console controller's ``ConsoleControllerHost``.
         store: The Console session store owning ``session_id``.
         session_id: The session whose roots to read.
 
@@ -107,7 +108,8 @@ def session_change_review_admission_stamp(
     made outside the app (another process, a folder removed on disk) do not.
 
     Args:
-        app: Owning application services (registry and consent service).
+        app: Owning application services (registry and consent service): the
+            app, or the Console controller's ``ConsoleControllerHost``.
         store: The Console session store owning ``session_id``.
         session_id: The session whose admission inputs to name.
 
@@ -151,7 +153,7 @@ def resolve_session_workspace_roots(
         KeyError: ``session_id`` is not one of the controller's sessions.
     """
     roots, _aliases, _skipped = read_session_change_review_admission(
-        controller.app, controller.store, session_id
+        controller._host, controller.store, session_id
     )
     return roots
 

@@ -41,6 +41,7 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.config import save_setting_to_cli_config
 from tldw_chatbook.MCP.builtin_tool_policy import BUILTIN_MCP_SERVER_KEY
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from Tests.Chat.console_controller_factory import bind_app, bound_app
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -620,7 +621,7 @@ async def test_the_tools_chip_counts_what_plain_chat_is_offered(tmp_path):
     bridge, _gateway, session, _assistant = _production_bridge(tmp_path, [])
     controller = controller_for(SimpleNamespace())
     controller._agent_bridge = bridge
-    controller.app = _fake_app(
+    bind_app(controller, _fake_app(
         FakeMCPService(
             inventory={
                 "tools": [
@@ -630,7 +631,7 @@ async def test_the_tools_chip_counts_what_plain_chat_is_offered(tmp_path):
             },
             catalog_records=[_catalog_record("weather", [_tool_dict("forecast")])],
         )
-    )
+    ))
 
     provider = await controller._compose_mcp_provider(session_id=session.id)
 
@@ -639,11 +640,11 @@ async def test_the_tools_chip_counts_what_plain_chat_is_offered(tmp_path):
     assert any(
         provider.server_key_for(name) == BUILTIN_MCP_SERVER_KEY for name in catalog
     ), sorted(catalog)
-    assert controller.app.console_mcp_tool_count == 1  # the user's weather server
-    assert controller.app.console_tool_count == len(LIGHT)
+    assert bound_app(controller).console_mcp_tool_count == 1  # the user's weather server
+    assert bound_app(controller).console_tool_count == len(LIGHT)
     chip = ConsoleControlState.from_values(
-        tool_count=controller.app.console_tool_count,
-        mcp_tool_count=controller.app.console_mcp_tool_count,
+        tool_count=bound_app(controller).console_tool_count,
+        mcp_tool_count=bound_app(controller).console_mcp_tool_count,
     )
     assert chip.tools_label == "Tools: 4 ready"
 
@@ -651,9 +652,9 @@ async def test_the_tools_chip_counts_what_plain_chat_is_offered(tmp_path):
     # and the built-ins go uncounted as before this task.
     assert save_setting_to_cli_config("tools", "full_agent_tools_enabled", True)
     provider = await controller._compose_mcp_provider(session_id=session.id)
-    assert controller.app.console_mcp_tool_count == len(provider.list_catalog())
-    assert controller.app.console_mcp_tool_count > 1
-    assert controller.app.console_tool_count == 0
+    assert bound_app(controller).console_mcp_tool_count == len(provider.list_catalog())
+    assert bound_app(controller).console_mcp_tool_count > 1
+    assert bound_app(controller).console_tool_count == 0
 
 
 @pytest.mark.asyncio
@@ -678,16 +679,16 @@ async def test_the_tools_chip_sees_the_sessions_live_sub_agents(tmp_path):
     bridge, _gateway, session, _assistant = _production_bridge(tmp_path, [])
     controller = controller_for(SimpleNamespace())
     controller._agent_bridge = bridge
-    controller.app = _fake_app(
+    bind_app(controller, _fake_app(
         FakeMCPService(
             catalog_records=[
                 _catalog_record("c", [_tool_dict("t1")], is_connected=True)
             ]
         )
-    )
+    ))
 
     await controller._compose_mcp_provider(session_id=session.id)
-    assert controller.app.console_tool_count == len(LIGHT)
+    assert bound_app(controller).console_tool_count == len(LIGHT)
 
     conversation_id = session.persisted_conversation_id or session.id
     bridge._fleet_coordinators[conversation_id] = _LiveFleet()
@@ -695,5 +696,5 @@ async def test_the_tools_chip_sees_the_sessions_live_sub_agents(tmp_path):
 
     # The agent surface: the built-ins go uncounted, as before this task,
     # and the whole composed catalog is offered.
-    assert controller.app.console_tool_count == 0
-    assert controller.app.console_mcp_tool_count == len(provider.list_catalog())
+    assert bound_app(controller).console_tool_count == 0
+    assert bound_app(controller).console_mcp_tool_count == len(provider.list_catalog())

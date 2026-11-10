@@ -978,7 +978,6 @@ async def capture_console_turn_configuration_owned(
             actual is not session
             or getattr(creator, "_disposed", False)
             or getattr(creator, "store", store) is not store
-            or getattr(creator, "app", app) is not app
             or config.current_config_identity() != config_identity
             or (
                 runtime is not None
@@ -1119,7 +1118,7 @@ async def capture_console_turn_configuration_owned(
 
 
 async def capture_runtime_configuration_owned(
-    controller, session_id, *, require_current, selection=None, prepared_skills=None
+    app, controller, session_id, *, require_current, selection=None, prepared_skills=None
 ):
     """Use the existing runtime's selected values and physical read observers."""
     store = controller.store
@@ -1158,7 +1157,7 @@ async def capture_runtime_configuration_owned(
             agent_runtime_enabled=controller._agent_runtime_enabled,
         )
     result = await capture_console_turn_configuration_owned(
-        controller.app,
+        app,
         store,
         session_id,
         selection=selection,
@@ -1177,12 +1176,12 @@ async def capture_runtime_configuration_owned(
 
 
 async def capture_mounted_configuration_owned(
-    controller, session_id, owner, provider, *, require_current
+    app, controller, session_id, owner, provider, *, require_current
 ):
     """Prepare a qualified mounted selection; custom producers retain fallback."""
     from tldw_chatbook.UI.Console_Modules import turn_admission
 
-    app, store = controller.app, controller.store
+    store = controller.store
     if not standard_console_configuration_sources(app, store, controller, session_id=session_id):
         return None
     # The UI owns the answer to "is this the stock capture seam"; Chat only asks.
@@ -1221,12 +1220,12 @@ async def capture_mounted_configuration_owned(
 
     current()
     return await capture_runtime_configuration_owned(
-        controller, session_id, require_current=current, selection=selection
+        app, controller, session_id, require_current=current, selection=selection
     )
 
 
 async def capture_received_configuration_owned(
-    controller, session_id, *, selection, prepared_skills=None
+    app, controller, session_id, *, selection, prepared_skills=None
 ):
     """Capture a detached receipt selection through the existing domain owner."""
     import sys
@@ -1238,7 +1237,7 @@ async def capture_received_configuration_owned(
         raise RecoveryRequired("console_snapshot_owner_changed")
     if not isinstance(selection, ConsoleTurnCaptureSelection):
         raise TypeError("selection must be ConsoleTurnCaptureSelection")
-    app, store = controller.app, controller.store
+    store = controller.store
     session = next((row for row in store.sessions() if row.id == session_id), None)
     if session is None:
         raise KeyError(session_id)
@@ -1252,8 +1251,7 @@ async def capture_received_configuration_owned(
 
     def current():
         if (
-            controller.app is not app
-            or controller.store is not store
+            controller.store is not store
             or next((row for row in store.sessions() if row.id == session_id), None)
             is not session
             or _configuration_session_identity(session) != identity
@@ -1277,12 +1275,13 @@ async def capture_received_configuration_owned(
     ):
         raise RecoveryRequired("console_snapshot_owner_changed")
     return await capture_runtime_configuration_owned(
-        controller, session_id, selection=selection,
+        app, controller, session_id, selection=selection,
         prepared_skills=prepared_skills, require_current=current,
     )
 
 
 async def _controller_capture_turn_configuration_snapshot(
+    app,
     self,
     session_id: str,
     *,
@@ -1290,7 +1289,11 @@ async def _controller_capture_turn_configuration_snapshot(
     selection: Any = None,
     _prepared_skills: Any = None,
 ) -> ConsoleTurnConfigurationSnapshot:
-    """Prepare fresh native MCP inputs before composing on the owning loop."""
+    """Prepare fresh native MCP inputs before composing on the owning loop.
+
+    ``app`` anchors the stock-source proofs; the controller's host passes its
+    own app here (TASK-36947.4) and a controller without a host passes None.
+    """
     import sys
     from types import MethodType
 
@@ -1307,7 +1310,7 @@ async def _controller_capture_turn_configuration_snapshot(
             capture_received_configuration_owned,
         )
         return await capture_received_configuration_owned(
-            self, session_id, selection=selection, prepared_skills=_prepared_skills
+            app, self, session_id, selection=selection, prepared_skills=_prepared_skills
         )
     original_provider = self._turn_context_provider
     provider = (
@@ -1337,7 +1340,6 @@ async def _controller_capture_turn_configuration_snapshot(
         standard_screen = is_stock_session_provider(provider)
     if provider is not None and not standard_screen:
         return synchronous_capture()
-    app = self.app
     app_config = getattr(app, "app_config", None)
     service = getattr(app, "unified_mcp_service", None)
     stock_mcp = standard_console_sources(service)
@@ -1392,7 +1394,6 @@ async def _controller_capture_turn_configuration_snapshot(
                 or runtime._chat_controller is not self
                 or runtime._chat_store is not store
                 or session_id in runtime._admission_fenced_sessions))
-            or self.app is not app
             or self.store is not store
             or current_session is not session
             or self._turn_context_provider is not original_provider
@@ -1437,7 +1438,7 @@ async def _controller_capture_turn_configuration_snapshot(
             capture_mounted_configuration_owned,
         )
         captured = await capture_mounted_configuration_owned(
-            self, session_id, screen_owner, provider, require_current=require_current
+            app, self, session_id, screen_owner, provider, require_current=require_current
         ) if stock_mcp else None
         if captured is not None:
             return captured
@@ -1450,7 +1451,7 @@ async def _controller_capture_turn_configuration_snapshot(
             app, store, self, session_id=session_id
         ):
             return await capture_runtime_configuration_owned(
-                self, session_id, require_current=require_current
+                app, self, session_id, require_current=require_current
             )
     if standard_screen:
         from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker

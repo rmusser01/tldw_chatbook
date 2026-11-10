@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from enum import Enum
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import Any, Hashable, Optional
 
@@ -245,6 +245,43 @@ def _validated_query(query: str) -> str:
     return sanitized
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LibraryRagSources:
+    """What the Library search service reads of the app, as narrow readers.
+
+    TASK-36947.4 (ADR-250 s7): the service holds no app, only these readers.
+    The five seams exist before ``_wire_study_services`` builds the service
+    and production never reassigns them; the readers stay late-bound, as the
+    attribute reads they replace were, because tests patch these app aliases
+    after construction. The RAG-cache pair must be callables either way: the
+    cache is app state that ``semantic_availability`` reads and writes.
+    """
+
+    read_notes_user_id: Callable[[], Any]
+    read_notes_scope_service: Callable[[], Any]
+    read_media_reading_scope_service: Callable[[], Any]
+    read_chachanotes_db: Callable[[], Any]
+    read_prompt_scope_service: Callable[[], Any]
+    #: The app's shared RAG runtime cache (``semantic_availability``).
+    read_rag_cache: Callable[[], Any]
+    write_rag_cache: Callable[[Any, int], None]
+
+    @classmethod
+    def for_app(cls, app: Any) -> LibraryRagSources:
+        """The readers over an app (or an app-like test double)."""
+        return cls(
+            read_notes_user_id=lambda: getattr(app, "notes_user_id", None),
+            read_notes_scope_service=lambda: getattr(app, "notes_scope_service", None),
+            read_media_reading_scope_service=lambda: getattr(
+                app, "media_reading_scope_service", None
+            ),
+            read_chachanotes_db=lambda: getattr(app, "chachanotes_db", None),
+            read_prompt_scope_service=lambda: getattr(app, "prompt_scope_service", None),
+            read_rag_cache=partial(current_app_rag_service, app),
+            write_rag_cache=partial(cache_app_rag_service, app),
+        )
+
+
 class LibraryLocalRagSearchService:
     """Keyword-first Library retrieval over the app's local source seams.
 
@@ -257,12 +294,22 @@ class LibraryLocalRagSearchService:
     the ACTIVE profile's decision, not a constant -- see `_search_rag`.
     """
 
-    def __init__(self, app_instance: Any) -> None:
-        self._app = app_instance
+    def __init__(self, sources: LibraryRagSources) -> None:
+        """Read the app's search seams through narrow readers (TASK-36947.4).
+
+        Args:
+            sources: The readers; ``from_app`` builds them over an app.
+        """
+        self._sources = sources
         #: TASK-33621.20 review: the one shared-runtime build in flight, which
         #: every caller joins (see `_shared_runtime_build`), with the shared
         #: service generation it was started under.
         self._runtime_build: tuple[int, asyncio.Future[tuple[Any, Any]]] | None = None
+
+    @classmethod
+    def from_app(cls, app: Any) -> LibraryLocalRagSearchService:
+        """The service over an app or an app-like double (tests, RAG harnesses)."""
+        return cls(LibraryRagSources.for_app(app))
 
     async def prewarm(self) -> bool:
         """Build the shared RAG runtime now, ahead of a time-boxed search.
@@ -448,7 +495,7 @@ class LibraryLocalRagSearchService:
         scope: Optional[EffectiveScope] = None,
     ) -> Any:
         """Fan out a keyword search over the notes/media/conversations/prompts seams."""
-        user_id = getattr(self._app, "notes_user_id", None) or "default_user"
+        user_id = self._sources.read_notes_user_id() or "default_user"
         is_scoped = scope is not None and scope.state == "scoped"
         note_allowlist = note_id_params(scope) if scope is not None else None
         media_allowlist = media_id_params(scope) if scope is not None else None
@@ -683,7 +730,7 @@ class LibraryLocalRagSearchService:
         id_allowlist: Optional[Sequence[str]] = None,
     ) -> tuple[SeamState, list[dict[str, Any]]]:
         """Search the notes seam. Returns (state, rows)."""
-        service = getattr(self._app, "notes_scope_service", None)
+        service = self._sources.read_notes_scope_service()
         if service is None:
             return SeamState.UNAVAILABLE, []
         # Forward the allowlist only when provided so an unscoped call
@@ -730,7 +777,7 @@ class LibraryLocalRagSearchService:
         id_allowlist: Optional[Sequence[str]] = None,
     ) -> tuple[SeamState, list[dict[str, Any]]]:
         """Search the media seam. Returns (state, rows)."""
-        service = getattr(self._app, "media_reading_scope_service", None)
+        service = self._sources.read_media_reading_scope_service()
         if service is None:
             return SeamState.UNAVAILABLE, []
         # Forward the allowlist only when provided so an unscoped call
@@ -767,7 +814,7 @@ class LibraryLocalRagSearchService:
         top_k: int,
     ) -> tuple[SeamState, list[dict[str, Any]]]:
         """Search the conversations seam. Returns (state, rows)."""
-        db = getattr(self._app, "chachanotes_db", None)
+        db = self._sources.read_chachanotes_db()
         if db is None:
             return SeamState.UNAVAILABLE, []
 
@@ -816,7 +863,7 @@ class LibraryLocalRagSearchService:
         top_k: int,
     ) -> tuple[SeamState, list[dict[str, Any]]]:
         """Search the prompts seam. Returns (state, rows)."""
-        service = getattr(self._app, "prompt_scope_service", None)
+        service = self._sources.read_prompt_scope_service()
         if service is None:
             return SeamState.UNAVAILABLE, []
 
@@ -1107,7 +1154,7 @@ class LibraryLocalRagSearchService:
             The RAG runtime, or None when it is unavailable (missing deps or
             failed construction) -- the caller renders the recovery state.
         """
-        cached = current_app_rag_service(self._app)
+        cached = self._sources.read_rag_cache()
         if cached is not None:
             return cached
         if not embeddings_rag_deps_installed():
@@ -1125,7 +1172,7 @@ class LibraryLocalRagSearchService:
         # Cache on the app so every RAG surface (chat sidebar readiness,
         # repeat Library queries) sees the initialized runtime, stamped so a
         # later profile switch invalidates it.
-        cache_app_rag_service(self._app, service, generation)
+        self._sources.write_rag_cache(service, generation)
         return service
 
     def _shared_runtime_build(self) -> asyncio.Future[tuple[Any, Any]]:

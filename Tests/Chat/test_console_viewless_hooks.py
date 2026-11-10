@@ -61,6 +61,7 @@ import toml
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
+from Tests.Chat.console_controller_factory import bind_app, bind_runtime_app
 
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
@@ -94,6 +95,7 @@ def _runtime_for(rig) -> ConsoleRuntime:
     _chacha, app, _runs_db, store, _session, _gateway, _bridge, controller = rig
     runtime = ConsoleRuntime(app=app)
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     return runtime
 
@@ -465,8 +467,8 @@ async def test_skill_confirms_armed_viewless_wait_and_remount_without_denial(
     rig = _controller_rig(tmp_path)
     chacha, app, _runs_db, _store, session, _gateway, _bridge, controller = rig
     try:
-        controller.app = app
         app.call_from_thread = lambda callback, *args: callback(*args)
+        bind_app(controller, app)
         runtime = _runtime_for(rig)
         old_projection_calls: list[tuple[str, object]] = []
         view = _mounted_view(
@@ -573,8 +575,8 @@ async def test_an_approval_round_armed_with_no_view_is_not_lost(tmp_path):
     rig = _controller_rig(tmp_path)
     chacha, app, _runs_db, _store, session, _gateway, _bridge, controller = rig
     try:
-        controller.app = app
         app.call_from_thread = lambda callback, *args: callback(*args)
+        bind_app(controller, app)
         runtime = _runtime_for(rig)
         view = _mounted_view(
             set_pending_approval=lambda payload: None,
@@ -653,6 +655,7 @@ async def test_a_runtime_that_never_had_a_view_answers_viewless(tmp_path):
             agent_runtime_enabled=False,
             global_user_display_name=lambda: "Ada",
         )
+        bind_app(controller, runtime._app)  # test apps publish no services bundle (TASK-36947.4)
         assert (
             controller.fleet_wake._conversation_in_view(session.id, session.id) is False
         ), (
@@ -702,6 +705,7 @@ async def test_every_slot_names_a_real_attribute_on_the_target_it_declares():
         assert slot.why, f"slot {slot.name!r} has no viewless justification"
 
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     view = _View({})
     generation = runtime.attach_view(view)
@@ -972,6 +976,7 @@ async def test_a_chat_closed_during_v2_hook_preparation_says_send_again(
         hook_permissions_accessor=runtime.ensure_hook_permissions,
     )
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     entered, release = threading.Event(), threading.Event()
     original = HookPermissions.v2_configuration

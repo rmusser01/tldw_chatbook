@@ -25,6 +25,7 @@ from tldw_chatbook.Chat.console_turn_context import (
     ConsoleTurnConfigurationSnapshot,
     ConsoleTurnCustodyRequest,
 )
+from Tests.Chat.console_controller_factory import bind_app, bind_runtime_app
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 hook_file = _hook_file
@@ -48,6 +49,7 @@ async def preparation_runtime(hook_file):
         hook_permissions_accessor=runtime.ensure_hook_permissions,
     )
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     attachment = PendingAttachment(
         file_path="/received-image.png",
@@ -283,6 +285,7 @@ async def test_replaced_controller_cannot_detach_original_native_read_from_dispo
             )
             assert read in state.controller._preparation_reads
             assert read.task is record.task and not read.retired.done()
+            bind_runtime_app(replacement, state.runtime)
             state.runtime.set_chat_controller(replacement)
             assert read in state.runtime._preparation_reads
             closing = asyncio.create_task(state.runtime.dispose())
@@ -521,6 +524,9 @@ async def test_original_workspace_context_outlives_dispose_cancelled_during_grac
         change_review_consent_service=consent,
     )
     state.runtime._app = app
+    # TASK-36947.4: the controller gets its host at construction, as the
+    # runtime's own ensure path builds it; set_chat_controller no longer binds.
+    bind_app(state.controller, app)
     state.runtime.set_chat_controller(state.controller)
     state.session.workspace_id = "hook-owned"
     record = task = closing = None
@@ -691,10 +697,12 @@ async def test_attaching_then_replacing_standalone_creator_preserves_native_reti
             assert read.task is task and read.session_id is None
             assert not state.runtime.has_custodied_turns()
             assert hook_preparation_reads_for(state.runtime._preparation_reads) == ()
+            bind_runtime_app(standalone, state.runtime)
             state.runtime.set_chat_controller(standalone)
             assert hook_preparation_reads_for(state.runtime._preparation_reads) == (
                 read,
             )
+            bind_runtime_app(replacement, state.runtime)
             state.runtime.set_chat_controller(replacement)
             assert hook_preparation_reads_for(state.runtime._preparation_reads) == (
                 read,
@@ -747,9 +755,9 @@ async def test_cold_runtime_hook_preparation_needs_no_controller_or_store(hook_f
     assert hook_preparation_reads_for(runtime._preparation_reads) == ()
 
 
-@pytest.mark.parametrize("replacement", ["app", "context_provider"])
+# TASK-36947.4 removed the "app" case: the controller holds no app to re-point.
 async def test_original_v2_capture_refuses_changed_controller_input_before_context(
-    preparation_runtime, replacement, monkeypatch
+    preparation_runtime, monkeypatch
 ):
     from tldw_chatbook.Agents.hook_permissions import HookPermissions
 
@@ -771,7 +779,6 @@ async def test_original_v2_capture_refuses_changed_controller_input_before_conte
     original_observe = probe.observe
     context_code = ConsoleRuntime._hooks_v2_context_key.__code__
     context_entries, successor_calls = [], []
-    original_app = state.controller.app
     original_provider = state.controller._turn_context_provider
     task = None
 
@@ -797,10 +804,7 @@ async def test_original_v2_capture_refuses_changed_controller_input_before_conte
                 probe.entered.is_set, 5
             ), "original v2 capture not reached"
             probe.assert_live()
-            if replacement == "app":
-                state.controller.app = SimpleNamespace(app_config={})
-            else:
-                state.controller._turn_context_provider = successor_provider
+            state.controller._turn_context_provider = successor_provider
             probe.release.set()
             await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 5)
             assert await _until(probe.retired, 5)
@@ -816,7 +820,6 @@ async def test_original_v2_capture_refuses_changed_controller_input_before_conte
             if task is not None:
                 await asyncio.gather(task, return_exceptions=True)
             assert await _until(probe.retired, 5)
-            state.controller.app = original_app
             state.controller._turn_context_provider = original_provider
     probe.assert_retired()
 
@@ -836,6 +839,7 @@ async def test_cold_canonical_permission_owner_is_constructed_on_native_worker(
         hook_permissions_accessor=runtime.ensure_hook_permissions,
     )
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     caller_thread = threading.current_thread()
     constructors, snapshots = [], []
@@ -886,6 +890,7 @@ async def test_completed_hook_lifecycle_remains_current_after_controller_replace
         hook_permissions_accessor=state.runtime.ensure_hook_permissions,
     )
     try:
+        bind_runtime_app(replacement, state.runtime)
         state.runtime.set_chat_controller(replacement)
         second = await state.runtime.prepare_hooks_v2(state.session.id)
         assert second is first
@@ -899,4 +904,5 @@ async def test_completed_hook_lifecycle_remains_current_after_controller_replace
         assert state.gateway.user_turns == []
     finally:
         await replacement.shutdown()
+        bind_runtime_app(state.controller, state.runtime)
         state.runtime.set_chat_controller(state.controller)

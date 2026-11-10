@@ -33,6 +33,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Chat.console_controller_factory import update_app
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_native_chat_flow import (
     _ReadyResolutionGateway,
@@ -697,7 +698,11 @@ async def test_authority_shrink_preserves_rank_or_dispatches_only_unlabelled_sur
                         )
                     )
                 else:
-                    app.library_rag_search_service = TwoNoteLibrary()
+                    # TASK-36947.4: the mounted controller reads it live.
+                    update_app(
+                        console._ensure_console_chat_controller(),
+                        library_rag_search_service=TwoNoteLibrary(),
+                    )
                     store = console._ensure_console_chat_store()
                     store.stage_session_library_policy(
                         store.active_session_id,

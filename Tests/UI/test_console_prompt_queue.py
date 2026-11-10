@@ -52,6 +52,7 @@ from tldw_chatbook.Widgets.Console.console_prompt_queue_modal import (
 from tldw_chatbook.Widgets.Console.console_session_surface import (
     ConsoleSessionSurface,
 )
+from Tests.Chat.console_controller_factory import bind_app
 
 
 def _activity(
@@ -1242,8 +1243,10 @@ async def test_wired_queue_admission_freezes_view_source_filter(
             requests.append((query, source_types, mode, kwargs))
             return {"results": []}
 
+        # TASK-36947.4: read the app live so the patched service reaches it.
+        bind_app(controller, console.app_instance)
         monkeypatch.setattr(
-            controller.app, "library_rag_search_service", SimpleNamespace(search=search)
+            console.app_instance, "library_rag_search_service", SimpleNamespace(search=search)
         )
         result = await controller.prepare_library_for_turn(preparation.preparation_id)
         assert result.state is ConsoleTurnPreparationState.READY

@@ -956,7 +956,7 @@ def environment_scope_stamp(screen: Any) -> tuple[Any, ...] | None:
         id(controller),
         active,
         session_change_review_admission_stamp(
-            controller.app, controller.store, active
+            controller.host, controller.store, active
         ),
     )
 
@@ -1974,7 +1974,7 @@ def build_console_controllers(
         ensure_agent_bridge=lambda: screen._ensure_console_agent_bridge(),
         wire_wake_coordinator=(
             lambda: (
-                (wake.wire(app=screen.app_instance), True)[1]
+                (wake.wire(), True)[1]
                 if (
                     wake := getattr(
                         screen._console_chat_controller
@@ -3342,7 +3342,7 @@ _REVIEW_UNCLAIMED = object()
 
 
 def attach_review_presenter(controller: Any, app: Any) -> None:
-    """Give the controller the app, the report presenter, and pending originals.
+    """Give the controller the report presenter (over the app) and pending originals.
 
     Every Console ensure lands here, so pending originals are re-presented
     only on a fresh view claim, with at most one pass in flight.
@@ -3351,8 +3351,7 @@ def attach_review_presenter(controller: Any, app: Any) -> None:
         controller: The Console chat controller a view is attaching to.
         app: The application object, which outlives every view.
     """
-    controller.app = app
-    controller.review_report_presenter = present_code_review_original
+    controller.review_report_presenter = partial(present_code_review_original, app=app)
     # The runtime calls this after every store activation (ADR-281).
     controller.review_session_activated = partial(review_session_activated, controller)
     runtime = getattr(app, "console_runtime", None)
@@ -3434,7 +3433,7 @@ def _review_present_done(controller: Any, task: asyncio.Task) -> None:
 
 
 def present_code_review_original(
-    controller: Any, session_id, review_id, report
+    controller: Any, session_id, review_id, report, *, app: Any
 ) -> bool:
     """Acknowledge mounted native originals before an authorized verifier starts."""
     from ...Chat.console_chat_models import ConsoleMessageRole
@@ -3445,7 +3444,7 @@ def present_code_review_original(
         # A detached or suspended view must not push the modal over another
         # screen (modals over the Console keep it current); the original stays
         # pending until the next resume or fresh attach presents it.
-        runtime = getattr(controller.app, "console_runtime", None)
+        runtime = getattr(app, "console_runtime", None)
         return (
             (runtime is None or getattr(runtime.view, "is_current", False))
             and not controller._disposed
@@ -3462,13 +3461,13 @@ def present_code_review_original(
             page = await asyncio.to_thread(
                 ConsoleCodeReviewModal.literal_page, report["original_page"]
             )
-            modal = controller.app.screen
+            modal = app.screen
             if (
                 not isinstance(modal, ConsoleCodeReviewModal)
                 or modal._review_id != review_id
             ):
                 modal = ConsoleCodeReviewModal(service=service, review_id=review_id)
-                await controller.app.push_screen(modal)
+                await app.push_screen(modal)
             if not available():
                 await modal.request_safe_cancel(source="review_closed")
                 return False
@@ -3486,7 +3485,7 @@ def present_code_review_original(
 
     loop, on_loop = owner_loop_state(controller._fleet_wake)
     if not on_loop and loop is not None and loop.is_running():
-        call_from_thread = getattr(controller.app, "call_from_thread", None)
+        call_from_thread = getattr(app, "call_from_thread", None)
         if callable(call_from_thread):
             return bool(call_from_thread(present))
     return False

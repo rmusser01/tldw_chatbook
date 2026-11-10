@@ -32,6 +32,7 @@ from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.MCP.execution_log import POLICY_DENIED_DECISION
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 from tldw_chatbook.MCP.permission_store import EffectiveToolState, definition_hash
+from Tests.Chat.console_controller_factory import bind_app
 
 
 def _catalog_record(
@@ -1330,10 +1331,10 @@ def test_stop_mid_approval_records_only_the_unresolved_row(running_loop):
     controller = ConsoleChatController(
         store=ConsoleChatStore(), provider_gateway=object()
     )
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         call_from_thread=lambda fn, *a, **kw: fn(*a, **kw),
         unified_mcp_service=service,
-    )
+    ))
     mounted: list[dict | None] = []
     controller.set_pending_approval = mounted.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0

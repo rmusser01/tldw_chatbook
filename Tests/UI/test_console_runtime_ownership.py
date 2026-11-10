@@ -75,6 +75,7 @@ from tldw_chatbook.Widgets.Console.console_composer_bar import (
     classify_console_raw_draft,
 )
 from tldw_chatbook.Widgets.Console import ProjectInstructionSetupResult
+from Tests.Chat.console_controller_factory import bind_app, bind_runtime_app
 
 
 @pytest.fixture(autouse=True)
@@ -365,6 +366,7 @@ async def test_runtime_injects_its_scratch_manager_into_chat_controller():
         store=ConsoleChatStore(),
         provider_gateway=object(),
     )
+    bind_app(controller, runtime._app)  # test apps publish no services bundle (TASK-36947.4)
 
     assert controller._scratch_spaces is runtime.scratch_spaces
     assert controller._owns_scratch_spaces is False
@@ -433,6 +435,7 @@ async def test_future_session_defaults_read_fresh_app_owned_provider_and_model()
         provider="anthropic",
         model="old-model",
     )
+    bind_app(controller, runtime._app)  # test apps publish no services bundle (TASK-36947.4)
 
     app.app_config = {
         "chat_defaults": {"provider": "openai", "model": "new-model"},
@@ -796,7 +799,7 @@ async def test_late_outgoing_ensure_cannot_reclaim_a_successor_attachment():
     """A refused stale claim cannot run any outgoing screen-derived wiring."""
     runtime = ConsoleRuntime(SimpleNamespace())
     wire_calls: list[object] = []
-    wake = SimpleNamespace(wire=lambda **kwargs: wire_calls.append(kwargs["app"]))
+    wake = SimpleNamespace(wire=lambda **kwargs: wire_calls.append(kwargs))
     runtime._chat_controller = SimpleNamespace(
         fleet_wake=wake,
         provider="successor-provider",
@@ -1208,6 +1211,7 @@ async def test_project_decisions_project_one_ordered_head_for_the_active_session
     controller = SimpleNamespace(_active_cancel_events={})
     runtime = ConsoleRuntime(SimpleNamespace())
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
 
     binding_a = asyncio.create_task(
@@ -2046,6 +2050,7 @@ def test_detach_releases_the_old_chat_screen_from_every_runtime_hook():
         prompt_queue_coordinator=SimpleNamespace(),
     )
     store = SimpleNamespace()
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     runtime.set_chat_store(store)
 
@@ -3325,7 +3330,7 @@ async def test_accepted_agent_chat_start_has_visible_stop_in_mounted_target(
             runtime._chat_store = store
             runtime._chat_controller = controller
             runtime._agent_bridge = controller._agent_bridge
-            controller.app = app
+            bind_app(controller, app)
             _register_runtime_database_owners(runtime, runs)
             _register_runtime_database_owners(runtime, store.persistence.db)
             rig_registered = True
@@ -3514,7 +3519,7 @@ async def test_prepared_native_start_allows_mounted_manual_send(
             runtime._chat_store = store
             runtime._chat_controller = controller
             runtime._agent_bridge = controller._agent_bridge
-            controller.app = app
+            bind_app(controller, app)
             _register_runtime_database_owners(runtime, runs)
             _register_runtime_database_owners(runtime, store.persistence.db)
             rig_registered = True
@@ -3634,7 +3639,7 @@ async def test_native_acceptance_consumes_only_open_target_revision(
             runtime._chat_store = store
             runtime._chat_controller = controller
             runtime._agent_bridge = controller._agent_bridge
-            controller.app = app
+            bind_app(controller, app)
             _register_runtime_database_owners(runtime, runs)
             _register_runtime_database_owners(runtime, store.persistence.db)
             rig_registered = True

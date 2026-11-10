@@ -22,6 +22,7 @@ from tldw_chatbook.Chat.console_prompt_mixins import (
 from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
     LiteralMixinDefinition,
 )
+from Tests.Chat.console_controller_factory import bind_app, update_app
 
 pytestmark = pytest.mark.bootstrap_profile
 A = MixinSourceRef("profile-test", "local", "00000000-0000-4000-8000-000000000001")
@@ -978,7 +979,7 @@ async def test_direct_admission_retains_source_across_hook_await(
         agent_runtime_enabled=False,
         turn_context_provider=lambda _: configuration,
     )
-    controller.app = SimpleNamespace(prompt_scope_service=scope)
+    bind_app(controller, SimpleNamespace(prompt_scope_service=scope))
     entered, release = asyncio.Event(), asyncio.Event()
 
     async def hook():
@@ -1008,9 +1009,9 @@ async def test_direct_admission_retains_source_across_hook_await(
         await asyncio.wait_for(entered.wait(), 5)
         assert not task.done()
         if change == "scope":
-            controller.app.prompt_scope_service = PromptScopeService(
+            update_app(controller, prompt_scope_service=PromptScopeService(
                 LocalPromptService(database), None
-            )
+            ))
         elif change == "backend":
             scope.local_service = LocalPromptService(database)
         elif change == "database":
@@ -1066,7 +1067,7 @@ async def test_direct_source_fence_survives_later_durable_awaits(
     )
     controller._turn_context_provider = lambda _: configuration
     controller._agent_runtime_enabled = False
-    controller.app = SimpleNamespace(prompt_scope_service=scope)
+    bind_app(controller, SimpleNamespace(prompt_scope_service=scope))
     service = controller.prompt_mixin_service()
     service.replace_preferences(
         session.id,
@@ -1153,7 +1154,7 @@ async def test_pending_direct_continuation_keeps_source_fence(
     configuration = controller.resolve_turn_configuration_snapshot(session.id)
     controller._turn_context_provider = lambda _: configuration
     controller._agent_runtime_enabled = False
-    controller.app = SimpleNamespace(prompt_scope_service=scope)
+    bind_app(controller, SimpleNamespace(prompt_scope_service=scope))
     controller.prompt_mixin_service().replace_preferences(
         session.id,
         expected_revision=0,

@@ -11,6 +11,7 @@ from tldw_chatbook.Agents.code_review_models import ReviewRefused, ReviewRunChoi
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_code_review import ConsoleCodeReviewCoordinator
+from Tests.Chat.console_controller_factory import bind_runtime_app
 
 source_case = helpers.source_case
 review_case = helpers.review_case
@@ -567,6 +568,7 @@ async def test_switching_to_a_chat_presents_its_pending_original_once(
     )
     runtime = ConsoleRuntime(SimpleNamespace())
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     wiring.attach_review_presenter(controller, SimpleNamespace(console_runtime=runtime))
 

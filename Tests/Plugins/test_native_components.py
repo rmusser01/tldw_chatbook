@@ -1,4 +1,5 @@
 """Native capabilities retain explicit selection and narrowing semantics."""
+from Tests.Chat.console_controller_factory import bind_app, bind_runtime_app, bound_app
 
 
 def test_empty_agent_tool_list_never_inherits():
@@ -369,8 +370,9 @@ async def test_actual_console_owned_hook_reserves_native_custody_before_launch(
         return outcome
 
     monkeypatch.setattr(HookEngine, "_deliver", observe)
-    runtime = ConsoleRuntime(app=rig.controller.app)
+    runtime = ConsoleRuntime(app=bound_app(rig.controller))
     runtime.set_chat_store(rig.store)
+    bind_runtime_app(rig.controller, runtime)
     runtime.set_chat_controller(rig.controller)
     try:
         result = await rig.controller.submit_draft("hello", session_id=rig.session.id)
@@ -428,11 +430,11 @@ async def test_actual_console_composes_owned_mcp_under_captured_selection(
         model="m",
         skills_service=skills,
     )
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         unified_mcp_service=case.unified,
         local_skills_service=local,
         skills_scope_service=skills,
-    )
+    ))
     tool, _state = next(iter(case.providers["a"]._entry_by_llm_name.values()))
     case.unified.set_tool_state(tool.server_key, tool.name, "allow", tool=tool)
     maximum = case.service.capture_maximum("a")
@@ -864,8 +866,9 @@ async def test_actual_console_dependency_failure_blocks_owned_skill_only(
 
     gateway = Gateway()
     db = AgentRunsDB(tmp_path / "dependencies.sqlite", client_id="native-dependencies")
-    runtime = ConsoleRuntime(app=rig.controller.app)
+    runtime = ConsoleRuntime(app=bound_app(rig.controller))
     runtime.set_chat_store(rig.store)
+    bind_runtime_app(rig.controller, runtime)
     runtime.set_chat_controller(rig.controller)
     try:
         bridge = ConsoleAgentBridge(
@@ -956,12 +959,12 @@ async def test_actual_console_owned_mcp_dispatch_uses_host_run_binding(
         model="m",
         skills_service=skills,
     )
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         unified_mcp_service=case.unified,
         local_skills_service=local,
         skills_scope_service=skills,
         workspace_registry_service=registry,
-    )
+    ))
     db = AgentRunsDB(tmp_path / "owned-console.sqlite", client_id="owned-console")
     tool, _state = next(iter(case.providers["a"]._entry_by_llm_name.values()))
     case.unified.set_tool_state(tool.server_key, tool.name, "allow", tool=tool)
@@ -1060,8 +1063,9 @@ async def test_revoking_actual_owned_hook_kills_and_reaps_before_settling(
         install.installation_id, workspace_id="workspace-a", intent="enabled"
     )
     await rig.service.commit(enable, enable.operation_id)
-    runtime = ConsoleRuntime(app=rig.controller.app)
+    runtime = ConsoleRuntime(app=bound_app(rig.controller))
     runtime.set_chat_store(rig.store)
+    bind_runtime_app(rig.controller, runtime)
     runtime.set_chat_controller(rig.controller)
     send = asyncio.create_task(
         rig.controller.submit_draft("hello", session_id=rig.session.id)

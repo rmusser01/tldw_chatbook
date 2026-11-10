@@ -51,6 +51,7 @@ from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
 from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.Chat.console_controller_factory import bind_app
 
 #: PR2a Task 5: the review hook takes the id of the run whose batch it is
 #: reviewing (both gates key their per-turn verdicts by run). These
@@ -1487,7 +1488,7 @@ async def test_descriptor_effects_reach_the_mounted_production_approval_card(tmp
         )
         controller, store = _build_controller()
         session = store.ensure_session()
-        controller.app = app
+        bind_app(controller, app)
         controller.set_pending_approval = lambda payload: (
             cards.sync_state(TaskResumeState(pending_approval=payload))
             if payload is not None
@@ -1595,7 +1596,7 @@ async def test_approved_definitive_tool_stays_mounted_until_real_terminal(
     async with app.run_test(size=(200, 40)) as pilot:
         cards = app.query_one(ChatTaskCards)
         app.controller = controller
-        controller.app = app
+        bind_app(controller, app)
         controller.set_pending_approval = lambda payload: cards.sync_state(
             TaskResumeState(pending_approval=payload)
         )
@@ -1717,7 +1718,7 @@ def test_run_terminal_sweeps_approved_undispatched_row_after_base_exception(
         call_id="call-never-dispatched",
         execution_policy=ToolExecutionPolicy.DEFINITIVE_AFTER_START,
     )
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.mcp_approval_timeout_seconds = lambda: 2.0
     controller.set_pending_approval = received.append
 
@@ -1812,7 +1813,7 @@ def test_local_same_name_finishing_rows_complete_by_call_id_out_of_order(tmp_pat
             call_id="call-second",
         ),
     ]
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_approval = received.append
     controller.mcp_approval_timeout_seconds = lambda: 2.0
     hook = build_local_review_hook(
@@ -2165,7 +2166,7 @@ async def test_request_mcp_approvals_round_trip_resolves_from_ui_thread():
     the real `ApprovalDecided` message-handler path."""
     controller, _ = _build_controller()
     received: list[dict | None] = []
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_approval = received.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
@@ -2202,7 +2203,7 @@ def test_request_mcp_approvals_routes_one_decision_to_duplicate_names():
     """
     controller, _ = _build_controller()
     received: list[dict | None] = []
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_approval = received.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
@@ -2225,7 +2226,7 @@ def test_request_mcp_approvals_preserves_native_call_ids_as_verdict_keys():
     """Two same-tool native calls remain independently addressable."""
     controller, _ = _build_controller()
     received: list[dict | None] = []
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_approval = received.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
     pending = [
@@ -2258,7 +2259,7 @@ def test_run_terminal_clears_approved_definitive_row_never_dispatched():
     controller, store = _build_controller()
     session = store.ensure_session()
     received: list[dict | None] = []
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_approval = received.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
     call = MCPPendingCall(
@@ -2307,7 +2308,7 @@ def test_close_session_discards_its_approved_definitive_row(retained_phase):
     controller, store = _build_controller()
     session = store.ensure_session()
     received: list[dict | None] = []
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_approval = received.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
     call = MCPPendingCall(
@@ -2352,7 +2353,7 @@ def test_close_session_discards_its_approved_definitive_row(retained_phase):
 def test_request_mcp_approvals_timeout_denies_with_timeout_for_all_undecided():
     controller, _ = _build_controller()
     received: list[dict | None] = []
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_approval = received.append
     controller.mcp_approval_timeout_seconds = lambda: 0.05
 
@@ -2380,7 +2381,7 @@ def test_request_mcp_approvals_cancellation_denies_undecided():
     headless cancel signal. Drive the seam, not the flag."""
     controller, _ = _build_controller()
     received: list[dict | None] = []
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_approval = received.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
@@ -2443,7 +2444,7 @@ def test_request_mcp_approvals_unrelated_session_stop_does_not_cross_cancel():
     decision below, not get denied out from under it."""
     controller, _ = _build_controller()
     received: list[dict | None] = []
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_approval = received.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
@@ -2510,10 +2511,10 @@ def test_request_mcp_approvals_cancellation_records_denied_decision_to_execution
     )
 
     controller, _ = _build_controller()
-    controller.app = SimpleNamespace(
+    bind_app(controller, SimpleNamespace(
         call_from_thread=lambda fn, *a, **kw: fn(*a, **kw),
         unified_mcp_service=service,
-    )
+    ))
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
     result = {}
@@ -2585,7 +2586,7 @@ def test_switch_session_parks_rather_than_denies_a_pending_approval_round():
     owning_session = store.create_session(title="Owning").id
     other_session = store.create_session(title="Other").id
     store.switch_session(owning_session)
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     mounted: list[dict | None] = []
     controller.set_pending_approval = mounted.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
@@ -2635,7 +2636,7 @@ def test_request_mcp_approvals_parks_for_a_non_active_session():
     background = store.create_session(title="Background").id
     store.switch_session(viewed)  # keep viewing the first session
     app = _FakeApp()
-    controller.app = app
+    bind_app(controller, app)
     mounted: list[dict | None] = []
     controller.set_pending_approval = mounted.append
     controller.park_pending_approval = lambda _session_id: pytest.fail(
@@ -2694,7 +2695,7 @@ def test_mcp_round_and_skill_install_round_for_the_same_session_both_keep_the_ba
     viewed = store.create_session(title="Viewed").id
     background = store.create_session(title="Background").id
     store.switch_session(viewed)  # keep viewing the first session
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_approval = lambda payload: None
     controller.set_pending_skill_install = lambda payload: None
     controller.mcp_approval_timeout_seconds = lambda: 30.0
@@ -2793,7 +2794,7 @@ def test_request_mcp_approvals_other_sessions_cancel_event_does_not_deny_this_ro
     # `request_mcp_approvals`' no-app guard), so wire the usual fake
     # bridge -- this test's subject is cross-session cancel isolation, not
     # the no-app path.
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_approval = lambda payload: None
     controller.mcp_approval_timeout_seconds = lambda: 60.0
 
@@ -2867,7 +2868,7 @@ def test_resolve_pending_approval_by_round_id_survives_a_mid_flight_session_swit
     session_a = store.create_session(title="A").id
     session_b = store.create_session(title="B").id
     store.switch_session(session_a)
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     mounted: list[dict | None] = []
     controller.set_pending_approval = mounted.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
@@ -2955,7 +2956,7 @@ def test_two_mcp_rounds_for_the_same_session_the_earlier_ones_teardown_does_not_
     controller, store = _build_controller()
     session_a = store.create_session(title="A").id
     store.switch_session(session_a)
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_approval = lambda payload: None
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
@@ -3049,7 +3050,7 @@ def test_two_mcp_rounds_for_the_same_session_resolving_the_newer_one_first_leave
     controller, store = _build_controller()
     session_a = store.create_session(title="A").id
     store.switch_session(session_a)
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     mounted: list[dict | None] = []
     controller.set_pending_approval = mounted.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
@@ -3179,7 +3180,7 @@ def test_teardown_clear_does_not_clobber_a_newer_same_session_round_arming_mid_t
     session_a = store.create_session(title="A").id
     store.switch_session(session_a)
     app = _DeferredClearApp()
-    controller.app = app
+    bind_app(controller, app)
     mounted: list[dict | None] = []
     controller.set_pending_approval = mounted.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
@@ -3281,7 +3282,7 @@ def test_resolve_pending_approval_stale_round_id_never_resolves_a_newer_round_fo
     round 1's now-stale id must never resolve round 2."""
     controller, store = _build_controller()
     session_a = store.create_session(title="A").id
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     mounted: list[dict | None] = []
     projected = threading.Event()
 
@@ -3359,7 +3360,7 @@ def test_resolve_pending_approval_without_round_id_fails_closed_and_leaves_round
     (see test_resolve_pending_approval_ignores_a_stale_or_unknown_round_id).
     Pre-fix, this used to resolve via the active-session fallback."""
     controller, _ = _build_controller()
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     mounted: list[dict | None] = []
     controller.set_pending_approval = mounted.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
@@ -3391,7 +3392,7 @@ def test_resolve_pending_approval_without_round_id_fails_closed_and_leaves_round
 def test_request_mcp_approvals_with_no_pending_calls_returns_empty_and_never_surfaces_card():
     controller, _ = _build_controller()
     received: list[dict | None] = []
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_approval = received.append
 
     assert controller.request_mcp_approvals([]) == {}
@@ -3406,7 +3407,7 @@ def test_request_mcp_approvals_snapshot_covers_exactly_the_unique_names():
     ones fail closed to "deny", both preserved by the setdefault pass
     before the snapshot)."""
     controller, _ = _build_controller()
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     received: list[dict | None] = []
     controller.set_pending_approval = received.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
@@ -3516,7 +3517,7 @@ def test_request_mcp_approvals_survives_marshal_failure_during_teardown():
             # it was called with.
             raise RuntimeError("App is not running")
 
-    controller.app = _TeardownApp()
+    bind_app(controller, _TeardownApp())
     controller.set_pending_approval = lambda payload: None
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
@@ -4031,7 +4032,7 @@ def test_revoking_a_run_denies_its_rounds_and_leaves_another_runs_untouched():
     controller, store = _build_controller()
     session_id = store.create_session(title="Fleet").id
     store.switch_session(session_id)
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_approval = lambda payload: None
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
@@ -4084,7 +4085,7 @@ def test_revoking_a_run_unblocks_its_waiting_thread_and_clears_the_card():
     controller, store = _build_controller()
     session_id = store.create_session(title="Child").id
     store.switch_session(session_id)
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     mounted: list[dict | None] = []
     controller.set_pending_approval = mounted.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
@@ -4123,7 +4124,7 @@ def test_revoking_an_unknown_run_is_a_zero_return_noop():
     controller, store = _build_controller()
     session_id = store.create_session(title="Child").id
     store.switch_session(session_id)
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_approval = lambda payload: None
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
@@ -4173,7 +4174,7 @@ def test_a_decision_landing_after_a_revoke_cannot_reopen_the_round():
     controller, store = _build_controller()
     session_id = store.create_session(title="Child").id
     store.switch_session(session_id)
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     mounted: list[dict | None] = []
     release = threading.Event()
 
@@ -4249,7 +4250,7 @@ def test_a_revoked_childs_card_can_no_longer_execute_its_tool(tmp_path, monkeypa
     controller, store = _build_controller()
     session_id = store.create_session(title="Child").id
     store.switch_session(session_id)
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     mounted: list[dict | None] = []
     controller.set_pending_approval = mounted.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
@@ -4344,7 +4345,7 @@ def test_the_next_turns_stop_does_not_deny_an_earlier_turns_survivors_card():
     controller, store = _build_controller()
     session_id = store.create_session(title="Fleet").id
     store.switch_session(session_id)
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_approval = lambda payload: None
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
@@ -4396,7 +4397,7 @@ def test_a_round_armed_between_turns_is_not_deniable_by_a_later_turns_stop():
     controller, store = _build_controller()
     session_id = store.create_session(title="Fleet").id
     store.switch_session(session_id)
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_approval = lambda payload: None
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
@@ -4439,7 +4440,7 @@ def test_the_owning_turns_own_stop_still_denies_its_round():
     controller, store = _build_controller()
     session_id = store.create_session(title="Owner").id
     store.switch_session(session_id)
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_approval = lambda payload: None
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
@@ -4472,7 +4473,7 @@ def test_shutdown_still_denies_a_survivors_round():
     controller, store = _build_controller()
     session_id = store.create_session(title="Fleet").id
     store.switch_session(session_id)
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_approval = lambda payload: None
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
@@ -4508,7 +4509,7 @@ def test_request_mcp_approvals_zero_timeout_keeps_round_armed_for_late_decision(
     and resolves only on the user's decision."""
     controller, _ = _build_controller()
     received: list[dict | None] = []
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_approval = received.append
     controller.mcp_approval_timeout_seconds = lambda: 0.0
 
@@ -4542,7 +4543,7 @@ def test_request_mcp_approvals_marks_human_input_wait_while_round_armed():
 
     controller, _ = _build_controller()
     received: list[dict | None] = []
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_approval = received.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
@@ -4595,7 +4596,7 @@ async def test_real_approval_round_marks_only_its_pending_tool_call():
             1,
         )
     received = []
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.set_pending_approval = received.append
     controller.mcp_approval_timeout_seconds = lambda: 30.0
     with use_run_id("run-real-approval"):
@@ -4637,7 +4638,7 @@ def test_request_mcp_approvals_without_ui_fails_closed_immediately():
     bridge must fail closed on the spot, mirroring the skill confirms'
     own no-app guards."""
     controller, _ = _build_controller()
-    assert controller.app is None
+    assert controller._host.call_from_thread is None
     controller.mcp_approval_timeout_seconds = lambda: 0.05
 
     started = time.monotonic()
@@ -4687,7 +4688,7 @@ def test_a_no_app_round_reports_every_key_as_unanswered():
     )
 
     controller, _ = _build_controller()
-    assert controller.app is None  # the branch under test
+    assert controller._host.call_from_thread is None  # the branch under test
 
     rows = [_pending(call_id="call-1"), _pending(llm_name="mcp__srv__other")]
     decisions = controller.request_mcp_approvals(rows)
@@ -4709,7 +4710,7 @@ def test_a_no_app_round_does_not_record_a_user_denial_on_the_mcp_hook():
     )
 
     controller, _ = _build_controller()
-    assert controller.app is None  # the branch under test
+    assert controller._host.call_from_thread is None  # the branch under test
 
     denials: list[str] = []
 
@@ -4853,7 +4854,7 @@ class _RevocationApp:
 def _revocation_controller():
     store = ConsoleChatStore()
     ctrl = ConsoleChatController(store=store, provider_gateway=object())
-    ctrl.app = _RevocationApp()
+    bind_app(ctrl, _RevocationApp())
     ctrl._maybe_fire_permission_summary = lambda _payload: None
     ctrl.mcp_approval_timeout_seconds = lambda: 0
     ctrl.skill_script_confirm_timeout_seconds = lambda: 0
@@ -5227,7 +5228,7 @@ def test_tool_display_observer_failure_cannot_break_real_approval(raise_when_pen
     from loguru import logger
 
     controller, _store = _build_controller()
-    controller.app = _FakeApp()
+    bind_app(controller, _FakeApp())
     controller.mcp_approval_timeout_seconds = lambda: 30.0
 
     def project_wait(_session_id, _run_id, _call_ids, pending):

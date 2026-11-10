@@ -59,6 +59,7 @@ from tldw_chatbook.Chat.console_chat_store import (
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.console_provider_doubles import provider_resolution
+from Tests.Chat.console_controller_factory import bind_app
 
 
 _MISSING = object()
@@ -1370,6 +1371,7 @@ def test_terminal_selected_answer_citations_survive_restart(
         controller = ConsoleChatController(
             store=stack.store, provider_gateway=SimpleNamespace()
         )
+        bind_app(controller, runtime._app)  # host as built at construction (TASK-36947.4)
         runtime.set_chat_controller(controller)
         runtime.stage_console_staged_evidence(object(), session.id)
         asyncio.run(

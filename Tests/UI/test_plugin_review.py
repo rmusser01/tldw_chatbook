@@ -14,6 +14,7 @@ from Tests.UI.test_plugins_browse import (
     settled,
     wait_for_plugin_prune,
 )
+from Tests.Chat.console_controller_factory import bind_runtime_app, bound_app, update_app
 
 native_console = _native_console
 native_package = _native_package
@@ -1569,7 +1570,7 @@ async def test_console_ui_capture_uses_owning_plugin_workspace(native_console):
         ConsoleWorkspaceContext(active_workspace_id="workspace-b")
     )
     builder = ConsoleSessionController.__new__(ConsoleSessionController)
-    builder.app_instance = rig.controller.app
+    builder.app_instance = bound_app(rig.controller)
     builder._provider_readiness_app_config_fn = dict
     builder._build_provider_selection_fn = lambda _: ConsoleProviderSelection(
         provider="llama_cpp", explicit_model="m"
@@ -2348,9 +2349,10 @@ async def test_confirmed_explicit_test_survives_close_during_child_prune(
     assert (await rig.service.commit(installed, installed.operation_id)).committed
     trust = await rig.service.review_trust(installed.installation_id)
     assert (await rig.service.commit(trust, trust.operation_id)).committed
-    runtime = ConsoleRuntime(app=rig.controller.app)
-    rig.controller.app.console_runtime = runtime
+    runtime = ConsoleRuntime(app=bound_app(rig.controller))
+    update_app(rig.controller, console_runtime=runtime)
     runtime.set_chat_store(rig.store)
+    bind_runtime_app(rig.controller, runtime)
     runtime.set_chat_controller(rig.controller)
     app = BrowseApp(rig)
     app.console_runtime = runtime

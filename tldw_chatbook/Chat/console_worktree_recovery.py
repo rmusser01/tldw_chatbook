@@ -54,7 +54,7 @@ def capture_intent(controller: Any, session_id: str) -> RecoveryIntent | None:
     """Copy the owning session's identity and selection state on the UI thread.
 
     Args:
-        controller: Console controller owning the session store and app runtime.
+        controller: Console controller owning the session store and runtime.
         session_id: Exact session to capture, independent of the active view.
 
     Returns:
@@ -62,7 +62,7 @@ def capture_intent(controller: Any, session_id: str) -> RecoveryIntent | None:
         session is missing, the runtime is disposed, or the session is fenced.
         A captured intent alone grants no repository authority.
     """
-    runtime = getattr(getattr(controller, "app", None), "console_runtime", None)
+    runtime = getattr(controller, "_hooks_v2_runtime", None)
     if runtime is not None:
         try:
             runtime._raise_if_disposed_or_session_fenced(session_id)
@@ -87,7 +87,7 @@ def validate_intent(
 
     Args:
         controller: Owning Console controller, including its workspace registry,
-            kill-switch reader and UI-thread dispatch through the app.
+            kill-switch reader and UI-thread dispatch through its host.
         session_id: Session whose current selection must still match the intent.
         intent: Captured selection to validate, or ``None`` for no selection.
 
@@ -106,7 +106,7 @@ def validate_intent(
         return None
     if not intent.project_instruction_state.working_folder_binding_id:
         return None
-    registry = getattr(controller.app, "workspace_registry_service", None)
+    registry = controller._host.workspace_registry_service
     try:
         selection = resolve_project_instruction_binding(intent, registry)
         if selection is None or not selection.allow_write:
@@ -116,7 +116,7 @@ def validate_intent(
         def guard():
             if kill_switch is None or kill_switch():
                 return False
-            current = controller.app.call_from_thread(
+            current = controller._host.call_from_thread(
                 capture_intent, controller, session_id
             )
             return bool(

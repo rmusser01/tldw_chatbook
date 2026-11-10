@@ -7,6 +7,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
 from Tests.Agents.test_agent_worktree_confirmed_recovery import work as _work
+from Tests.Chat.console_controller_factory import bind_app, bind_runtime_app
 
 work = _work
 
@@ -223,11 +224,12 @@ async def test_reopened_record_manual_action_uses_real_controller_card_and_git(
     runtime = ConsoleRuntime(app)
     app.console_runtime = runtime
     runtime.set_chat_store(store)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     runtime._worktree_recovery = helper
     try:
         async with app.run_test(size=(100, 35)) as pilot:
-            controller.app = app
+            bind_app(controller, app)
             generation = runtime.attach_view(app)
             runtime.finish_view_reconciliation(app, generation)
             controller.set_pending_worktree_merge = lambda value: app.query_one(
@@ -498,6 +500,7 @@ async def test_controller_bridge_turn_child_write_visible_confirmation(
     app = TurnApp()
     runtime = ConsoleRuntime(app)
     runtime.set_chat_store(store)
+    bind_app(controller, runtime._app)  # host as built at construction (TASK-36947.4)
     runtime.set_chat_controller(controller)
     runtime.set_agent_bridge(bridge)
     submit = None
@@ -718,6 +721,7 @@ async def test_controller_previews_match_live_worktree_schemas(
     )
     runtime = ConsoleRuntime(app)
     runtime.set_chat_store(store)
+    bind_app(controller, runtime._app)  # host as built at construction (TASK-36947.4)
     runtime.set_chat_controller(controller)
     runtime.set_agent_bridge(bridge)
     if inbox_state != "unopened":

@@ -36,9 +36,9 @@ def preparation_native_runner(
     """Capture one finite operation's sources before creating its native worker."""
     from tldw_chatbook import config
 
-    app, store = controller.app, controller.store
+    store, read_app_config = controller.store, controller._host.read_app_config
     runtime = getattr(controller, "_hooks_v2_runtime", None)
-    app_config = getattr(app, "app_config", None)
+    app_config = read_app_config(None)
     identity = config.current_config_identity()
     session = next((row for row in store.sessions() if row.id == session_id), None)
     incarnation = getattr(session, "incarnation_id", None)
@@ -51,9 +51,8 @@ def preparation_native_runner(
             require_current()
         if (
             sys.modules.get("tldw_chatbook.config") is not config
-            or controller.app is not app
             or controller.store is not store
-            or getattr(app, "app_config", None) is not app_config
+            or read_app_config(None) is not app_config
             or config.current_config_identity() != identity
             or controller._disposed
             or controller._shutdown_requested.is_set()
@@ -103,7 +102,6 @@ class ReceivedPreparationSource:
     app_config: Any = field(repr=False)
     store: Any = field(repr=False)
     controller: Any = field(repr=False)
-    controller_app: Any = field(repr=False)
     config: Any = field(repr=False)
     config_identity: Any = field(repr=False)
     permissions: Any = field(repr=False)
@@ -128,7 +126,6 @@ def received_preparation_source(runtime, *, configuration_preparation=None):
         getattr(runtime._app, "app_config", None),
         runtime._chat_store,
         runtime._chat_controller,
-        getattr(runtime._chat_controller, "app", None),
         config,
         config.current_config_identity(),
         runtime._hook_permissions,
@@ -154,7 +151,6 @@ def require_received_source(runtime, record, source, *, inputs=True):
         or getattr(source.app, "app_config", None) is not source.app_config
         or runtime._chat_store is not source.store
         or runtime._chat_controller is not source.controller
-        or getattr(source.controller, "app", None) is not source.controller_app
         or getattr(source.controller, "store", source.store) is not source.store
         or getattr(source.controller, "_disposed", False)
         or (

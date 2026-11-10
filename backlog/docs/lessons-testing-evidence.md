@@ -71,6 +71,24 @@ Deleting those rows as "gone" would have certified that live durable writers had
 - Wait on the product's own completion hook (here `_after_category_panes`) before the first read of anything the race rebuilds, not just before the action.
 - Then wait for the observable each later step produces (`has_focus`, the message's arrival), bounded. Do not rely on one `pilot.pause()`.
 
+## Removing an injected `controller.app` hides three kinds of test patch (TASK-36947.4, 2026-11-07)
+
+**Incident.** TASK-36947.4 replaced the Console controller's settable `self.app` with a host built at construction. A mechanical rewrite turned every `controller.app = fake` into a construction-equivalent binding, and the first full Console run still had 156 new failures. They fell into three groups:
+- **Late patches across function boundaries.** A rig bound the fake, and the test then replaced `app.notify` or `app.unified_mcp_service`. A same-function scan for late patches did not see them.
+- **Indirect injection.** `ConsoleRuntime.set_chat_controller` had also assigned `controller.app = self._app`. Tests that handed a self-built controller to a runtime relied on that silently, and nothing in those tests mentions `.app`.
+- **Real apps.** These tests patched service aliases before mounting. The production host reads `app.services`, which composition had built before those patches.
+
+The run also exposed controller reads under names that a `controller.app` grep misses: moved methods that take the controller as `self`, and `preparation_owner`.
+
+**What to do.** When an injected, lazily read attribute becomes a construction-time dependency:
+- Give tests a helper that keeps the old lazy reads. Here, `bind_app` reads the fake on every access.
+- Stand in for each indirect injection site explicitly (`bind_runtime_app`).
+- Republish the bundle after pre-mount alias patches.
+
+Find the remaining failures by comparing failing test ids against base, not by counts: locally both base and head fail about 1,100 Console tests from the RecoveryRequired trap.
+
+Matching ids is not enough either: a test that fails from the trap on both sides proves nothing about the change. The fix round's review found a regression that the id comparison had passed. Round one rewrote "is there an app" as "does the host have `call_from_thread`". A real app always has that method, but the fleet rig's `_AppStub` did not, so an approval round was denied on the spot. `test_navigation_detach_preserves_the_round_then_wake_delivery` had been failing on both base and head from the trap the whole time. Re-run the trap-failing ids in the changed area under a temporary `@private_profile_test` marker on both trees, then remove the marker. The same round also found six Console tests that patched an app alias after mount: they sat in files outside round one's covering set, so widen that set to every file that reaches the changed modules.
+
 ## A test server's sleeping handler is paid in full when `async with server` exits (TASK-38965, 2026-11-06)
 
 **Incident.** `test_real_tls_stalls_are_timeouts_not_plain_http[handshake-stall]` took 32.5 s, although its probe gave up after 0.5 s. Its `asyncio.start_server` handler read once and then slept 30 s to "never answer". Since Python 3.12, `Server.wait_closed()` (which `async with server` calls on exit) waits until every connection is closed; it does not wait for handlers. Over plain TCP, the handshake-stall case, `StreamReaderProtocol.eof_received` returns True, so a connection the client has closed stays half-open until the handler calls `writer.close()`, and this handler did that only after its sleep. That was 32 s of every PR's serial dreams-boundary step. Over TLS, `eof_received` returns False and the client's EOF closes the transport, so the sibling tls-read-timeout case (2.6 s) let the server exit while its handler still slept. Review r10e-rev1 measured both with the old handler on Python 3.12.11: the TLS server exited at 0.52 s, and the plain-TCP server was still waiting after 4 s.

@@ -61,7 +61,7 @@ def _cold_library(monkeypatch, *, build_seconds: float, search_seconds: float = 
     monkeypatch.setattr(service_module, "embeddings_rag_deps_installed", lambda: True)
     monkeypatch.setattr(service_module, "get_shared_rag_service", build_shared_runtime)
     app = SimpleNamespace()
-    service = LibraryLocalRagSearchService(app)
+    service = LibraryLocalRagSearchService.from_app(app)
 
     async def semantic(query, source_types, top_k, kwargs, *, scope, rag_service, **_):
         assert isinstance(rag_service, _Runtime)
@@ -212,7 +212,7 @@ async def test_retries_during_a_hung_build_join_it_instead_of_queueing_threads(
 
     monkeypatch.setattr(service_module, "embeddings_rag_deps_installed", lambda: True)
     monkeypatch.setattr(service_module, "get_shared_rag_service", build_shared_runtime)
-    service = LibraryLocalRagSearchService(SimpleNamespace())
+    service = LibraryLocalRagSearchService.from_app(SimpleNamespace())
     try:
         for _ in range(3):
             with pytest.raises(TimeoutError):
@@ -306,7 +306,7 @@ async def test_a_failed_build_is_not_rejoined_by_the_next_prewarm(monkeypatch):
 
     monkeypatch.setattr(service_module, "embeddings_rag_deps_installed", lambda: True)
     monkeypatch.setattr(service_module, "get_shared_rag_service", build_shared_runtime)
-    service = LibraryLocalRagSearchService(SimpleNamespace())
+    service = LibraryLocalRagSearchService.from_app(SimpleNamespace())
 
     assert await asyncio.wait_for(service.prewarm(), timeout=10) is False
     assert await asyncio.wait_for(service.prewarm(), timeout=10) is True
@@ -339,7 +339,7 @@ async def test_a_prewarm_after_a_profile_switch_does_not_join_the_old_build(
     monkeypatch.setattr(
         service_module, "shared_rag_service_generation", lambda: generation[0]
     )
-    service = LibraryLocalRagSearchService(SimpleNamespace())
+    service = LibraryLocalRagSearchService.from_app(SimpleNamespace())
     try:
         with pytest.raises(TimeoutError):
             async with asyncio.timeout(0.2):

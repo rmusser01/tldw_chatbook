@@ -35,6 +35,7 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 
 from Tests.Chat.test_console_chat_controller import StreamingGateway
+from Tests.Chat.console_controller_factory import bind_runtime_app
 
 
 class _RecordingFleetBridge:
@@ -71,6 +72,7 @@ def _controller_with_bridge(store: ConsoleChatStore):
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
     runtime.set_agent_bridge(bridge)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
     return runtime, controller, bridge
 
@@ -151,6 +153,7 @@ async def test_close_survives_a_bridge_without_the_cancel_all_seam():
     runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
     runtime.set_agent_bridge(controller._agent_bridge)
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
 
     assert (

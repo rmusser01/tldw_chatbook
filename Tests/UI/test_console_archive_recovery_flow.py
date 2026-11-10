@@ -41,6 +41,7 @@ from tldw_chatbook.Chat.console_runtime import (
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Library.local_library_tool_service import LocalLibraryToolService
+from Tests.Chat.console_controller_factory import bind_app
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -193,6 +194,7 @@ async def mounted_recovery(
     owner.set_chat_store(store)
     owner.set_provider_gateway(gateway)
     owner.set_agent_bridge(bridge)
+    bind_app(controller, owner._app)  # host as built at construction (TASK-36947.4)
     owner.set_chat_controller(controller)
     recovery = owner.ensure_archive_recovery()
     controller._archive_recovery_runtime = recovery

@@ -44,6 +44,7 @@ from tldw_chatbook.Widgets.Console.console_video_card import (
     ConsoleVideoCard,
     ConsoleVideoCardSpec,
 )
+from Tests.Chat.console_controller_factory import bind_app, bind_runtime_app
 
 
 RECEIPT_A = "11111111-1111-4111-8111-111111111111"
@@ -165,6 +166,7 @@ def test_runtime_attention_is_receipt_or_hidden_decision_and_exact_ack() -> None
     app = _App(marks)
     runtime = ConsoleRuntime(app)
     controller = _DecisionController(("opaque-decision",))
+    bind_runtime_app(controller, runtime)
     runtime.set_chat_controller(controller)
 
     assert runtime.recompute_console_attention() is True
@@ -213,6 +215,7 @@ def test_worker_attention_handoff_does_not_block_ui_owner_fences(
     session = store.create_session(ephemeral=True)
     controller = ConsoleChatController(store=store, provider_gateway=SimpleNamespace())
     runtime.set_chat_store(store)
+    bind_app(controller, runtime._app)  # host as built at construction (TASK-36947.4)
     runtime.set_chat_controller(controller)
     ready = threading.Event()
     release = threading.Event()

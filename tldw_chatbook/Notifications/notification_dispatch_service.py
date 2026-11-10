@@ -2,10 +2,24 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from ..runtime_policy.types import PolicyDeniedError
 from ..Utils.NotificationHelper import show_notification
+
+
+class NotifyTarget:
+    """A transient-delivery target that is only ``notify``, not the app.
+
+    ``dispatch(app=...)`` uses nothing of the app but ``notify``, so a
+    service handed this holds a narrow callable instead of the app
+    (ADR-250 section 1, Q1; TASK-36947.4).
+    """
+
+    __slots__ = ("notify",)
+
+    def __init__(self, notify: Callable[..., Any]) -> None:
+        self.notify = notify
 
 
 class NotificationDispatchService:

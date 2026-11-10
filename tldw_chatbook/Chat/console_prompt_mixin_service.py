@@ -349,7 +349,12 @@ class ConsolePromptMixinService:
         except Exception:  # noqa: BLE001 - source uncertainty must refuse exact capture.
             raise MixinSnapshotUnavailableError("mixin_source_unavailable") from None
 
-        owner_app = getattr(self.preparation_owner, "app", None)
+        from .console_controller_host import NO_HOST
+
+        # TASK-36947.4: the owner's host, unless it was built without one.
+        owner_host = getattr(self.preparation_owner, "_host", None)
+        if owner_host is NO_HOST:
+            owner_host = None
 
         def current():
             if (
@@ -361,12 +366,9 @@ class ConsolePromptMixinService:
                 raise MixinSourceChangedError("mixin_session_changed")
             if self.preferences(session_id).revision != expected_revision:
                 raise MixinPreferenceConflictError("mixin_preference_conflict")
-            if (
-                getattr(self.preparation_owner, "app", None) is not owner_app
-                or self.prompt_scope_service is not scope
-            ) or (
-                owner_app is not None
-                and getattr(owner_app, "prompt_scope_service", None) is not scope
+            if self.prompt_scope_service is not scope or (
+                owner_host is not None
+                and getattr(owner_host, "prompt_scope_service", None) is not scope
             ):
                 raise MixinSourceChangedError("mixin_source_changed")
             for backend, identity in identities.items():
