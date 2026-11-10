@@ -63,5 +63,6 @@ No PR lane runs any of the three files.
 2026-11-09 evidence (review r12fr; dev 3a6498ae14, run.sh, `-n 4`, load ~20). `Tests/UI/test_console_mcp_approval.py` plain still has 11 `RecoveryRequired` nodes. Under the temporary `bootstrap_profile` marker it now gives 31 failed / 92 passed. Changes against the list above:
 - `test_revocation_cannot_split_a_batch_snapshot` now passes.
 - `test_raw_shell_command_view_has_bounded_scrollable_geometry` now fails with `_agentic_terminal.tcss is missing '.approval-row-full-command'`, because #3036 moved the approval rules into `css/features/_console_approvals.tcss`.
-- #3036 (the approval UX merge) makes 23 more nodes red. They are filed as their own task, which leaves this file's lane to this task.
+- `test_approved_definitive_tool_stays_mounted_until_real_terminal[success]` is red before #3036 too, like `[crash]` above: on the round-12 stack 9091820bf2, which has no #3036, it fails under the marker with "approved handler never started" (review r12fr2: 3 of 3; re-run here: 2 of 2, load ~31-41).
+- #3036 (the approval UX merge) makes 22 more nodes red. They are filed as their own task, which leaves this file's lane to this task.
 <!-- SECTION:NOTES:END -->
