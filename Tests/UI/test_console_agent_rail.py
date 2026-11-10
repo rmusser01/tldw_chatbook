@@ -33,6 +33,24 @@ def _select_test_log_run(controller, target):
     controller._console_agent_bridge.resolve_run_log_target = lambda conversation, drill: drill
 
 
+def _record_probe_publications(monkeypatch, controller):
+    """Count paints requested by the probe, independent of coalesced rail refreshes."""
+    published = []
+    publish = controller._publish_console_agent_log_availability
+
+    def record_paint():
+        published.append(controller._console_agent_full_log_cache_available)
+
+    def record(*args):
+        with monkeypatch.context() as scoped:
+            scoped.setattr(controller._screen, "_sync_console_agent_section", record_paint)
+            publish(*args)
+
+    monkeypatch.setattr(controller._screen, "_sync_console_agent_section", lambda: None)
+    monkeypatch.setattr(controller, "_publish_console_agent_log_availability", record)
+    return published
+
+
 def _all_rows(state):
     rows = []
     for section in state.sections:
@@ -1429,7 +1447,7 @@ async def test_drilldown_still_prefers_the_persisted_steps_once_they_exist():
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
-async def test_full_log_slow_probe_is_off_thread_and_rejects_stale_target():
+async def test_full_log_slow_probe_is_off_thread_and_rejects_stale_target(monkeypatch):
     import threading
 
     from Tests.UI.test_console_run_log_paging import settled
@@ -1458,10 +1476,7 @@ async def test_full_log_slow_probe_is_off_thread_and_rejects_stale_target():
         bridge = Bridge()
         controller._console_agent_bridge = bridge
         _select_test_log_run(controller, lambda: target[0])
-        published = []
-        console._sync_console_agent_section = lambda: published.append(
-            controller._console_agent_full_log_cache_available
-        )
+        published = _record_probe_publications(monkeypatch, controller)
         assert controller._console_agent_full_log_available() is False
         await settled(pilot, entered.is_set)
         assert calls == [("run-a", calls[0][1])]
@@ -1670,7 +1685,7 @@ async def test_initial_empty_log_semantics(state):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cancel", [False, True])
 @pytest.mark.bootstrap_profile
-async def test_log_probe_settles_stale_or_cancelled_generation(cancel):
+async def test_log_probe_settles_stale_or_cancelled_generation(cancel, monkeypatch):
     import threading
 
     from Tests.UI.test_console_run_log_paging import settled
@@ -1698,8 +1713,7 @@ async def test_log_probe_settles_stale_or_cancelled_generation(cancel):
         controller = host.screen_stack[-1]._agent
         controller._console_agent_bridge = bridge
         _select_test_log_run(controller, lambda: target[0])
-        published = []
-        controller._screen._sync_console_agent_section = lambda: published.append(True)
+        published = _record_probe_publications(monkeypatch, controller)
         assert not controller._console_agent_full_log_available()
         await settled(pilot, entered.is_set)
         if cancel:
