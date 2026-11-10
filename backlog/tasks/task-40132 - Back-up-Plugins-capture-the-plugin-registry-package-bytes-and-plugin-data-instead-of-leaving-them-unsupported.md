@@ -1,11 +1,11 @@
 ---
 id: TASK-40132
 title: "Back up Plugins: capture the plugin registry, package bytes and plugin data instead of leaving them unsupported"
-status: Done
+status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-10 16:15
-updated_date: 2026-11-10 21:51
+updated_date: 2026-11-10 22:39
 labels:
 - follow-up
 - backup
@@ -39,7 +39,7 @@ Today every one of these producers sits in the backup review's conservative `uns
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 A backup preview of a profile with an installed plugin and plugin data shows the plugins root as captured, not unsupported: the registry database, the package bytes and every plugin data root
-- [x] #2 Only runtime.lock and, inside staging, the host git/SSH configuration copies (host-git-config, host-ssh-*), repository.git and content/ are left out of the capture, each named in the notes with its reason and shown in the preview as excluded; anything else under the plugins root, including staging snapshots and acquisition custody records, is captured
+- [ ] #2 Inside each staging/<name>/ only snapshot/ is captured (an allow-list, implementing the owner's D1 text "Capture snapshot/ and the custody records"); every other staging member, known (host-git-config, host-ssh-*, repository.git, content/) or not (for example a lockfile residue), is excluded as one directory-level row without walking its contents, shown in the preview as excluded with its reason and named in the notes. runtime.lock is also excluded. Everything else under the plugins root, including the acquisition custody records, is captured
 - [x] #3 The registry database is captured consistently, like the other SQLite owners (schema catalog, WAL folded), with a test that is red before the change
 - [x] #4 While a plugin process or another plugin data writer is running, capture either waits for it to stop or is refused with a reason the preview shows, so no capture holds half-written plugin data; a test shows it
 - [x] #5 A restore puts the registry, packages and data back byte for byte. The plugin system then reports its documented state when the keyring marker is missing or does not match the restored files, and the user sees copy that says truthfully what works (an in-place restore with plugins unchanged since the backup needs only Unlock) and what does not yet (the other cases keep plugins off, with their files and data on disk), with no step that dead-ends; no plugin data is lost. Tests cover both
@@ -98,6 +98,8 @@ Review r13g-rev1 (2026-11-10) owner decisions, via the coordinator's AskUserQues
 
 - D1 staging: "Only what recovery needs (Recommended)" — "Capture snapshot/ and the custody records. Exclude host-git-config, host-ssh-*, repository.git and content/, shown as excluded in the preview. Git-installed plugins stay recoverable, and no SSH, git or credential config goes into archives." (Supersedes Q1 for those staging members; AC#2 rewritten to match.)
 - D2 recovery: "Truthful copy now, feature next (Recommended)" — "This PR states exactly what works (an in-place restore with plugins unchanged needs only Unlock) and what doesn't, with no false steps. I file a follow-up feature: a reset that keeps plugin data and re-attaches it, plus rebinding of restored data roots." (AC#5 rewritten to match; the coordinator files the feature.)
+
+Review r13g-rev2 (2026-11-10), coordinator ruling I1, consistent with D1's option text "Capture snapshot/ and the custody records": the staging rule becomes an allow-list. Inside `staging/<name>/` only `snapshot/` is captured; every other member, including ones a future version adds and lockfile residue such as `host-git-config.lock`, is excluded at the directory level without walking it, so a local-source `repository.git` of tens of thousands of files neither counts toward the tree's entry limit nor produces preview rows. AC#2 rewritten again to match.
 
 **Questions as asked (kept for the record):**
 
