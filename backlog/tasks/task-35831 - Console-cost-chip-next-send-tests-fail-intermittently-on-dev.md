@@ -42,4 +42,6 @@ Found while checking PR #3169's rebase onto dev 0fef489ece (2026-10-20). Four Co
   - `test_projected_delta_estimator_skipped_when_warm_without_break_reason`: estimator `call_count` 0, expected 1.
 - The round-5 report put the burst test's unpriced label at 1 of 20 runs.
 - `test_excluded_historical_media_keeps_next_send_priced` did not fail in these three runs.
+
+2026-11-08 evidence (round 12 of the 2026-10-23 burn-down; TASK-39145's notes on round-12 branch fu/r12-cprod). In a covering run at `-n 4` and load 60+, 9 `test_console_cost_chip_screen.py` nodes and 2 `test_console_cost_config_source_retry.py` nodes timed out waiting for 'warm reply' on that head only. A rerun of both files gave 39 passed and 1 failed (`test_idle_draft_edit_burst_coalesces_one_cost_refresh`). Alone, that node failed once on base 8b762b52fa and passed twice on the head. Same file and same load sensitivity as this task, so no new task was filed.
 <!-- SECTION:NOTES:END -->
