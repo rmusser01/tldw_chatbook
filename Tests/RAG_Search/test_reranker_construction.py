@@ -35,6 +35,8 @@ Two more review findings on this same task, both fixed here (task-3170 P0):
     shared reranker singleton cannot misattribute them.)
 """
 
+import sys
+from contextlib import ExitStack
 from types import SimpleNamespace
 
 import pytest
@@ -46,7 +48,11 @@ from tldw_chatbook.RAG_Search.reranker import (
     create_reranker_from_config,
 )
 from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig, get_profile_manager
-from tldw_chatbook.RAG_Search.simplified.config import RAGConfig
+from tldw_chatbook.RAG_Search.simplified.config import (
+    EmbeddingConfig,
+    RAGConfig,
+    VectorStoreConfig,
+)
 from tldw_chatbook.RAG_Search.simplified import enhanced_rag_service_v2
 from tldw_chatbook.RAG_Search.simplified.enhanced_rag_service_v2 import (
     EnhancedRAGServiceV2,
@@ -115,6 +121,22 @@ def test_no_builtin_profile_asks_for_reasoning_it_cannot_fit_or_read(tmp_path):
     )
 
 
+@pytest.fixture
+def make_v2_service(tmp_path, monkeypatch):
+    services = ExitStack()
+
+    def make(**kwargs):
+        return services.enter_context(_make_v2_service_with_reranking(tmp_path, **kwargs))
+
+    try:
+        yield make
+    finally:
+        # Mock embeddings own no GPU resources, so skip CUDA discovery on close.
+        with monkeypatch.context() as teardown:
+            teardown.setitem(sys.modules, "torch", None)
+            services.close()
+
+
 def _make_v2_service_with_reranking(
     tmp_path,
     enable_cache=False,
@@ -138,11 +160,10 @@ def _make_v2_service_with_reranking(
     """
     manager = get_profile_manager(profiles_dir=tmp_path)
 
-    rag_cfg = RAGConfig()
-    rag_cfg.embedding.model = "mock"  # deterministic bag-of-words backend, offline
-    rag_cfg.embedding.device = "cpu"
-    rag_cfg.vector_store.type = "memory"
-    rag_cfg.vector_store.persist_directory = None
+    rag_cfg = RAGConfig(
+        embedding=EmbeddingConfig(model="mock", device="cpu"),
+        vector_store=VectorStoreConfig(type="memory"),
+    )
     rag_cfg.chunking.chunk_size = 60
     rag_cfg.chunking.chunk_overlap = 10
     rag_cfg.search.enable_cache = enable_cache
@@ -169,8 +190,9 @@ def _make_v2_service_with_reranking(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_reranker_construction_failure_records_safe_unavailability(
-    tmp_path, monkeypatch
+    make_v2_service, monkeypatch
 ):
     warnings = []
 
@@ -184,7 +206,7 @@ def test_reranker_construction_failure_records_safe_unavailability(
     )
     monkeypatch.setattr(enhanced_rag_service_v2.logger, "warning", warnings.append)
 
-    service = _make_v2_service_with_reranking(tmp_path)
+    service = make_v2_service()
 
     assert service.reranker is None
     assert "RuntimeError" in service._reranker_unavailable_reason
@@ -193,9 +215,10 @@ def test_reranker_construction_failure_records_safe_unavailability(
     assert all("secret-token-value" not in warning for warning in warnings)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_construction_failure_tags_one_base_result_without_mutating_original(
-    tmp_path, monkeypatch
+    make_v2_service, monkeypatch
 ):
     def _raise_construction_failure(*args, **kwargs):
         raise RuntimeError("secret-token-value")
@@ -217,7 +240,7 @@ async def test_construction_failure_tags_one_base_result_without_mutating_origin
         enhanced_rag_service_v2.EnhancedRAGService, "search", _base_search
     )
 
-    service = _make_v2_service_with_reranking(tmp_path)
+    service = make_v2_service()
 
     results = await service.search("query")
 
@@ -234,8 +257,9 @@ async def test_construction_failure_tags_one_base_result_without_mutating_origin
     assert await service.search("query") == []
 
 
+@pytest.mark.bootstrap_profile
 def test_switch_profile_clears_stale_reranker_and_unavailability_reason(
-    tmp_path, monkeypatch
+    make_v2_service, monkeypatch
 ):
     def _raise_construction_failure(*args, **kwargs):
         raise RuntimeError("secret-token-value")
@@ -245,7 +269,7 @@ def test_switch_profile_clears_stale_reranker_and_unavailability_reason(
         "create_reranker_from_config",
         _raise_construction_failure,
     )
-    service = _make_v2_service_with_reranking(tmp_path)
+    service = make_v2_service()
     assert service.reranker is None
     assert service._reranker_unavailable_reason
 
@@ -280,11 +304,12 @@ def test_switch_profile_clears_stale_reranker_and_unavailability_reason(
     assert service._reranker_unavailable_reason is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_experiment_reranker_construction_failure_is_safely_disclosed(
-    tmp_path, monkeypatch
+    make_v2_service, monkeypatch
 ):
-    service = _make_v2_service_with_reranking(tmp_path)
+    service = make_v2_service()
     base_result = SearchResult(id="result-1", score=0.8, document="First", metadata={})
     base_results = [base_result]
     experiment_profile = ProfileConfig(
@@ -346,11 +371,12 @@ async def test_experiment_reranker_construction_failure_is_safely_disclosed(
     assert factory_calls == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_experiment_reranker_overrides_an_unavailable_base_reranker(
-    tmp_path, monkeypatch
+    make_v2_service, monkeypatch
 ):
-    service = _make_v2_service_with_reranking(tmp_path)
+    service = make_v2_service()
     service.reranker = None
     service._reranker_unavailable_reason = "reranker construction failed (RuntimeError)"
     base_results = [
@@ -407,12 +433,12 @@ async def test_experiment_reranker_overrides_an_unavailable_base_reranker(
     assert metrics[-1]["reranked"] is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_experiment_reranker_uses_its_default_when_base_is_disabled(
-    tmp_path, monkeypatch
+    make_v2_service, monkeypatch
 ):
-    service = _make_v2_service_with_reranking(
-        tmp_path,
+    service = make_v2_service(
         enable_reranking=False,
         include_reranking_config=False,
     )
@@ -474,11 +500,12 @@ async def test_experiment_reranker_uses_its_default_when_base_is_disabled(
     assert metrics[-1]["reranked"] is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_experiment_only_inherits_base_reranker_when_explicitly_enabled(
-    tmp_path, monkeypatch
+    make_v2_service, monkeypatch
 ):
-    service = _make_v2_service_with_reranking(tmp_path)
+    service = make_v2_service()
     base_results = [
         SearchResult(id="result-1", score=0.8, document="First", metadata={}),
         SearchResult(id="result-2", score=0.7, document="Second", metadata={}),
@@ -534,6 +561,7 @@ async def test_experiment_only_inherits_base_reranker_when_explicitly_enabled(
     assert metrics[-1]["reranked"] is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("failed", "total", "expected_reranked"),
@@ -544,9 +572,9 @@ async def test_experiment_only_inherits_base_reranker_when_explicitly_enabled(
     ],
 )
 async def test_experiment_rerank_metric_requires_a_successful_scoring(
-    tmp_path, monkeypatch, failed, total, expected_reranked
+    make_v2_service, monkeypatch, failed, total, expected_reranked
 ):
-    service = _make_v2_service_with_reranking(tmp_path)
+    service = make_v2_service()
     base_results = [
         SearchResult(id="result-1", score=0.8, document="First", metadata={}),
         SearchResult(id="result-2", score=0.7, document="Second", metadata={}),
@@ -597,9 +625,10 @@ async def test_experiment_rerank_metric_requires_a_successful_scoring(
     assert metrics[-1]["reranked"] is expected_reranked
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_runtime_reranker_failure_is_safely_disclosed(tmp_path, monkeypatch):
-    service = _make_v2_service_with_reranking(tmp_path)
+async def test_runtime_reranker_failure_is_safely_disclosed(make_v2_service, monkeypatch):
+    service = make_v2_service()
     base_results = [
         SearchResult(id="result-1", score=0.8, document="First", metadata={}),
         SearchResult(id="result-2", score=0.7, document="Second", metadata={}),
@@ -625,9 +654,10 @@ async def test_runtime_reranker_failure_is_safely_disclosed(tmp_path, monkeypatc
     assert all("secret-token-value" not in warning for warning in warnings)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_raising_reranker_degrades_to_unreranked_results(tmp_path):
-    service = _make_v2_service_with_reranking(tmp_path)
+async def test_raising_reranker_degrades_to_unreranked_results(make_v2_service):
+    service = make_v2_service()
     assert service.reranker is not None, "reranker must construct for this profile"
 
     await service.index_batch_optimized(
@@ -770,8 +800,9 @@ def _quokka_platypus_docs():
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_reranking_skipped_tag_does_not_poison_the_cache(tmp_path):
+async def test_reranking_skipped_tag_does_not_poison_the_cache(make_v2_service):
     """Review finding on this task (task-3170 P0): RAGService.search()'s
     base-layer cache stores and returns SearchResult objects BY REFERENCE
     (rag_service.py's cache.get_async/put_async), not by copy. The old
@@ -782,7 +813,7 @@ async def test_reranking_skipped_tag_does_not_poison_the_cache(tmp_path):
     cache ON: search once with a raising reranker (tags "boom"), then search
     the identical query again with reranking explicitly off -- the second
     call must NOT see the first call's tag."""
-    service = _make_v2_service_with_reranking(tmp_path, enable_cache=True)
+    service = make_v2_service(enable_cache=True)
     assert service.reranker is not None
 
     await service.index_batch_optimized(_quokka_platypus_docs())
@@ -818,9 +849,10 @@ async def test_reranking_skipped_tag_does_not_poison_the_cache(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reranking_degraded_tag_when_scoring_silently_fails_for_every_result(
-    tmp_path,
+    make_v2_service,
 ):
     """Review finding on this task (task-3170 P0): the dominant real
     LLM-reranking failure mode is SILENT, not an exception.
@@ -832,7 +864,7 @@ async def test_reranking_degraded_tag_when_scoring_silently_fails_for_every_resu
     unchanged, (b) `reranking_degraded` tag present, (c) tag absent on a
     later clean (reranking-off) search with cache on -- same
     copy-not-mutate rule as the reranking_skipped test above."""
-    service = _make_v2_service_with_reranking(tmp_path, enable_cache=True)
+    service = make_v2_service(enable_cache=True)
     assert service.reranker is not None
 
     await service.index_batch_optimized(_quokka_platypus_docs())
