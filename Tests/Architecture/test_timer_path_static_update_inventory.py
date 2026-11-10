@@ -2368,6 +2368,25 @@ def census(
     return found
 
 
+@pytest.fixture(autouse=True)
+def cleanup_file_descriptors() -> Iterator[None]:
+    """Skip the root conftest's periodic ``gc.collect()`` in this pure-AST census.
+
+    Overrides the root fixture of this name. Nothing here mounts an app, and
+    while the package AST is cached a full collection walks ~13M objects
+    (about 3 s each, TASK-39125).
+    """
+    yield
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _release_package_ast() -> Iterator[None]:
+    """Free the cached whole-package AST before the next test file (TASK-39125)."""
+    yield
+    for cached in (_load_package, _package_graph, _package_clock_roots):
+        cached.cache_clear()
+
+
 @pytest.fixture(scope="module")
 def timer_path_census() -> dict[tuple[str, str, str], dict]:
     """Build the census once for the whole module.

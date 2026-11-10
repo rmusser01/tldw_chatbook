@@ -144,7 +144,7 @@ def framework_clock_constructions(
     ``loading-indicator``.
     """
     if modules is None:
-        return _package_framework_clocks()
+        return _package_censuses()[0]
     found: dict[tuple[str, str, str], str] = {}
     for module in modules.values():
         rel = str(module.path.relative_to(REPO_ROOT))
@@ -172,7 +172,7 @@ def auto_refresh_armings(
     is not a clock and is skipped.
     """
     if modules is None:
-        return _package_auto_refresh_armings()
+        return _package_censuses()[1]
     found: dict[tuple[str, str, str], str] = {}
     for module in modules.values():
         rel = str(module.path.relative_to(REPO_ROOT))
@@ -203,13 +203,17 @@ def auto_refresh_armings(
 
 
 @lru_cache(maxsize=1)
-def _package_framework_clocks() -> dict[tuple[str, str, str], str]:
-    return framework_clock_constructions(_load_package())
+def _package_censuses() -> tuple[
+    dict[tuple[str, str, str], str], dict[tuple[str, str, str], str]
+]:
+    """Both censuses from one parse, without keeping the parsed package.
 
-
-@lru_cache(maxsize=1)
-def _package_auto_refresh_armings() -> dict[tuple[str, str, str], str]:
-    return auto_refresh_armings(_load_package())
+    The whole-package AST is ~13M objects; left cached, every later periodic
+    ``gc.collect()`` in the session walked it, about 3 s each (TASK-39125).
+    """
+    modules = _load_package()
+    _load_package.cache_clear()
+    return framework_clock_constructions(modules), auto_refresh_armings(modules)
 
 
 @pytest.fixture(scope="module")
