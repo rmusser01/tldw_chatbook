@@ -153,6 +153,7 @@ async def test_expanded_and_collapsed_rail_owners_keep_one_divider() -> None:
         _assert_edge_owned_workbench(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("focus_selector", "owner_selector", "divider_edge"),
@@ -166,7 +167,7 @@ async def test_focus_repaints_only_owned_divider_without_moving_geometry(
     owner_selector: str,
     divider_edge: str,
 ) -> None:
-    async with make_console_pilot(size=(160, 45)) as pilot:
+    async with _make_console_pilot_without_onboarding(size=(160, 45)) as pilot:
         screen = pilot.app.screen
         assert await pilot.click("#console-inspector-rail-open")
         await pilot.pause()
@@ -185,12 +186,13 @@ async def test_focus_repaints_only_owned_divider_without_moving_geometry(
         assert control.styles.text_style.underline
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_f6_transcript_focus_marks_only_stable_title_without_geometry_change() -> (
     None
 ):
     """Transcript focus remains visible without relying on a color delta."""
-    async with make_console_pilot(size=(160, 45)) as pilot:
+    async with _make_console_pilot_without_onboarding(size=(160, 45)) as pilot:
         screen = pilot.app.screen
         title = screen.query_one("#console-transcript-title")
         region = screen.query_one("#console-transcript-region")
@@ -272,6 +274,7 @@ async def test_live_resize_reasserts_edge_ownership_and_preserves_rail_intent() 
         assert checks == [(150, 30), (120, 30), (100, 30), (100, 24)]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("collapse_selector", "control_selector", "owner_selector", "divider_edge"),
@@ -296,7 +299,7 @@ async def test_collapsed_handle_focus_is_non_color_and_dimension_stable(
     owner_selector: str,
     divider_edge: str,
 ) -> None:
-    async with make_console_pilot(size=(160, 45)) as pilot:
+    async with _make_console_pilot_without_onboarding(size=(160, 45)) as pilot:
         screen = pilot.app.screen
         if collapse_selector is not None:
             assert await pilot.click(collapse_selector)
@@ -328,6 +331,7 @@ async def test_collapsed_handle_focus_is_non_color_and_dimension_stable(
         _assert_edge_owned_workbench(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("focus_selector", "owner_selector", "cue_selector", "focus_class", "edge"),
@@ -362,7 +366,7 @@ async def test_focus_paint_clears_when_focus_becomes_none(
     focus_class: str,
     edge: str | None,
 ) -> None:
-    async with make_console_pilot(size=(160, 45)) as pilot:
+    async with _make_console_pilot_without_onboarding(size=(160, 45)) as pilot:
         screen = pilot.app.screen
         target = screen.query_one(focus_selector)
         owner = screen.query_one(owner_selector)
@@ -430,9 +434,10 @@ async def test_native_widget_blur_repaints_the_actual_focus_successor() -> None:
         _assert_edge_owned_workbench(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rapid_focus_transfer_keeps_only_the_current_edge_painted() -> None:
-    async with make_console_pilot(size=(160, 45)) as pilot:
+    async with _make_console_pilot_without_onboarding(size=(160, 45)) as pilot:
         screen = pilot.app.screen
         context = screen.query_one("#console-context-rail-collapse")
         inspector = screen.query_one("#console-inspector-rail-open")
