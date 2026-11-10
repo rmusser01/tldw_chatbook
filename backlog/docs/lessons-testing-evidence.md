@@ -25244,3 +25244,10 @@ minutes:
   inputs from the preview inventory, and give a keyring stand-in a plain-file
   backend (`KeyringPluginMarkerStore` with a test backend) rather than an admitted
   private-file path.
+- **Opening stores in the backup/restore child does the same.** In review round
+  r13g-rev1, `_populate_required_dependencies` (and importing a test module whose
+  imports load config before the config file existed) in the same child as
+  `start_backup`/`start_restore` failed them with `admission_timeout`, or added a
+  default `~/.local/share/tldw_cli/default_user` that previewed as `unknown`.
+  Build stores in a separate setup child, or copy store files plainly with
+  `shutil.copytree`, and write the config (and its data folder) before any import.

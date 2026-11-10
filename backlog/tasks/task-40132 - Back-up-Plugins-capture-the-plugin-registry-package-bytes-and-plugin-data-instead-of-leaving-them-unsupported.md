@@ -129,66 +129,95 @@ Review r13g-rev1 (2026-11-10) owner decisions, via the coordinator's AskUserQues
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-**Summary.** A backup now captures the whole plugin root through a new installed `plugins` owner (`tldw_chatbook/Plugins/backup.py`). It covers the registry, package bytes, revisions, every data root, staging and acquisition custody. Only `runtime.lock` is left out. Capture refuses while plugin writers may be live. A restore goes back onto the same profile only, and restored plugins stay off until plugin authority recovery approves them. Implemented on dev ae9f9e8d21 + the filing commit, 2026-11-10. Owner decisions Q1–Q4 are recorded verbatim in the plan above.
+**Summary.** A backup captures the plugin root through a new installed `plugins` owner (`tldw_chatbook/Plugins/backup.py`).
+- **Captured:** the registry, package bytes, revisions, every data root, and each repository fetch's `snapshot/` and custody record.
+- **Left out:** `runtime.lock`, and inside each `staging/<name>/` the fetch's host git/SSH configuration copies, `repository.git` and `content/` (D1).
+- **Capture** refuses while plugin writers may be live, without blocking backups that leave plugins out.
+- **Restore** goes back onto the same profile and data folder only. Restored plugins stay off until the plugin service's authority recovery approves them.
+- **User copy** says truthfully what works and what does not (D2).
+
+Implemented on dev ae9f9e8d21 plus the filing commit, 2026-11-10. Owner decisions Q1–Q4 and review decisions D1–D2 are recorded verbatim in the plan above.
 
 **Approach.**
 - **Owner shape.** One tree owner, shaped like `recovered.media`.
   - `inventory.sqlite_tree_member` replaces the two `recovered.media` name checks, for sidecar declaration and capture dispatch.
-  - `registry.sqlite3` goes through a new SQLite owner, `recovery.plugins.registry`: `copy_private_sqlite` (backup API, so the WAL folds in) and `_validate_sqlite` against the frozen v5 catalog `REGISTRY_SCHEMAS`. A test pins that catalog to `PluginRegistry._reference_schema()`.
-  - Other files go through the raw route (`_RAW_RECOVERY_LIMITS["plugins"]`). The owner joins the `tools` group and is labelled "Plugins".
-- **Exclusion (AC2).** Only `runtime.lock` is left out: it is the live runtime owner's lock, holds no data, and restoring a held lock would be meaningless. It shows as `intentionally_excluded`. Registry `-wal`/`-shm` show as `sqlite.transient`, because they are folded into the copy. A stray `-journal` is `unsupported`, because it could roll back a restored copy. Staging and custody are captured, per Q1.
-- **Quiescing (AC4): refuse, never wait.** Two things count as live writers: any `processes.state != 'settled'`, or a failed non-creating `portalocker` probe of `runtime.lock`.
-  - Either one marks every plugin item `unavailable`, adds a `plugins:writers_active` row, and puts the inventory issue `plugin_writers_active` in the preview. The Backup screen renders that issue with its `issue_message`, which states the restart ceiling.
-  - Partial capture is allowed to omit plugins. Each item's capture re-probes the lock and holds it while copying.
-- **Restore.**
-  - `staging._config_targets` refuses `owner_relocation_unverified:plugins` when the target selector's profile id differs from the archive's (Q4).
-  - `relocate_restore` also refuses a registry whose `data_roots.path` rows name another root.
-  - Staged registry copies are opened only through `open_recovery_validation`.
+  - `registry.sqlite3` goes through a new SQLite owner, `recovery.plugins.registry`: `copy_private_sqlite`, which folds the WAL in, and `_validate_sqlite` against the frozen v5 catalog `REGISTRY_SCHEMAS`. A test pins that catalog to `PluginRegistry._reference_schema()`.
+  - Other files take the raw route (`_RAW_RECOVERY_LIMITS["plugins"]`). The owner is in the `tools` group and labelled "Plugins".
+- **Exclusions (AC2, D1)**, each shown as `intentionally_excluded`:
+  - `runtime.lock`: the live runtime owner's lock, which holds no data.
+  - `staging/<name>/host-git-config` and `host-ssh-*`: copies of the host git/SSH configuration, which can hold credential helpers and SSH config. Capture refuses them with `plugin_staging_member_excluded`.
+  - `staging/<name>/repository.git/` and `content/`: the fetch's object store (for a local source, the user's whole objects and refs, up to 500 MB) and working copy. Recovery reads only `snapshot/` and the custody record.
+  - Registry `-wal`/`-shm` are `sqlite.transient`, because they are folded into the copy. A stray `-journal` is `unsupported`.
+- **Quiescing (AC4, C1): refuse, never wait.** Two things count as live writers: an unsettled `processes` row, or a failed non-creating `portalocker` probe of `runtime.lock`.
+  - Either one reduces the owner to one unavailable root (no children, so the tree stays valid) plus a `plugins:writers_active` row.
+  - Inventory adds `plugin_writers_active` after group selection, from that row only. A backup without `tools` is therefore unaffected, and a partial backup omits plugins. The Backup screen explains the issue (M4 wording).
+  - Capture creates `runtime.lock` if it is absent and holds it while copying each item (M3).
+  - A plugin service that found the lock busy retries on its next use instead of caching `plugin_owner_busy` (M3).
+- **Restore (AC8, M1, M2).**
+  - `staging._config_targets` refuses `owner_relocation_unverified:plugins` when the target selector's profile id differs.
+  - `relocate_restore` also refuses a registry whose data-root paths, or whose `materialized_identity` paths in `revisions.inspection_json` (installed and fetched packages), are outside the destination root. This catches a same-profile restore after `data_dir` moved.
+  - Detached import refuses a plugin root by name (`detached_owner_unavailable:plugins`).
 - **Gate (AC7, Q3).**
-  - `PluginAdmission.capture` raises `plugin_restore_review_required` while a restored generation that lists `plugins` is unapproved. That check is `Plugins/backup.restore_review_required`, which fails closed.
-  - Generations restored before this owner existed are ignored, so they cannot lock plugins forever.
-  - `PluginService.recover()`/`unlock()` approve the generation once coordinator recovery returns no `recovery_required` receipt and the posture is ready.
-- **Copy (Q2).** The Plugins screen's `recovery_required` status now names the restore case and Reset authority…. It renders in a `markup=False` Static and interpolates nothing.
+  - `PluginAdmission.capture` refuses `plugin_restore_review_required` while a restored generation that lists `plugins` is unapproved.
+  - `PluginService` approves it only when coordinator recovery returns no `recovery_required` receipt and the posture is ready (M5 tests).
+- **Copy (Q2 narrowed by D2).** It states what works and what does not, with no step that dead-ends:
+  - What works: an in-place restore with plugins unchanged since the backup needs only Unlock.
+  - On another computer or profile, the `recovery_required` copy on the Plugins screen says Chatbook cannot recover the plugins yet; they stay off with files and data on disk.
+  - After plugins changed since the backup, unlock raises `FileNotFoundError`, and `authority_failure_message` names the mismatch.
+  - No Reset step is suggested, because bootstrap refuses while the registry lists installs.
 
-**Red → green evidence** (load 30–60 throughout).
-- AC1/AC2: the preview test was red on `assert None == ('plugins', 'intentionally_excluded')` — the whole root previewed as `{'.': ('unknown', 'unsupported')}`.
-- AC3: red on `assert 'plugins' in owners`.
-- AC4 (both params): red on `assert 'plugin_writers_active' in (...)`.
-- Preview reason UI: red on the raw code `plugin_writers_active` only.
-- Plugins copy UI: red on the old "Authority: recovery_required. Restore the protected backend…" text.
-- AC8 negative control (the profile check removed in staging): the e2e test went red with "separate-profile plugin restore was planned".
-- Registry-root defense control (the raise removed): red on "DID NOT RAISE".
-- AC7 control (the admission gate disabled): red with "restored plugin ran before authority recovery", after the authority was unlocked and reconciled outside the service.
-- All were green after the change. The e2e test takes about 2 minutes.
+**Red → green evidence** (load 30–60).
+- AC1/AC2 preview: red first on the root previewing as `unknown`; with D1, red on `staging/op/host-git-config` included.
+- AC3: red on `'plugins' in owners`.
+- AC4: red on the missing `plugin_writers_active`.
+- C1 held-lock child: red on `('overlapping_owner_roots', 'plugin_writers_active', …)`.
+- M2: "DID NOT RAISE" with no data roots.
+- M3 capture lock: `['absent'] == ['held']`. M3 busy retry: `'plugin_owner_busy' == 'needs_setup'`.
+- M4: "in Plugins" in the copy.
+- M5: three cases red with both conditions removed.
+- M1: detached "DID NOT RAISE".
+- Unlock copy: red with its branch removed.
+- Plugins copy UI: red on the old Reset text.
+- Earlier controls: removing the separate-profile check went red with "separate-profile plugin restore was planned"; removing the registry-root raise went red with "DID NOT RAISE"; disabling the admission gate went red with "restored plugin ran before authority recovery".
+- All green after the changes.
+- E2e `test_plugin_backup_restores_in_place_and_waits_for_authority_recovery`: 1 passed in 10 min at load ~45–50. It covers:
+  - a repository install through `acquire_snapshot` + `SourceService.review_acquired`;
+  - the staged host files, `repository.git` and `content/` excluded and absent from the archive, with no credential bytes in any payload;
+  - an isolated plan refused;
+  - a same-profile restore after `data_dir` moved refused (`owner_relocation_unverified`);
+  - an in-place restore with byte-equal files and an identical registry dump;
+  - posture `recovery_required` with another marker;
+  - the gate refusing until the service's recovery;
+  - the git-installed plugin re-verifying and running after restore;
+  - then, after a later plugin change and a second restore of the same archive: posture `locked`, unlock raising `FileNotFoundError` with the truthful copy, plugins still refused, data kept.
 
 **Tests.**
-- `Tests/Plugins/test_recovery.py` (plugin-qualification lane):
-  - `test_backup_preview_captures_plugin_root_except_runtime_lock`
-  - `test_plugin_registry_capture_folds_wal_into_its_exact_catalog`
-  - `test_live_plugin_writers_refuse_preview_and_capture[process|lock]`
-  - `test_restored_registry_must_name_its_own_plugin_root`
-  - `test_plugin_backup_restores_in_place_and_waits_for_authority_recovery` (managed runtime only). It covers a Tools-group backup, an isolated plan refused, a same-profile replacement, byte-equal package/data/staging files and an identical registry dump (the registry is compared by its rows, since the SQLite backup route rewrites pages and folds the WAL, so the file is not the source's bytes), missing-keyring posture `recovery_required`, the gate before and after recovery, and plugin data kept.
-- UI: `Tests/UI/test_backup_data_groups.py::test_backup_review_explains_refused_live_plugins` and `Tests/UI/test_plugins_browse.py::test_authority_recovery_names_restore_and_reset`.
-- Census and allowlist updates:
-  - `Tests/DB/test_private_sqlite_inventory.py`: C99/B41 ranges, the `copy_private_sqlite` count 23, the reviewed authority set, and the `_Plugins` fixed-validation declaration.
+- `Tests/Plugins/test_recovery.py` (plugin-qualification lane, whose path filter now includes `tldw_chatbook/Backup_Recovery/**`):
+  - the preview, catalog, live-writer, held-lock, registry-root, capture-lock, busy-retry, approval-condition, reason-copy and unlock-copy tests;
+  - the e2e test.
+- `Tests/Backup_Recovery/test_detached_layout.py::test_detached_import_refuses_a_plugin_root_by_name`.
+- UI: `test_backup_data_groups.py::test_backup_review_explains_refused_live_plugins` and `test_plugins_browse.py::test_authority_recovery_names_restore_and_reset`. Both files are now on the UI census tail: the backup file whole (~21 s serial) and the plugins file as 15 node ids (12–25 s each serially). The floor is 1929. The shard replay was not run, so the coordinator rebalances if needed.
 
 **Docs (AC6).**
-- `backlog/docs/backup-recovery-owner-inventory.md`: a new "Plugins backup owner" section, the `sqlite:` rows, the three new producer rows, and all 64 existing `Plugins/*` rows reclassified.
+- `backlog/docs/backup-recovery-owner-inventory.md`: the Plugins section, rows reclassified, and the I1 identity text.
 - `backlog/docs/sqlite-private-owner-inventory.md` (C99, B41).
-- `Docs/Backup-and-Recovery.md`: the backup user page; there is no `Docs/User_Guide/` page for Backup & Restore.
+- `Docs/Backup-and-Recovery.md`: the backup user page; there is no `Docs/User_Guide/` page for it.
 - `Docs/Plugins/operations.md` ("After restoring a backup"): the Plugins user page.
 - `Docs/Architecture/backup-recovery.md`.
 
-**Findings.**
-- Capturing staging and custody is necessary for recovering git-installed plugins, but by code reading it is not sufficient. `acquisition._qualify` compares the plugin root's and staging's physical identities, and `data_cleanup.open_root` compares data-root inode and birth time. Restored copies have new identities, so a git-installed plugin may still fail authority recovery after a restore and need Reset authority. This is not exercised by a test; the e2e plugin was a local-folder install.
-- Staging also holds copies of the host git/SSH configuration a fetch used. The backup page recommends encryption.
+**Known limits.**
+- A plugin root, `staging/` or data root deleted before a restore comes back with a new identity. Data roots then report `root_anchor_changed`, custody records fail `_qualify`, and the app has no rebind yet. The D2 feature follow-up is filed by the coordinator.
+- A restored plugin snapshot containing a symlink would be `unsupported` by the tree inventory. This is not exercised.
 
 **Files.**
 - New: `tldw_chatbook/Plugins/backup.py`.
 - Changed:
-  - `Backup_Recovery/{capture,data_groups,inventory,owner_registry,recovery_service,sqlite_validation,staging,storage_admission}.py`
+  - `Backup_Recovery/{capture,data_groups,detached_layout,inventory,owner_registry,recovery_service,sqlite_validation,staging,storage_admission}.py`
   - `DB/private_sqlite.py`
   - `Plugins/{admission,service}.py`
   - `UI/Screens/{backup_restore_screen,plugins_screen}.py`
-  - the tests, docs and lesson listed above.
+  - `Widgets/plugin_review_modal.py`
+  - `.github/workflows/plugin-qualification.yml`
+  - `scripts/{ui_pr_gate_census.txt,check_ui_pr_gate_census.py}`
+  - the tests and docs above, and `backlog/docs/lessons-testing-evidence.md`.
 <!-- SECTION:NOTES:END -->
