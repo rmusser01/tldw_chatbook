@@ -11,6 +11,7 @@ import time
 import httpx
 import pytest
 
+from Tests.Backup_Recovery.config_test_support import select_config_source
 from tldw_chatbook.Tools import web_tool_impls
 from tldw_chatbook.Web_Scraping import WebSearch_APIs
 from tldw_chatbook import config as config_module
@@ -1107,9 +1108,11 @@ def test_search_settings_timeout_keys_with_defaults(tmp_path, monkeypatch):
         "[general]\nusers_name = 'test'\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_path.chmod(0o600)
 
-    settings = config_module.load_settings(force_reload=True)
+    with monkeypatch.context() as selected:
+        source = select_config_source(selected, config_path)
+        settings = source.load_settings(force_reload=True)
 
     search_settings = settings["search_settings_general"]
     assert search_settings["relevance_llm_timeout_s"] == 30
@@ -1130,9 +1133,11 @@ def test_search_settings_timeout_keys_from_toml(tmp_path, monkeypatch):
         "deep_search_timeout_s = 600\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_path.chmod(0o600)
 
-    settings = config_module.load_settings(force_reload=True)
+    with monkeypatch.context() as selected:
+        source = select_config_source(selected, config_path)
+        settings = source.load_settings(force_reload=True)
 
     search_settings = settings["search_settings_general"]
     assert search_settings["relevance_llm_timeout_s"] == 45
@@ -1153,9 +1158,11 @@ def test_search_settings_timeout_keys_coerce_int(tmp_path, monkeypatch):
         'deep_search_timeout_s = "600"\n',
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_path.chmod(0o600)
 
-    settings = config_module.load_settings(force_reload=True)
+    with monkeypatch.context() as selected:
+        source = select_config_source(selected, config_path)
+        settings = source.load_settings(force_reload=True)
 
     search_settings = settings["search_settings_general"]
     assert search_settings["relevance_llm_timeout_s"] == 45
@@ -1181,9 +1188,11 @@ def test_search_settings_timeout_keys_malformed_value_degrades_to_default(
         'deep_search_timeout_s = "300x"\n',
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_path.chmod(0o600)
 
-    settings = config_module.load_settings(force_reload=True)
+    with monkeypatch.context() as selected:
+        source = select_config_source(selected, config_path)
+        settings = source.load_settings(force_reload=True)
 
     search_settings = settings["search_settings_general"]
     # Malformed values should degrade to defaults
@@ -1230,10 +1239,12 @@ def test_non_positive_timeout_values_degrade_to_default(tmp_path, monkeypatch, c
             "deep_search_timeout_s = 100\n",
             encoding="utf-8",
         )
-        monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+        config_path.chmod(0o600)
 
-        with caplog.at_level(logging.WARNING):
-            settings = config_module.load_settings(force_reload=True)
+        with monkeypatch.context() as selected:
+            source = select_config_source(selected, config_path)
+            with caplog.at_level(logging.WARNING):
+                settings = source.load_settings(force_reload=True)
 
         search_settings = settings["search_settings_general"]
         # Non-positive values should degrade to defaults

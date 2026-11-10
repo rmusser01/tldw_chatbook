@@ -200,62 +200,94 @@ def test_probe_classifies_http_failures_without_secret_text(
     ],
 )
 def test_real_settings_save_and_environment_override_reach_http(
-    monkeypatch, backend, field, env_var, header
+    tmp_path, monkeypatch, backend, field, env_var, header
 ):
-    """Only outgoing HTTP is replaced; Settings persistence, resolution and dispatch run."""
+    """Exercise real Settings persistence and dispatch with a mocked HTTP transport."""
     import json
+    from base64 import b64encode
 
-    from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
+    from Tests.Backup_Recovery.config_test_support import select_config_source
+    from tldw_chatbook.UI.Settings_Modules import settings_config_adapter
+    from tldw_chatbook.Utils import tls_trust
 
-    adapter = SettingsConfigAdapter()
-    adapter.load(force_reload=True)
-    monkeypatch.delenv(env_var, raising=False)
-    monkeypatch.delenv("GOOGLE_SEARCH_ENGINE_ID", raising=False)
-    monkeypatch.delenv("YANDEX_FOLDER_ID", raising=False)
-    response = Mock()
-    response.headers = {}
-    response.json.return_value = {
-        "results": [],
-        "data": [],
-        "items": [],
-        "organic": [],
-        "webPages": {"value": []},
-    }
-    send = Mock(return_value=response)
-    monkeypatch.setattr(api.requests, "get", send)
-    monkeypatch.setattr(api.requests, "post", send)
-    monkeypatch.setattr(api.requests.Session, "get", send)
-    values = {
-        field: "first-saved",
-        "google_search_engine_id": "cx-saved",
-        "yandex_search_folder_id": "folder-saved",
-    }
-    assert adapter.save_values("SearchEngines", values)
+    with monkeypatch.context() as selected:
+        selected.delenv(env_var, raising=False)
+        selected.delenv("GOOGLE_SEARCH_ENGINE_ID", raising=False)
+        selected.delenv("YANDEX_FOLDER_ID", raising=False)
+        source = select_config_source(selected, tmp_path / "config.toml")
+        selected.setattr(
+            settings_config_adapter,
+            "load_cli_config_and_ensure_existence",
+            source.load_cli_config_and_ensure_existence,
+        )
+        selected.setattr(
+            settings_config_adapter,
+            "save_setting_to_cli_config",
+            source.save_setting_to_cli_config,
+        )
+        selected.setattr(api, "load_settings", source.load_settings)
+        selected.setattr(tls_trust, "get_cli_setting", source.get_cli_setting)
 
-    def check(expected):
-        api.perform_websearch(backend, "query", "US", "en", "en", 1)
-        kwargs = send.call_args.kwargs
-        if header:
-            prefix = {"kagi": "Bot ", "yandex": "Api-Key ", "tavily": "Bearer "}.get(
-                backend, ""
-            )
-            assert kwargs["headers"][header] == prefix + expected
-        elif backend == "google":
-            assert kwargs["params"]["key"] == expected
-            assert kwargs["params"]["cx"] == "cx-saved"
-        else:
-            assert json.loads(kwargs["data"])["api_key"] == expected
-        assert 0 < kwargs["timeout"] <= 30
+        adapter = settings_config_adapter.SettingsConfigAdapter()
+        adapter.load(force_reload=True)
+        response = api.requests.Response()
+        response.status_code = 200
+        response.headers["Content-Type"] = "application/json"
+        response._content = json.dumps(
+            {
+                "results": [],
+                "data": [],
+                "items": [],
+                "organic": [],
+                "webPages": {"value": []},
+                "rawData": b64encode(b"<yandexsearch><response /></yandexsearch>").decode(
+                    "ascii"
+                ),
+            }
+        ).encode("utf-8")
+        response._content_consumed = True
+        send = Mock(return_value=response)
+        selected.setattr(api.requests, "get", send)
+        selected.setattr(api.requests, "post", send)
+        session = Mock(spec=api.requests.Session)
+        session.get = send
+        selected.setattr(api.requests, "Session", Mock(return_value=session))
+        values = {
+            field: "first-saved",
+            "google_search_engine_id": "cx-saved",
+            "yandex_search_folder_id": "folder-saved",
+        }
+        assert adapter.save_values("SearchEngines", values)
 
-    check("first-saved")
-    assert adapter.save_values("SearchEngines", {field: "second-saved"})
-    check("second-saved")
-    monkeypatch.setenv(env_var, "environment")
-    check("environment")
-    assert (
-        config.load_cli_config_and_ensure_existence()["SearchEngines"][field]
-        == "second-saved"
-    )
+        def check(expected):
+            send.reset_mock()
+            result = api.perform_websearch(backend, "query", "US", "en", "en", 1)
+            send.assert_called_once()
+            assert result["processing_error"] is None
+            kwargs = send.call_args.kwargs
+            if header:
+                prefix = {"kagi": "Bot ", "yandex": "Api-Key ", "tavily": "Bearer "}.get(
+                    backend, ""
+                )
+                assert kwargs["headers"][header] == prefix + expected
+            elif backend == "google":
+                assert kwargs["params"]["key"] == expected
+                assert kwargs["params"]["cx"] == "cx-saved"
+            else:
+                assert json.loads(kwargs["data"])["api_key"] == expected
+            assert 0 < kwargs["timeout"] <= 30
+
+        check("first-saved")
+        assert adapter.save_values("SearchEngines", {field: "second-saved"})
+        check("second-saved")
+        selected.setenv(env_var, "environment")
+        check("environment")
+        assert (
+            source.load_cli_config_and_ensure_existence(force_reload=True)["SearchEngines"][
+                field
+            ]
+            == "second-saved"
+        )
 
 
 @pytest.mark.parametrize(
