@@ -973,6 +973,10 @@ MINIMUM_FILES = 1998
 # and the Console inspector rail minors file at the tail. The floor is the
 # measured entry count.
 MINIMUM_FILES = 2004
+# TASK-40132 review r13g-rev1 (2026-11-10): append the Backup screen group file
+# and the Plugins screen file's fifteen tests at the tail. The floor is the
+# measured entry count.
+MINIMUM_FILES = 2020
 
 
 def read_census(path: Path) -> list[str]:

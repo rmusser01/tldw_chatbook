@@ -816,13 +816,13 @@ def test_interrupted_cutover_requalifies_valid_legacy_writer_then_old_backup(
 # TASK-40132: backups capture the plugin root (owner decision 2026-11-10).
 
 
-def _plugin_root(tmp_path, *, process_state=None):
+def _plugin_root(tmp_path, *, process_state=None, config=None):
     """A selected profile whose plugin root holds real registry, package and data bytes."""
     from contextlib import closing
 
     from tldw_chatbook.Plugins.registry import _schema_statements
 
-    config = tmp_path / "selected.toml"
+    config = config or tmp_path / "selected.toml"
     config.write_text(
         f'[general]\nusers_name = "Ada"\n[paths]\ndata_dir = "{tmp_path / "data"}"\n'
     )
@@ -832,6 +832,12 @@ def _plugin_root(tmp_path, *, process_state=None):
         "packages-revisions/inst/digest/plugin.json": b'{"name": "inst", "v": 2}',
         "data/root-1/notes.txt": b"made by the plugin",
         "staging/op/snapshot/plugin.json": b'{"name": "git"}',
+        # What a fetch leaves beside its snapshot (D1: never archived).
+        "staging/op/host-git-config": b"[credential]\n\thelper = !token\n",
+        "staging/op/host-ssh-input": b"Host *\n  IdentityFile ~/.ssh/id\n",
+        "staging/op/host-ssh-config": b"Host x\n",
+        "staging/op/repository.git/HEAD": b"ref: refs/heads/main\n",
+        "staging/op/content/plugin.json": b'{"name": "git"}',
         "acquisition-custody/op.json": b'{"phase": "terminal"}',
         "cache/index.json": b"{}",
         "runtime.lock": b"",
@@ -891,9 +897,10 @@ def _plugin_rows(config, root):
 # The plugin root exists only where the runtime owner qualifies (POSIX here).
 @platform_support.package_capture
 def test_backup_preview_captures_plugin_root_except_runtime_lock(tmp_path):
-    """AC1/AC2: registry, packages, revisions and every data root are captured,
-    staging and acquisition custody too (owner decision Q1); only runtime.lock is
-    excluded, and the registry's live WAL/SHM stay transient SQLite sidecars."""
+    """AC1/AC2: registry, packages, revisions, every data root, staging snapshots and
+    acquisition custody are captured; runtime.lock and the staged host git/SSH
+    configuration, repository.git and content/ are excluded (D1), and the
+    registry's live WAL/SHM stay transient SQLite sidecars."""
     config, root = _plugin_root(tmp_path)
     registry = root / "registry.sqlite3"
     reader = sqlite3.connect(registry)  # keeps -wal/-shm present, as a live store does
@@ -910,6 +917,17 @@ def test_backup_preview_captures_plugin_root_except_runtime_lock(tmp_path):
     }
     assert statuses.get("runtime.lock") == ("plugins", "intentionally_excluded")
     del statuses["runtime.lock"]
+    # D1 (2026-11-10): fetch-time host configuration and git working copies stay out.
+    for relative in (
+        "staging/op/host-git-config",
+        "staging/op/host-ssh-input",
+        "staging/op/host-ssh-config",
+        "staging/op/repository.git",
+        "staging/op/repository.git/HEAD",
+        "staging/op/content",
+        "staging/op/content/plugin.json",
+    ):
+        assert statuses.pop(relative) == ("plugins", "intentionally_excluded"), relative
     assert statuses.pop("registry.sqlite3-wal") == (
         "sqlite.transient",
         "intentionally_excluded",
@@ -1015,6 +1033,13 @@ def test_live_plugin_writers_refuse_preview_and_capture(tmp_path, monkeypatch, w
     config, root = _plugin_root(
         tmp_path, process_state="published" if writer == "process" else None
     )
+    notes = root / "data" / "root-1" / "notes.txt"
+    if writer == "lock":
+        # A capture item from an idle copy of the same layout.
+        (tmp_path / "free").mkdir()
+        free = _plugin_rows(*_plugin_root(tmp_path / "free"))[1][
+            tmp_path / "free" / "data" / "Ada" / "plugins" / "data" / "root-1" / "notes.txt"
+        ]
     handle = open(root / "runtime.lock", "r+b")
     try:
         if writer == "lock":
@@ -1022,19 +1047,20 @@ def test_live_plugin_writers_refuse_preview_and_capture(tmp_path, monkeypatch, w
         inventory, rows = _plugin_rows(config, root)
         assert "plugin_writers_active" in inventory.issues
         assert not inventory.complete
-        assert rows[root / "data" / "root-1" / "notes.txt"].status == "unavailable"
-        assert rows[root / "registry.sqlite3"].status == "unavailable"
-        assert rows[root / "runtime.lock"].status == "intentionally_excluded"
+        # C1: one unavailable root and no children keep the tree valid, so a
+        # partial or Tools-free backup still works.
+        assert {path: item.status for path, item in rows.items()} == {root: "unavailable"}
+        assert "overlapping_owner_roots" not in inventory.issues
         assert any(
             item.owner == "plugins" and item.logical_id.endswith(":writers_active")
             for item in inventory.items
         )
-        assert "quit" in issue_message("plugin_writers_active").lower()
+        assert "quit Chatbook" in issue_message("plugin_writers_active")
         if writer == "lock":
             from tldw_chatbook.Plugins.backup import recovery_adapters
 
             (adapter,) = recovery_adapters()
-            item = replace(rows[root / "data" / "root-1" / "notes.txt"], status="included")
+            item = replace(free, path=notes)  # the same item, at this root
             authority = application_authority(tmp_path, root, monkeypatch)
             stage = tmp_path / "stage"
             stage.mkdir(mode=0o700)
@@ -1068,6 +1094,40 @@ def test_restored_registry_must_name_its_own_plugin_root(tmp_path):
         "file", 0o600, 0, "private",
     )
     candidate = root / "registry.sqlite3"
+    # M2: with no data roots, a revision's installed or fetched package path
+    # still binds the registry to its original plugin root.
+    from contextlib import closing
+
+    bare = tmp_path / "bare-registry.sqlite3"
+    shutil.copyfile(candidate, bare)
+    bare.chmod(0o600)
+    # Closed, so the WAL is checkpointed into the file the restore route reads.
+    with closing(sqlite3.connect(bare)) as connection, connection:
+        connection.execute("DELETE FROM data_roots")
+        connection.execute(
+            "INSERT INTO revisions VALUES ('inst', 'digest', ?)",
+            (
+                '{"materialized_identity": "'
+                + str(root / "packages" / "inst")
+                + '", "acquisition_reference": {"materialized_identity": "'
+                + str(root / "staging" / "op" / "snapshot")
+                + '"}}',
+            ),
+        )
+    for destination, refused in (
+        (root, False),
+        (tmp_path / "elsewhere" / "plugins", True),
+    ):
+        item = StorageItem(
+            "plugins", "profile:p:plugins:registry", destination / "registry.sqlite3",
+            "included", (), metadata=metadata,
+        )
+        with _preview_reads():
+            if refused:
+                with pytest.raises(ValueError, match="owner_relocation_unverified:plugins"):
+                    adapter.relocate_restore(item, bare, {})
+            else:
+                adapter.relocate_restore(item, bare, {})
     for destination, refused in ((root, False), (tmp_path / "elsewhere" / "plugins", True)):
         item = StorageItem(
             "plugins", "profile:p:plugins:registry", destination / "registry.sqlite3",
@@ -1079,6 +1139,207 @@ def test_restored_registry_must_name_its_own_plugin_root(tmp_path):
                     adapter.relocate_restore(item, candidate, {})
             else:
                 adapter.relocate_restore(item, candidate, {})
+
+@platform_support.package_capture
+def test_capture_holds_the_runtime_lock_even_when_none_existed(tmp_path, monkeypatch):
+    """M3: after a restore runtime.lock is absent; capture creates and holds it, so
+    no runtime owner can start while plugin bytes are copied."""
+    from threading import Event
+
+    import portalocker
+
+    from Tests.Backup_Recovery.test_core_owners import application_authority
+    from tldw_chatbook.Backup_Recovery.recovery_files import _RawDeclaration
+    from tldw_chatbook.Plugins.backup import recovery_adapters
+
+    config, root = _plugin_root(tmp_path)
+    (root / "runtime.lock").unlink()
+    _, rows = _plugin_rows(config, root)
+    item = rows[root / "data" / "root-1" / "notes.txt"]
+    observed = []
+    original = _RawDeclaration.capture
+
+    def probing(self, *args, **kwargs):
+        try:
+            with open(root / "runtime.lock", "rb") as handle:
+                portalocker.lock(handle, portalocker.LOCK_EX | portalocker.LOCK_NB)
+                observed.append("free")
+                portalocker.unlock(handle)
+        except FileNotFoundError:
+            observed.append("absent")
+        except portalocker.exceptions.LockException:
+            observed.append("held")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(_RawDeclaration, "capture", probing)
+    (adapter,) = recovery_adapters()
+    authority = application_authority(tmp_path, root, monkeypatch)
+    stage = tmp_path / "stage"
+    stage.mkdir(mode=0o700)
+    with (
+        authority.maintenance(("core", "bootstrap.unbound"), 1) as session,
+        session.capture_scope((item.path,), stage),
+    ):
+        adapter.capture(item, stage / "notes.txt", Event())
+    assert observed == ["held"]
+
+
+@platform_support.managed_runtime
+@pytest.mark.asyncio
+async def test_plugin_service_retries_after_a_backup_released_the_lock(tmp_path):
+    """M3: a first plugin use while a capture held runtime.lock must not stay
+    plugin_owner_busy until restart."""
+    import portalocker
+
+    from tldw_chatbook.Plugins.authority_store import FilePluginMarkerStore
+    from tldw_chatbook.Plugins.service import PluginService
+
+    root = tmp_path / "profile" / "plugins"
+    root.mkdir(parents=True, mode=0o700)
+    handle = open(root / "runtime.lock", "a+b")
+    portalocker.lock(handle, portalocker.LOCK_EX | portalocker.LOCK_NB)
+    service = PluginService(
+        tmp_path / "profile",
+        workspace_lookup=lambda _: None,
+        marker_store_factory=lambda _: FilePluginMarkerStore(tmp_path / "marker"),
+        accept_reduced_protection=True,
+    )
+    try:
+        assert await service.authority_status() == "plugin_owner_busy"
+        portalocker.unlock(handle)
+        handle.close()
+        assert await service.authority_status() == "needs_setup"
+    finally:
+        handle.close()
+        await service.aclose()
+
+
+@pytest.mark.parametrize(
+    ("phase", "posture", "approved"),
+    [
+        ("recovery_required", "ready", False),
+        ("complete", "locked", False),
+        ("complete", "recovery_required", False),
+        ("complete", "ready", True),
+        ("complete", "ready_reduced", True),
+    ],
+)
+def test_only_completed_ready_recovery_approves_a_restore(
+    tmp_path, monkeypatch, phase, posture, approved
+):
+    """M5: a recovery_required receipt or a non-ready posture approves nothing."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Plugins import backup
+    from tldw_chatbook.Plugins.review import OperationReceipt
+    from tldw_chatbook.Plugins.service import PluginService
+
+    calls = []
+    monkeypatch.setattr(backup, "approve_restore", calls.append)
+    monkeypatch.setattr(backup, "restore_review_required", lambda root: not calls)
+    service = PluginService(tmp_path, workspace_lookup=lambda _: None)
+    service._restore_review = True
+    service._coordinator = SimpleNamespace(
+        authority=SimpleNamespace(posture=lambda: posture),
+        owner=SimpleNamespace(root=tmp_path / "plugins"),
+    )
+    service._finish_restore_review((OperationReceipt("op", phase, phase == "complete"),))
+    assert calls == ([tmp_path / "plugins"] if approved else [])
+    assert service._restore_review is not approved
+
+
+def test_unlock_mismatch_copy_is_truthful_and_has_no_dead_end_step():
+    """D2: a marker naming missing authority files is a restore mismatch, not a
+    passphrase problem; other failures keep the retry advice."""
+    from tldw_chatbook.Widgets.plugin_review_modal import authority_failure_message
+
+    mismatch = authority_failure_message(FileNotFoundError("snapshot"), "unlock")
+    assert "cannot recover these plugins yet" in mismatch
+    assert "stay on disk" in mismatch and "Reset" not in mismatch
+    assert "passphrase incorrect" in authority_failure_message(ValueError(), "unlock")
+    assert "passphrase incorrect" in authority_failure_message(
+        FileNotFoundError(), "setup"
+    )
+
+
+def test_live_writer_reason_sends_nobody_into_plugins():
+    """M4: opening Plugins takes the lock, so the reason must not suggest it."""
+    from tldw_chatbook.Backup_Recovery.recovery_service import issue_message
+
+    message = issue_message("plugin_writers_active")
+    assert "quit Chatbook" in message and "partial backup" in message
+    assert "in Plugins" not in message
+
+
+_HELD_LOCK_SETUP = r"""
+import os
+from pathlib import Path
+# The profile exists before any import loads config (else a default one appears).
+source=Path(os.environ['TLDW_CONFIG_PATH']);home=Path.home()
+source.write_text(f'[general]\nusers_name = "Ada"\n[paths]\ndata_dir = "{home / "data"}"\n')
+(home/'data').mkdir(mode=0o700)
+from Tests.network_guard import install
+install()
+from Tests.Plugins.test_recovery import _plugin_root
+from Tests.Backup_Recovery.test_capture_service import _populate_required_dependencies
+from tldw_chatbook.Backup_Recovery.capture_service import preview_capture
+_plugin_root(home,config=source)
+_populate_required_dependencies(preview_capture((source,),options={'allow_partial':True}))
+print('HELD_LOCK_SETUP_COMPLETE',flush=True)
+"""
+
+# A separate process: the setup's store handles would hold the leases capture pauses.
+_HELD_LOCK_BACKUPS = r"""
+import json,os,zipfile
+from pathlib import Path
+from Tests.network_guard import install
+install()
+os.environ['PYTHON_KEYRING_BACKEND']='keyring.backends.null.Keyring'
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+import portalocker
+from tldw_chatbook.Backup_Recovery import credentials
+from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+from tldw_chatbook.runtime_policy.server_credentials import KeyringServerCredentialStore
+store=KeyringServerCredentialStore(keyring_backend=Keyring());credentials._credential_store=lambda:store
+source=Path(os.environ['TLDW_CONFIG_PATH']);home=Path.home();root=home/'data'/'Ada'/'plugins'
+# The app's plugin service holds this lock from first plugin use until quit.
+handle=open(root/'runtime.lock','r+b');portalocker.lock(handle,portalocker.LOCK_EX|portalocker.LOCK_NB)
+service=RecoveryService(home/'recovery-control')
+try:
+ for name,groups in (('prompts',('prompts',)),('whole',None)):
+  options={'allow_partial':True}
+  if groups:options['data_groups']=groups
+  preview=service.preview_backup((source,),options=options)
+  if groups:assert preview.complete and 'plugin_writers_active' not in preview.issues,preview.issues
+  else:assert 'plugin_writers_active' in preview.issues and not preview.complete,preview.issues
+  destination=home/(name+'.tldw-backup.zip')
+  result=service.wait(service.start_backup((source,),preview.scope_digest,destination,options=options,password=None))
+  assert result['state']=='succeeded',dict(result)
+  with zipfile.ZipFile(destination) as archive:manifest=json.loads(archive.read('manifest.json'))
+  assert not [row for row in manifest['files'] if row['owner_id']=='plugins'],name
+finally:
+ service.close();handle.close()
+print('HELD_LOCK_BACKUPS_COMPLETE',flush=True)
+"""
+
+
+@platform_support.package_capture
+@pytest.mark.timeout(600)
+def test_held_plugin_lock_leaves_other_and_partial_backups_available(tmp_path):
+    """C1: while the plugin service holds runtime.lock, a backup without Tools
+    succeeds and a whole-profile partial backup succeeds without plugins."""
+    from Tests.Backup_Recovery.test_config_sibling_capture import _child
+
+    home = tmp_path / "home"
+    home.mkdir(mode=0o700)
+    selector = tmp_path / "profile-config" / "config.toml"
+    selector.parent.mkdir(mode=0o700)
+    setup = _child(home, _HELD_LOCK_SETUP, "setup", timeout=180, selector=selector)
+    assert "HELD_LOCK_SETUP_COMPLETE" in setup
+    output = _child(home, _HELD_LOCK_BACKUPS, "held-lock", timeout=300, selector=selector)
+    assert "HELD_LOCK_BACKUPS_COMPLETE" in output
 
 _RESTORE_PRIVATE = r"""
 import asyncio,hashlib,json,os,shutil,sqlite3,sys,threading
@@ -1110,8 +1371,11 @@ def marker(name='keyring.json'):
  return lambda store:authority_store.KeyringPluginMarkerStore(store,keyring_backend=FileKeyring(home/name))
 def service():
  return PluginService(get_user_data_dir(),workspace_lookup=lambda _:None,marker_store_factory=marker())
+def excluded(path):
+ parts=path.relative_to(root).parts
+ return parts[0]=='runtime.lock' or parts[0].startswith('registry.sqlite3') or (len(parts)>2 and parts[0]=='staging' and (parts[2] in {'host-git-config','repository.git','content'} or parts[2].startswith('host-ssh-')))
 def state():
- files={p.relative_to(root).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file() and not p.name.startswith(('registry.sqlite3','runtime.lock'))}
+ files={p.relative_to(root).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file() and not excluded(p)}
  with sqlite3.connect(f"file:{root/'registry.sqlite3'}?mode=ro",uri=True) as connection:registry=list(connection.iterdump())
  return {'files':files,'registry':registry}
 """
@@ -1128,14 +1392,21 @@ selector.chmod(0o600)
     + _RESTORE_PRIVATE
     + r"""
 async def main():
+ from Tests.Plugins.acquisition_process_support import repository
+ from tldw_chatbook.Plugins.git_source import select_local_source
+ from tldw_chatbook.Plugins.source_service import SourceService
  package=home/'package';shutil.copytree(Path('Tests/Plugins/fixtures/native'),package)
  manifest=json.loads((package/'plugin.json').read_text())
  manifest['extensions']['io.github.rmusser01.chatbook']={'version':1}
  (package/'plugin.json').write_text(json.dumps(manifest))
+ source=repository(package,home/'git-source')
  plugins=service()
  try:
   await plugins.bootstrap('test passphrase')
-  review=await plugins.review_install(package,selection=('skill:review',),workspace_id=None)
+  # The Plugins screen's repository path: acquire, then review the acquired bytes.
+  destination=await plugins.acquisition_destination('ui-git-install')
+  snapshot=await plugins.acquire_snapshot(select_local_source(source),'ui-git-install',destination)
+  review=await SourceService(plugins).review_acquired(snapshot,selection=('skill:review',),workspace_id=None)
   await plugins.commit(review,review.operation_id)
   trust_review=await plugins.review_trust(review.installation_id)
   await plugins.commit(trust_review,trust_review.operation_id)
@@ -1144,16 +1415,20 @@ async def main():
   assert plugins.capture_maximum('global')['available_skills']
  finally:
   await plugins.aclose()
- return review.installation_id
+ return review.installation_id,destination.parent
 # The core stores every profile's preview depends on, as the selective-restore tests build them.
 from Tests.Backup_Recovery.test_capture_service import _populate_required_dependencies
 from tldw_chatbook.Backup_Recovery.capture_service import preview_capture
 _populate_required_dependencies(preview_capture((selector,),options={'allow_partial':True}))
-installation=asyncio.run(main())
+installation,staged=asyncio.run(main())
+assert (staged/'snapshot').is_dir() and (staged/'repository.git').is_dir() and (staged/'content').is_dir()
+# A remote fetch also leaves copies of the host git/SSH configuration (D1).
+for name in ('host-git-config','host-ssh-input','host-ssh-config'):
+ (staged/name).write_bytes(b'[credential]\n\thelper = !secret-token\n');(staged/name).chmod(0o600)
 data=root/'data'/'kept-root'
 for path in (root/'data',data):path.mkdir(mode=0o700,exist_ok=True)
 (data/'notes.txt').write_bytes(b'made by the plugin');(data/'notes.txt').chmod(0o600)
-(home/'plugin-seed.json').write_text(json.dumps({'installation':installation,**state()}))
+(home/'plugin-seed.json').write_text(json.dumps({'installation':installation,'staged':str(staged),**state()}))
 print('PLUGIN_SEED_COMPLETE',flush=True)
 """
 )
@@ -1161,7 +1436,7 @@ print('PLUGIN_SEED_COMPLETE',flush=True)
 # Only the Tools group (MCP, skills and plugins): whole-profile replacement is
 # far slower and adds nothing to the plugin owner's evidence.
 _PLUGIN_BACKUP_RESTORE = r"""
-import json,os,threading
+import json,os,sys,threading,zipfile
 from pathlib import Path
 from Tests.network_guard import install
 install()
@@ -1173,32 +1448,61 @@ from tldw_chatbook.Backup_Recovery import credentials
 from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
 from tldw_chatbook.runtime_policy.server_credentials import KeyringServerCredentialStore
 store=KeyringServerCredentialStore(keyring_backend=Keyring());credentials._credential_store=lambda:store
-source=Path(os.environ['TLDW_CONFIG_PATH']);home=Path.home()
+source=Path(os.environ['TLDW_CONFIG_PATH']);home=Path.home();first=sys.argv[1]=='first'
 options={'data_groups':('tools',)}
+destination=home/'tools.tldw-backup.zip'
 def done(service,operation):
  result=service.wait(operation);assert result['state']=='succeeded',dict(result);return result
 service=RecoveryService(home/'recovery-control')
 try:
- preview=service.preview_backup((source,),options=options)
- assert preview.complete,preview.issues
- plugin={item.path.name:item for item in preview.items if item.owner=='plugins' and item.path is not None}
- assert {name:plugin[name].status for name in ('registry.sqlite3','notes.txt','runtime.lock')}=={'registry.sqlite3':'included','notes.txt':'included','runtime.lock':'intentionally_excluded'}
- destination=home/'tools.tldw-backup.zip'
- done(service,service.start_backup((source,),preview.scope_digest,destination,options=options,password=None))
+ if first:
+  preview=service.preview_backup((source,),options=options)
+  assert preview.complete,preview.issues
+  plugins=[item for item in preview.items if item.owner=='plugins' and item.path is not None]
+  root=next(item.path for item in plugins if item.metadata and item.metadata.relative_path=='')
+  status={item.path.relative_to(root).as_posix():item.status for item in plugins}
+  staged=Path(json.loads((home/'plugin-seed.json').read_text())['staged']).relative_to(root).as_posix()
+  assert status['registry.sqlite3']=='included' and status['runtime.lock']=='intentionally_excluded'
+  assert status[staged+'/snapshot/plugin.json']=='included'
+  assert {status[staged+'/'+name] for name in ('host-git-config','host-ssh-input','host-ssh-config','repository.git','content')}=={'intentionally_excluded'}
+  assert any(key.startswith('acquisition-custody/') and value=='included' for key,value in status.items()),status
+  done(service,service.start_backup((source,),preview.scope_digest,destination,options=options,password=None))
+  # D1: the fetch's host configuration and git working copies never reach the archive.
+  with zipfile.ZipFile(destination) as archive:
+   manifest=json.loads(archive.read('manifest.json'))
+   names={row['relative_path'] for row in manifest['files'] if row['owner_id']=='plugins'}
+   assert not [name for name in names if '/host-' in name or '/repository.git' in name or '/content/' in name],names
+   assert any(name.endswith('snapshot/plugin.json') for name in names),names
+   assert not [row for row in manifest['files'] if b'secret-token' in archive.read(row['payload'])]
  inspection=service.start_inspection(destination,password=None);done(service,inspection)
  profile=service.summary(inspection)['profile_ids'][0]
- # AC8: a separate profile cannot take the plugin root's absolute paths.
- isolated=home/'isolated-parent';isolated.mkdir(mode=0o700)
- try:
-  service.preview_restore(inspection,mode='isolated',profile_bases={profile:isolated/'restored'},target_configs={},external_destinations={},profile_names={profile:'Restored elsewhere'},target=None,data_groups=('tools',))
- except ValueError as error:
-  assert str(error)=='owner_relocation_unverified:plugins',str(error)
- else:raise AssertionError('separate-profile plugin restore was planned')
- plugin['notes.txt'].path.write_bytes(b'changed after the backup')
+ if first:
+  # AC8: a separate profile cannot take the plugin root's absolute paths.
+  isolated=home/'isolated-parent';isolated.mkdir(mode=0o700)
+  try:
+   service.preview_restore(inspection,mode='isolated',profile_bases={profile:isolated/'restored'},target_configs={},external_destinations={},profile_names={profile:'Restored elsewhere'},target=None,data_groups=('tools',))
+  except ValueError as error:
+   assert str(error)=='owner_relocation_unverified:plugins',str(error)
+  else:raise AssertionError('separate-profile plugin restore was planned')
  def restore(**review):
   target=service.preview_backup((source,),options={})
   plan=service.preview_restore(inspection,mode='replace',profile_bases={},target_configs={profile:source},external_destinations={},profile_names={},target=target,data_groups=('tools',),**review)
   return service.wait(service.start_restore(inspection,plan,rollback_password=b'rollback-test-password'))
+ if first:
+  # M2: same profile, but its data folder moved since the backup. With no
+  # registered data roots, the installed/fetched package paths still refuse.
+  original=source.read_bytes()
+  moved=home/'moved-data';moved.mkdir(mode=0o700)
+  source.write_text(original.decode().replace(json.dumps(str(home/'data')),json.dumps(str(moved))))
+  # A plain copy of the other stores: opening them here would hold leases.
+  import shutil
+  shutil.copytree(home/'data'/'default_user',moved/'default_user',ignore=shutil.ignore_patterns('plugins'))
+  try:result=restore()
+  except ValueError as error:assert str(error).startswith('owner_relocation_unverified'),str(error)
+  else:assert result['state']!='succeeded' and 'owner_relocation_unverified' in result['issues'],dict(result)
+  assert not (moved/'default_user'/'plugins'/'registry.sqlite3').exists()
+  source.write_bytes(original)
+  next(item.path for item in preview.items if item.owner=='plugins' and item.path is not None and item.path.name=='notes.txt').write_bytes(b'changed after the backup')
  result=restore()
  if result['state']=='recovery_required' and result.get('review_issues'):
   issues=tuple(result['review_issues'])
@@ -1214,7 +1518,8 @@ print('PLUGIN_REPLACEMENT_COMPLETE',flush=True)
 _PLUGIN_REOPEN = _RESTORE_PRIVATE + r"""
 from tldw_chatbook.Plugins.backup import restore_review_required
 from tldw_chatbook.Plugins.admission import PluginUnavailable
-seed=json.loads((home/'plugin-seed.json').read_text())
+from tldw_chatbook.Widgets.plugin_review_modal import authority_failure_message
+seed=json.loads((home/'plugin-seed.json').read_text());unchanged=sys.argv[1]=='unchanged'
 # AC5: registry rows, package bytes and plugin data are back, byte for byte.
 assert state()==({key:seed[key] for key in ('files','registry')}),'restored plugin root differs'
 assert (root/'data'/'kept-root'/'notes.txt').read_bytes()==b'made by the plugin'
@@ -1234,6 +1539,15 @@ async def main():
   await refused(None)  # locked authority refuses on its own as well
   posture=await plugins.authority_status()
   assert posture=='locked',posture
+  if not unchanged:
+   # D2: plugins changed after the backup. Unlock cannot verify the marker's
+   # authority files, and the copy says so without a dead-end step.
+   try:await plugins.unlock('test passphrase')
+   except FileNotFoundError as error:message=authority_failure_message(error,'unlock')
+   else:raise AssertionError('mismatched restored authority unlocked')
+   assert 'cannot recover these plugins yet' in message and 'stay on disk' in message,message
+   await refused('plugin_restore_review_required')
+   return
   # Authority unlocked and reconciled outside the service's recovery is not
   # the review: the restored generation still keeps plugins from running.
   await plugins._call(lambda:plugins._coordinator.authority.unlock('test passphrase'))
@@ -1242,8 +1556,12 @@ async def main():
   await refused('plugin_restore_review_required')
   await plugins.recover()
   assert restore_review_required(root) is False
+  # The git-installed plugin re-verifies its retained fetch after the restore.
   assert (await capture()).installation_id==seed['installation']
   assert plugins.capture_maximum('global')['available_skills']
+  # Change plugins after the backup, for the next restore of the same archive.
+  disable=await plugins.review_activation(seed['installation'],workspace_id=None,intent='disabled')
+  await plugins.commit(disable,disable.operation_id)
  finally:
   await plugins.aclose()
 asyncio.run(main())
@@ -1253,9 +1571,12 @@ print('PLUGIN_RESTORE_REVIEW_COMPLETE',flush=True)
 
 
 @platform_support.managed_runtime
-@pytest.mark.timeout(900)
+@pytest.mark.timeout(3600)
 def test_plugin_backup_restores_in_place_and_waits_for_authority_recovery(tmp_path):
-    """AC5/AC7/AC8 through actual capture, archive and same-profile replacement."""
+    """AC5/AC7/AC8/D1/D2 through the app's repository install path, actual
+    capture, archive and same-profile replacement, twice: with plugins unchanged
+    since the backup (Unlock recovers) and after a later plugin change (truthful
+    refusal, plugins stay off, data kept)."""
     from Tests.Backup_Recovery.test_config_sibling_capture import _child
 
     home = tmp_path / "home"
@@ -1263,11 +1584,12 @@ def test_plugin_backup_restores_in_place_and_waits_for_authority_recovery(tmp_pa
     # A selector outside the default config folder, which holds recovery control,
     # as the selective-restore tests use: first binding proves its own container.
     selector = tmp_path / "profile-config" / "config.toml"
-    seed = _child(home, _PLUGIN_SEED, "plugins", timeout=120, selector=selector)
-    assert "PLUGIN_SEED_COMPLETE" in seed
-    assert "PLUGIN_REPLACEMENT_COMPLETE" in _child(
-        home, _PLUGIN_BACKUP_RESTORE, "restore", timeout=300, selector=selector
-    )
-    assert "PLUGIN_RESTORE_REVIEW_COMPLETE" in _child(
-        home, _PLUGIN_REOPEN, "reopen", timeout=120, selector=selector
-    )
+
+    def run(script, *arguments, timeout=900):
+        return _child(home, script, *arguments, timeout=timeout, selector=selector)
+
+    assert "PLUGIN_SEED_COMPLETE" in run(_PLUGIN_SEED, "plugins", timeout=180)
+    assert "PLUGIN_REPLACEMENT_COMPLETE" in run(_PLUGIN_BACKUP_RESTORE, "first")
+    assert "PLUGIN_RESTORE_REVIEW_COMPLETE" in run(_PLUGIN_REOPEN, "unchanged")
+    assert "PLUGIN_REPLACEMENT_COMPLETE" in run(_PLUGIN_BACKUP_RESTORE, "again")
+    assert "PLUGIN_RESTORE_REVIEW_COMPLETE" in run(_PLUGIN_REOPEN, "changed")

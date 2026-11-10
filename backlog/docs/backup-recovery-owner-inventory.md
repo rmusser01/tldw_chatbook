@@ -2884,7 +2884,8 @@ existing private activation publisher and are not restored execution authority.
 
 ## Plugins backup owner (TASK-40132)
 
-Owner decision 2026-11-10 (TASK-39116): capture all of it. The installed `plugins`
+Owner decision 2026-11-10 (TASK-39116): capture all of it, narrowed by review
+decision D1 (2026-11-10) to what recovery needs inside staging. The installed `plugins`
 owner (`Plugins/backup.py`) is one tree over `<user data>/plugins`, shaped like
 `recovered.media`: `registry.sqlite3` is its SQLite member, everything else is raw
 bytes. It is in the `tools` data group, next to `skills`, whose tree already holds
@@ -2895,31 +2896,52 @@ the plugin authority under `skills/trust/plugins/`.
 | `registry.sqlite3` | included | SQLite backup route through `recovery.plugins.registry`; committed WAL frames fold in; exact frozen v5 catalog (`REGISTRY_SCHEMAS`, pinned to the installed migrations by a test). A registry at v1-v4 or failing validation is `unsupported`. |
 | `registry.sqlite3-wal`, `-shm` | `sqlite.transient`, intentionally excluded | folded into the registry copy |
 | `registry.sqlite3-journal` | unsupported | refused: a stray rollback journal could undo a restored copy |
-| `runtime.lock` | intentionally excluded | refused; the only excluded file |
+| `runtime.lock` | intentionally excluded | refused: the live runtime owner's lock, no data |
 | `packages/`, `packages-revisions/`, `data/<root_id>/` | included | raw bytes |
-| `staging/`, `acquisition-custody/` | included | raw bytes. Plugin recovery re-verifies git-installed packages from the retained custody record and `staging/<sha>/snapshot`. Staging also holds the copies of the host git and SSH configuration a fetch used (`host-git-config`, `host-ssh-input`, `host-ssh-config`). |
+| `staging/<name>/snapshot/`, `acquisition-custody/*.json` | included | raw bytes. Plugin recovery (`acquisition.verify_reference`) re-verifies git-installed packages from exactly the custody record and the snapshot. |
+| `staging/<name>/host-git-config`, `host-ssh-*` | intentionally excluded | refused (`plugin_staging_member_excluded`): copies of the host git/SSH configuration a fetch used, which can hold credential helpers and SSH config (D1) |
+| `staging/<name>/repository.git/`, `content/` | intentionally excluded | refused: the fetch's git object store (for a local source, the user's whole objects and refs, up to 500 MB) and working copy; recovery needs neither (D1) |
 | anything else (`cache/`, unknown names) | included | raw bytes |
 
 **Live writers.** Capture refuses rather than waits. When any registry `processes`
 row is not `settled` (a plugin process may still run, including unresolved rows
 left by a crashed owner), or a non-blocking probe of an existing `runtime.lock`
-finds a live runtime owner, every plugin item is `unavailable`, a
-`plugins:writers_active` row is added and the inventory carries the issue
-`plugin_writers_active`, which the preview explains. A partial backup still omits
-plugins. Capture probes and holds the lock again while it copies each plugin
-item. Accepted ceiling: the app's plugin service holds the lock from its first
-use until quit, so a complete in-app backup after plugin use needs a restart.
+finds a live runtime owner, discovery returns only the plugin root as
+`unavailable` (no children, so the tree stays valid) and a
+`plugins:writers_active` row. Inventory adds the issue `plugin_writers_active`
+after group selection, from that row only, so a backup without the `tools` group
+is unaffected and a partial backup omits plugins; the preview explains the
+issue. Capture creates `runtime.lock` if absent and holds it while it copies each
+plugin item. Accepted ceiling: the app's plugin service holds the lock from its
+first use until quit, so a complete in-app backup after plugin use needs a
+restart; a plugin service that found the lock held by a capture retries on its
+next use.
 
 **Restore.** The registry restores through the restricted SQLite route, other
 files through the raw route, back to the same plugin root only: the registry and
 the authenticated authority snapshot bind absolute plugin-root paths. A restore
 into a separate profile refuses the owner (`owner_relocation_unverified:plugins`);
-a registry whose data-root paths do not match the destination is refused the same
-way. The OS-keyring generation marker is never captured, so a restored profile
-without it reports `recovery_required`; restored data roots and acquisition
-custody also fail their physical-identity bindings until rebound. The owner is
-activation-required: the plugin service refuses to run plugins for a restored
-generation until plugin authority recovery completes, which approves it.
+a registry whose data-root paths, or installed and fetched package paths
+(`materialized_identity` in `revisions.inspection_json`), name another root is
+refused the same way at staging. Detached import refuses a plugin root by name
+(`detached_owner_unavailable:plugins`). The owner is activation-required: the
+plugin service refuses to run plugins for a restored generation until its own
+authority recovery completes (no `recovery_required` receipt, posture ready),
+which approves it.
+
+What then works (review decision D2, 2026-11-10): an in-place restore with plugins
+unchanged since the backup needs only Unlock. What does not yet: the OS-keyring
+generation marker is never captured, so on another computer or profile the
+posture is `recovery_required`; after plugins changed since the backup the posture
+is `locked` and unlock fails with `FileNotFoundError` (the marker names a snapshot
+the restored trust files lack). Both keep plugins off with files and data on disk;
+Reset authority does not help, because bootstrap refuses while the registry lists
+installations. Physical identity: a restore over existing folders keeps their
+identities. A plugin root, `staging/` or data root deleted before the restore is
+recreated with a new identity: data roots then report `root_anchor_changed`
+(`data_cleanup.open_root`), and every custody record fails `acquisition._qualify`,
+which admission re-verifies on each run. The app has no rebind for either yet
+(feature follow-up filed from D2).
 
 | Registry owner | Source module | Existing policy | Recovery cohort/status |
 | --- | --- | --- | --- |

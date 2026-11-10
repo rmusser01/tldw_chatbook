@@ -155,9 +155,9 @@ _ISSUE_MESSAGES = {
     "plugin_writers_active": (
         "Plugins are in use, so their files are not copied. Chatbook keeps plugins "
         "running from their first use until you quit: quit Chatbook, reopen it and "
-        "back up before opening Plugins. If a plugin process is still recorded as "
-        "running, review it in Plugins first. A partial backup without plugins "
-        "remains available."
+        "back up before opening Plugins. If this remains after reopening, a plugin "
+        "process from an earlier session is still recorded as running. Either way, "
+        "a partial backup without plugins is available now."
     ),
 }
 

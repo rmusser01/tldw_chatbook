@@ -5,6 +5,9 @@ on:
   pull_request:
     paths:
       - "tldw_chatbook/Plugins/**"
+      # TASK-40132: the plugin backup owner's tests in Tests/Plugins/test_recovery.py
+      # also guard the backup pipeline they run through.
+      - "tldw_chatbook/Backup_Recovery/**"
       - "tldw_chatbook/Agents/hooks_v2/**"
       - "Tests/Plugins/**"
       - "Tests/Agents/test_hooks_v2_*.py"

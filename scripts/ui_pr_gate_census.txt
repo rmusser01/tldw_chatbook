@@ -2886,3 +2886,22 @@ Tests/UI/test_library_media_reader_shell.py::test_persisted_items_read_uses_defa
 # TASK-39153 (2026-11-10): the Console inspector rail minors file whole
 # (bootstrap_profile, 5 tests, 73-94 s serially at load 72-88).
 Tests/UI/test_console_inspector_rail_minors.py
+# TASK-40132 review r13g-rev1 (2026-11-10): the Backup screen's group and
+# live-plugin review file (whole, ~21 s serial) and the Plugins screen file's
+# fifteen tests as node ids (12-25 s each serially at load ~45; ~5 min whole).
+Tests/UI/test_backup_data_groups.py
+Tests/UI/test_plugins_browse.py::test_stale_search_cannot_retarget_selection
+Tests/UI/test_plugins_browse.py::test_untrusted_display_is_literal_bounded_and_removes_terminal_controls
+Tests/UI/test_plugins_browse.py::test_keyboard_details_back_resize_and_restore_keep_stable_selection[size0]
+Tests/UI/test_plugins_browse.py::test_keyboard_details_back_resize_and_restore_keep_stable_selection[size1]
+Tests/UI/test_plugins_browse.py::test_real_source_add_and_import_preview_are_keyboard_reachable
+Tests/UI/test_plugins_browse.py::test_changed_workspace_refuses_pending_readme_and_refreshes_scope
+Tests/UI/test_plugins_browse.py::test_reordered_rows_and_obsolete_search_keep_explicit_source_selection
+Tests/UI/test_plugins_browse.py::test_live_catalog_refresh_preview_and_stale_failure_preserve_source_identity
+Tests/UI/test_plugins_browse.py::test_selected_repository_preview_captures_real_snapshot_without_install
+Tests/UI/test_plugins_browse.py::test_editing_import_location_refuses_pending_preview
+Tests/UI/test_plugins_browse.py::test_back_replaces_held_load_without_old_completion_clearing_new_owner[back]
+Tests/UI/test_plugins_browse.py::test_back_replaces_held_load_without_old_completion_clearing_new_owner[form]
+Tests/UI/test_plugins_browse.py::test_navigation_during_child_prune_settles_original_load[workspace-success]
+Tests/UI/test_plugins_browse.py::test_navigation_during_child_prune_settles_original_load[snapshot-error]
+Tests/UI/test_plugins_browse.py::test_authority_recovery_names_restore_and_reset

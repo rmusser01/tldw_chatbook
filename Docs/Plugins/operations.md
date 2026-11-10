@@ -96,24 +96,40 @@ binding reference requires reviewed current authority.
 
 ### After restoring a backup
 
-A backup holds the plugin root (registry, package bytes, saved data, staging and
-acquisition records) and the plugin authority files, but never the protected
-marker kept in the OS keyring. After a restore, plugins stay off until plugin
-authority recovery completes; a successful recovery from **Authority…** (or the
-recovery that runs when you unlock) also records that review, and plugins can
-run again.
+A backup holds the plugin root (registry, package bytes, saved data, and each
+fetch's snapshot and record) and the plugin authority files, but never the
+protected marker kept in the OS keyring. After a restore, plugins stay off until
+plugin authority recovery completes; a successful recovery when you unlock (or
+from **Authority…**) also records that review, and plugins can run again.
 
-On the computer and profile the backup came from, with plugins unchanged since
-the backup, **Authority…** asks you to unlock as usual. Otherwise, Plugins shows
-"Plugin authority needs recovery: its protected marker is missing or does not
-match, as after a profile is restored from a backup. Plugins stay off until then.
-Choose Reset authority…, set up plugin authority again, then review your plugins;
-their files and data stay on disk." Restored saved-data folders and fetch records
-also have new file identities: saved data may report recovery reasons, and a
-plugin installed from a repository may fail authority recovery on its fetch
-record, which also leaves Reset authority… as the way back. Plugins restore only
-onto the profile they came from; see
-[Local backup and recovery](../Backup-and-Recovery.md).
+What works today: a restore onto the same profile on the same computer, with
+plugins unchanged since the backup. **Authority…** asks for the plugin
+passphrase as usual, and unlocking recovers the plugins, including ones
+installed from a repository.
+
+What does not work yet, and what Plugins says:
+
+- After plugins changed since the backup, unlocking reports "Plugin authority
+  does not match the plugin files here: its protected marker names authority
+  files that are missing, as when plugins changed after a restored backup was
+  made. Chatbook cannot recover these plugins yet. They stay off, and their files
+  and saved data stay on disk."
+- On another computer or profile, **Authority…** reports "Plugin authority needs
+  recovery: its protected marker is missing or does not match the plugin files
+  here, as after restoring a backup on another computer or profile. Chatbook
+  cannot recover these plugins yet. They stay off, and their files and saved data
+  stay on disk."
+
+Resetting plugin authority does not help in either case: setting it up again
+refuses while the restored registry still lists installed plugins.
+
+File identity matters too. A restore over the existing plugin folders keeps
+their identities. If the plugin folder, `staging/` or a saved-data folder was
+deleted before the restore, the restored copy has a new identity: saved data then
+reports a changed root (`root_anchor_changed`), and fetch records fail their
+check, so a plugin installed from a repository cannot run. Chatbook has no way
+to rebind restored folders yet. Plugins restore only onto the profile they came
+from; see [Local backup and recovery](../Backup-and-Recovery.md).
 
 See [compatibility](compatibility.md) for unqualified environments and
 [authoring](authoring.md) for component and resource contracts.

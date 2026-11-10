@@ -164,6 +164,16 @@ class PluginService:
     def _start(self, *, terminal=False):
         with self._lock:
             self._require_open(terminal=terminal)
+            if (
+                self._thread is not None
+                and self._ready.done()
+                and not self._thread.is_alive()
+                and isinstance(self._ready.exception(), PluginUnavailable)
+                and str(self._ready.exception()) == "plugin_owner_busy"
+            ):
+                # Another holder (a backup capture, another instance) had the
+                # runtime lock; try again rather than stay busy until restart.
+                self._thread, self._ready = None, Future()
             if self._thread is None:
                 self._thread = threading.Thread(
                     target=self._worker, name="chatbook-plugin-storage", daemon=True

@@ -639,9 +639,10 @@ class PluginsScreen(BaseAppScreen):
                     )
                     self._reload()
                 elif posture == "recovery_required":
-                    # TASK-40132: a backup never holds the keyring marker.
+                    # TASK-40132 (D2): a backup never holds the keyring marker,
+                    # and no in-app path recovers restored plugins yet.
                     self._status(
-                        "Plugin authority needs recovery: its protected marker is missing or does not match, as after a profile is restored from a backup. Plugins stay off until then. Choose Reset authority…, set up plugin authority again, then review your plugins; their files and data stay on disk."
+                        "Plugin authority needs recovery: its protected marker is missing or does not match the plugin files here, as after restoring a backup on another computer or profile. Chatbook cannot recover these plugins yet. They stay off, and their files and saved data stay on disk."
                     )
                 else:
                     self._status(

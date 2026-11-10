@@ -537,8 +537,10 @@ async def test_authority_recovery_names_restore_and_reset(request, native_consol
         for _ in range(100):
             await pilot.pause(0.02)
             status = str(screen.query_one("#plugins-status", Static).render())
-            if "Reset authority" in status:
+            if "needs recovery" in status:
                 break
-        assert "restored" in status and "Reset authority" in status
-        assert "Plugins stay off" in status
-        assert "data stay on disk" in status
+        # D2: say what is true; no Reset authority step that bootstrap refuses.
+        assert "restoring a backup" in status
+        assert "cannot recover these plugins yet" in status
+        assert "saved data stay on disk" in status
+        assert "Reset authority" not in status

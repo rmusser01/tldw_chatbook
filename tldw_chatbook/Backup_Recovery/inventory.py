@@ -750,11 +750,6 @@ def discover(
         issues.add("config_parse_failure")
     if any(item.logical_id.endswith(":discovery_failure") for item in items):
         issues.add("config_discovery_failure")
-    if any(
-        item.owner == "plugins" and item.logical_id.endswith(":writers_active")
-        for item in items
-    ):
-        issues.add("plugin_writers_active")
     if selections.data_groups is not None:
         from .group_selection import select_inventory
 
@@ -767,6 +762,15 @@ def discover(
             selections.data_groups,
         )
         issues = set(result.issues)
+    # After group selection: an unselected Tools group excludes the marker, so
+    # live plugin writers never block a backup that leaves plugins out.
+    if any(
+        item.owner == "plugins"
+        and item.logical_id.endswith(":writers_active")
+        and item.status == "unavailable"
+        for item in result.items
+    ):
+        issues.add("plugin_writers_active")
     return replace(
         result,
         complete=result.complete and not issues,

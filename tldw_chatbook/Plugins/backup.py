@@ -3,15 +3,18 @@
 One tree owner, shaped like ``recovered.media``: ``registry.sqlite3`` is the one
 SQLite member, captured through the SQLite backup route (committed WAL frames
 fold in) and validated against the exact frozen catalog below. Every other file
-is raw bytes, including ``staging/`` and ``acquisition-custody/``: plugin recovery
-re-verifies git-installed packages from them (owner decision 2026-11-10). Only
-the runtime owner's ``runtime.lock`` is left out.
+is raw bytes, including staging snapshots and ``acquisition-custody/``: plugin
+recovery re-verifies git-installed packages from them. Left out: the runtime
+owner's ``runtime.lock``, and inside each ``staging/<name>/`` the fetch-time host
+git/SSH configuration copies (they can hold credential helpers and SSH config),
+``repository.git`` and ``content/`` (owner decision D1, 2026-11-10).
 
 While a plugin process may be running, or a live runtime owner holds the lock,
-the preview marks every plugin item unavailable and capture refuses
-(``plugin_writers_active``); it never waits. The app's plugin service holds the
-lock from its first use until it quits, so a complete in-app backup after plugin
-use needs a restart (accepted ceiling, owner decision 2026-11-10).
+the preview shows one unavailable plugin root and the issue
+``plugin_writers_active``, so a partial backup omits plugins; capture never waits.
+The app's plugin service holds the lock from its first use until it quits, so a
+complete in-app backup after plugin use needs a restart (accepted ceiling, owner
+decision 2026-11-10).
 """
 
 from contextlib import closing, contextmanager
@@ -68,11 +71,25 @@ REGISTRY_SCHEMAS = (
 )
 
 
+def _staging_excluded(root: Path, path: Path) -> bool:
+    """Fetch-time host configuration and git working copies beside a snapshot."""
+    parts = path.relative_to(root).parts
+    return (
+        len(parts) > 2
+        and parts[0] == "staging"
+        and (
+            parts[2] in {"host-git-config", "repository.git", "content"}
+            or parts[2].startswith("host-ssh-")
+        )
+    )
+
+
 @contextmanager
-def _runtime_lock(root: Path):
+def _runtime_lock(root: Path, *, create: bool = False):
     """Hold the runtime owner's lock so no owner starts while plugin bytes are read.
 
-    No lock file means no runtime owner ever ran here; nothing is created.
+    Preview never creates the file (no lock means no owner ever ran). Capture
+    creates it, as the owner does, so a restored root without one is guarded too.
     """
     import os
 
@@ -80,7 +97,7 @@ def _runtime_lock(root: Path):
 
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     try:
-        descriptor = os.open(root / LOCK, flags)
+        descriptor = os.open(root / LOCK, flags | (os.O_CREAT if create else 0), 0o600)
     except FileNotFoundError:
         yield
         return
@@ -174,6 +191,19 @@ class _Plugins(_Definition):
             raise ValueError(issues[0])
         if self.restore_role(item) != "sqlite":
             return
+        import json
+
+        def materialized(value):
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    if key == "materialized_identity" and isinstance(child, str):
+                        yield child
+                    else:
+                        yield from materialized(child)
+            elif isinstance(value, list):
+                for child in value:
+                    yield from materialized(child)
+
         root = item.path.parent
         with open_recovery_validation(
             self.owner_id, candidate, writable=False
@@ -182,6 +212,13 @@ class _Plugins(_Definition):
                 "SELECT root_id, path FROM data_roots"
             ):
                 if path != str(root / "data" / root_id):
+                    raise ValueError("owner_relocation_unverified:" + self.owner_id)
+            # Installed and fetched package paths bind the root as data roots do.
+            for (raw,) in connection.execute("SELECT inspection_json FROM revisions"):
+                if any(
+                    not Path(path).is_relative_to(root)
+                    for path in materialized(json.loads(raw))
+                ):
                     raise ValueError("owner_relocation_unverified:" + self.owner_id)
 
     def relocate(self, candidate, mapping):
@@ -197,6 +234,11 @@ class _Plugins(_Definition):
             if item.path in sidecars:
                 continue  # Declared as transient SQLite sidecars by inventory.
             if item.status == "included" and item.path == root / LOCK:
+                item = replace(item, status="intentionally_excluded")
+            elif item.status in {
+                "included",
+                "included_directory",
+            } and _staging_excluded(root, item.path):
                 item = replace(item, status="intentionally_excluded")
             elif item.status == "included" and item.path == journal:
                 # A stray rollback journal could undo a restored registry copy.
@@ -215,20 +257,17 @@ class _Plugins(_Definition):
         except ValueError:
             active = True
         except OSError:
-            return tuple(
-                replace(item, status="unavailable")
-                if item.status in {"included", "included_directory"}
-                else item
-                for item in entries
-            )
-        if not active:
+            active = None
+        if active is False:
             return tuple(entries)
-        return tuple(
-            replace(item, status="unavailable")
-            if item.status in {"included", "included_directory"}
-            else item
-            for item in entries
-        ) + (
+        # One unavailable root, no children: the tree stays topologically valid,
+        # an unselected Tools group excludes it, and partial capture omits it.
+        unavailable = (
+            replace(next(item for item in entries if item.path == root), status="unavailable"),
+        )
+        if active is None:
+            return unavailable
+        return unavailable + (
             StorageItem(
                 self.owner_id,
                 storage_logical_id(context, self.owner_id, "writers_active"),
@@ -239,7 +278,10 @@ class _Plugins(_Definition):
         )
 
     def capture(self, item: StorageItem, destination: Path, cancel: Event) -> None:
-        with _runtime_lock(_root_of(item)):
+        root = _root_of(item)
+        if _staging_excluded(root, item.path):
+            raise ValueError("plugin_staging_member_excluded")
+        with _runtime_lock(root, create=True):
             if self.restore_role(item) != "sqlite":
                 super().capture(item, destination, cancel)
                 return

@@ -352,6 +352,19 @@ class PluginVariableDialog(ModalScreen):
             self._busy = False
 
 
+def authority_failure_message(error: BaseException, mode: str) -> str:
+    """Name the restore mismatch truthfully; other failures keep the retry advice."""
+    if mode == "unlock" and isinstance(error, FileNotFoundError):
+        # TASK-40132 (D2): the marker names authority files a restored backup lacks.
+        return (
+            "Plugin authority does not match the plugin files here: its protected "
+            "marker names authority files that are missing, as when plugins changed "
+            "after a restored backup was made. Chatbook cannot recover these plugins "
+            "yet. They stay off, and their files and saved data stay on disk."
+        )
+    return "Authority unavailable or passphrase incorrect. Retry after checking the protected backend."
+
+
 class PluginAuthorityDialog(PasswordDialog):
     """Keep passphrases in the existing masked credential flow only."""
 
@@ -399,11 +412,9 @@ class PluginAuthorityDialog(PasswordDialog):
             )
             self._clear()
             self.dismiss(True)
-        except (ValueError, OSError, RuntimeError):
+        except (ValueError, OSError, RuntimeError) as error:
             self._clear()
-            self.show_error(
-                "Authority unavailable or passphrase incorrect. Retry after checking the protected backend."
-            )
+            self.show_error(authority_failure_message(error, self.mode))
         finally:
             password = ""
             self._submitting = False
