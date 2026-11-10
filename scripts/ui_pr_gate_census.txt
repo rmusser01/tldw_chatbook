@@ -2635,3 +2635,35 @@ Tests/UI/test_approval_details.py::test_mounted_details_keep_unicode_separators_
 Tests/UI/test_approval_feedback.py::test_feedback_message_compatibility_alias_reaches_current_screen_handler
 Tests/UI/test_portrait_region_editor.py::test_retiring_the_editor_before_it_mounts_still_closes_it[cancel]
 Tests/UI/test_cancelled_dialog_waits.py
+# TASK-38977 (2026-11-07): the Prompts modal's unavailable-source copy and
+# recipe-fill gateway pins, and the response-rule active-run copy pin, one
+# entry per test (0.6-9.1 s each serial at load about 27). Appended at the tail.
+Tests/UI/test_console_prompts_modal.py::test_no_matches_retry_and_source_unavailable_are_explicit
+Tests/UI/test_console_prompts_modal.py::test_source_switch_clears_foreign_rows_before_unavailable_result
+Tests/UI/test_console_prompts_modal.py::test_real_recipe_fill_with_additional_context_reaches_block_review
+Tests/UI/test_console_prompts_modal.py::test_mapped_context_blocks_recipe_save_until_deleted
+Tests/UI/test_console_response_rules.py::test_active_run_copy_takes_priority_over_an_earlier_rule_verdict
+# TASK-38961 (2026-11-07): the refused-settings retry (it waits for the
+# header badge's word) and the two pick-mode create tests (they wait for the
+# switcher's Find to mount), one entry per test; the create test's two cases
+# share one entry, as its first case id holds spaces (24-31 s per case
+# serial at load about 150). Appended at the tail.
+Tests/UI/test_console_endpoint_discovery.py::test_refused_chat_settings_test_blocks_console_until_one_retry
+Tests/UI/test_console_endpoint_discovery.py::test_create_endpoint_with_live_controller_rebase_settles
+Tests/UI/test_console_endpoint_discovery.py::test_endpoint_command_create_lands_on_a_pair_in_pick_mode
+# TASK-38968 (2026-11-07): the deferred-Enter pin that only durable
+# acceptance removes a sent draft's captured prefix from the composer (the
+# whole file is 115 s serial; this node 24-39 s per lane run at load 61-89).
+# Appended at the tail.
+Tests/UI/test_console_send_admission_off_pump.py::test_an_enter_deferred_behind_a_send_sends_its_own_capture_only
+# TASK-39120 (2026-11-07): the Inspector-style section, now that its harness
+# loads the app bundle its utility classes live in (38 tests, 50 s serial at
+# load about 150). Appended at the tail.
+Tests/UI/test_console_inspector_section.py
+# TASK-38948 (2026-11-07): the 100 ms Send-feedback budgets (Sending frame,
+# input mutation, input frame), one entry per route (6-9 s each serial at
+# load about 130). Loop CPU is held at any load; wall time only while the
+# load average is under the CPU count.
+# Appended at the tail.
+Tests/UI/test_console_received_intent_feedback.py::test_actual_send_paints_sending_and_accepts_input_within_100ms[enter]
+Tests/UI/test_console_received_intent_feedback.py::test_actual_send_paints_sending_and_accepts_input_within_100ms[send-button]

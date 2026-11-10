@@ -12271,10 +12271,16 @@ class TestUserPromptSubmitHooks:
         )
         # Register the exact live owner. Durable budget admission is covered
         # by the fleet-wake integration suite; this test isolates hook routing.
-        wake._active["conv-1"] = console_fleet_wake._WakeDelivery(session.id, token)
+        # TASK-39045: by keyword (3176bebc22 put slot_token before
+        # authorization), and the stub grants what the real accept grants
+        # (09c38664b4 gates the automatic source on ``accepted``).
+        wake._active["conv-1"] = console_fleet_wake._WakeDelivery(
+            session.id, authorization=token
+        )
         async def accept(authorization, session_id):
             assert wake.authorizes(authorization, session_id)
             authorization.acceptance_started = True
+            authorization.accepted = True
             return True
         wake.accept = accept
         try:

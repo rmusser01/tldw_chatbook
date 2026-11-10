@@ -86,7 +86,14 @@ class _SectionHarness(ConsolidatedCSSApp):
     """Minimal host mounting one Inspector section directly (no ChatScreen
     involved -- this is a standalone-component test, mirroring the
     `_HandleHarness`/`_SectionHeaderHarness` pattern in
-    `test_destination_rail.py`)."""
+    `test_destination_rail.py`).
+
+    The app bundle is loaded because the header's `h-1` (and the rows'
+    heights) are utility classes there since ae9093a714; without it the
+    header laid out 6 rows tall and its summary landed off the title's
+    edge (TASK-39120, as TASK-39044 found for the scrolled harness)."""
+
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self, section: ConsoleInspectorSection) -> None:
         super().__init__()

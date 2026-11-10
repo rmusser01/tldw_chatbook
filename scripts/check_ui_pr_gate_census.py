@@ -898,6 +898,22 @@ MINIMUM_FILES = 1821
 # cases at insertion, eight since dev deleted media_viewer_panel.py; about
 # 10 s) at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1822
+# TASK-38977 (2026-11-07): append the five Prompts modal and response-rule
+# copy/gateway nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1827
+# TASK-38961 (2026-11-07): append the three Console endpoint-discovery
+# retry and pick-mode nodes at the tail. The floor is the measured entry
+# count.
+MINIMUM_FILES = 1830
+# TASK-38968 (2026-11-07): append the send-admission deferred-Enter capture
+# node at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1831
+# TASK-39120 (2026-11-07): append the Console Inspector section file at the
+# tail. The floor is the measured entry count.
+MINIMUM_FILES = 1832
+# TASK-38948 (2026-11-07): append the two 100 ms Send-feedback route nodes
+# at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1834
 
 
 def read_census(path: Path) -> list[str]:

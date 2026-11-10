@@ -2,10 +2,13 @@
 
 import asyncio
 import contextlib
+import gc
 import json
+import os
 import sys
 import threading
 import time
+import warnings
 from types import SimpleNamespace
 
 import pytest
@@ -71,7 +74,9 @@ class _NaturalPreparingFrame:
         self.code = App._display.__code__
         self.refresh_code = Screen._compositor_refresh.__code__
         self.action_at = self.frame_at = self.feedback_frame_at = None
-        self.while_held = False
+        # Loop-thread CPU at the action and at the Sending frame (TASK-38948).
+        self.action_cpu = self.feedback_frame_cpu = None
+        self.while_held = self.feedback_while_held = False
         self.pending_user_frame_at = self.pending_user_identity = None
         self.pending_user_while_held = False
         self.painted = threading.Event()
@@ -98,6 +103,8 @@ class _NaturalPreparingFrame:
             frame.f_locals.get("renderable"), chip.region, "Sending"
         ):
             self.feedback_frame_at = time.perf_counter()
+            self.feedback_frame_cpu = time.thread_time()
+            self.feedback_while_held = not self.case.probe.release.is_set()
         if self.frame_at is None and _update_contains(
             frame.f_locals.get("renderable"), button.region, "Preparing"
         ):
@@ -163,6 +170,80 @@ class _NaturalPreparingFrame:
             monitoring.set_local_events(tool, self.code, 0)
             monitoring.register_callback(tool, monitoring.events.PY_RETURN, None)
             monitoring.free_tool_id(tool)
+
+
+class _TimedInputFrame(_NaturalInputFrame):
+    """Also stamp the event loop thread's CPU at the mutation and the frame.
+
+    ``key_cpu`` is stamped when the loop starts handling the typed key, so the
+    loop's CPU between the key and each observation can be held to the budget.
+    The stamps ride the timestamps' setters: wrapping ``_returned`` would add
+    a frame to the ``sys._getframe(1)`` read it makes of the observed call.
+    """
+
+    key_cpu = mutated_cpu = frame_cpu = None
+
+    @property
+    def mutated_at(self):
+        return self._mutated_at
+
+    @mutated_at.setter
+    def mutated_at(self, value):
+        self._mutated_at = value
+        if value is not None:
+            self.mutated_cpu = time.thread_time()
+
+    @property
+    def frame_at(self):
+        return self._frame_at
+
+    @frame_at.setter
+    def frame_at(self, value):
+        self._frame_at = value
+        if value is not None:
+            self.frame_cpu = time.thread_time()
+
+
+#: How long the held provider read waits for both paints (TASK-38948).
+_HELD_READER_SECONDS = 5.0
+
+
+def _assert_send_budget(record_property, label, start, end, loop_cpu, budget=0.1):
+    """Hold the loop's CPU to the budget at any load; wall time on a free host.
+
+    TASK-38948 (AC#2). ``loop_cpu`` is the event loop thread's CPU time in
+    the interval. It is held to the budget at every load, so work added on
+    the loop fails even on a loaded runner. Wall time is held to the budget
+    only while the 1-minute load average is under the CPU count. At or over
+    that, a wall-clock miss is reported, not failed: a ``<label>_host_load_miss``
+    property and a warning carrying the load and the loop's CPU and off-CPU
+    time. A blocking wait added before the paint is therefore caught only on
+    a host that is not oversubscribed.
+    """
+    elapsed = end - start
+    record_property(f"{label}_loop_cpu_seconds", loop_cpu)
+    lag = (
+        f"the loop ran {loop_cpu * 1000:.0f} ms on the CPU and was off it "
+        f"{(elapsed - loop_cpu) * 1000:.0f} ms"
+    )
+    assert loop_cpu <= budget, (
+        f"{label}: the event loop spent {loop_cpu * 1000:.0f} ms of CPU against "
+        f"{budget * 1000:.0f} ms ({elapsed * 1000:.0f} ms wall)"
+    )
+    if elapsed <= budget:
+        return
+    cores = os.cpu_count() or 1
+    load = os.getloadavg()[0] if hasattr(os, "getloadavg") else 0.0
+    assert load >= cores, (
+        f"{label}: {elapsed * 1000:.0f} ms against {budget * 1000:.0f} ms at "
+        f"load {load:.1f} on {cores} CPUs; {lag}"
+    )
+    record_property(f"{label}_host_load_miss", load)
+    warnings.warn(
+        f"{label} missed {budget * 1000:.0f} ms ({elapsed * 1000:.0f} ms) at load "
+        f"{load:.0f} on {cores} CPUs, so wall time was not enforced; {lag}",
+        stacklevel=2,
+    )
 
 
 @contextlib.asynccontextmanager
@@ -467,10 +548,14 @@ async def test_actual_send_paints_sending_and_accepts_input_within_100ms(
     """Headless supplied frames qualify readiness, not physical terminal flush."""
     async with _received_console_case(monkeypatch, f"feedback-{route}") as case:
         preparing = _NaturalPreparingFrame(case)
-        typing = _NaturalInputFrame(case.host, case.console, case.composer, case.probe)
+        typing = _TimedInputFrame(case.host, case.console, case.composer, case.probe)
         loop = asyncio.get_running_loop()
         stop = threading.Event()
         receipt_observed = threading.Event()
+
+        def press_z():
+            typing.key_cpu = time.thread_time()
+            _key(case.host, "Z", "Z")
 
         def release_independently():
             try:
@@ -478,9 +563,14 @@ async def test_actual_send_paints_sending_and_accepts_input_within_100ms(
                     if stop.is_set():
                         return
                 typing.sent_at = time.perf_counter()
-                loop.call_soon_threadsafe(_key, case.host, "Z", "Z")
-                deadline = time.perf_counter() + 0.5
-                typing.painted.wait(0.5)
+                loop.call_soon_threadsafe(press_z)
+                # The reader stays held until both paints and the receipt
+                # are seen, or this long. It is the test's patience, not a
+                # budget: the budgets below come from the frames' own
+                # timestamps. 0.5 s released before a slow frame at load
+                # 105 (TASK-38948).
+                deadline = time.perf_counter() + _HELD_READER_SECONDS
+                typing.painted.wait(_HELD_READER_SECONDS)
                 preparing.painted.wait(max(0, deadline - time.perf_counter()))
                 receipt_observed.wait(max(0, deadline - time.perf_counter()))
             finally:
@@ -490,8 +580,16 @@ async def test_actual_send_paints_sending_and_accepts_input_within_100ms(
         with preparing.installed(), typing.installed():
             releaser.start()
             try:
+                # Start with no collection owed: a gen-2 pass over the worker's
+                # accumulated heap read as 483 ms of loop CPU in the interval
+                # late in a mixed run (TASK-38948 review r12t-rev1). A full
+                # collection zeroes CPython's long-lived pending count, so no
+                # automatic full pass can run within the short interval. No
+                # freeze: unfreezing would empty the product's own frozen set.
+                gc.collect()
                 # All Send-triggered preparation remains inside this interval.
                 preparing.action_at = time.perf_counter()
+                preparing.action_cpu = time.thread_time()
                 _send(case, route)
                 record = await _held_received_record(case)
                 ack = vars(case.console).get("_console_send_ack")
@@ -500,7 +598,7 @@ async def test_actual_send_paints_sending_and_accepts_input_within_100ms(
                 received_pending_identity = (id(ack), id(pending.token), pending.row.id)
                 assert record.received_intent.inputs.draft == pending.row.content
                 receipt_observed.set()
-                assert await _until(case.probe.release.is_set, 2)
+                assert await _until(case.probe.release.is_set, _HELD_READER_SECONDS + 2)
                 record_property(
                     "send_to_preparing_frame_seconds",
                     None
@@ -526,25 +624,54 @@ async def test_actual_send_paints_sending_and_accepts_input_within_100ms(
                 assert preparing.pending_user_while_held
                 record_property("pending_user_linked_to_received_session", True)
                 record_property("headless_supplied_frame_only", True)
-                record_property("held_reader_budget_seconds", 0.5)
+                record_property("held_reader_budget_seconds", _HELD_READER_SECONDS)
                 record_property(
                     "send_to_run_feedback_frame_seconds",
                     None
                     if preparing.feedback_frame_at is None
                     else preparing.feedback_frame_at - preparing.action_at,
                 )
+                # A late Sending frame is waited for, so the held-read check
+                # below names it instead of reading None.
+                await _until(
+                    lambda: preparing.feedback_frame_at is not None,
+                    _HELD_READER_SECONDS,
+                )
                 assert preparing.feedback_frame_at is not None
-                assert preparing.feedback_frame_at - preparing.action_at <= 0.1
+                # A loaded host only reports wall misses; the Sending frame
+                # must still land before the held read is released.
+                assert preparing.feedback_while_held, (
+                    "Sending painted only after the held read was released"
+                )
                 assert preparing.frame_at is not None and preparing.while_held
                 # Preparing follows the immediate Sending frame at real receipt.
                 assert typing.mutated_while_held and typing.frame_while_held
-                assert typing.mutated_at - typing.sent_at <= 0.1
-                assert typing.frame_at - typing.sent_at <= 0.1
             finally:
                 stop.set()
                 case.probe.release.set()
-                releaser.join(timeout=2)
+                releaser.join(timeout=_HELD_READER_SECONDS + 2)
                 assert not releaser.is_alive()
+        for label, start, end, loop_cpu in (
+            (
+                "send_to_run_feedback_frame",
+                preparing.action_at,
+                preparing.feedback_frame_at,
+                preparing.feedback_frame_cpu - preparing.action_cpu,
+            ),
+            (
+                "input_mutation",
+                typing.sent_at,
+                typing.mutated_at,
+                typing.mutated_cpu - typing.key_cpu,
+            ),
+            (
+                "input_frame",
+                typing.sent_at,
+                typing.frame_at,
+                typing.frame_cpu - typing.key_cpu,
+            ),
+        ):
+            _assert_send_budget(record_property, label, start, end, loop_cpu)
 
 
 def _install_received_wire_reply(monkeypatch, case):

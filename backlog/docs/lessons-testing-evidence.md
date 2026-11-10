@@ -27,6 +27,28 @@ refusal with appropriately scoped evidence, or state that its payload is unavail
 - If the holder may release before you capture it, record each acquirer through a delegating proxy over the module's lock. A `Condition` built on the original lock still works, because the proxy takes the same underlying lock.
 - Load the probe with `PYTEST_PLUGINS`, from a runner that adds its directory to `PYTHONPATH`. That reaches xdist workers and private-profile children in both worktrees, without putting a file in either.
 
+## A Console test that pushes its own ChatScreen loses the transcript to the reused route (TASK-39120, 2026-11-07)
+
+**Incident.** `test_manual_stream_completes_once_across_real_navigation` built `ChatScreen(app)`, pushed it, sent a turn, navigated to Library and back through `NavigateToScreen`, and found the "Setup complete" empty state instead of the reply, which was in the store. Since fed0b7257a (TASK-31520, 2026-09-05) the Console route reuses the app's own installed ChatScreen, and the runtime's view stays attached across a suspend. So the return showed the app's ChatScreen, not the pushed one. A probe on that screen read `_console_attach_reconciled=False` and `running=False` for 18 s, with an empty `ConsoleTranscript._messages`: it never attached. The wake-render test in the same file failed the same way. Its helper also asserted `chat2 is not chat, "screens are never cached"`, which TASK-31520 made false. Getting the seed's Console through the route (`_navigate(app, pilot, "chat", ...)`) made both tests pass.
+
+**What to do.** A mounted Console test that navigates away and back must take its Console from the route, never construct one. If a navigation test reads an empty transcript while the store has the rows, check the screen's identity and its attach flags before suspecting the render.
+
+## A probe process cannot excuse a loaded host's latency miss, and the loop's CPU time is a better but imperfect guard (TASK-38948, 2026-11-07)
+
+**Incident.** The 100 ms Send-feedback budgets failed 19 of 20 runs at load 50 on wall time alone. Two ways of excusing host load were tried and dropped:
+- A separate probe process slept 1 ms at a time, and its late wakes were subtracted from each interval. At load 104-130 the Send-button case read 406 ms, of which the probe accounted for 181 ms, so it still failed. The scheduler favours a thread that mostly sleeps, so the probe stalls far less than the CPU-bound event loop thread.
+- The probe was then used only as a contention signal (stalled at least 10% of the window). At load 48 an input interval read 181 ms while the probe had stalled 9 ms.
+
+The event loop thread's own CPU time over each interval (`time.thread_time()` stamped on the loop at both ends) held far better: at most 78 ms for the Sending frame over about 100 cases at load 30-178. It is still not load-proof:
+- It read 258 ms at load 31 with no product change.
+- Review r12t-rev1 then saw 483 ms at load 40-60, late in a six-file `-n 4` run, in a worker that had already run many tests. A gen-2 collection over the accumulated heap landing in the interval is the likely cause. CPU time also inflates when threads are oversubscribed or moved to efficiency cores.
+
+The test now calls `gc.collect()` just before the interval: on CPython 3.12 a full collection zeroes the long-lived pending count, so no automatic full pass can run in the short interval. Ten mixed runs at load 25-48, with the node last behind five other UI files, then read 32-75 ms (20 of 20). That set briefly also used `gc.freeze()`/`gc.unfreeze()`. Review r12t-rev2 dropped the pair: `gc.unfreeze()` empties the whole worker's frozen set, including what the product froze at UI-ready and screen pre-import, so later timing tests in the same worker or serial shard would carry that heap in gen 2. A longer window also collects more unrelated loop CPU: a 0.3 s delay of the Sending paint alone read 100-123 ms.
+
+A separate trap in the same test: the held provider read gave up waiting for the paints after 0.5 s, so at load 105 it released before a slow frame and failed `frame_while_held`. That wait is the test's patience, not a budget, and is now 5 s.
+
+**What to do.** Do not infer a busy thread's lost time from another process's sleep latency. CPU time on the thread that does the work is the better load-tolerant budget, but start the interval with no collection owed (`gc.collect()`; never `gc.unfreeze()` in a test, which thaws the product's own frozen heap), and keep the interval short. If you also gate a wall-clock budget on host load, say plainly in the test and the task that a loaded host only reports wall misses. Keep an ordering bound that holds at any load: here the Sending frame must land before the held read is released.
+
 ## A census's "gone" row can be a live producer the scanner stopped seeing (TASK-39053, 2026-11-06)
 
 **Incident.** The backup owner inventory reported 194 gone producer rows, and the task that filed it read them as removed or moved code. But 24 of them were live `os.replace` / `os.unlink` calls. Their modules had switched to `from tldw_chatbook.Utils.platform_files import os`, and the census only bound `os` from `import os`. Other reviewed rows looked gone for the same kind of reason:
