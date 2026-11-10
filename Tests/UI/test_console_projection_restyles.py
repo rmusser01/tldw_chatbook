@@ -58,6 +58,7 @@ from tldw_chatbook.UI.Workbench.workbench_state import (
     WorkbenchStatus,
 )
 from tldw_chatbook.UI.Workbench.workbench_widgets import CommandStrip, DestinationHeader
+from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -876,9 +877,9 @@ async def test_a_compact_flip_restyles_only_what_its_rules_style(monkeypatch):
             assert shell.has_class("-console-compact") is (height < 35)
             nodes = {id(node) for node in shell.walk_children(with_self=True)}
             restyled = {id(node) for node in applied if id(node) in nodes}
-            # A reader that answers the flip with its own class (the approval
-            # card's ``approval-compact``, its buttons' compact) restyles its
-            # own subtree; the shell's flip itself is never excused.
+            # The approval card, the one allowed reader, answers the flip with
+            # its own class (``approval-compact``, its buttons' compact) and
+            # restyles its own subtree; the shell's flip itself is never excused.
             reaction = {
                 id(node)
                 for reader in shell.walk_children()
@@ -886,6 +887,14 @@ async def test_a_compact_flip_restyles_only_what_its_rules_style(monkeypatch):
                 for node in reader.walk_children(with_self=True)
             }
             assert crosses or not reaction, f"40->{height} moved a reader's classes"
+            cards = {
+                id(node)
+                for card in console.query(ChatApprovalCard)
+                for node in card.walk_children(with_self=True)
+            }
+            assert reaction <= cards, (
+                f"40->{height}: {len(reaction - cards)} reaction nodes outside the approval card"
+            )
             assert restyled == ((styled if crosses else set()) | reaction), (
                 f"40->{height}: restyled {len(restyled)} of {total} shell nodes; "
                 f"the compact rules style {len(styled)} and readers' "
