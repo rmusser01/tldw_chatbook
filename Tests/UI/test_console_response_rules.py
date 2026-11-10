@@ -802,7 +802,8 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "sync", ["recovery-and-resume", "full-ui", "full-ui-held", "coachmark"]
+    "sync",
+    ["recovery-and-resume", "full-ui", "full-ui-held", "coachmark", "coachmark-dismissed"],
 )
 async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypatch, sync):
     """TASK-35444, TASK-35645: display syncs never wait while a rebuild holds config.
@@ -821,7 +822,8 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
     thread was waiting. "coachmark" (TASK-39166): a tab sync that sees the
     session count reach two shows the fleet coach-mark, whose copy reads the
     parallel-run cap; it waited in ``load_settings()`` through
-    ``_ensure_console_chat_controller`` under load.
+    ``_ensure_console_chat_controller`` under load. "coachmark-dismissed": a
+    dismissal while that show is deferred keeps it from appearing afterwards.
     """
     from tldw_chatbook import config
 
@@ -852,13 +854,18 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
         started = []  # when the hold began
         holder.start()
         try:
-            if sync == "coachmark":
+            if sync.startswith("coachmark"):
                 await settle(case.console)
                 await case.console._sync_console_native_session_tabs()  # seeds the count
                 assert len(case.chats.sessions()) == 1
                 case.chats.create_session(activate=False)
                 start_rebuild()
                 await case.console._sync_console_native_session_tabs()
+                if sync == "coachmark-dismissed":
+                    assert "_show_console_fleet_coachmark" in (
+                        getattr(case.console, "_console_config_retries", None) or {}
+                    ), "the coach-mark show was not deferred"
+                    case.console._record_console_fleet_coachmark_dismissed()
             elif sync == "recovery-and-resume":
                 await settle(case.console)
                 start_rebuild()
@@ -921,9 +928,16 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
             release.set()
             holder.join(3)
         assert not holder.is_alive() and not watch.is_alive()
+        banner = case.console.query_one("#console-fleet-coachmark")
+        if sync == "coachmark-dismissed":
+            await _until(
+                lambda: "_show_console_fleet_coachmark"
+                not in (getattr(case.console, "_console_config_retries", None) or {}),
+                "the deferred coach-mark show running after the release",
+            )
+            assert banner.styles.display != "block", "the dismissed coach-mark reappeared"
         if sync == "coachmark":
             # Deferred, not dropped: the coach-mark shows once the hold ends.
-            banner = case.console.query_one("#console-fleet-coachmark")
             await _until(
                 lambda: banner.styles.display == "block",
                 "the fleet coach-mark showing after the release",
