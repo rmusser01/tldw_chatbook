@@ -292,7 +292,7 @@ def _base_data_dir_cli_consumer_lines(tree: ast.AST) -> tuple[int, ...]:
 
 
 #: TASK-39126: a file can only hold a runtime-owner finding if it spells one of
-#: these, so only such files are parsed (parsing all ~9,700 took up to 113 s
+#: these, so only such files are parsed (parsing all ~9,050 took up to 113 s
 #: of the node's 180 s CI timeout).
 RUNTIME_OWNER_NAMES = ("BASE_DATA_DIR_CLI", "DEFAULT_RUNTIME_POLICY_PATH")
 
@@ -371,6 +371,42 @@ def test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners()
     from tldw_chatbook.runtime_policy.bootstrap import default_runtime_policy_path
 
     assert isinstance(default_runtime_policy_path(), Path)
+
+
+#: Roots this node skips: the package (preflight's profile census parses it),
+#: Tests/ (pytest collection parses each file a lane runs) and Docs/ (not
+#: runtime). Hidden directories other than .github/ are local state (.venv,
+#: worktrees), not repository source.
+PARSED_ELSEWHERE_ROOTS = ("tldw_chatbook", "Tests", "Docs")
+
+
+def test_python_outside_the_package_and_tests_parses() -> None:
+    """Every other repository ``.py`` file parses (TASK-39126).
+
+    The runtime-policy node above used to parse every file, so an unparseable
+    script failed it as a side effect. It now parses only files that name its
+    constants; this node keeps that side effect for the roots no other check
+    parses (scripts/, Helper_Scripts/, Packaging/, packages/, .github/,
+    native/, top-level files, ...).
+    """
+    unparseable: list[str] = []
+    for entry in sorted(REPO_ROOT.iterdir()):
+        if entry.name in PARSED_ELSEWHERE_ROOTS or (
+            entry.name.startswith(".") and entry.name != ".github"
+        ):
+            continue
+        if entry.is_dir():
+            paths = sorted(entry.rglob("*.py"))
+        else:
+            paths = [entry] if entry.suffix == ".py" else []
+        for path in paths:
+            relative_path = path.relative_to(REPO_ROOT).as_posix()
+            try:
+                ast.parse(path.read_text(encoding="utf-8"), relative_path)
+            except SyntaxError as error:
+                unparseable.append(f"{relative_path}:{error.lineno}: {error.msg}")
+
+    assert unparseable == []
 
 
 def test_cli_prints_the_real_source_census_and_enforces_it() -> None:

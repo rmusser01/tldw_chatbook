@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-07 02:03
-updated_date: 2026-11-10 18:11
+updated_date: 2026-11-10 18:51
 labels:
 - follow-up
 - ci
@@ -64,9 +64,9 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-1
 
 **Approach.** The node still reads every `*.py` file outside `Docs/`, but parses only a file whose text names `BASE_DATA_DIR_CLI` or `DEFAULT_RUNTIME_POLICY_PATH` (`_may_name_runtime_owner`). Both findings are AST nodes whose identifier is one of those two names (a load of the constant, a qualified `.BASE_DATA_DIR_CLI`, an `import ... BASE_DATA_DIR_CLI as x` that makes `x` count, or an assignment target), so a file that never spells either name cannot hold a finding. The parser NFKC-normalizes identifiers, so non-ASCII text is NFKC-normalized before the check (1.45 s for the 2,941 non-ASCII files). On the current tree 7 of 9,053 files are parsed.
 
-One side effect is gone: a file outside `Docs/` that does not parse but names neither constant no longer fails this node (TASK-38989 already excluded `Docs/` for exactly that kind of failure). Such a file cannot hide a finding: a file naming either constant is still parsed and still raises.
+**The parse side effect, and how it is covered now.** Parsing every file also failed this node on any unparseable `.py` outside `Docs/`. With the prefilter, a file that names neither constant is no longer parsed (it still cannot hide a finding: a file naming either constant is still parsed and still raises). Review r13a-rev1 found that no other required PR-time check parses the non-package roots: preflight's profile census covers only `tldw_chatbook/`, pytest collection only the `Tests/` files a lane runs, and `lint.yml` is not required. A new node in the same file and job, `test_python_outside_the_package_and_tests_parses`, parses every `.py` under each top-level entry except `tldw_chatbook/`, `Tests/`, `Docs/` and hidden directories other than `.github/` (134 files: scripts/ 37, Helper_Scripts/ 33, Packaging/ 27, packages/ 24, .github/ 6, native/ 4, qa/ 1, two top-level files) and names each file that fails. Its call took 0.92 s at load about 48. A planted `scripts/_r13a_broken.py` (`def broken(:`) turned it red with `scripts/_r13a_broken.py:1: invalid syntax`; removed. Still not parse-checked by any PR-time check: `Tests/` files that no lane runs (the old node parsed them as a side effect).
 
-**Pin.** The already-laned `test_base_data_dir_census_detects_qualified_and_aliased_consumers` now also asserts that the prefilter admits its source and a full-width spelling (`\uff22ASE_DATA_DIR_CLI`, which the parser reads as `BASE_DATA_DIR_CLI`), and skips a file naming neither. Red before the NFKC line (temporary removal): `assert _may_name_runtime_owner(full_width)` -> `assert False`; green with it. No lane, workflow or pin-list change.
+**Pin.** The already-laned `test_base_data_dir_census_detects_qualified_and_aliased_consumers` now also asserts that the prefilter admits its source and a full-width spelling (`\uff22ASE_DATA_DIR_CLI`, which the parser reads as `BASE_DATA_DIR_CLI`), and skips a file naming neither. Red before the NFKC line (temporary removal): `assert _may_name_runtime_owner(full_width)` -> `assert False`; green with it. The new syntax node is laned by node id in `derived-artifacts.yml`'s architecture-guards step and in `ARCHITECTURE_GUARD_TARGETS` (`Tests/CI/test_ci_queue_pressure_contract.py`, whose completeness pin requires every test in this file to be listed).
 
 **Local measurements** (the node inside the job's exact command, serial):
 
@@ -82,4 +82,4 @@ Alone at load about 40-45: 10.6-12.8 s per run (the controls below).
 
 **Negative controls** (each a temporary `scripts/_r13a_planted.py`, removed): no plant -> 1 passed; `DEFAULT_RUNTIME_POLICY_PATH = Path("x")` -> red (`['scripts/_r1...bootstrap.py'] == ['tldw_chatbo...bootstrap.py']`); `from tldw_chatbook.config import BASE_DATA_DIR_CLI as data_dir` + a use -> red (`[('scripts/_r...anted.py', 2)] == []`); `import tldw_chatbook.config as cfg` + `cfg.BASE_DATA_DIR_CLI` -> red; a full-width `\uff24EFAULT_RUNTIME_POLICY_PATH = 1` -> red.
 
-**Files.** `Tests/Architecture/test_profile_owned_path_inventory.py`.
+**Files.** `Tests/Architecture/test_profile_owned_path_inventory.py`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`.

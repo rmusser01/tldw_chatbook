@@ -64,6 +64,8 @@ from Tests.Architecture.test_timer_path_static_update_inventory import (
     _load_package,
     _Module,
     _modules_from_source,
+    _package_clock_roots,
+    _package_graph,
 )
 
 #: Widgets whose construction alone arms a repeating framework clock.
@@ -212,7 +214,9 @@ def _package_censuses() -> tuple[
     ``gc.collect()`` in the session walked it, about 3 s each (TASK-39125).
     """
     modules = _load_package()
-    _load_package.cache_clear()
+    # The timer census's derived caches go too, so none outlives this parse.
+    for cached in (_load_package, _package_graph, _package_clock_roots):
+        cached.cache_clear()
     return framework_clock_constructions(modules), auto_refresh_armings(modules)
 
 

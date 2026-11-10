@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-07 02:03
-updated_date: 2026-11-10 18:11
+updated_date: 2026-11-10 18:51
 labels:
 - follow-up
 - ci
@@ -59,9 +59,9 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-1
 
 ## Implementation Notes
 
-**Approach.** `test_framework_armed_clock_inventory.py` (the job's only reader of `_load_package()`) now computes both of its censuses from one parse in `_package_censuses()` and calls `_load_package.cache_clear()` right after the load, so the ~13M-object package dies when the census returns, inside the census node's setup. `test_timer_path_static_update_inventory.py`, which owns the cache and needs it across its tests, follows TASK-38702's pattern: a no-op `cleanup_file_descriptors` override and a module-scoped autouse fixture that clears `_load_package`, `_package_graph` and `_package_clock_roots` when the module ends (it runs in no PR lane; this is for local `Tests/Architecture` runs).
+**Approach.** `test_framework_armed_clock_inventory.py` (the job's only reader of `_load_package()`) now computes both of its censuses from one parse in `_package_censuses()` and clears `_load_package` (and, since review r13a-rev1, the timer census's derived `_package_graph` and `_package_clock_roots`, so none can point at a stale parse) right after the load, so the ~13M-object package dies when the census returns, inside the census node's setup. `test_timer_path_static_update_inventory.py`, which owns the cache and needs it across its tests, follows TASK-38702's pattern: a no-op `cleanup_file_descriptors` override and a module-scoped autouse fixture that clears `_load_package`, `_package_graph` and `_package_clock_roots` when the module ends (it runs in no PR lane; this is for local `Tests/Architecture` runs).
 
-**Deviation from the plan.** The first version gave the framework module the same release fixture. In its job run (load 54-92) the release itself, freeing 13M objects, showed as a 2.11 s teardown on the module's last, trivial node. Dropping the package inside the census moves that cost into the census node's setup; it also removes the module's second census pass (`test_no_unclassified_auto_refresh_arming`, 8.5-19.8 s call before).
+**Deviation from the plan.** The first version gave the framework module the same release fixture. In its job run (load 54-92) the release itself, freeing 13M objects, showed as a 2.11 s teardown on the module's last, trivial node. Dropping the package inside the census moves that cost into the census node's setup. It also moves the module's second census walk (`test_no_unclassified_auto_refresh_arming`, 8.5-19.8 s call before) into that same setup, which counts toward `--timeout=180` (pytest-timeout's `func_only` is False). Review r13a-rev1's numbers: local setup 97.9 s at load about 44; CI on 2026-11-06 had setup 45-63 s plus a second walk of 6-11 s, so about 51-74 s is expected there, at least 2.4x headroom.
 
 **Measurements** (the job's exact command, extracted from `derived-artifacts.yml`, serial, plus `--durations=0 --durations-min=0`; local venv, 18 CPUs shared):
 
