@@ -1059,6 +1059,11 @@ class ChatApprovalCard(Container):
         self._sync_control_layout()
 
     def _sync_control_layout(self) -> None:
+        # A hidden card lays out nothing; flipping its compact class would
+        # restyle its whole subtree at every 34/35-row shell crossing (TASK-39132
+        # hotfix). ``set_batch``'s ``ready()`` reflows the card once it shows.
+        if not self.display:
+            return
         try:
             actions = self.query_one("#approval-batch-actions", Horizontal)
         except NoMatches:

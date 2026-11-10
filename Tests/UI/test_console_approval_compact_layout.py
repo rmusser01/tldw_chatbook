@@ -375,6 +375,16 @@ async def _verify_height_only_resize_reflows_existing_controls(request):
         await pilot.pause(0.3)
         assert not card.has_class("approval-compact")
         assert card.query_one(Select) is select and select.value == "deny"
+        # A hidden card skips the shell's 34/35-row crossing (TASK-39132
+        # hotfix); showing it again must still reflow it to compact.
+        console.set_task_resume_state(TaskResumeState())
+        await pilot.pause()
+        assert not card.display
+        await pilot.resize_terminal(80, 24)
+        await pilot.pause(0.3)
+        _pending_card(console, "shown-after-hidden-crossing")
+        await pilot.pause(0.3)
+        assert card.display and card.has_class("approval-compact")
 
 
 @pytest.mark.asyncio
