@@ -158,6 +158,7 @@ def _degraded_config(strategy: str) -> RerankingConfig:
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("strategy", ["pairwise", "listwise"])
 @pytest.mark.asyncio
 async def test_degraded_rerank_never_touches_the_callers_cached_objects(
@@ -247,6 +248,7 @@ async def test_degraded_tag_does_not_poison_the_search_cache(
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_pointwise_rows_do_not_claim_the_reranked_score_kind(monkeypatch):
     """3 of 5 scoring calls fail. The two SCORED rows carry the reranker
@@ -297,6 +299,7 @@ async def test_failed_pointwise_rows_do_not_claim_the_reranked_score_kind(monkey
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_pointwise_rows_keep_their_kind_through_the_cache_hit(monkeypatch):
     """The reranker caches its per-result `RerankingResult`s, so a cache HIT
@@ -330,6 +333,7 @@ async def test_failed_pointwise_rows_keep_their_kind_through_the_cache_hit(monke
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("strategy", ["pointwise", "pairwise", "listwise"])
 @pytest.mark.asyncio
 async def test_rerank_returns_its_own_failure_counts(strategy, monkeypatch):
@@ -350,6 +354,7 @@ async def test_rerank_returns_its_own_failure_counts(strategy, monkeypatch):
     assert outcome.degraded is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reranker_keeps_no_cross_call_failure_state(monkeypatch):
     """The structural half of AC#4: there is no shared instance state left for
@@ -470,6 +475,7 @@ def _make_v2_service(tmp_path, strategy: str, enable_cache: bool):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reranker_dispatch_binding_against_the_real_chat_api_call_signature(
     monkeypatch,
@@ -546,6 +552,7 @@ async def test_reranker_dispatch_binding_against_the_real_chat_api_call_signatur
     assert landed["streaming"] is False
 
 
+@pytest.mark.bootstrap_profile
 def test_reranker_does_not_read_a_settings_table(monkeypatch):
     """AC#2: the phantom `self._settings["API"]` read is GONE, not repaired.
 
@@ -576,6 +583,7 @@ def test_reranker_does_not_read_a_settings_table(monkeypatch):
         assert not hasattr(reranker, "_settings")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "provider",
     [
