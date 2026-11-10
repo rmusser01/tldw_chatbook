@@ -402,6 +402,33 @@ def test_no_module_reads_the_console_controllers_app() -> None:
     )
 
 
+def test_no_test_sets_or_reads_the_console_controllers_app() -> None:
+    """Tests bind the host through ``Tests/Chat/console_controller_factory``.
+
+    A ``controller.app = fake`` write in a test sets an attribute nothing reads,
+    so the test runs against ``NO_HOST`` and can pass vacuously (TASK-36947.4
+    re-review M1). ``assert not hasattr(controller, "app")`` checks are allowed.
+    """
+
+    tests = _REPO_ROOT / "Tests"
+    offenders = []
+    for path in sorted(tests.rglob("*.py")):
+        rel = path.relative_to(_REPO_ROOT).as_posix()
+        if rel == "Tests/Chat/console_controller_factory.py":
+            continue
+        text = path.read_text(encoding="utf-8")
+        source_lines = text.splitlines()
+        offenders += [
+            f"{rel}:{line}"
+            for line in _controller_app_reads(text)
+            if "assert not hasattr(" not in source_lines[line - 1]
+        ]
+    assert not offenders, (
+        f"{offenders} set or read a controller's ``app``; use ``bind_app`` or "
+        "``update_app`` from Tests/Chat/console_controller_factory.py"
+    )
+
+
 @pytest.mark.parametrize(
     "source",
     [
