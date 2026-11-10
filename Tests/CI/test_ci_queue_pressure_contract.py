@@ -392,12 +392,6 @@ DREAMS_BOUNDARY_TARGETS = (
     # TASK-38966: the QwenCloud provider contract file, red on dev in no PR
     # lane. Pure, 7 tests; 2.7 s at -n 4 on dev, 1.8-2.1 s serial (load 36-38).
     "Tests/Chat/test_qwencloud_provider_contract.py",
-    # TASK-38974: Tests/Docs, red on dev in no PR lane (the User Guide and
-    # README contracts). Pure file reads plus one tmp_path database; sandboxed.
-    "Tests/Docs/test_console_library_controls_docs.py",
-    "Tests/Docs/test_user_guide_contract.py",
-    "Tests/Docs/test_user_guide_conflict_markers.py",
-    "Tests/Docs/test_personas_qa_capture_script.py",
     # TASK-38985: the Library modal dismissal contracts and launch inventory,
     # red on dev in no PR lane. ~2 min serial (140.2, 114.6 and 101.6 s with
     # this step's command, load 20-34 on 18 CPUs), whole file: the UI census
@@ -528,6 +522,12 @@ RECOVERED_SUITES_TARGETS = (
     "Tests/Prompt_Management/test_prompt_scope_service.py",
     "Tests/Prompt_Management/test_prompt_batch_models.py",
     "Tests/Prompts_DB/test_prompts_db_batch_mutations.py",
+    # TASK-38974: Tests/Docs, red on dev in no PR lane (the User Guide and
+    # README contracts). Pure file reads plus one tmp_path database; sandboxed.
+    "Tests/Docs/test_console_library_controls_docs.py",
+    "Tests/Docs/test_user_guide_contract.py",
+    "Tests/Docs/test_user_guide_conflict_markers.py",
+    "Tests/Docs/test_personas_qa_capture_script.py",
     # TASK-39142: bootstrap_profile since TASK-38111. TASK-39049's keyword-leg
     # pool retirement file runs beside its four siblings.
     "Tests/Prompt_Management/test_prompt_improvement_service.py",

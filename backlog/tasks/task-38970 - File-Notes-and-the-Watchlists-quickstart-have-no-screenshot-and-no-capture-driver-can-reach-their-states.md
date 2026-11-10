@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:21
-updated_date: 2026-11-10 17:17
+updated_date: 2026-11-10 17:58
 labels:
 - follow-up
 - docs
@@ -68,4 +68,11 @@ Added a checked-in capture driver, `scripts/capture_user_guide.py`, and retook b
 - **AC#3** Both states were reached; captured at 235x52, cdnjs-free, no temp paths or account names in the SVG text. `library/file-notes.md` shows `../images/library/file-notes.svg` in its Layout tour; `watchlists-quickstart.md` shows `images/watchlists/console-workflow-complete.svg` with a new caption (three source checks and the briefing COMPLETE, the summary reply below). Final run of all three targets after the last driver edit: rc=0 each.
 - Deviation, docs correctness: the workflow only completed with `[tools] full_agent_tools_enabled = true`; plain chat's light tool surface (TASK-34100.5.3) offers no Watchlists tools, so `load_tools` failed and the approved call came back "Tool not permitted". The quickstart's "Before you start" now lists **Full agent tools** with where to turn it on.
 - Files: `scripts/capture_user_guide.py` (new), `Docs/User_Guide/images/library/file-notes.svg`, `Docs/User_Guide/images/watchlists/console-workflow-complete.svg` (both new), `Docs/User_Guide/library/file-notes.md`, `Docs/User_Guide/watchlists-quickstart.md`, `Docs/User_Guide/_template.md` (points the capture recipe at the two drivers).
+- **Review round 1 (r13h-rev1).**
+  - I-2: the workflow target could export a turn that was still running (Stop and Redirect visible). After the reply appears it now waits, bounded, until `#console-stop-generation` is hidden. The recapture's composer row reads "Send disabled: type a message Send Dictate".
+  - M-1: `os._exit` skipped the real-profile guard's atexit report. The driver now reads `real_profile_guard.take_violations()` before exiting, prints any refusal and exits 1.
+  - M-2: `_isolate` drops `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` (any case) and every inherited `*API_KEY`, `*_TOKEN` and `*_SECRET` variable before the app is imported.
+  - M-4: `console/agent-runs-and-tools.md`'s "Running the Watchlists workflow from Console" now says to turn on Full agent tools, linking the light-surface section.
+  - Smoke test (reviewer recommendation): the gateway subclass moved to `guide_gateway()` in the driver. `Tests/Docs/test_user_guide_contract.py::test_capture_driver_builds_its_gateway_on_the_uat_planner` builds it and runs its first planner turn. Red under a temporary rename of the UAT's `_ScriptedWatchlistsGateway` (`ImportError: cannot import name '_ScriptedWatchlistsGateway'`), the break it exists to catch; reverted, green.
+  - All three targets were rerun with the fixed driver: rc=0 each. `search-rag.svg` and `file-notes.svg` came out byte-identical to the previous run.
 <!-- SECTION:NOTES:END -->

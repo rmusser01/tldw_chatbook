@@ -24,9 +24,13 @@ INDEX = GUIDE / "index.md"
 IMAGE_LINK_RE = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
 TABLE_KEY_RE = re.compile(r"Ctrl\+\d|F\d+")
 LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)#]+)")
-# A run of two or more F-keys joined only by list separators: "F2, F3",
-# "F2–F5 / F7", "F2 / F3 / F4". Ranges ("F2–F5") are expanded.
-F_KEY_RUN_RE = re.compile(r"\bF\d+(?:\s*(?:,|/|–|and|or)\s*F\d+)+\b")
+# A run of F-keys joined only by list separators: "F2, F3", "F2–F5 / F7",
+# "F2-F5/F7". Ranges (en dash or hyphen) are expanded; "Shift+F6" never starts
+# one. Runs of fewer than three keys ("F1, F6", finding ids like "F1/F2") are
+# not destination lists.
+F_KEY_RUN_RE = re.compile(r"(?<![+\w])F\d+(?:\s*(?:,|/|–|-|and|or)\s*F\d+)+\b")
+# Two or more quoted nav labels: "F2 Lab", "F3 Logs", ...
+QUOTED_RUN_RE = re.compile(r'"F\d+ [A-Z]\w*"(?:,\s*(?:and\s+)?"F\d+ [A-Z]\w*")+')
 
 
 def _nav_table() -> dict[str, str]:
@@ -61,21 +65,43 @@ def test_index_nav_table_matches_the_shell_shortcut_map() -> None:
             assert (INDEX.parent / target).is_file(), f"{key} row links to {target}"
 
 
-def test_every_f_key_list_on_the_index_names_the_whole_f_row() -> None:
+def _f_keys(run: str) -> list[str]:
+    """Expand a run such as "F2–F5 / F7" to F2, F3, F4, F5, F7."""
+    keys: list[str] = []
+    for part in re.split(r"\s*(?:,|/|and|or)\s*", run):
+        ends = [int(key[1:]) for key in re.findall(r"F\d+", part)]
+        keys += [f"F{n}" for n in range(ends[0], ends[-1] + 1)]
+    return keys
+
+
+def test_every_f_key_list_in_the_guide_names_the_whole_f_row() -> None:
     shipped = sorted(
-        (key.upper() for key in SHELL_DESTINATION_SHORTCUTS.values() if key[0] == "f"),
+        (key for key in SHELL_DESTINATION_SHORTCUTS.values() if key[0] == "f"),
         key=lambda key: int(key[1:]),
     )
-    prose = re.sub(r"[*`]", "", INDEX.read_text(encoding="utf-8"))
-    runs = F_KEY_RUN_RE.findall(prose)
-    assert len(runs) >= 4, f"expected the index's four F-key lists, found {runs}"
-    for run in runs:
-        keys: list[str] = []
-        for part in re.split(r"\s*(?:,|/|and|or)\s*", run):
-            first, _, last = part.partition("–")
-            low, high = int(first[1:]), int((last or first)[1:])
-            keys += [f"F{n}" for n in range(low, high + 1)]
-        assert keys == shipped, f"index.md F-key list {run!r} should cover {shipped}"
+    keys = [key.upper() for key in shipped]
+    owner = {key: dest for dest, key in SHELL_DESTINATION_SHORTCUTS.items()}
+    labels = [
+        f'"{key} {get_shell_destination(owner[key.lower()]).label}"' for key in keys
+    ]
+    stale: list[str] = []
+    index_runs = 0
+    for page in sorted(GUIDE.rglob("*.md")):
+        prose = " ".join(re.sub(r"[*`]", "", page.read_text(encoding="utf-8")).split())
+        name = str(page.relative_to(GUIDE))
+        for run in F_KEY_RUN_RE.findall(prose):
+            expanded = _f_keys(run)
+            if len(expanded) < 3 or not set(expanded) & set(keys):
+                continue
+            index_runs += page == INDEX
+            if expanded != keys:
+                stale.append(f"{name}: {run!r}")
+        for run in QUOTED_RUN_RE.findall(prose):
+            index_runs += page == INDEX
+            if re.findall(r'"[^"]+"', run) != labels:
+                stale.append(f"{name}: {run!r}")
+    assert index_runs >= 5, "the index's F-key lists were not found"
+    assert not stale, f"F-key lists that differ from {keys}: {stale}"
 
 
 def test_user_guide_svgs_load_no_remote_fonts() -> None:
@@ -94,3 +120,13 @@ def test_every_user_guide_image_link_resolves() -> None:
         if (broken := missing_local_links(page, IMAGE_LINK_RE))
     }
     assert not missing, f"User Guide image links name missing files: {missing}"
+
+
+async def test_capture_driver_builds_its_gateway_on_the_uat_planner() -> None:
+    """A refactor of the mounted UAT's planner that breaks the driver fails here."""
+    from scripts.capture_user_guide import guide_gateway
+
+    gateway = guide_gateway(["https://public.example/feed-1.xml"], None)
+    first = [chunk async for chunk in gateway.stream_chat(None, [{"content": ""}])]
+    assert "find_tools" in "".join(first) and gateway.stage == 1
+    assert gateway.cached_context_window(None) is None

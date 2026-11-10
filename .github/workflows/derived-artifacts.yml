@@ -1109,8 +1109,7 @@ jobs:
       # TASK-38966 appends the QwenCloud provider contract file (pure, ~2 s
       # serial), red on dev in no lane. TASK-39043 (owner decision 2026-11-06:
       # only its two small files here) appends the Console sync maintenance
-      # file and the automatic wake recovery file. TASK-38974 adds the four
-      # Tests/Docs files (sandboxed, ~10 s together), which ran in no PR lane.
+      # file and the automatic wake recovery file.
       - name: Run Dreams and Guardian boundary contracts
         if: ${{ !cancelled() }}
         run: |
@@ -1142,10 +1141,6 @@ jobs:
             Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py \
             Tests/LLM_Management/test_vllm_profiles.py \
             Tests/Chat/test_qwencloud_provider_contract.py \
-            Tests/Docs/test_console_library_controls_docs.py \
-            Tests/Docs/test_user_guide_contract.py \
-            Tests/Docs/test_user_guide_conflict_markers.py \
-            Tests/Docs/test_personas_qa_capture_script.py \
             Tests/UI/test_library_modal_dismissal.py \
             Tests/UI/test_library_adaptive_reader_closeout.py::test_closeout_single_app_route_cycle \
             Tests/Web_Server/test_mobile_service.py \
@@ -1372,7 +1367,8 @@ jobs:
 
       # TASK-39043: the Console config-sync lifetime and Home citation
       # retirement suites (~86 s serial each). TASK-38976: the prompt
-      # scope-service and batch suites. Then the bootstrap_profile suites:
+      # scope-service and batch suites. TASK-38974: the four Tests/Docs files
+      # (sandboxed, ~8 s serial). Then the bootstrap_profile suites:
       # TASK-39142's prompt-improvement and keyword-leg files, with TASK-39049's
       # keyword-leg pool retirement file beside them, and TASK-39049's Library
       # ingest runner. TASK-39124 appends the built-in pixel buddy file
@@ -1395,6 +1391,10 @@ jobs:
             Tests/Prompt_Management/test_prompt_scope_service.py \
             Tests/Prompt_Management/test_prompt_batch_models.py \
             Tests/Prompts_DB/test_prompts_db_batch_mutations.py \
+            Tests/Docs/test_console_library_controls_docs.py \
+            Tests/Docs/test_user_guide_contract.py \
+            Tests/Docs/test_user_guide_conflict_markers.py \
+            Tests/Docs/test_personas_qa_capture_script.py \
             Tests/Prompt_Management/test_prompt_improvement_service.py \
             Tests/RAG_Search/test_keyword_leg_chacha.py \
             Tests/RAG_Search/test_keyword_leg_db_resolution.py \

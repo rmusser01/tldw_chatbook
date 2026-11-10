@@ -11,8 +11,8 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DOC_CONTRACT: dict[str, tuple[str, ...]] = {
-    # TASK-38974: the newcomer README (b9fe7ee28a) names the four controls in
-    # prose, not by their labels; pinned at that wording.
+    # TASK-38974: the README (d01daac8b4) names the four controls in prose,
+    # not by their labels; pinned at that wording.
     "README.md": (
         "manual Library search, automatic retrieval policy, assistant tool "
         "permission, and direct/RAG retrieval mode",

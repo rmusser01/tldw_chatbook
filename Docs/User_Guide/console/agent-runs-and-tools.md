@@ -23,7 +23,7 @@ record tested source versions and supported-platform evidence.
 
 ## Running the Watchlists workflow from Console
 
-You can ask the Console agent to create feeds, group them into a Watchlist, check the sources, generate a briefing, save a recurrence, and read a completed briefing. The agent discovers and loads the required local tools, while each approval remains explicit and auditable.
+You can ask the Console agent to create feeds, group them into a Watchlist, check the sources, generate a briefing, save a recurrence, and read a completed briefing. The agent discovers and loads the required local tools, while each approval remains explicit and auditable. Turn on **Full agent tools** first: plain chat's [light tool surface](#what-plain-chat-offers--the-light-tool-surface) offers no Watchlists tools.
 
 A useful first request is:
 

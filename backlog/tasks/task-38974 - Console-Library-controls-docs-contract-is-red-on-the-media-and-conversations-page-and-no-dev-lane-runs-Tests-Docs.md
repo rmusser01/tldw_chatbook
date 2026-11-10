@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:21
-updated_date: 2026-11-10 17:17
+updated_date: 2026-11-10 17:58
 labels:
 - follow-up
 - docs
@@ -70,8 +70,9 @@ Re-pinned the stale contract strings at the shipped wording, taught the link che
 - **AC#1** Both media-and-conversations strings are re-pinned at the page's wording, which f09a7786d4 rewrote on purpose; the page is unchanged:
   - "does not change the conversation's Auto or Assistant setting" → "does not send automatically or change the conversation's Auto or Assistant setting" (the page's sentence; the same no-change claim, plus no auto-send);
   - "staged context" → "Use as source stages a reference to the selected conversation in the current Console session" (what the handoff stages, and where).
-  - The README pair (TASK-32583's two nodes) had to pass for the file to be laned. The README entry is re-pinned at README's own wording (b9fe7ee28a): "manual Library search, automatic retrieval policy, assistant tool permission, and direct/RAG retrieval mode" and "New conversations do not silently grant every tool or source". The `mailto:` node passes through AC#2.
+  - The README pair (TASK-32583's two nodes) had to pass for the file to be laned. The README entry is re-pinned at README's own wording, which d01daac8b4 ("docs: restore layered project README") introduced: "manual Library search, automatic retrieval policy, assistant tool permission, and direct/RAG retrieval mode" and "New conversations do not silently grant every tool or source". The `mailto:` node passes through AC#2.
 - **AC#2** `missing_local_links` skips any target that starts with a URL scheme (`URL_SCHEME_RE`: http, https, mailto, media, …). Negative control: a temporary `[the gone page](no-such-page.md)` and a `mailto:` link appended to the media page failed with `['no-such-page.md']` alone; reverted. Baseline red on dev: the 4 named nodes failed, 21 passed (`Tests/Docs`).
-- **AC#3** `Tests/Docs/{test_console_library_controls_docs,test_user_guide_contract,test_user_guide_conflict_markers,test_personas_qa_capture_script}.py` run in `dreams-boundary`'s sandboxed step, after the QwenCloud file and before the bootstrap-profile block. pr-fast-lane is at its cap (TASK-36532). The pins are in `Tests/CI/test_ci_queue_pressure_contract.py` and `Tests/CI/test_response_rules_critical_gate.py`. Measured serially with the step's flags at load 78-92 on 18 CPUs: the controls file was 21 passed in 3.5 s and 4.0 s (about 1.9 s of that is session setup; the test bodies are a few ms each). The four files were 29 passed in 7.3 s and 8.2 s with `--storage-lease-guard`; the slowest is the personas seeding test (3.9 s). `Tests/CI` contract files: 252 passed.
+- **AC#3** `Tests/Docs/{test_console_library_controls_docs,test_user_guide_contract,test_user_guide_conflict_markers,test_personas_qa_capture_script}.py` run in `recovered-suites`' "Run the recovered suites" step (the owner's 2026-11-06 job for non-UI suites red in no PR lane). They sit in its sandboxed block, after `Tests/Prompts_DB/test_prompts_db_batch_mutations.py` and before the bootstrap_profile suites, and are pinned in `RECOVERED_SUITES_TARGETS` (`Tests/CI/test_ci_queue_pressure_contract.py`). Measured serially with that step's flags (`--storage-lease-guard --timeout=180`) at load 42-52 on 18 CPUs: the four files were 30 passed in 5.5 s and 4.8 s; the controls file alone was 21 passed in 1.7 s. `Tests/CI`: 1240 passed, 1 skipped.
 - Files: `Tests/Docs/test_console_library_controls_docs.py`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/CI/test_response_rules_critical_gate.py`.
+- **Review round 1 (r13h-rev1).** I-1: the first version put the files in `dreams-boundary`, against the owner's decision that keeps that job's margin. They moved to `recovered-suites`; the dreams-boundary step, its comment, `DREAMS_BOUNDARY_TARGETS` and `test_response_rules_critical_gate.py` are back as on dev. M-5: the README prose came from d01daac8b4, not b9fe7ee28a (which removed the old labels); the test comment and these notes are corrected.
 <!-- SECTION:NOTES:END -->

@@ -42,6 +42,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 IMAGES = REPO_ROOT / "Docs" / "User_Guide" / "images"
 SIZE = (235, 52)
+_PROXY_VARS = {"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"}
 _REMOTE_FONT = re.compile(
     r',\s*url\("https://cdnjs\.cloudflare\.com/[^"]+"\) format\("woff2?"\)'
 )
@@ -66,6 +67,11 @@ def _isolate(profile: Path) -> None:
     config = profile / "config" / "config.toml"
     for directory in (home, profile / "data", config.parent):
         directory.mkdir(mode=0o700, parents=True)
+    # No proxy may carry a request off the machine, and no ambient provider
+    # credential may reach the app (httpx trusts *_PROXY by default).
+    for name in list(os.environ):
+        if name.upper() in _PROXY_VARS or re.search(r"(API_KEY|_TOKEN|_SECRET)$", name):
+            del os.environ[name]
     os.environ.update(
         HOME=str(home),
         USERPROFILE=str(home),
@@ -210,6 +216,24 @@ async def _file_notes(app, pilot) -> Path:
     return IMAGES / "library" / "file-notes.svg"
 
 
+def guide_gateway(feed_urls, receipt_ready):
+    """The mounted UAT's scripted planner, as the real app's Console needs it."""
+    from Tests.QA.test_console_watchlists_workflow_uat import (
+        BRIEFING_ONLY_MARKER,
+        _ScriptedWatchlistsGateway,
+    )
+
+    class GuideGateway(_ScriptedWatchlistsGateway):
+        def cached_context_window(self, _settings):
+            return None  # the real app's context meter asks; nothing is cached
+
+        async def stream_chat(self, *args, **kwargs):
+            async for chunk in super().stream_chat(*args, **kwargs):
+                yield chunk.replace(f" ({BRIEFING_ONLY_MARKER})", "")
+
+    return GuideGateway(feed_urls, receipt_ready=receipt_ready)
+
+
 def _arm_watchlists_workflow():
     """Script the model and the feed fetches; return the app-side wiring.
 
@@ -217,10 +241,7 @@ def _arm_watchlists_workflow():
     Console's gateway is the UAT's scripted planner, and feeds and the
     briefing's own model call return canned demo text.
     """
-    from Tests.QA.test_console_watchlists_workflow_uat import (
-        BRIEFING_ONLY_MARKER,
-        _ScriptedWatchlistsGateway,
-    )
+    from Tests.QA.test_console_watchlists_workflow_uat import BRIEFING_ONLY_MARKER
     from tldw_chatbook import config
     from tldw_chatbook.Chat.provider_setup_persistence import persist_provider_setup
     from tldw_chatbook.Subscriptions import briefing_service
@@ -257,14 +278,6 @@ def _arm_watchlists_workflow():
 
     watchlists_operation_coordinator.execute_accepted_briefing = scripted_briefing
 
-    class GuideGateway(_ScriptedWatchlistsGateway):
-        def cached_context_window(self, _settings):
-            return None  # the real app's context meter asks; nothing is cached
-
-        async def stream_chat(self, *args, **kwargs):
-            async for chunk in super().stream_chat(*args, **kwargs):
-                yield chunk.replace(f" ({BRIEFING_ONLY_MARKER})", "")
-
     async def scripted_feed(subscription):
         source_id = int(subscription["id"])
         return {
@@ -293,7 +306,7 @@ def _arm_watchlists_workflow():
             return bool(rows and rows[0]["status"] == "complete")
 
         feeds = [f"https://public.example/feed-{index}.xml" for index in (1, 2, 3)]
-        gateway = GuideGateway(feeds, receipt_ready=receipt_ready)
+        gateway = guide_gateway(feeds, receipt_ready)
         app.console_provider_gateway_factory = lambda: gateway
         app.local_watchlists_service.run_executor = scripted_feed
         app.unified_mcp_service.set_global_default("allow")
@@ -334,6 +347,12 @@ async def _watchlists_workflow(app, pilot) -> Path:
             approved.add(round_id)
             buttons[0].press()
         await pilot.pause(0.1)
+    # The reply paints before the turn settles: wait until Stop is gone.
+    await _wait(
+        pilot,
+        lambda: not console.query_one("#console-stop-generation").display,
+        "the run to finish",
+    )
     console.query_one("#console-native-transcript").scroll_end(
         animate=False, immediate=True
     )
@@ -377,6 +396,14 @@ def main(argv: list[str]) -> int:
         traceback.print_exc()
         status = 1
     shutil.rmtree(profile, ignore_errors=True)
+    # os._exit skips the guard's atexit report, so read its refusals here.
+    from Tests import real_profile_guard
+
+    if refused := real_profile_guard.take_violations():
+        print(
+            "refused writes to the real profile:", *refused, sep="\n", file=sys.stderr
+        )
+        status = 1
     sys.stdout.flush()
     sys.stderr.flush()
     # A real TldwCli can wait minutes at interpreter exit for a worker thread

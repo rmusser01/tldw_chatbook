@@ -159,7 +159,7 @@ as lies (task-2761).
 way to select a rail row or press a canvas button from the keyboard beyond
 **Tab**/**Shift+Tab** focus-walking, and nothing for a focused field to
 swallow (Home has no text fields). What works is global: **Ctrl+1 … Ctrl+0**,
-**F2–F5/F7**, **Ctrl+P**, **Ctrl+Q**.
+**F2–F5/F7–F9**, **Ctrl+P**, **Ctrl+Q**.
 
 - **F1** here lists only the three inherited bindings (Tab / Shift+Tab /
   Ctrl+C copy) — it does not mention the global navigation keys.
