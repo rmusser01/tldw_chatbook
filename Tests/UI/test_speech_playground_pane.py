@@ -241,6 +241,7 @@ async def test_delivered_result_actions_are_visible_inside_result_and_viewport(
             assert body.region.contains_region(control.region), control_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_native_profile_save_action_tracks_generation_lifecycle(
     faked_service: FakeTTSService,
@@ -311,6 +312,7 @@ async def test_native_profile_save_action_tracks_generation_lifecycle(
         assert button.disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_options_bearing_result_states_why_it_cannot_be_saved(
     faked_service: FakeTTSService,
@@ -369,6 +371,7 @@ async def test_options_bearing_result_states_why_it_cannot_be_saved(
         assert "temporary" in clean_lifecycle.casefold()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_save_profile_button_opens_the_name_dialog(
     faked_service: FakeTTSService,
@@ -475,6 +478,7 @@ async def test_the_axes_and_the_text_input_are_both_present(
         assert screen.query_one("#speech-param-group")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("metadata", "expected_status"),
@@ -511,6 +515,7 @@ async def test_current_result_reports_only_known_artifact_facts(
         assert "0:00 / 0:00" not in time_copy
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_complete_wav_result_has_safe_provenance_and_repeat_save_actions(
     tmp_path,
@@ -605,6 +610,7 @@ def test_current_result_provenance_bounds_and_flattens_provider_identifiers(
     assert copy.count("…") == 3
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_current_result_disabled_actions_explain_the_current_state(
     tmp_path: Path,
@@ -646,6 +652,7 @@ async def test_current_result_disabled_actions_explain_the_current_state(
         assert "in progress" in str(repeat.tooltip).lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("auto_play", [False, True])
 async def test_generation_honors_studio_auto_play_and_keyboard_recovery(
@@ -1034,6 +1041,7 @@ async def test_play_is_blocked_while_new_result_waits_for_playback_stop(
         assert pane.current_audio_artifact.operation_id == new_artifact.operation_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_secondary_diagnostics_start_collapsed_and_use_neutral_detail_rows(
     monkeypatch: pytest.MonkeyPatch,
@@ -1055,6 +1063,7 @@ async def test_secondary_diagnostics_start_collapsed_and_use_neutral_detail_rows
         assert not details.query("#tts-provider-status")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_audio_cpp_hides_its_non_applicable_language_axis(
     monkeypatch: pytest.MonkeyPatch,
