@@ -21,6 +21,7 @@ from unittest.mock import Mock
 
 import pytest
 from loguru import logger
+from rich.cells import cell_len
 from textual import on
 
 # Harness apps load the consolidated widget CSS the real app loads
@@ -45,12 +46,19 @@ from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.UI.Screens.chat_screen import CONSOLE_WORKBENCH_SHORTCUTS, ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
-    NEEDS_DECISION_PREFIX,
+    DECISION_SCOPE_COPY,
+    ApprovalChoice,
+    ApprovalSummary,
     ChatApprovalCard,
 )
 from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
 
 from Tests.UI.app_factory import _build_test_app
+
+# TASK-39154: `_build_test_app()` and the controller's approval path read
+# config through the guarded loader, which the per-test TLDW_CONFIG_PATH
+# redirect refuses (RecoveryRequired raw_source_selection_changed).
+pytestmark = pytest.mark.bootstrap_profile
 
 #: PR2a Task 5: the review hook takes the id of the run whose batch it is
 #: reviewing (both gates key their per-turn verdicts by run). These
@@ -60,6 +68,11 @@ RUN = "run-1"
 
 _CSS_ROOT = Path(tldw_chatbook.__file__).parent / "css"
 _AGENTIC_TERMINAL_TCSS = _CSS_ROOT / "components" / "_agentic_terminal.tcss"
+#: TASK-40097: a2fcbe61bc (#3036) moved the approval rules into this feature
+#: file; build_css.py splices it into `_agentic_terminal.tcss`'s
+#: `/* @console-approvals */` slot, so the bundled cascade order is unchanged.
+_CONSOLE_APPROVALS_TCSS = _CSS_ROOT / "features" / "_console_approvals.tcss"
+_VARIABLES_TCSS = _CSS_ROOT / "core" / "_variables.tcss"
 _BUNDLED_STYLESHEET = _CSS_ROOT / "tldw_cli_modular.tcss"
 
 
@@ -67,28 +80,92 @@ def _text(widget: Static) -> str:
     return str(widget.render())
 
 
+async def _until_actionable(card: ChatApprovalCard, pilot) -> None:
+    """Wait for the round's decisions to enable.
+
+    TASK-40097: a41da77591 (#3036) keeps every decision control disabled
+    until the round's facts have mounted and laid out
+    (`ChatApprovalCard._defer_decisions`); a press before that is refused.
+    """
+    deadline = time.monotonic() + 5.0
+    while not card._information_ready and time.monotonic() < deadline:
+        await pilot.pause()
+    assert card._information_ready, "approval decisions never enabled"
+
+
+async def _open_staged_choices(card: ChatApprovalCard, pilot) -> None:
+    """Open the per-row Selects and Apply, the way "More options" does.
+
+    TASK-40097: since a2fcbe61bc (#3036) a row's decision Select and Apply
+    are hidden until More options opens the staged choices; Select+Apply is
+    the path to every scope beyond Allow once / Deny.
+    """
+    await _until_actionable(card, pilot)
+    more = card.query_one(
+        "#approval-more-options-batch"
+        if card.has_class("approval-batch")
+        else "#approval-single-actions .approval-more-options",
+        Button,
+    )
+    more.press()
+    await pilot.pause()
+    assert card.has_class("approval-options-open")
+    assert all(select.display for select in card._batch_selects)
+    assert card.query_one("#approval-submit", Button).display
+
+
+def _resolve_tokens(block: str, tokens_source: str) -> str:
+    """Replace `$ds-*` tokens in ``block`` with the values ``tokens_source`` defines."""
+    import re
+
+    tokens = dict(
+        re.findall(r"^\$(ds-[a-z0-9-]+):\s*([^;]+);", tokens_source, re.M)
+    )
+    for _ in range(5):
+        resolved = re.sub(
+            r"\$(ds-[a-z0-9-]+)", lambda m: tokens.get(m.group(1), m.group(0)), block
+        )
+        if resolved == block:
+            break
+        block = resolved
+    assert "$ds-" not in block, f"unresolved token in {block!r}"
+    return block
+
+
 def _assert_rule_pinned_in_bundle_source_and_bundle(
     selector: str, expected_declarations: tuple[str, ...]
 ) -> None:
-    """Shared pin-test body (T9, MCP Hub Phase 5) -- mirrors the identical
-    helper in test_mcp_audit_mode.py: asserts ``selector``'s block carries
-    every one of ``expected_declarations`` in BOTH the bundle-source
-    component file (`_agentic_terminal.tcss`) and the generated bundle
+    """Shared pin-test body (T9, MCP Hub Phase 5) -- asserts the rule that
+    starts a line with ``selector`` carries every one of
+    ``expected_declarations`` (token values resolved, whitespace ignored) in
+    BOTH the bundle-source file and the generated bundle
     (`tldw_cli_modular.tcss`), proving `build_css.py` was re-run after the
-    source edit."""
-    agentic_terminal = _AGENTIC_TERMINAL_TCSS.read_text(encoding="utf-8")
-    bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    source edit.
 
-    for text, label in (
-        (agentic_terminal, "_agentic_terminal.tcss"),
-        (bundled_stylesheet, "tldw_cli_modular.tcss"),
+    TASK-40097: the source is `features/_console_approvals.tcss` since
+    a2fcbe61bc (#3036); ADR-161 (bc1c716e43) had already replaced the
+    literals with `$ds-*` tokens, so the declared values are compared after
+    resolving each file's own token definitions."""
+    import re
+
+    assert "/* @console-approvals */" in _AGENTIC_TERMINAL_TCSS.read_text(
+        encoding="utf-8"
+    ), "the approval rules lost their `_agentic_terminal.tcss` cascade slot"
+    bundled_stylesheet = _BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    for text, tokens, label in (
+        (
+            _CONSOLE_APPROVALS_TCSS.read_text(encoding="utf-8"),
+            _VARIABLES_TCSS.read_text(encoding="utf-8"),
+            "_console_approvals.tcss",
+        ),
+        (bundled_stylesheet, bundled_stylesheet, "tldw_cli_modular.tcss"),
     ):
-        start = text.find(selector)
-        assert start != -1, f"{label} is missing {selector!r}"
-        end = text.find("}", start)
-        block = text[start:end]
+        match = re.search(r"^" + re.escape(selector), text, re.M)
+        assert match, f"{label} is missing {selector!r}"
+        end = text.find("}", match.start())
+        block = "".join(_resolve_tokens(text[match.start() : end], tokens).split())
         for declaration in expected_declarations:
-            assert declaration in block, (
+            assert "".join(declaration.split()) in block, (
                 f"{label}'s {selector!r} block is missing {declaration!r}"
             )
 
@@ -327,11 +404,15 @@ async def test_raw_shell_row_shows_complete_command_and_danger_context():
 async def test_raw_shell_row_has_no_generic_scope_static_but_an_mcp_row_does():
     """Final-review fix: `.approval-row-raw-scope` ("Session scope: ...") is the
     raw-shell row's own, WIDER statement of what "All shell · session"
-    covers -- the generic per-decision `.approval-row-scope` line
-    (`DECISION_SCOPE_COPY`) would duplicate and undercut it, so a
-    raw-shell row must not also mount that Static. An ordinary MCP row
-    carries no `.approval-row-raw-scope` and must keep its
-    `.approval-row-scope` line exactly as before.
+    covers. An ordinary MCP row carries no `.approval-row-raw-scope` and
+    must keep its `.approval-row-scope` line exactly as before.
+
+    TASK-40097: a2fcbe61bc (#3036) gives every row, raw shell included, ONE
+    authoritative current-consent line (`.approval-row-scope`) describing the
+    row's current choice; the production payload's captured view words its
+    session scope for the shell (`approval_presentation.scope_copy`'s
+    `console_chat` branch). So the raw-shell row now carries exactly one
+    scope line, stating its Deny default, beside its own session statement.
     """
     app = _CardHarnessApp()
     async with app.run_test() as pilot:
@@ -344,7 +425,10 @@ async def test_raw_shell_row_has_no_generic_scope_static_but_an_mcp_row_does():
 
         mcp_row, raw_row = list(app.query(".approval-row"))
         assert list(mcp_row.query(".approval-row-scope"))
-        assert not list(raw_row.query(".approval-row-scope"))
+        assert not list(mcp_row.query(".approval-row-raw-scope"))
+        raw_scopes = list(raw_row.query(".approval-row-scope"))
+        assert len(raw_scopes) == 1
+        assert _text(raw_scopes[0]) == DECISION_SCOPE_COPY["deny"]
         assert list(raw_row.query(".approval-row-raw-scope"))
 
 
@@ -363,11 +447,15 @@ async def test_raw_shell_row_defaults_to_deny_and_enter_does_not_submit():
             "deny",
         ]
         assert select.value == "deny"
-        assert card.first_focus_widget_id() == select.id
+        # TASK-40097: a2fcbe61bc (#3036) lands keyboard review on the neutral
+        # request summary, never on a committing control (the Select is
+        # hidden until More options opens it).
+        assert card.first_focus_widget_id() == "approval-request-summary"
 
         card.focus_first_decision()
         await pilot.pause()
-        assert app.focused is select
+        assert isinstance(app.focused, ApprovalSummary)
+        assert app.focused.id == "approval-request-summary"
         await pilot.press("enter")
         await pilot.pause()
         assert app.decided == []
@@ -375,8 +463,8 @@ async def test_raw_shell_row_defaults_to_deny_and_enter_does_not_submit():
 
 def test_raw_shell_command_view_has_bounded_scrollable_geometry():
     _assert_rule_pinned_in_bundle_source_and_bundle(
-        ".approval-row-full-command",
-        ("width: 1fr", "height: 6", "min-height: 3"),
+        ".approval-row-full-command{",
+        ("width: 1fr;", "height: 6;", "min-height: 3;"),
     )
 
 
@@ -418,9 +506,13 @@ async def test_reason_badges_carry_a_visible_why_line_not_a_tooltip():
 
         assert "(high risk)" in _text(risk_header)
         assert not risk_header.tooltip
+        # TASK-40097: a2fcbe61bc (#3036) words the reason as the policy
+        # sentence for every tool; the blast radius moved to the row's own
+        # effects line, which a call declaring no effects does not show.
         assert _text(rows[0].query_one(".approval-row-reason", Static)) == (
-            "High risk: this tool reads local data and always asks first."
+            "High risk: current policy requires approval for this call."
         )
+        assert not list(rows[0].query(".approval-row-effects"))
         assert "(definition changed)" in _text(changed_header)
         assert not changed_header.tooltip
         assert _text(rows[1].query_one(".approval-row-reason", Static)) == (
@@ -490,6 +582,13 @@ async def test_bulk_approve_and_deny_all_are_row_aware_and_never_raise():
         of crashing or assigning an illegal one.
       - row C: unnarrowed -- gets the bulk target directly, exactly as
         before task-5 (regression guard for the common MCP case).
+
+    TASK-40097: a2fcbe61bc (#3036) made each bulk button one committing
+    gesture for the WHOLE counted batch (`ChatApprovalCard._commit_bulk`), so
+    a batch with a row that cannot legally take the target is no longer
+    partially applied: "Deny all" commits nothing, and "Allow all" becomes
+    "Review individually", which opens the staged per-row choices. No row
+    ever holds an illegal value and nothing raises.
     """
     calls = [
         {
@@ -532,20 +631,33 @@ async def test_bulk_approve_and_deny_all_are_row_aware_and_never_raise():
         assert row_b.value == "approve_once"
         assert row_c.value == "approve_once"
 
-        # "Deny all" must not raise even though row B cannot legally hold "deny".
+        await _until_actionable(card, pilot)
+
+        # "Deny all" must not raise even though row B cannot legally hold
+        # "deny" -- and it commits nothing rather than a partial batch.
         app.query_one("#approval-deny-all", Button).press()
         await pilot.pause()
-        assert row_a.value == "deny"
-        assert row_b.value == "approve_once"  # untouched: no legal deny candidate
-        assert row_c.value == "deny"
+        assert (row_a.value, row_b.value, row_c.value) == (
+            "approve_session",
+            "approve_once",
+            "approve_once",
+        )
+        assert app.decided == []
 
         # "Approve all" must not raise even though row A cannot legally hold
-        # "approve_once" -- it must fall back to "approve_session" instead.
-        app.query_one("#approval-approve-all", Button).press()
+        # "approve_once" -- it opens individual review instead of committing.
+        approve_all = app.query_one("#approval-approve-all", Button)
+        assert str(approve_all.label) == "Review individually"
+        approve_all.press()
         await pilot.pause()
-        assert row_a.value == "approve_session"
-        assert row_b.value == "approve_once"
-        assert row_c.value == "approve_once"
+        assert (row_a.value, row_b.value, row_c.value) == (
+            "approve_session",
+            "approve_once",
+            "approve_once",
+        )
+        assert app.decided == []
+        assert card.has_class("approval-options-open")
+        assert all(select.display for select in (row_a, row_b, row_c))
 
 
 def _row_options_excluding_every_bulk_candidate() -> list[str]:
@@ -564,7 +676,14 @@ async def test_bulk_actions_flag_a_row_they_could_not_apply_to():
     to a row nobody has decided on yet -- it gets a `needs-decision` class
     on its row container so the user notices it still needs an explicit
     choice. Covers both bulk buttons and confirms an applied row (here,
-    the unnarrowed row) never carries the class."""
+    the unnarrowed row) never carries the class.
+
+    TASK-40097: a2fcbe61bc (#3036) replaced the partial bulk with one
+    all-or-nothing commit (`ChatApprovalCard._commit_bulk`), so no bulk
+    press leaves one row decided and another not: with a row that offers
+    neither bulk target, "Allow all" opens the staged per-row choices for
+    that explicit decision and "Deny all" commits nothing. No row is
+    flagged, because no row was skipped."""
     calls = _sample_calls()
     calls[0]["options"] = _row_options_excluding_every_bulk_candidate()
 
@@ -579,48 +698,23 @@ async def test_bulk_actions_flag_a_row_they_could_not_apply_to():
         assert not row_a.has_class("needs-decision")  # untouched card starts clean
         assert not row_b.has_class("needs-decision")
 
+        await _until_actionable(card, pilot)
+        select_a, select_b = card._batch_selects
+        assert (select_a.value, select_b.value) == ("always_allow", "approve_once")
+
         app.query_one("#approval-approve-all", Button).press()
         await pilot.pause()
-        assert row_a.has_class("needs-decision")
-        assert not row_b.has_class("needs-decision")  # applied row: never flagged
+        assert app.decided == []
+        assert card.has_class("approval-options-open")
+        assert select_a.display and select_b.display
+        assert (select_a.value, select_b.value) == ("always_allow", "approve_once")
 
         app.query_one("#approval-deny-all", Button).press()
         await pilot.pause()
-        assert row_a.has_class("needs-decision")  # still unreachable
-        assert not row_b.has_class("needs-decision")
-
-
-@pytest.mark.asyncio
-async def test_changing_a_flagged_rows_select_clears_needs_decision():
-    """Task 5: once the user gives a flagged row its own explicit decision,
-    the flag must clear -- the row's own `Select.Changed` is what a real
-    interaction with the (only legal, single-option) overlay would fire.
-    Posted directly (mirrors ``test_mcp_rail.py``'s
-    ``rail.on_select_changed(Select.Changed(select, "local"))`` pattern)
-    since this row's sole legal value is already its current value, so a
-    real drive-the-overlay interaction wouldn't itself change `.value` --
-    the flag-clearing contract is "the row got a Select.Changed", not
-    "the value differs from its previous value"."""
-    calls = _sample_calls()
-    calls[0]["options"] = _row_options_excluding_every_bulk_candidate()
-
-    app = _CardHarnessApp()
-    async with app.run_test() as pilot:
-        card = app.query_one(ChatApprovalCard)
-        card.set_batch(calls, timeout_seconds=45.0)
-        await pilot.pause()
-
-        rows = list(app.query(".approval-row"))
-        row_a = rows[0]
-        select_a = row_a.query_one(".approval-row-decision", Select)
-
-        app.query_one("#approval-approve-all", Button).press()
-        await pilot.pause()
-        assert row_a.has_class("needs-decision")
-
-        select_a.post_message(Select.Changed(select_a, select_a.value))
-        await pilot.pause()
+        assert app.decided == []  # row A cannot take Deny: nothing commits
+        assert (select_a.value, select_b.value) == ("always_allow", "approve_once")
         assert not row_a.has_class("needs-decision")
+        assert not row_b.has_class("needs-decision")
 
 
 @pytest.mark.asyncio
@@ -628,7 +722,11 @@ async def test_unrelated_select_changed_does_not_touch_batch_rows():
     """A `Select.Changed` from a `Select` that isn't one of this card's
     batch-row selects must be a no-op -- guards the membership check in
     `_on_batch_row_select_changed` (it must not, say, clear every row's
-    flag on any incoming event)."""
+    flag on any incoming event).
+
+    TASK-40097: no bulk press flags a row since a2fcbe61bc (#3036), so the
+    guard is pinned by what the handler still owns: each row's scope line,
+    the count summary and the staged values."""
     calls = _sample_calls()
     calls[0]["options"] = _row_options_excluding_every_bulk_candidate()
 
@@ -638,34 +736,49 @@ async def test_unrelated_select_changed_does_not_touch_batch_rows():
         card.set_batch(calls, timeout_seconds=45.0)
         await pilot.pause()
 
-        rows = list(app.query(".approval-row"))
-        row_a = rows[0]
-
-        app.query_one("#approval-approve-all", Button).press()
+        await _open_staged_choices(card, pilot)
+        card._batch_selects[1].value = "deny"
         await pilot.pause()
-        assert row_a.has_class("needs-decision")
+
+        def snapshot() -> tuple:
+            return (
+                [_text(scope) for scope in card._batch_scope_statics],
+                _text(card.query_one("#approval-count-scope-summary", Static)),
+                [select.value for select in card._batch_selects],
+            )
+
+        before = snapshot()
+        assert before[0][1] == DECISION_SCOPE_COPY["deny"]
 
         foreign_select = Select([("x", "x")], value="x", allow_blank=False)
         card._on_batch_row_select_changed(Select.Changed(foreign_select, "x"))
         await pilot.pause()
-        assert row_a.has_class("needs-decision")  # unaffected by a foreign Select
+        assert snapshot() == before  # unaffected by a foreign Select
 
 
 @pytest.mark.asyncio
 async def test_approve_all_and_deny_all_bulk_set_every_row():
+    """TASK-40097: since a2fcbe61bc (#3036) each bulk button sets every row
+    AND commits the round in the same press, so each runs on its own round."""
     app = _CardHarnessApp()
     async with app.run_test() as pilot:
         card = app.query_one(ChatApprovalCard)
-        card.set_batch(_sample_calls(), timeout_seconds=45.0)
-        await pilot.pause()
+        for round_id, button_id, decision in (
+            ("round-deny-all", "#approval-deny-all", "deny"),
+            ("round-allow-all", "#approval-approve-all", "approve_once"),
+        ):
+            card.set_batch(_sample_calls(), timeout_seconds=45.0, round_id=round_id)
+            await _until_actionable(card, pilot)
 
-        app.query_one("#approval-deny-all", Button).press()
-        await pilot.pause()
-        assert all(select.value == "deny" for select in card._batch_selects)
-
-        app.query_one("#approval-approve-all", Button).press()
-        await pilot.pause()
-        assert all(select.value == "approve_once" for select in card._batch_selects)
+            app.query_one(button_id, Button).press()
+            await pilot.pause()
+            assert all(select.value == decision for select in card._batch_selects)
+            assert app.decided[-1] == {
+                "mcp__srv_a__search": decision,
+                "mcp__srv_b__write": decision,
+            }
+            assert app.decided_round_ids[-1] == round_id
+        assert len(app.decided) == 2
 
 
 @pytest.mark.asyncio
@@ -677,6 +790,12 @@ async def test_approve_all_leaves_raw_shell_row_on_deny_and_flags_needs_decision
     identity -- bulk-set it right along with every ordinary MCP row. It
     must be skipped, and the skip must be visible in TEXT (TASK-1845:
     colour is never the only carrier of state), not just the CSS class.
+
+    TASK-40097: since a2fcbe61bc (#3036) a batch holding a raw-shell row
+    offers "Review individually" instead of a one-press Allow all. The press
+    commits nothing and opens the staged choices with the raw-shell row still
+    on Deny; Apply stays disabled and the hint says, in text, that the shell
+    row still needs a deliberate choice.
     """
     calls = [_sample_calls()[0], _raw_shell_call("printf unsafe")]
 
@@ -689,29 +808,35 @@ async def test_approve_all_leaves_raw_shell_row_on_deny_and_flags_needs_decision
         mcp_row, raw_row = list(app.query(".approval-row"))
         raw_select = raw_row.query_one(".approval-row-decision", Select)
         assert raw_select.value == "deny"
-        assert not raw_row.has_class("needs-decision")
+        await _until_actionable(card, pilot)
 
-        app.query_one("#approval-approve-all", Button).press()
+        approve_all = app.query_one("#approval-approve-all", Button)
+        assert str(approve_all.label) == "Review individually"
+        approve_all.press()
         await pilot.pause()
 
         mcp_select = mcp_row.query_one(".approval-row-decision", Select)
         assert mcp_select.value == "approve_once"
         assert raw_select.value == "deny"  # never moved off the deny default
-        assert raw_row.has_class("needs-decision")
-        header_text = _text(raw_row.query_one(".approval-row-header", Static))
-        assert header_text.startswith(NEEDS_DECISION_PREFIX), header_text
-        # An untouched row (here, the MCP row Approve all DID apply to)
-        # must never pick up the prefix.
-        mcp_header_text = _text(mcp_row.query_one(".approval-row-header", Static))
-        assert not mcp_header_text.startswith(NEEDS_DECISION_PREFIX)
+        assert app.decided == []
+        assert card.has_class("approval-options-open")
+        assert raw_select.display
+        assert app.query_one("#approval-submit", Button).disabled is True
+        assert _text(app.query_one("#approval-choices-hint", Static)) == (
+            "Review required. Select each shell choice, even to keep Deny."
+        )
 
 
 @pytest.mark.asyncio
 async def test_changing_raw_shell_select_after_approve_all_clears_needs_decision_prefix():
     """task-32282: once the user gives the flagged raw-shell row its own
     explicit decision, both the CSS flag and the header text prefix must
-    clear -- exactly as an ordinary narrowed row already does (see
-    ``test_changing_a_flagged_rows_select_clears_needs_decision``)."""
+    clear.
+
+    TASK-40097: since a2fcbe61bc (#3036) the review requirement lives on
+    Apply and the hint, not the row header: a deliberate overlay choice for
+    the shell row (`ApprovalChoice.Deliberate`, here keeping Deny) clears the
+    hint and enables Apply, which then submits each row's staged choice."""
     calls = [_sample_calls()[0], _raw_shell_call("printf unsafe")]
 
     app = _CardHarnessApp()
@@ -721,19 +846,28 @@ async def test_changing_raw_shell_select_after_approve_all_clears_needs_decision
         await pilot.pause()
 
         raw_row = list(app.query(".approval-row"))[1]
-        raw_select = raw_row.query_one(".approval-row-decision", Select)
-        header = raw_row.query_one(".approval-row-header", Static)
+        raw_select = raw_row.query_one(".approval-row-decision", ApprovalChoice)
+        hint = app.query_one("#approval-choices-hint", Static)
+        submit = app.query_one("#approval-submit", Button)
+        await _until_actionable(card, pilot)
 
         app.query_one("#approval-approve-all", Button).press()
         await pilot.pause()
-        assert raw_row.has_class("needs-decision")
-        assert _text(header).startswith(NEEDS_DECISION_PREFIX)
+        assert submit.disabled is True
+        assert _text(hint) == "Review required. Select each shell choice, even to keep Deny."
 
-        raw_select.post_message(Select.Changed(raw_select, "approve_once"))
+        raw_select.post_message(
+            ApprovalChoice.Deliberate(raw_select, raw_select.batch_generation)
+        )
         await pilot.pause()
 
-        assert not raw_row.has_class("needs-decision")
-        assert not _text(header).startswith(NEEDS_DECISION_PREFIX)
+        assert submit.disabled is False
+        assert _text(hint) == "Choices apply when you press Apply"
+        submit.press()
+        await pilot.pause()
+        assert app.decided == [
+            {"mcp__srv_a__search": "approve_once", "raw-call-1": "deny"}
+        ]
 
 
 @pytest.mark.asyncio
@@ -741,7 +875,10 @@ async def test_deny_all_sets_raw_shell_row_to_deny_and_clears_needs_decision_pre
     """task-32282 (c): "Deny all" is legal for a raw-shell row (``deny`` is
     always one of its options), so it must apply normally -- setting the
     Select and clearing any stale needs-decision state left by an earlier
-    "Approve all" press."""
+    "Approve all" press.
+
+    TASK-40097: since a2fcbe61bc (#3036) "Deny all" also commits the round in
+    the same press, even from the staged review "Review individually" opened."""
     calls = [_sample_calls()[0], _raw_shell_call("printf unsafe")]
 
     app = _CardHarnessApp()
@@ -752,20 +889,20 @@ async def test_deny_all_sets_raw_shell_row_to_deny_and_clears_needs_decision_pre
 
         mcp_row, raw_row = list(app.query(".approval-row"))
         raw_select = raw_row.query_one(".approval-row-decision", Select)
-        header = raw_row.query_one(".approval-row-header", Static)
+        await _until_actionable(card, pilot)
 
         app.query_one("#approval-approve-all", Button).press()
         await pilot.pause()
-        assert raw_row.has_class("needs-decision")
+        assert card.has_class("approval-options-open")
+        assert app.decided == []
 
         app.query_one("#approval-deny-all", Button).press()
         await pilot.pause()
 
         assert raw_select.value == "deny"
-        assert not raw_row.has_class("needs-decision")
-        assert not _text(header).startswith(NEEDS_DECISION_PREFIX)
         mcp_select = mcp_row.query_one(".approval-row-decision", Select)
         assert mcp_select.value == "deny"
+        assert app.decided == [{"mcp__srv_a__search": "deny", "raw-call-1": "deny"}]
 
 
 @pytest.mark.asyncio
@@ -775,6 +912,7 @@ async def test_submit_posts_approval_decided_with_per_row_decisions():
         card = app.query_one(ChatApprovalCard)
         card.set_batch(_sample_calls(), timeout_seconds=45.0)
         await pilot.pause()
+        await _open_staged_choices(card, pilot)
 
         card._batch_selects[1].value = "deny"
         app.query_one("#approval-submit", Button).press()
@@ -797,6 +935,7 @@ async def test_submit_echoes_back_the_round_id_stamped_by_set_batch():
         card = app.query_one(ChatApprovalCard)
         card.set_batch(_sample_calls(), timeout_seconds=45.0, round_id="round-xyz")
         await pilot.pause()
+        await _open_staged_choices(card, pilot)
 
         app.query_one("#approval-submit", Button).press()
         await pilot.pause()
@@ -906,6 +1045,10 @@ async def test_changed_ordinary_one_row_reuses_only_noncommitting_widgets():
     paint the whole subtree again.  The decision controls deliberately remain
     round-scoped: reusing them would let queued old-round interaction reach the
     new round.
+
+    TASK-40097: since a2fcbe61bc (#3036) a fast button is enabled only for a
+    decision the row legally offers, so the changed row (Until Chatbook exits
+    / Deny) commits through Deny, not an illegal Allow once.
     """
     app = _CardHarnessApp()
     async with app.run_test() as pilot:
@@ -969,9 +1112,16 @@ async def test_changed_ordinary_one_row_reuses_only_noncommitting_widgets():
         )
         assert "Writing the new target" in _text(context)
 
-        app.query_one(".approval-row-fast-approve", Button).press()
+        await _until_actionable(card, pilot)
+        fast_approve = app.query_one(".approval-row-fast-approve", Button)
+        assert fast_approve.disabled is True
+        fast_approve.press()
         await pilot.pause()
-        assert app.decided == [{"mcp__srv_b__write": "approve_once"}]
+        assert app.decided == []
+
+        app.query_one(".approval-row-fast-deny", Button).press()
+        await pilot.pause()
+        assert app.decided == [{"mcp__srv_b__write": "deny"}]
         assert app.decided_round_ids == ["round-reuse-new"]
 
 
@@ -1050,10 +1200,15 @@ async def test_back_to_back_changed_rounds_leave_only_latest_controls():
         row = app.query_one(".approval-row")
         assert len(row.query(".approval-row-controls")) == 1
         assert len(row.query(".approval-row-decision")) == 1
-        assert len(row.query(".approval-row-fast-approve")) == 1
-        assert len(row.query(".approval-row-fast-deny")) == 1
+        # TASK-40097: since a2fcbe61bc (#3036) a single row's fast buttons sit
+        # in the card's `#approval-single-actions` bar, not inside the row.
+        single_actions = card.query_one("#approval-single-actions")
+        assert len(single_actions.query(".approval-row-fast-approve")) == 1
+        assert len(single_actions.query(".approval-row-fast-deny")) == 1
+        assert len(card.query(".approval-row-fast-approve")) == 1
         assert "third" in _text(row.query_one(".approval-row-header", Static))
 
+        await _open_staged_choices(card, pilot)
         row.query_one(".approval-row-decision", Select).value = "deny"
         app.query_one("#approval-submit", Button).press()
         await pilot.pause()
@@ -1093,16 +1248,18 @@ async def test_single_row_batch_renders_fast_approve_and_deny_buttons():
 
         fast_approve = app.query_one(".approval-row-fast-approve", Button)
         fast_deny = app.query_one(".approval-row-fast-deny", Button)
-        assert str(fast_approve.label) == "Approve once"
+        # TASK-40097: a2fcbe61bc (#3036) renamed the fast approval "Allow once".
+        assert str(fast_approve.label) == "Allow once"
         assert str(fast_deny.label) == "Deny"
         assert fast_approve.tooltip
         assert fast_deny.tooltip
 
         # The Select+Submit path stays fully available alongside the fast
-        # buttons -- this is an addition, not a replacement (e.g. "Approve
-        # for session" is still only reachable through the row's Select).
+        # buttons -- this is an addition, not a replacement (e.g. "Until
+        # Chatbook exits" is still only reachable through the row's Select,
+        # which More options opens with Apply since a2fcbe61bc).
         assert list(app.query(Select))
-        assert app.query_one("#approval-submit", Button)
+        await _open_staged_choices(card, pilot)
 
 
 @pytest.mark.asyncio
@@ -1125,12 +1282,15 @@ async def test_two_option_save_row_renders_once_and_deny_only():
         select = app.query_one(".approval-row-decision", Select)
         assert [value for _label, value in select._options] == ["approve_once", "deny"]
         assert select.value == "approve_once"
+        # TASK-40097: "Allow once" since a2fcbe61bc (#3036); Apply opens with
+        # the staged choices.
         assert (
             str(app.query_one(".approval-row-fast-approve", Button).label)
-            == "Approve once"
+            == "Allow once"
         )
         assert str(app.query_one(".approval-row-fast-deny", Button).label) == "Deny"
 
+        await _open_staged_choices(card, pilot)
         app.query_one("#approval-submit", Button).press()
         await pilot.pause()
         assert app.decided == [{"character_save": "approve_once"}]
@@ -1161,7 +1321,7 @@ async def test_fast_approve_button_submits_approve_once_immediately():
     async with app.run_test() as pilot:
         card = app.query_one(ChatApprovalCard)
         card.set_batch(_single_call(), timeout_seconds=45.0, round_id="round-fast-1")
-        await pilot.pause()
+        await _until_actionable(card, pilot)
 
         # Never touched the Select or clicked Submit.
         app.query_one(".approval-row-fast-approve", Button).press()
@@ -1177,7 +1337,7 @@ async def test_fast_deny_button_submits_deny_immediately():
     async with app.run_test() as pilot:
         card = app.query_one(ChatApprovalCard)
         card.set_batch(_single_call(), timeout_seconds=45.0, round_id="round-fast-2")
-        await pilot.pause()
+        await _until_actionable(card, pilot)
 
         app.query_one(".approval-row-fast-deny", Button).press()
         await pilot.pause()
@@ -1235,6 +1395,7 @@ async def test_stale_generation_fast_button_press_is_a_noop():
         # the guard blocks stale presses, not the whole fast path.
         fresh_button = app.query_one(".approval-row-fast-approve", Button)
         assert fresh_button is not stale_button
+        await _until_actionable(card, pilot)
         fresh_button.press()
         await pilot.pause()
 
@@ -1252,7 +1413,7 @@ async def test_fast_approve_button_disables_after_press_to_prevent_double_submit
     async with app.run_test() as pilot:
         card = app.query_one(ChatApprovalCard)
         card.set_batch(_single_call(), timeout_seconds=45.0, round_id="round-once")
-        await pilot.pause()
+        await _until_actionable(card, pilot)
 
         fast_approve = app.query_one(".approval-row-fast-approve", Button)
         fast_deny = app.query_one(".approval-row-fast-deny", Button)
@@ -1285,13 +1446,15 @@ async def test_new_batch_reenables_submit_after_a_prior_round_disabled_it():
         card = app.query_one(ChatApprovalCard)
         card.set_batch(_sample_calls(), timeout_seconds=45.0, round_id="round-a")
         await pilot.pause()
+        await _open_staged_choices(card, pilot)
 
         app.query_one("#approval-submit", Button).press()
         await pilot.pause()
+        assert app.decided_round_ids == ["round-a"]
         assert app.query_one("#approval-submit", Button).disabled is True
 
         card.set_batch(_sample_calls(), timeout_seconds=45.0, round_id="round-b")
-        await pilot.pause()
+        await _until_actionable(card, pilot)
         assert app.query_one("#approval-submit", Button).disabled is False
 
 
@@ -1637,7 +1800,9 @@ async def test_approved_definitive_tool_stays_mounted_until_real_terminal(
         while time.monotonic() < deadline:
             card = cards.query_one(ChatApprovalCard)
             fast = list(card.query(".approval-row-fast-approve"))
-            if card.display and fast:
+            # TASK-39154: a41da77591 (#3036) keeps the fast button disabled
+            # until the round's facts lay out; a click before that is refused.
+            if card.display and fast and not fast[0].disabled:
                 break
             await pilot.pause(0.05)
         else:
@@ -1662,7 +1827,13 @@ async def test_approved_definitive_tool_stays_mounted_until_real_terminal(
         )
         assert card.display is True
         assert all(select.disabled for select in card.query(Select))
-        assert all(button.disabled for button in card.query(Button))
+        # TASK-39154: a2fcbe61bc (#3036) composes the Details panel's
+        # navigation buttons once; a finishing card keeps that panel closed
+        # with those buttons hidden, and every displayed control disabled.
+        assert card.query_one("#approval-details-panel").display is False
+        assert all(
+            button.disabled or not button.display for button in card.query(Button)
+        )
         assert worker.is_alive(), "runtime returned before the real tool terminal"
 
         release.set()
@@ -1942,9 +2113,12 @@ def test_console_binds_alt_a_to_review_pending_approval():
 
 @pytest.mark.asyncio
 async def test_alt_a_focuses_the_pending_approval_decision_select():
-    """With a batch pending, Alt+A lands focus on the row's decision
-    Select -- never Submit (`ChatApprovalCard.focus_first_decision`'s own
-    contract)."""
+    """With a batch pending, Alt+A lands focus on the card -- never Submit
+    (`ChatApprovalCard.focus_first_decision`'s own contract).
+
+    TASK-40097: since a2fcbe61bc (#3036) that landing is the card's neutral
+    request summary, before any committing control; the row's Select is
+    hidden until More options opens it."""
     app = _build_ready_production_console_app()
     async with app.run_test(size=(200, 40)) as pilot:
         screen = await _wait_for_production_console_ready(app, pilot)
@@ -1963,8 +2137,10 @@ async def test_alt_a_focuses_the_pending_approval_decision_select():
         await pilot.press("alt+a")
         await pilot.pause()
 
-        assert isinstance(app.focused, Select)
-        assert "approval-row-decision" in app.focused.classes
+        card = screen.query_one(ChatApprovalCard)
+        assert isinstance(app.focused, ApprovalSummary)
+        assert app.focused.id == card.first_focus_widget_id()
+        assert card in app.focused.ancestors
 
 
 @pytest.mark.asyncio
@@ -2014,8 +2190,11 @@ async def test_alt_a_reaches_the_card_at_80_columns_with_inspector_closed():
         await pilot.press("alt+a")
         await pilot.pause()
 
-        assert isinstance(app.focused, Select)
-        assert "approval-row-decision" in app.focused.classes
+        # TASK-40097: the neutral summary since a2fcbe61bc (#3036).
+        card = screen.query_one(ChatApprovalCard)
+        assert isinstance(app.focused, ApprovalSummary)
+        assert app.focused.id == card.first_focus_widget_id()
+        assert card in app.focused.ancestors
 
 
 @pytest.mark.asyncio
@@ -2034,7 +2213,12 @@ async def test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_
     for the two new buttons.
 
     The production Console is allowed to mount and settle before the pending
-    approval state is delivered, matching the real worker-to-UI round trip."""
+    approval state is delivered, matching the real worker-to-UI round trip.
+
+    TASK-40097: since a2fcbe61bc (#3036) the fast buttons (with More options)
+    sit in the card's `#approval-single-actions` bar below the row, sized to
+    their labels (`#approval-single-actions ApprovalActionButton { width:
+    auto }`), and the row's Select stays hidden until More options."""
     app = _build_ready_production_console_app()
     async with app.run_test(size=(200, 40)) as pilot:
         card = await _show_production_approval_batch(app, pilot, _single_call())
@@ -2042,28 +2226,31 @@ async def test_single_row_fast_buttons_have_nonzero_geometry_and_do_not_overlap_
         rows = list(card.query(".approval-row"))
         assert len(rows) == 1
         row = rows[0]
-        select = row.query_one(".approval-row-decision", Select)
-        fast_approve = row.query_one(".approval-row-fast-approve", Button)
-        fast_deny = row.query_one(".approval-row-fast-deny", Button)
+        assert row.query_one(".approval-row-decision", Select).display is False
+        bar = card.query_one("#approval-single-actions")
+        fast_approve = bar.query_one(".approval-row-fast-approve", Button)
+        fast_deny = bar.query_one(".approval-row-fast-deny", Button)
+        more = bar.query_one(".approval-more-options", Button)
 
         for widget, label in (
             (fast_approve, "fast-approve"),
             (fast_deny, "fast-deny"),
+            (more, "more-options"),
         ):
             assert widget.size.width > 0 and widget.size.height > 0, (
-                f"approval row {label} button collapsed to zero size under bundled CSS"
+                f"approval {label} button collapsed to zero size under bundled CSS"
             )
-            assert widget.size.width == 14, (
-                f"{label} button width {widget.size.width} != pinned 14"
+            assert widget.size.width >= cell_len(str(widget.label)), (
+                f"{label} button width {widget.size.width} clips its label"
             )
 
-        # Left-to-right order, no overlap: Select, then fast-approve, then
-        # fast-deny, each starting no earlier than the previous widget's
-        # right edge, and both fast buttons stay inside the row.
-        assert fast_approve.region.x >= select.region.right
+        # Left-to-right order, no overlap: fast-approve, then fast-deny, then
+        # More options, each starting no earlier than the previous widget's
+        # right edge, all inside the bar, which sits below the row.
         assert fast_deny.region.x >= fast_approve.region.right
-        assert fast_approve.region.right <= row.region.right
-        assert fast_deny.region.right <= row.region.right
+        assert more.region.x >= fast_deny.region.right
+        assert more.region.right <= bar.region.right
+        assert bar.region.y >= row.region.bottom
 
         # Compact row (same discipline as the sibling test). TASK-1846
         # made it two lines -- headline + full-width arguments -- so the
@@ -2084,8 +2271,11 @@ def test_approval_row_decision_select_width_rule_pinned_in_bundle_source_and_bun
     the two files' relative concatenation order in build_css.py) -- same
     Defect-1 Select-width lesson as `#mcp-tools-filter-server-slot Select`
     / `#mcp-audit-filter-decision` above, applied to the approval card."""
+    # TASK-40097: a2fcbe61bc (#3036) gave the Select its own
+    # `$ds-approval-decision-width` token, one cell wider than the 27 it
+    # replaced; `test_chat_approval_card.py` budgets the labels from it.
     _assert_rule_pinned_in_bundle_source_and_bundle(
-        ".approval-row-decision {", ("width: 27;",)
+        ".approval-row-decision{", ("width: 28;",)
     )
 
 
@@ -2096,8 +2286,10 @@ def test_approval_row_height_rule_pinned_in_bundle_source_and_bundle() -> None:
     space instead of hugging its own single-line content, the same
     fr-inside-auto-parent collapse class documented on
     `MCPAuditMode.BUNDLED_CSS`'s Findings-view comment."""
+    # 838acbf037 shares this rule with `.approval-row-controls` (TASK-1846's
+    # controls line needs the same `height: auto`).
     _assert_rule_pinned_in_bundle_source_and_bundle(
-        ".approval-row {", ("height: auto;", "width: 1fr;")
+        ".approval-row, .approval-row-controls {", ("height: auto;", "width: 1fr;")
     )
 
 
@@ -3462,6 +3654,10 @@ def mock_chat_host():
 def test_chat_screen_forwards_approval_decided_to_controller(mock_chat_host):
     screen = ChatScreen(mock_chat_host)
     controller = Mock()
+    # TASK-39154: 3e618d7119 (#3023) makes the runtime adopt the controller's
+    # standalone preparation reads when it is attached; a real controller
+    # always carries that set, which a bare Mock attribute cannot iterate.
+    controller._preparation_reads = set()
     screen._console_chat_controller = controller
 
     # Task 9 fix round 1: the event's round_id must forward too --
@@ -3744,8 +3940,11 @@ def test_refusing_one_call_does_not_get_overwritten_by_approving_another():
     """
     from types import SimpleNamespace
 
-    from tldw_chatbook.Agents.agent_models import ToolCall
-    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+    from tldw_chatbook.Agents.agent_models import ToolCall, ToolReviewDecision
+    from tldw_chatbook.Chat.console_chat_controller import (
+        USER_DENIED_REFUSAL,
+        build_tool_review_hook,
+    )
 
     stamped: list[tuple[str, str]] = []
 
@@ -3789,12 +3988,15 @@ def test_refusing_one_call_does_not_get_overwritten_by_approving_another():
         RUN,
     )
 
-    refusal = verdicts.get("call-1")
-    assert refusal and refusal != "proceed", (
+    # TASK-39154: since 55121153dd the hook returns per-call
+    # `ToolReviewDecision`s that carry the user's approval provenance.
+    assert verdicts.get("call-1") == ToolReviewDecision(
+        USER_DENIED_REFUSAL.format(name="read_file"), "denied"
+    ), (
         "the refusal of secrets.md never reached the runtime, so the "
         f"name-keyed approval of spec.md let it through: {verdicts}"
     )
-    assert verdicts.get("call-2", "proceed") == "proceed", (
+    assert verdicts.get("call-2") == ToolReviewDecision("proceed", "approved"), (
         f"approving spec.md must still let it run: {verdicts}"
     )
     assert ("read_file", "deny") not in stamped, (
@@ -3857,8 +4059,11 @@ def test_a_refusal_never_stamps_the_name_even_when_it_is_decided_last():
     """
     from types import SimpleNamespace
 
-    from tldw_chatbook.Agents.agent_models import ToolCall
-    from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
+    from tldw_chatbook.Agents.agent_models import ToolCall, ToolReviewDecision
+    from tldw_chatbook.Chat.console_chat_controller import (
+        USER_DENIED_REFUSAL,
+        build_tool_review_hook,
+    )
 
     stamped: list[tuple[str, str]] = []
 
@@ -3907,7 +4112,11 @@ def test_a_refusal_never_stamps_the_name_even_when_it_is_decided_last():
         "the refusal was stamped against the tool NAME, which also blocks "
         f"the call the user approved: {stamped}"
     )
-    assert verdicts.get("c-no", "proceed") != "proceed", (
+    # TASK-39154: 55121153dd made each verdict a `ToolReviewDecision`, which
+    # never equals a string, so compare the decision itself.
+    assert verdicts.get("c-no") == ToolReviewDecision(
+        USER_DENIED_REFUSAL.format(name="read_file"), "denied"
+    ), (
         f"secrets.md must still be refused per call: {verdicts}"
     )
 
@@ -4231,7 +4440,7 @@ def test_a_revoked_childs_card_can_no_longer_execute_its_tool(tmp_path, monkeypa
     """
     import tldw_chatbook.config as config_module
     import tldw_chatbook.Tools.file_operation_tools as fot
-    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.agent_models import ToolCall, normalize_tool_review
     from tldw_chatbook.Agents.builtin_tool_gate import BuiltinToolGate
     from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
     from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
@@ -4278,7 +4487,9 @@ def test_a_revoked_childs_card_can_no_longer_execute_its_tool(tmp_path, monkeypa
 
     worker = threading.Thread(target=_review)
     worker.start()
-    time.sleep(0.2)
+    deadline = time.monotonic() + 5.0
+    while not (mounted and mounted[-1] is not None) and time.monotonic() < deadline:
+        time.sleep(0.02)
     assert mounted and mounted[-1] is not None, "precondition: the card is on screen"
     round_a = mounted[-1]["round_id"]
 
@@ -4295,7 +4506,9 @@ def test_a_revoked_childs_card_can_no_longer_execute_its_tool(tmp_path, monkeypa
     with use_run_id(RUN_A):
         result = provider.invoke("builtin:write_file", args)
 
-    assert verdicts["call-1"] != "proceed", (
+    # TASK-39154: compare the verdict, not the 55121153dd `ToolReviewDecision`
+    # wrapper (which never equals a string).
+    assert normalize_tool_review(verdicts["call-1"]).verdict != "proceed", (
         f"the revoked call was cleared for dispatch: {verdicts}"
     )
     assert result.ok is False
@@ -4702,7 +4915,7 @@ def test_a_no_app_round_reports_every_key_as_unanswered():
 def test_a_no_app_round_does_not_record_a_user_denial_on_the_mcp_hook():
     """The MCP review hook's end of the same bug: an unanswered round must
     not reach `MCPToolProvider.record_user_denial`."""
-    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.agent_models import ToolCall, ToolReviewDecision
     from tldw_chatbook.Chat.console_chat_controller import (
         USER_DENIED_REFUSAL,
         build_tool_review_hook,
@@ -4745,7 +4958,11 @@ def test_a_no_app_round_does_not_record_a_user_denial_on_the_mcp_hook():
         [ToolCall(name="mcp__srv__tool", args={"a": 1}, call_id="call-1")], RUN
     )
 
-    assert verdicts["call-1"] == USER_DENIED_REFUSAL.format(name="mcp__srv__tool")
+    # TASK-39154: since 55121153dd the verdict carries approval provenance;
+    # an unanswered headless round must carry none (not the user's "denied").
+    assert verdicts["call-1"] == ToolReviewDecision(
+        USER_DENIED_REFUSAL.format(name="mcp__srv__tool"), None
+    )
     assert denials == [], "a headless fail-closed deny was audited as the user's"
 
 

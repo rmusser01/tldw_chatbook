@@ -3861,7 +3861,7 @@ def test_review_hook_refuses_and_audits_an_mcp_sibling_without_its_own_approval(
 
 
 def test_review_hook_gives_a_mutating_builtin_the_mutation_effect():
-    """task-32278 AC#3: the card's blast-radius sentence must be right.
+    """task-32278 AC#3: the card's blast-radius line must be right.
 
     The read-vs-mutation wording keys off `MCPPendingCall.effects`, and this
     builder passed none -- so `write_file`, whose `risk_tags == ("mutates",)`
@@ -3869,12 +3869,20 @@ def test_review_hook_gives_a_mutating_builtin_the_mutation_effect():
     data". Driven through the REAL hook with the REAL tools: a
     reconstruction of these kwargs would keep passing if the builder stopped
     supplying them, which is the defect itself.
+
+    TASK-40097: a2fcbe61bc (#3036) made the `risk_floored` reason one policy
+    sentence for every tool and moved the blast radius to the row's own
+    effects line (`format_approval_effects`), so the read-vs-mutation
+    difference is pinned there now.
     """
     from tldw_chatbook.Chat.console_chat_controller import build_tool_review_hook
     from tldw_chatbook.Tools.file_operation_tools import ReadFileTool, WriteFileTool
     from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        format_approval_effects,
         format_approval_reason,
     )
+
+    policy = "High risk: current policy requires approval for this call."
 
     def _row_for(tool) -> MCPPendingCall:
         asked: dict[str, list[MCPPendingCall]] = {}
@@ -3891,15 +3899,15 @@ def test_review_hook_gives_a_mutating_builtin_the_mutation_effect():
 
     mutating = _row_for(WriteFileTool())
     assert mutating.effects == ("mutates_local",)
-    assert format_approval_reason(vars(mutating)) == (
-        "High risk: this tool changes local data and always asks first."
+    assert format_approval_reason(vars(mutating)) == policy
+    assert format_approval_effects(vars(mutating)) == (
+        "Effects: may modify local data"
     )
 
     reading = _row_for(ReadFileTool())
     assert reading.effects == ()
-    assert format_approval_reason(vars(reading)) == (
-        "High risk: this tool reads local data and always asks first."
-    )
+    assert format_approval_reason(vars(reading)) == policy
+    assert format_approval_effects(vars(reading)) == ""
 
 
 def _file_tool(name: str):
