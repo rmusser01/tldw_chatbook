@@ -341,7 +341,9 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # composer work (has_unsaved_editor_state), so the backup probe stops reading
     # its private fields (+1 method). Exact measurement after the 2026-11-09
     # rebase onto dev.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24636, 742),
+    # 2026-11-12, same waiver: re-measured on dev 4b90eb860b (24,524 lines);
+    # this branch adds 44 lines and the one method above.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24568, 742),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
