@@ -1216,6 +1216,8 @@ jobs:
     # git history (TASK-39055 retired those nodes). The profile inventory's
     # CLI test is left out: preflight's census step runs the same CLI (but
     # not its `--print-occurrences` check, which is unlaned).
+    # TASK-39153: the persistent terminal privacy boundary runs last; its one
+    # bootstrap_profile node must not precede a sandboxed suite (TASK-32873).
     name: Architecture guard contracts
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
     runs-on: ubuntu-latest
@@ -1272,6 +1274,7 @@ jobs:
             Tests/Architecture/test_console_realtime_controller_boundary.py \
             Tests/Architecture/test_console_review_selection_controller_boundary.py \
             Tests/Architecture/test_console_wave6_inventory.py \
+            Tests/Architecture/test_persistent_terminal_privacy_boundary.py \
             --timeout=180 \
             --tb=short
 
@@ -1401,7 +1404,8 @@ jobs:
       # Console files of TASK-39154 (rewind/summarize, per-session run state),
       # TASK-39164 (edit-and-resend, regenerate branching) and TASK-40097's
       # controller node are bootstrap_profile and follow the goal recovery file.
-      # Last, TASK-39163's automatic Library preparation file (bootstrap_profile).
+      # Then TASK-39163's automatic Library preparation file (bootstrap_profile).
+      # TASK-39153 appends the Library ingest flow file (bootstrap_profile, 13 tests).
       - name: Run the recovered suites
         run: |
           pytest \
@@ -1436,6 +1440,7 @@ jobs:
             Tests/Chat/test_console_regenerate_branching.py \
             Tests/Chat/test_console_chat_controller.py::test_review_hook_gives_a_mutating_builtin_the_mutation_effect \
             Tests/Chat/test_console_automatic_library_preparation.py \
+            Tests/integration/test_library_ingest_flow.py \
             --storage-lease-guard \
             --timeout=180 \
             --tb=short

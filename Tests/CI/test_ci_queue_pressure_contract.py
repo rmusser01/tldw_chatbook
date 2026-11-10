@@ -479,6 +479,8 @@ ARCHITECTURE_GUARD_TARGETS = (
     "Tests/Architecture/test_console_realtime_controller_boundary.py",
     "Tests/Architecture/test_console_review_selection_controller_boundary.py",
     "Tests/Architecture/test_console_wave6_inventory.py",
+    # TASK-39153: last, after every sandboxed suite (one bootstrap_profile node).
+    "Tests/Architecture/test_persistent_terminal_privacy_boundary.py",
 )
 
 # The 2026-10-25 architecture-review program's tests, in their own job
@@ -584,6 +586,9 @@ RECOVERED_SUITES_TARGETS = (
     # TASK-39163: the automatic Library preparation file (bootstrap_profile,
     # 90 tests), which ran on no lane. Guard-clean.
     "Tests/Chat/test_console_automatic_library_preparation.py",
+    # TASK-39153: the Library ingest flow file (bootstrap_profile since
+    # TASK-39141, 13 tests), which ran on no lane.
+    "Tests/integration/test_library_ingest_flow.py",
 )
 DREAMS_ADMISSION_TARGETS = (
     "Tests/Dreams/test_boot_dispatch_admission.py",
