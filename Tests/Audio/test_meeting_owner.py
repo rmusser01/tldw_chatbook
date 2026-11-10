@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from Tests.Backup_Recovery.config_test_support import select_config_source
 from tldw_chatbook.Audio import meeting_owner as mo
 from tldw_chatbook.Audio.system_audio_tap import TapMode
 from tldw_chatbook.Audio.wav_writer import PlaceholderWavWriter, wav_needs_patch
@@ -211,8 +212,12 @@ def test_meeting_user_display_name_treats_whitespace_only_as_unset(tmp_path, mon
     `test_config_console_defaults.py::test_blank_chat_display_name_falls_back_to_user`."""
     config_path = tmp_path / "config.toml"
     config_path.write_text("[chat_defaults]\nuser_display_name = '   '\n", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-    assert mo.meeting_user_display_name() == "You"
+    config_path.chmod(0o600)
+    with monkeypatch.context() as selected:
+        source = select_config_source(selected, config_path)
+        raw = source.load_cli_config_and_ensure_existence()
+        assert raw["chat_defaults"]["user_display_name"] == "   "
+        assert mo.meeting_user_display_name() == "You"
 
 
 def test_meeting_user_display_name_rejects_a_control_character_name(tmp_path, monkeypatch):
@@ -223,8 +228,12 @@ def test_meeting_user_display_name_rejects_a_control_character_name(tmp_path, mo
     config_path.write_text(
         f'[chat_defaults]\nuser_display_name = "{invalid_value}"\n', encoding="utf-8"
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-    assert mo.meeting_user_display_name() == "You"
+    config_path.chmod(0o600)
+    with monkeypatch.context() as selected:
+        source = select_config_source(selected, config_path)
+        raw = source.load_cli_config_and_ensure_existence()
+        assert raw["chat_defaults"]["user_display_name"] == invalid_value
+        assert mo.meeting_user_display_name() == "You"
 
 
 def test_diarization_requirements_uses_find_spec_not_imports():
@@ -261,6 +270,7 @@ def test_build_diarizer_construction_failure_returns_none(tmp_path, monkeypatch)
     assert mo.build_diarizer(settings) is None
 
 
+@pytest.mark.bootstrap_profile
 def test_live_diarization_active_false_for_server_backend(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
     owner, _, _ = _owner(tmp_path, live_diarization=True, diarizer_backend="server")
@@ -268,9 +278,16 @@ def test_live_diarization_active_false_for_server_backend(tmp_path, monkeypatch)
     assert prepared.live_diarization_active is False
 
 
+@pytest.mark.bootstrap_profile
 def test_live_diarization_active_true_for_local_backend_with_deps(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
-    owner, _, _ = _owner(tmp_path, live_diarization=True, diarizer_backend="local")
+    owner, _, _ = _owner(
+        tmp_path,
+        live_diarization=True,
+        diarizer_backend="local",
+        onnx_models_dir=tmp_path / "models",
+        voice_match=False,
+    )
     prepared = owner.prepare()
     assert prepared.live_diarization_active is True
 

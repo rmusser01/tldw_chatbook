@@ -46,6 +46,7 @@ class TestErrorRecovery:
                 mock_stream.close.assert_called_once_with()
                 assert service.stream is None
 
+    @pytest.mark.bootstrap_profile
     def test_transcription_service_fallback(self):
         """Test fallback when primary transcription service fails."""
         # First provider fails
@@ -59,10 +60,12 @@ class TestErrorRecovery:
                 True,
             ):
                 service = TranscriptionService()
-
-                # Should list available models
-                models = service.list_available_models()
-                assert "parakeet-mlx" in models
+                try:
+                    # Should list available models
+                    models = service.list_available_models()
+                    assert "parakeet-mlx" in models
+                finally:
+                    service.cleanup()
 
     def test_dictation_continues_after_transcription_error(self):
         """Test dictation continues even if transcription fails."""
