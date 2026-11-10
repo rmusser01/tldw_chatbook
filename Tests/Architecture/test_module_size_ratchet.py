@@ -847,7 +847,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-07, TASK-38987 (owner waiver): 8983 -> 8990; config writes
     # run inside the shared switch-interval scope, lifted while waiting on
     # another process's lock (review r12s-rev1 M4).
-    "tldw_chatbook/config.py": 8990,
+    # 2026-11-09, round-12 restack onto dev 3a6498ae14 (owner size waiver):
+    # dev's 8,983 plus TASK-38987's +20 (the write's scope, the lock wait's
+    # release and the interval constant, with their comments).
+    "tldw_chatbook/config.py": 9003,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
