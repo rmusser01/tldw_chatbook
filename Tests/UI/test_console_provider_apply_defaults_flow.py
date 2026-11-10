@@ -36,6 +36,7 @@ from Tests.UI.app_factory import (
     persist_seeded_config,
 )
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.console_rail_section_helpers import open_rail_section
 from Tests.UI.test_destination_shells import _wait_for_selector
 from tldw_chatbook.Chat.console_context_policy import (
     CompactionFailureBehavior,
@@ -218,7 +219,7 @@ def _console_app(*, retire_chachanotes_db=False):
     return app
 
 
-def _persisted_console_app(**vllm_settings: object):
+def _persisted_console_app(*, retire_chachanotes_db=False, **vllm_settings: object):
     """Build from the sandbox config file the default writer will mutate.
 
     Args:
@@ -245,7 +246,7 @@ def _persisted_console_app(**vllm_settings: object):
         }
     )
     app = _build_test_app()
-    attach_chachanotes_db(app)
+    attach_chachanotes_db(app, retire_with_app=retire_chachanotes_db)
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "model-a"
     app.providers_models = {
@@ -915,13 +916,14 @@ async def test_stale_compaction_retry_cannot_replace_newer_full_policy(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_default_actions_persist_exact_scope_and_publish_blank_chat_defaults() -> (
     None
 ):
     """Profile/global scope drift or missing runtime publication fails here."""
 
     literal_model = "vendor/model:b"
-    app = _persisted_console_app()
+    app = _persisted_console_app(retire_chachanotes_db=True)
     notifications: list[str] = []
     app.notify = lambda message, **_kwargs: notifications.append(str(message))
     harness = _ConsoleFlowHarness(app)
@@ -1026,16 +1028,7 @@ async def test_default_actions_persist_exact_scope_and_publish_blank_chat_defaul
             temporary.settings.temperature,
         ) == ("vllm", literal_model, pytest.approx(0.23))
 
-        conversations_toggle = console.query_one(
-            "#console-rail-section-toggle-conversations", Button
-        )
-        conversations_toggle.scroll_visible(animate=False, force=True)
-        await pilot.pause()
-        if console._current_console_rail_state().conversations_open:
-            console._toggle_console_rail_section("conversations", next_open=False)
-            await pilot.pause()
-        assert await pilot.click(conversations_toggle) is True
-        await pilot.pause()
+        await open_rail_section(console, pilot, "conversations")
         await console._sync_console_legacy_workspace_context_aliases()
         await _wait_for_selector(
             console,
