@@ -55,5 +55,5 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-1
 
 **AC#2, 10 of 10.** The 12 census nodes (`scripts/ui_pr_gate_census.txt`, the eight `test_opening_the_list_beside_an_open_item_leaves_no_work_sliver` cases and the four `test_every_other_list_destination_gives_an_opened_list_the_stage` cases), run together at `-n 4` ten times in a row: 10 of 10 runs, 12 passed each, 156-236 s per run, 1-minute load 46.7-94.0 at the starts of the runs (every run started at load 46 or more).
 
-**Files.** `Tests/UI/test_library_adaptive_reader_closeout.py`.
+**Files.** `Tests/UI/test_library_adaptive_reader_closeout.py`; a lesson in `backlog/docs/lessons-testing-evidence.md` (the first 10-run loop read its node list with bash 3.2's missing `mapfile`, so pytest collected the whole tree).
 
