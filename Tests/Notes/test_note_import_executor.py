@@ -1229,6 +1229,7 @@ def test_executor_leaves_wikilink_text_alone_outside_obsidian_mode(
     assert note.content == "See [[link-target]]."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("batch_size", "item_count", "expected_running_completed"),
     [
@@ -1238,6 +1239,7 @@ def test_executor_leaves_wikilink_text_alone_outside_obsidian_mode(
     ],
 )
 def test_executor_processes_items_in_bounded_batches_with_monotonic_frozen_progress(
+    request: pytest.FixtureRequest,
     target_harness,
     tmp_path: Path,
     batch_size: int,
@@ -1246,6 +1248,7 @@ def test_executor_processes_items_in_bounded_batches_with_monotonic_frozen_progr
 ) -> None:
     target, _service, _folders, _db = target_harness
     receipts = NoteImportReceiptRepository(tmp_path / f"progress-{batch_size}.sqlite3")
+    request.addfinalizer(receipts._store.close)
     executor = NoteImportExecutor(
         target=target,
         receipt_repository=receipts,
@@ -1669,8 +1672,10 @@ async def test_execute_async_file_backed_recursive_import_reopens_and_replays_on
         reopened_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("crash_boundary", ["folder", "payload", "membership", "item"])
 def test_executor_reopens_and_reconciles_each_create_crash_window(
+    request: pytest.FixtureRequest,
     target_harness,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1679,6 +1684,7 @@ def test_executor_reopens_and_reconciles_each_create_crash_window(
     target, _service, folders, db = target_harness
     receipt_path = tmp_path / f"crash-{crash_boundary}.sqlite3"
     receipts = NoteImportReceiptRepository(receipt_path)
+    request.addfinalizer(receipts._store.close)
     executor = NoteImportExecutor(
         target=target,
         receipt_repository=receipts,
@@ -1724,6 +1730,7 @@ def test_executor_reopens_and_reconciles_each_create_crash_window(
     monkeypatch.undo()
 
     reopened_receipts = NoteImportReceiptRepository(receipt_path)
+    request.addfinalizer(reopened_receipts._store.close)
     resumed = NoteImportExecutor(
         target=target,
         receipt_repository=reopened_receipts,
@@ -1759,7 +1766,9 @@ def test_executor_reopens_and_reconciles_each_create_crash_window(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_reopens_after_committed_create_item_finalization(
+    request: pytest.FixtureRequest,
     target_harness,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1767,6 +1776,7 @@ def test_executor_reopens_after_committed_create_item_finalization(
     target, _service, folders, db = target_harness
     receipt_path = tmp_path / "post-create-item-finalization.sqlite3"
     receipts = NoteImportReceiptRepository(receipt_path)
+    request.addfinalizer(receipts._store.close)
     executor = NoteImportExecutor(
         target=target,
         receipt_repository=receipts,
@@ -1809,6 +1819,7 @@ def test_executor_reopens_after_committed_create_item_finalization(
 
     monkeypatch.setattr(target, "create_note", forbidden_create)
     reopened_receipts = NoteImportReceiptRepository(receipt_path)
+    request.addfinalizer(reopened_receipts._store.close)
     resumed = NoteImportExecutor(
         target=target,
         receipt_repository=reopened_receipts,
@@ -1836,7 +1847,9 @@ def test_executor_reopens_after_committed_create_item_finalization(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_reopens_after_committed_update_item_finalization(
+    request: pytest.FixtureRequest,
     target_harness,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1844,6 +1857,7 @@ def test_executor_reopens_after_committed_update_item_finalization(
     target, _service, folders, db = target_harness
     receipt_path = tmp_path / "post-update-item-finalization.sqlite3"
     receipts = NoteImportReceiptRepository(receipt_path)
+    request.addfinalizer(receipts._store.close)
     executor = NoteImportExecutor(
         target=target,
         receipt_repository=receipts,
@@ -1896,6 +1910,7 @@ def test_executor_reopens_after_committed_update_item_finalization(
 
     monkeypatch.setattr(target, "replace_note", forbidden_replace)
     reopened_receipts = NoteImportReceiptRepository(receipt_path)
+    request.addfinalizer(reopened_receipts._store.close)
     resumed = NoteImportExecutor(
         target=target,
         receipt_repository=reopened_receipts,
@@ -2145,13 +2160,16 @@ def test_executor_durably_fails_applied_update_that_diverges_before_item_finaliz
     assert retried_durable.items[0].reason_code == "note_conflict"
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_applied_multi_create_divergence_preserves_per_payload_counts(
+    request: pytest.FixtureRequest,
     target_harness,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     target, _service, _folders, _db = target_harness
     receipts = NoteImportReceiptRepository(tmp_path / "multi-divergence.sqlite3")
+    request.addfinalizer(receipts._store.close)
     executor = NoteImportExecutor(
         target=target,
         receipt_repository=receipts,
@@ -2552,12 +2570,15 @@ def test_completed_single_payload_receipt_produces_private_exact_prior_observati
         assert private_value not in rendered
 
 
+@pytest.mark.bootstrap_profile
 def test_prior_observations_select_the_latest_completed_matching_source(
+    request: pytest.FixtureRequest,
     target_harness,
     tmp_path: Path,
 ) -> None:
     target, _service, _folders, _db = target_harness
     receipts = NoteImportReceiptRepository(tmp_path / "prior-latest.sqlite3")
+    request.addfinalizer(receipts._store.close)
     first_payload = _payload(title="Older receipt", content="Older body")
     second_payload = _payload(title="Latest receipt", content="Latest body")
     first_item = _execution_item(
@@ -2606,12 +2627,15 @@ def test_prior_observations_select_the_latest_completed_matching_source(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_prior_observations_do_not_fall_back_past_latest_multi_payload_receipt(
+    request: pytest.FixtureRequest,
     target_harness,
     tmp_path: Path,
 ) -> None:
     target, _service, _folders, _db = target_harness
     receipts = NoteImportReceiptRepository(tmp_path / "prior-no-fallback.sqlite3")
+    request.addfinalizer(receipts._store.close)
     first_item = _execution_item(
         item_id="same-source-single",
         payloads=(_payload(title="Older single"),),
@@ -2671,12 +2695,15 @@ def test_prior_observations_do_not_fall_back_past_latest_multi_payload_receipt(
     assert observations[0].note_id != _expected_note_id("same-source-single", 0)
 
 
+@pytest.mark.bootstrap_profile
 def test_prior_observations_reject_duplicate_items_in_latest_source_session(
+    request: pytest.FixtureRequest,
     target_harness,
     tmp_path: Path,
 ) -> None:
     target, _service, _folders, _db = target_harness
     receipts = NoteImportReceiptRepository(tmp_path / "prior-duplicate-source.sqlite3")
+    request.addfinalizer(receipts._store.close)
     older_item = _execution_item(
         item_id="duplicate-source-older",
         payloads=(_payload(title="Older exact source"),),
@@ -2734,8 +2761,10 @@ def test_prior_observations_reject_duplicate_items_in_latest_source_session(
     assert all(value not in rendered for value in private_values)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("excluded_state", ["multi", "failed", "cancelled", "missing"])
 def test_prior_observations_omit_unconfirmed_sources_but_keep_multi_record_ones(
+    request: pytest.FixtureRequest,
     target_harness,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2743,6 +2772,7 @@ def test_prior_observations_omit_unconfirmed_sources_but_keep_multi_record_ones(
 ) -> None:
     target, _service, _folders, _db = target_harness
     receipts = NoteImportReceiptRepository(tmp_path / f"prior-{excluded_state}.sqlite3")
+    request.addfinalizer(receipts._store.close)
     executor = NoteImportExecutor(
         target=target,
         receipt_repository=receipts,
