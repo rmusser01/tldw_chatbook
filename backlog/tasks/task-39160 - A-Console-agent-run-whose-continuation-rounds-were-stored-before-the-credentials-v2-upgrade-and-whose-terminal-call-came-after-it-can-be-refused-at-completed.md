@@ -1,8 +1,10 @@
 ---
 id: TASK-39160
 title: "A Console agent run whose continuation rounds were stored before the credentials-v2 upgrade and whose terminal call came after it can be refused at completed-replay attachment"
-status: To Do
+status: In Progress
+assignee: ['@claude']
 created_date: 2026-11-08 06:54
+updated_date: 2026-11-10 17:46
 labels:
 - follow-up
 - trace
@@ -39,3 +41,27 @@ Found in round 12 of the 2026-10-23 burn-down (review r12b-rev3 of TASK-39123, r
 - [ ] #3 A replay whose rounds really changed is still refused
 - [ ] #4 The test runs on a PR lane (never the fast PR contract), with three timings recorded
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Trace where a run's trace policy is frozen and whether a run's calls can carry different credential versions.
+2. If such a run can be recorded, build it in `Tests/Chat/test_console_dispatch_continuation_handoff.py` (the upgraded-from-v1 harness) and show whether the completed replay refuses it; otherwise stop and report NEEDS_CONTEXT with the evidence.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Stopped: NEEDS_CONTEXT (2026-11-10, base ae9f9e8d21).** AC #1 asks for a test that builds a run whose early continuation rounds are stored under `credentials-v1` and whose terminal call is `credentials-v2`. Read on the base, no live path can record that run, so a test could only build it by bypassing two invariants:
+
+- **One policy per run, enforced at capture.** `console_trace_runtime.py`'s tool-loop capture refuses a continuation call unless the run origin's `policy_id` and the previous call's `policy_id` equal the new call's (`origin.policy_id ... != policy.policy_id` and `previous.policy_id != policy.policy_id` -> `trace_tool_chain_unavailable`, around lines 527-546 and 575-592). A resumed or retried chain reuses its reserved policy (`policy.policy_id != reserved.policy_id`, around line 189).
+- **A call's policy is immutable.** The `console_trace_calls_immutable_guard` trigger (migration `chachanotes_v55_to_v56_console_semantic_trace.sql`, recovery schema) aborts any `UPDATE` that changes `policy_id`. So the terminal call of a v1 run stays v1, and `_completed_replay_trace_checkpoint` projects the checkpoint under v1, the same projection the stored rounds used. Nothing is refused.
+- **Not traced:** whether a dispatch-recovery Retry after the upgrade (a new origin under a v2 policy) can reuse the interrupted run's v1 continuation nodes inside the completed tool turn's replay range, through `_durable_reference_matches`' every-version surface-prefix match. If such reuse lands in `plan.start_sequence..plan.end_sequence`, the case is real.
+
+**Options for the owner or coordinator:**
+1. Close as not reachable through the live chain, on the evidence above.
+2. Re-scope AC #1 to the recovery Retry path above (build: interrupt a v1 agent turn after round 1, upgrade, Retry, complete, then send a follow-up turn), and fix only if that is refused.
+3. Harden regardless: compare each prior node and the checkpoint under the current projection (v2 re-masks v1 idempotently, per `console_trace_redaction.py`'s version rule), with a unit test on mixed-version inputs. This is cheap, but it changes refusal semantics for a state no live run is shown to produce.
+
+No code was changed for this task.
+<!-- SECTION:NOTES:END -->
