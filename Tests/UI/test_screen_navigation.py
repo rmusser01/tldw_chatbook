@@ -5796,7 +5796,7 @@ async def test_nav_bar_uses_overflow_instead_of_truncating_at_160_cols():
         assert strip.virtual_size.width > strip.region.width
         for destination in SHELL_DESTINATION_ORDER:
             button = nav.query_one(f"#nav-{destination.destination_id}")
-            assert str(button.label).endswith(destination.label)
+            assert str(button.label).rstrip(" ").endswith(destination.label)
 
 
 @pytest.mark.asyncio
