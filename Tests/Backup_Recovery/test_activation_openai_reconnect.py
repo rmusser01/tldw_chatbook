@@ -290,10 +290,14 @@ def capture():
 thread=threading.Thread(target=capture);thread.start();assert entered.wait(2)
 time.sleep(.15);assert not finished.is_set()
 if sys.argv[1]=='partial':result.close()
-else:assert '[DONE]' in ''.join(result)
+else:
+ assert '[DONE]' in next(result)
+ assert effects[-2:]==['response-close','session-close']
+ assert not finished.is_set()
+ assert list(result)==[]
 thread.join(7)
 assert not thread.is_alive() and not errors and finished.is_set(),errors
-assert 'response-close' in effects and 'session-close' in effects
+assert effects.count('response-close')==effects.count('session-close')==1
 assert not blocked_attempts()
 print('retired and reopened')
 """
@@ -682,7 +686,12 @@ if route=='complete':assert result['choices'][0]['message']['content']=='answer'
 else:
  assert 'answer' in next(result)
  if route=='partial':result.close()
- else:assert '[DONE]' in ''.join(result)
+ else:
+  assert 'finish_reason' in next(result)
+  assert '[DONE]' in next(result)
+  assert effects[-2:]==['response-close','session-close']
+  assert list(result)==[]
+ assert effects.count('response-close')==effects.count('session-close')==1
 posts=[e for e in effects if isinstance(e,tuple)]
 assert len(posts)==1 and posts[0][1]=='https://api.openai.com/v1/responses'
 assert 'response-close' in effects and 'session-close' in effects
@@ -821,6 +830,7 @@ try:
 except Exception:pass
 else:raise AssertionError('failed native close released source')
 Response.close=original;result.close()
+assert effects.count('response-close')==effects.count('session-close')==1
 with authority.maintenance(('profile',),3):pass
 assert not blocked_attempts()
 print('retired and reopened')

@@ -73,7 +73,7 @@ def _normalize_openai_responses_payload(
     }
 
 
-def _responses_stream_to_chat_sse(response, *, model: str):
+def _responses_stream_to_chat_sse(response, *, model: str, finalize: bool = True):
     from . import LLM_API_Calls as _owner
 
     completion_id = f"chatcmpl-openai-responses-{_owner.time.time_ns()}"
@@ -134,9 +134,10 @@ def _responses_stream_to_chat_sse(response, *, model: str):
             + "\n\n"
         )
     finally:
-        if response is not None:
+        if finalize and response is not None:
             response.close()
-    yield "data: [DONE]\n\n"
+    if finalize:
+        yield "data: [DONE]\n\n"
 
 
 def _openai_stream_line_usage(line: str) -> dict | None:

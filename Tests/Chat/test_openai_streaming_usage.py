@@ -161,6 +161,7 @@ def test_streaming_payload_includes_stream_options(mock_post):
     assert sent_payload["stream_options"] == {"include_usage": True}
 
 
+@pytest.mark.bootstrap_profile
 @patch("requests.Session.post")
 def test_stopping_stream_closes_transport_without_yielding_after_generator_exit(
     mock_post,
@@ -187,8 +188,10 @@ def test_stopping_stream_closes_transport_without_yielding_after_generator_exit(
         streaming=True,
     )
 
-    assert "first" in next(generator)
-    generator.close()
+    try:
+        assert "first" in next(generator)
+    finally:
+        generator.close()
 
     response.close.assert_called_once_with()
 

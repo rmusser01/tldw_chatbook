@@ -289,11 +289,11 @@ def _normalize_openai_responses_payload(
     return _normalize_openai_responses_payload(response_data, model=model)
 
 
-def _responses_stream_to_chat_sse(response, *, model: str):
+def _responses_stream_to_chat_sse(response, *, model: str, finalize: bool = True):
     """Yield the legacy stream while forwarding close/throw to its adapter."""
     from .openai_protocol import _responses_stream_to_chat_sse
 
-    yield from _responses_stream_to_chat_sse(response, model=model)
+    yield from _responses_stream_to_chat_sse(response, model=model, finalize=finalize)
 
 
 def _anthropic_uses_adaptive_thinking(model: object) -> bool:
@@ -817,15 +817,11 @@ def chat_with_openai(
             logger.debug("OpenAI: Posting request (streaming)")
 
             def stream_generator():
-                # ADR-222 (TASK-34418): deliberately NOT registry-backed --
-                # openai_post() transfers session ownership to the guarded
-                # recovery _Operation, which closes it at operation end and
-                # (recovered mode) sets session.trust_env = False. A shared
-                # session would be closed per call anyway and would leak
-                # that mutation into later calls. See ADR-222 §5.
-                session_context = create_owned_default_session()
-                session = session_context.__enter__()
-                response = None
+                # ADR-222: the recovery operation owns the private transport.
+                session, retire_transport = _provider_recovery.openai_stream_session(
+                    create_owned_default_session
+                )
+                emit_done = not use_responses_api
                 try:
                     response = _provider_recovery.openai_post(
                         session,
@@ -857,32 +853,35 @@ def chat_with_openai(
                     response.raise_for_status()
                     if use_responses_api:
                         yield from _responses_stream_to_chat_sse(
-                            response, model=final_model
+                            response, model=final_model, finalize=False
                         )
-                        return
-                    # `stream_options.include_usage` is requested above, so
-                    # the final chunk carries usage; OpenAI-compatible
-                    # gateways sometimes emit CUMULATIVE usage per chunk, so
-                    # keep the last seen and record ONCE at normal loop end
-                    # (a consumer Stop records nothing -- cancelled streams
-                    # undercount by policy).
-                    openai_stream_final_usage = None
-                    for line in response.iter_lines(decode_unicode=True):
-                        if line and line.strip():
-                            if '"usage"' in line:
-                                usage_candidate = _openai_stream_line_usage(line)
-                                if usage_candidate is not None:
-                                    openai_stream_final_usage = usage_candidate
-                            # Pass through OpenAI's SSE lines directly.
-                            # Ensure they end with \n\n if not already.
-                            # OpenAI's SSE usually includes double newlines.
-                            yield line if line.endswith("\n") else line + "\n"
-                    if openai_stream_final_usage:
-                        _session_ledger().record_provider_payload(
-                            openai_stream_final_usage,
-                            provider="openai",
-                            model=final_model,
-                        )
+                        emit_done = True
+                    else:
+                        # `stream_options.include_usage` is requested above, so
+                        # the final chunk carries usage; OpenAI-compatible
+                        # gateways sometimes emit CUMULATIVE usage per chunk, so
+                        # keep the last seen and record ONCE at normal loop end
+                        # (a consumer Stop records nothing -- cancelled streams
+                        # undercount by policy).
+                        openai_stream_final_usage = None
+                        for line in response.iter_lines(decode_unicode=True):
+                            if line and line.strip():
+                                if '"usage"' in line:
+                                    usage_candidate = _openai_stream_line_usage(
+                                        line
+                                    )
+                                    if usage_candidate is not None:
+                                        openai_stream_final_usage = usage_candidate
+                                # Pass through OpenAI's SSE lines directly.
+                                # Ensure they end with \n\n if not already.
+                                # OpenAI's SSE usually includes double newlines.
+                                yield line if line.endswith("\n") else line + "\n"
+                        if openai_stream_final_usage:
+                            _session_ledger().record_provider_payload(
+                                openai_stream_final_usage,
+                                provider="openai",
+                                model=final_model,
+                            )
                 except requests.exceptions.RequestException as e_request:
                     logger.opt(exception=True).error(
                         f"OpenAI: RequestException during stream: {e_request}"
@@ -909,18 +908,10 @@ def chat_with_openai(
                         }
                     )
                     yield f"data: {error_content}\n\n"  # Yield as SSE error
-                finally:
-                    try:
-                        if response is not None:
-                            response.close()
-                    finally:
-                        session_context.__exit__(None, None, None)
-                # Keep the endpoint wrapper's normal/error completion
-                # sentinel outside ``finally``. Console Stop closes this
-                # generator with ``GeneratorExit``; yielding while handling
-                # that control signal raises ``generator ignored
-                # GeneratorExit`` and skips transport cleanup.
-                if not use_responses_api:
+                # Stop skips this tail. _OpenAIStream retires its operation
+                # when it closes the suspended generator.
+                retire_transport()
+                if emit_done:
                     yield "data: [DONE]\n\n"
 
             return stream_generator()

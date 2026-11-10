@@ -473,19 +473,24 @@ class _Operation:
         if not any(item is resource for item in self.resources):
             self.resources.append(resource)
 
+    def close_resources(self):
+        error = None
+        for index in range(len(self.resources) - 1, -1, -1):
+            try:
+                self.resources[index].close()
+            except BaseException as failure:  # noqa: BLE001 - settle every native resource before propagating failure.
+                error = error or failure
+            else:
+                del self.resources[index]
+        if error is not None:
+            raise error  # Native source remains held when actual cleanup fails.
+
     def close(self):
         if self.closed:
             return
         if self.async_contexts:
             raise ProviderReconnectRequired()  # Native async cleanup did not settle.
-        error = None
-        for resource in reversed(self.resources):
-            try:
-                resource.close()
-            except BaseException as failure:  # noqa: BLE001 - settle every native resource before propagating failure.
-                error = error or failure
-        if error is not None:
-            raise error  # Native source remains held when actual cleanup fails.
+        self.close_resources()
         self.closed = True
         if getattr(self.lease, "_retained_stream_operation", None) is self:
             self.lease._retained_stream_operation = None
@@ -618,6 +623,23 @@ def openai_call[**P, R](function: Callable[P, R]) -> Callable[P, R | _OpenAIStre
     return call
 
 
+def _active_openai_operation():
+    active = _current.get()
+    if active is None or active[1] != _identity():
+        raise ProviderReconnectRequired()
+    return active[0]
+
+
+def openai_stream_session(
+    factory: Callable[[], "requests.Session"],
+) -> tuple["requests.Session", Callable[[], None]]:
+    """Enroll the private stream session before request validation."""
+    operation = _active_openai_operation()
+    session = factory()
+    operation.own(session)
+    return session, operation.close_resources
+
+
 def openai_post(
     session: "requests.Session", url: str, **kwargs: Any
 ) -> "requests.Response":
@@ -636,10 +658,7 @@ def openai_post(
         ProviderReconnectRequired: Admission, reviewed credentials, or the
             response redirect policy cannot be verified.
     """
-    active = _current.get()
-    if active is None or active[1] != _identity():
-        raise ProviderReconnectRequired()
-    operation = active[0]
+    operation = _active_openai_operation()
     key = kwargs.get("headers", {}).get("Authorization", "").removeprefix("Bearer ")
     operation.check_request(url, key)
     operation.own(session)

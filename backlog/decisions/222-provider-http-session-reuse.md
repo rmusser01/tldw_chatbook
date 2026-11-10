@@ -143,6 +143,16 @@ Excluded, with reasons:
 
 ## Context
 
+### 0.2.4 OpenAI streaming retirement
+
+The existing guarded operation alone owns the private streaming Session and each
+enrolled Response. Enroll the Session before request validation so a pre-POST
+refusal also retires it. On normal completion the operation closes the transports
+before the synthetic completion marker. On Stop the guarded iterator closes them
+without emitting that marker. A failed close keeps custody; retry does not close
+resources that already retired. The selected source stays held until the guarded
+operation itself retires. Standalone Responses translation keeps its own cleanup.
+
 ### 0.2.4 Qwen streaming retirement
 
 Qwen nonstreaming retains the shared transport and the existing retry and trust policy. A Qwen streaming invocation uses one private Session for its bounded attempts. The existing ordinary provider source operation owns that Session and each live Response before their cleanup can be deferred; the accepted stream inherits that same owner. The private response hook establishes custody before Requests handles redirects, then observes the actual close of a completed redirect hop. The private pool is necessary because an abort may race final reads or cleanup and must never touch another invocation's connection.
