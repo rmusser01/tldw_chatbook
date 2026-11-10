@@ -857,3 +857,47 @@ def test_detached_import_refuses_a_plugin_root_by_name(tmp_path):
         _layout().produce_detached_archive(
             source.absolute(), (tmp_path / "work").absolute(), Event()
         )
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_actor_pack_persona_images_are_validated_in_a_detached_source(
+    tmp_path, changed
+):
+    """TASK-39116 review r13b-rev1: actor_packs/ goes through its owner's
+    validated discovery, so a file whose recorded digest changed refuses rather
+    than being copied as a plain tree."""
+    import hashlib
+
+    source, root, _old = _base_profile(tmp_path)
+    data = b"actor pack persona frame"
+    runtime = f"actor_packs/{'a' * 64}/persona-runtime"
+    asset = root / runtime / "asset-0001.png"
+    asset.parent.mkdir(parents=True)
+    asset.write_bytes(b"changed" if changed else data)
+    with sqlite3.connect(root / "tldw_chatbook_ChaChaNotes.db") as connection:
+        connection.execute(
+            "INSERT INTO persona_visual_packs(id,title) VALUES (1,'Imported')"
+        )
+        connection.execute(
+            "INSERT INTO persona_visual_pack_versions(id,pack_id,version_number,renderer_type,manifest_version,manifest_json,manifest_sha256,storage_relpath) VALUES (1,1,1,'frames',1,'{}',?,?)",
+            ("0" * 64, f"{runtime}/manifest.json"),
+        )
+        connection.execute(
+            "INSERT INTO persona_visual_assets(pack_id,pack_version_id,asset_key,role,storage_relpath,mime_type,bytes,sha256,width,height) VALUES (1,1,'idle','frame',?,'image/png',?,?,4,5)",
+            (f"{runtime}/asset-0001.png", len(data), hashlib.sha256(data).hexdigest()),
+        )
+    produce = _layout().produce_detached_archive
+    if changed:
+        with pytest.raises(
+            ValueError, match="detached_owner_unavailable:persona.actor_packs"
+        ):
+            produce(source.absolute(), (tmp_path / "work").absolute(), Event())
+        return
+    result = produce(source.absolute(), (tmp_path / "work").absolute(), Event())
+    with zipfile.ZipFile(result.archive) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+    assert [
+        row["sha256"]
+        for row in manifest["files"]
+        if row["owner_id"] == "persona.actor_packs"
+    ] == [hashlib.sha256(data).hexdigest()]

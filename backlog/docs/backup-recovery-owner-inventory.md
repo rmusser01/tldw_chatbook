@@ -2983,6 +2983,14 @@ changes below add 99 producer rows and change or remove none:
   `file_os = _write_file_os()`, so its `os.link`, two `os.unlink`, `os.replace` and the
   Windows shim's `os.replace_open_target` are now counted. Both arms of a conditional
   expression count (`replace = file_os.replace_open_target if ... else file_os.replace`).
+  Also counted (review r13b-rev1): a method helper (`self._os()`), a helper that
+  returns another helper's call, a helper call used in place (`h().replace(a, b)`),
+  any spelling of the return (`return(os)`, a continued line), and annotated or
+  walrus bindings (`f: T = h()`, `(f := h())`, which also apply to the native
+  aliases). Not counted, a known limit of this lexical scan: a returned local alias
+  (`m = os; return m`), a helper imported from another module, `os` held in an
+  attribute or container (`self.os = os`), and an alias a nested function binds from
+  an outer alias assigned later in the source.
 - Linux `renameat2` is counted the way `renameatx_np` is: called directly, through a
   tuple alias, and through `getattr(libc, name)` where `name` is a string constant or
   a local name bound to string constants. New rows: `TTS/profile_migration_namespace._rename_noreplace`,
@@ -2991,8 +2999,9 @@ changes below add 99 producer rows and change or remove none:
 - pydub `export` is counted as `pydub.export`, but only in a module that imports
   pydub, so the Prompts, Evals, OPML, meetings and STTS-profile exporters of the same
   name stay out. An export whose target (first argument or `out_f=`) is a
-  `BytesIO(...)`, or a name bound to one in the same lexical scope, writes no file
-  and is not counted. Three modules import pydub (`TTS/audio_service`,
+  `BytesIO(...)`, or a name that the same function (not an enclosing one) binds
+  only to `BytesIO(...)`, writes no file and is not counted; a parameter, or a name
+  the function also binds to anything else, is a file target and is counted. Three modules import pydub (`TTS/audio_service`,
   `TTS/audio_stitch`, `TTS/audiobook_generator`) with seven `export` calls; the
   five BytesIO exports stay out, and the one new row is
   `AudioService.create_m4b_with_chapters` `pydub.export` 2: the temporary `.m4a`
@@ -3159,8 +3168,8 @@ The owner chose each package's cohort on 2026-11-10:
   2026-11-10 ("Approve all 11"); by its decision 1 the profile key travels as a
   credential record inside the encrypted archive, only when a backup includes
   credentials. The Personal Context rows and the two `personal_context.*` owners
-  above stay as they are until its implementation tasks (TASK-40133 to TASK-40138)
-  land.
+  above stay as they are until its implementation tasks (TASK-40133 to TASK-40136,
+  TASK-40138 and TASK-40139) land.
 
 ### `persona.actor_packs`
 
@@ -3173,14 +3182,14 @@ as owner `unknown`, and `persona.assets` reported the whole owner unsupported
 
 `Persona_Visual/recovery.py` now installs `persona.actor_packs`, a second `_Assets`
 tree owner rooted at `actor_packs/`. The two owners split the `persona_visual_assets`
-rows: a locator whose first component is `actor_packs` belongs to
-`persona.actor_packs`, every other row to `persona.assets` (so a stray locator still
-fails there). Each owner checks its rows' files, sizes and SHA-256 digests in
+rows: a locator that starts with `actor_packs/` belongs to `persona.actor_packs`,
+every other row to `persona.assets` (so a stray locator, including one that is
+exactly `actor_packs`, still fails there). Each owner checks its rows' files, sizes and SHA-256 digests in
 discovery, `validate_dependencies` and `validate_restore_dependencies`. The new owner
 is in the `conversations` group beside `persona.assets`, has the same 256 GiB raw-file
-limit, is a ChaChaNotes core dependency when such rows exist (the core check splits
-the row query the same way), and the detached layout discovers it through its own
-validator. The shared-visual half of an activation lives under
+limit, is a ChaChaNotes core dependency when such rows exist (the core's two queries
+test `substr(storage_relpath,1,12) = 'actor_packs/'`, the same prefix), and the
+detached layout discovers it through its own validator. The shared-visual half of an activation lives under
 `visual_identities/actor_packs/` and was already captured by
 `persona.visual_identity`.
 
@@ -3192,7 +3201,9 @@ have (neither is `persona.visual_identity`), and it has no recovery-review label
 its own ("Other saved data").
 
 The Actor_Packs rows: activation producers are `qualified` under the owner they write
-into; import staging rows take the installed `actor_packs.import_staging` owner,
+into; import staging rows, and `_preflight_space` (which checks free space on the
+staging root and, before activation, on the profile data root), take the installed
+`actor_packs.import_staging` owner,
 which reports staged packs `unsupported` and an empty root unused; reads of the
 user's selected archive are `external_input` / `external`; publication into the
 user-confirmed export destination is `external_input` /
@@ -3492,7 +3503,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Actor_Packs/importer.py | _extract_member | mkdir | 1 | unsupported | actor_packs.import_staging |
 | tldw_chatbook/Actor_Packs/importer.py | _extract_member | open | 2 | unsupported | actor_packs.import_staging |
 | tldw_chatbook/Actor_Packs/importer.py | _pin_source | open | 1 | external_input | external |
-| tldw_chatbook/Actor_Packs/importer.py | _preflight_space | secure_private_directory | 1 | qualified | persona.actor_packs / persona.visual_identity; Actor Pack activation publication, no participant token |
+| tldw_chatbook/Actor_Packs/importer.py | _preflight_space | secure_private_directory | 1 | unsupported | actor_packs.import_staging; creates the staging root, and before activation verifies the profile data root (free-space check) |
 | tldw_chatbook/Actor_Packs/importer.py | _read_candidate_authority | open | 2 | unsupported | actor_packs.import_staging |
 | tldw_chatbook/Actor_Packs/importer.py | _read_member | open | 1 | external_input | external |
 | tldw_chatbook/Actor_Packs/importer.py | _read_staged | open | 1 | unsupported | actor_packs.import_staging |

@@ -88,6 +88,9 @@ NATIVE_OS_CALLS = frozenset(
 # libc no-replace renames: macOS and Linux (renameat2: TASK-39115).
 NATIVE_LIBC_CALLS = frozenset({"renameatx_np", "renameat2"})
 
+# Statements and expressions that bind a name to a value (review r13b-rev1).
+BINDINGS = (ast.Assign, ast.AnnAssign, ast.NamedExpr)
+
 
 def census(source: str) -> Counter:
     result = Counter()
@@ -96,9 +99,11 @@ def census(source: str) -> Counter:
     imported_candidates = {}
     # Assignment aliases are lexical: keyed by the enclosing function node
     # (None = module), visible to that function and its nested ones. They resolve
-    # in source order (ponytail: an alias a nested function assigns from an outer
-    # alias bound later in the source is missed; iterate to a fixed point if that
-    # form appears).
+    # in source order. ponytail: not resolved, so these os helper forms are missed:
+    # an alias a nested function assigns from an outer alias bound later in the
+    # source, a returned local alias (`m = os; return m`), a helper imported from
+    # another module, and `os` held in an attribute or container (`self.os`).
+    # Iterate to a fixed point or add a binding pass if one of them appears.
     assigned_candidates = {}
     os_aliases = {}  # names bound to `os` by a helper call (TASK-39112)
     string_aliases = {}  # names bound to string constants, for getattr (TASK-39115)
@@ -110,21 +115,39 @@ def census(source: str) -> Counter:
         for alias in node.names
         if alias.name == "os"
     }
-    # A function that returns an os binding, as Tools' `_write_file_os()` does.
-    # The text check skips the per-function walk in modules with no such return.
+
+    def callee(call):
+        """A called function's or method's name: `h()` and `self.h()` are `h`."""
+        return getattr(call.func, "id", None) or getattr(call.func, "attr", None)
+
+    # A function that returns an os binding, as Tools' `_write_file_os()` does, or
+    # returns another helper's call (`return base()`, `return self._os()`). The
+    # text check skips the per-function walk in modules with no such return.
     returns_os = os_names and re.search(
-        r"\breturn\s+\(?\s*(?:%s)\b" % "|".join(map(re.escape, os_names)), source
+        r"\breturn\W*(?:%s)\b" % "|".join(map(re.escape, os_names)), source
     )
-    os_helpers = {
-        node.name
+    returned = {
+        node.name: [
+            child.value
+            for child in ast.walk(node)
+            if isinstance(child, ast.Return) and child.value is not None
+        ]
         for node in (ast.walk(tree) if returns_os else ())
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and any(
-            isinstance(child, ast.Return)
-            and getattr(child.value, "id", None) in os_names
-            for child in ast.walk(node)
-        )
     }
+    os_helpers = set()
+    while found := {
+        name
+        for name, values in returned.items()
+        if name not in os_helpers
+        and any(
+            getattr(value, "id", None) in os_names
+            or isinstance(value, ast.Call)
+            and callee(value) in os_helpers
+            for value in values
+        )
+    }:
+        os_helpers |= found
 
     # pydub writers (TASK-39111 AC#2): `.export` counts as `pydub.export` only in
     # a module that imports pydub, unless its target is a BytesIO (bound in scope
@@ -139,7 +162,9 @@ def census(source: str) -> Counter:
             else [node.module or ""]
         )
     )
-    buffers = {}  # names bound to BytesIO(...), per lexical scope
+    # name -> bound only to BytesIO(...) in that scope; read in the innermost
+    # scope only, so a parameter or a rebinding is a file target again.
+    buffers = {}
 
     def is_bytes_io(value):
         return isinstance(value, ast.Call) and "BytesIO" in (
@@ -189,6 +214,10 @@ def census(source: str) -> Counter:
         if value.attr in NATIVE_OS_CALLS and (
             base in os_names
             or base in {name for owner in owners for name in os_aliases.get(owner, ())}
+            # `_write_file_os().replace(...)`, a helper's call used in place.
+            or os_helpers
+            and isinstance(value.value, ast.Call)
+            and callee(value.value) in os_helpers
         ):
             return {f"os.{value.attr}"}
         return set()
@@ -210,33 +239,43 @@ def census(source: str) -> Counter:
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
                 collect_assignments(child, (*owners, child))
                 continue
-            if isinstance(child, ast.Assign):
-                for target in child.targets:
-                    # `fn, flags = libc.renameatx_np, 4` pairs element-wise.
-                    pairs = (
-                        zip(target.elts, child.value.elts)
-                        if isinstance(target, ast.Tuple)
-                        and isinstance(child.value, ast.Tuple)
-                        and len(target.elts) == len(child.value.elts)
-                        else ((target, child.value),)
-                    )
-                    for name, value in pairs:
-                        if not isinstance(name, ast.Name):
-                            continue
-                        if candidates := native_candidates(value, owners):
-                            assigned_candidates.setdefault(owners[-1], {}).setdefault(
-                                name.id, set()
-                            ).update(candidates)
-                        if strings := strings_for(value, owners):
-                            string_aliases.setdefault(owners[-1], {}).setdefault(
-                                name.id, set()
-                            ).update(strings)
-                        if isinstance(value, ast.Call) and (
-                            getattr(value.func, "id", None) in os_helpers
-                        ):
-                            os_aliases.setdefault(owners[-1], set()).add(name.id)
-                        if imports_pydub and is_bytes_io(value):
-                            buffers.setdefault(owners[-1], {})[name.id] = {"BytesIO"}
+            # `x = v`, `x: T = v` and `(x := v)` bind alike.
+            if isinstance(child, BINDINGS) and child.value:
+                bound = child.value
+                targets = (
+                    child.targets if isinstance(child, ast.Assign) else (child.target,)
+                )
+            else:
+                targets = ()
+            for target in targets:
+                # `fn, flags = libc.renameatx_np, 4` pairs element-wise.
+                pairs = (
+                    zip(target.elts, bound.elts, strict=True)
+                    if isinstance(target, ast.Tuple)
+                    and isinstance(bound, ast.Tuple)
+                    and len(target.elts) == len(bound.elts)
+                    else ((target, bound),)
+                )
+                for name, value in pairs:
+                    if not isinstance(name, ast.Name):
+                        continue
+                    if candidates := native_candidates(value, owners):
+                        assigned_candidates.setdefault(owners[-1], {}).setdefault(
+                            name.id, set()
+                        ).update(candidates)
+                    if strings := strings_for(value, owners):
+                        string_aliases.setdefault(owners[-1], {}).setdefault(
+                            name.id, set()
+                        ).update(strings)
+                    if (
+                        os_helpers
+                        and isinstance(value, ast.Call)
+                        and callee(value) in os_helpers
+                    ):
+                        os_aliases.setdefault(owners[-1], set()).add(name.id)
+                    if imports_pydub:
+                        scope = buffers.setdefault(owners[-1], {})
+                        scope[name.id] = scope.get(name.id, True) and is_bytes_io(value)
             collect_assignments(child, owners)
 
     collect_assignments(tree, (None,))
@@ -303,7 +342,7 @@ def census(source: str) -> Counter:
                 if not (
                     is_bytes_io(target)
                     or isinstance(target, ast.Name)
-                    and scoped(buffers, self.functions, target.id)
+                    and buffers.get(self.functions[-1], {}).get(target.id, False)
                 ):
                     result[(symbol, "pydub.export")] += 1
             # A producer passed by reference runs elsewhere, for example
@@ -368,14 +407,19 @@ def test_every_persistence_source_symbol_has_reviewed_owner_row():
     production = production_census()
     added = sorted(production.keys() - rows.keys())
     gone = sorted(rows.keys() - production.keys())
-    changed = sorted(k for k in production.keys() & rows.keys() if rows[k] != production[k])
+    changed = sorted(
+        k for k in production.keys() & rows.keys() if rows[k] != production[k]
+    )
     if added or gone or changed:
         # Raised, not asserted: pytest truncates assertion explanations, and the
         # reviewer needs every row (TASK-39053: a truncated diff hid 850 rows).
         listing = [
             f"Persistence producer census changed: {len(added)} added, {len(gone)} gone, "
             f"{len(changed)} changed. Review owner, resolver, cohort and exclusion.",
-            *(f"added   | {m} | {s} | {c} | {production[m, s, c]} |" for m, s, c in added),
+            *(
+                f"added   | {m} | {s} | {c} | {production[m, s, c]} |"
+                for m, s, c in added
+            ),
             *(f"gone    | {m} | {s} | {c} | {rows[m, s, c]} |" for m, s, c in gone),
             *(
                 f"changed | {m} | {s} | {c} | {rows[m, s, c]} -> {production[m, s, c]} |"
@@ -762,11 +806,61 @@ def unrelated(a):
     f.replace("a", "b")
 """
     result = census(source)
+    # Review r13b-rev1: the text prefilter must not need a space after `return`.
+    for spelling in ("return(os)", "return \\\n        os"):
+        alone = (
+            f"import os\ndef h():\n    {spelling}\n"
+            "def use(a):\n    f = h()\n    f.unlink(a)\n"
+        )
+        assert census(alone)[("use", "os.unlink")] == 1, spelling
     assert result[("publish", "os.replace")] == 2
     assert result[("publish", "os.link")] == 1
     assert result[("publish", "os.unlink")] == 1
     assert result[("publish", "os.replace_open_target")] == 1
     assert not any(symbol == "unrelated" for symbol, _ in result)
+
+
+def test_census_tracks_other_forms_of_an_os_helper():
+    # TASK-39112 review r13b-rev1: a method helper, a helper that returns another
+    # helper's call, a call used in place, and annotated or walrus bindings.
+    source = """
+import os
+
+class Store:
+    def _os(self):
+        return os
+
+    def publish(self, a, b):
+        f = self._os()
+        f.replace(a, b)
+
+def base():
+    return os
+
+def chained():
+    return base()
+
+def in_place(a, b):
+    base().replace(a, b)
+
+def via_chain(a):
+    f = chained()
+    f.unlink(a)
+
+def annotated(a, b):
+    f: object = base()
+    f.link(a, b)
+
+def walrus(a, b):
+    if (f := base()):
+        f.rename(a, b)
+"""
+    result = census(source)
+    assert result[("Store.publish", "os.replace")] == 1
+    assert result[("in_place", "os.replace")] == 1
+    assert result[("via_chain", "os.unlink")] == 1
+    assert result[("annotated", "os.link")] == 1
+    assert result[("walrus", "os.rename")] == 1
 
 
 def test_census_counts_linux_renameat2_like_renameatx_np():
@@ -817,9 +911,23 @@ def encode(segment):
     buffer = io.BytesIO()
     segment.export(buffer, format="wav")
     segment.export(io.BytesIO())
+
+shared = io.BytesIO()
+
+def to_parameter(segment, shared):
+    segment.export(shared)
+
+def rebound(segment, path):
+    out = io.BytesIO()
+    out = path
+    segment.export(out)
 """
     result = census(importing)
     assert result[("save", "pydub.export")] == 2
+    # Review r13b-rev1: only the innermost scope's binding hides an export, and a
+    # name rebound away from BytesIO is a file target again.
+    assert result[("to_parameter", "pydub.export")] == 1
+    assert result[("rebound", "pydub.export")] == 1
     assert not any(symbol == "encode" for symbol, _ in result)
     assert census("def save(exporter, path):\n    exporter.export(path)\n") == Counter()
 
@@ -832,6 +940,9 @@ def test_actor_pack_persona_images_preview_and_validate_with_persona_artwork(
     ``persona_visual_assets`` rows at them. They previewed as owner ``unknown``,
     and ``persona.assets`` refused those rows. Owner decision 2026-11-10: capture
     them with the persona artwork group."""
+    import sqlite3
+    from contextlib import closing
+
     from Tests.Persona_Visual.test_persona_visual_publication import _snapshot
     from tldw_chatbook.Backup_Recovery.data_groups import group_for_owner
     from tldw_chatbook.Backup_Recovery.inventory import discover
@@ -954,3 +1065,17 @@ def test_actor_pack_persona_images_preview_and_validate_with_persona_artwork(
     # The row's recorded digest is checked against the actor_packs/ file.
     asset.write_bytes(b"changed")
     assert preview()[1][asset].status == "unsupported"
+    # Review r13b-rev1: a locator that is exactly "actor_packs" is not under
+    # actor_packs/. persona.assets keeps it (and refuses it), as the core's
+    # dependency query does, so preview and capture agree.
+    with closing(sqlite3.connect(root / "tldw_chatbook_ChaChaNotes.db")) as raw:
+        with raw:
+            raw.execute(
+                "UPDATE persona_visual_assets SET storage_relpath='actor_packs'"
+            )
+    assert core_edges() == {"persona.assets"}
+    assert [
+        item.logical_id.rsplit(":", 1)[1]
+        for item in discover((config,)).items
+        if item.owner == "persona.assets" and item.path is None
+    ] == ["references_unavailable"]

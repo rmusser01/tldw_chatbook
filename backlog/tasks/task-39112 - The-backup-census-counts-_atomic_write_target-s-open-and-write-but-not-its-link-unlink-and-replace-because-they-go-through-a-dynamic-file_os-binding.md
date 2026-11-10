@@ -4,7 +4,7 @@ title: "The backup census counts _atomic_write_target's open and write but not i
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-07 02:03
-updated_date: 2026-11-10 18:23
+updated_date: 2026-11-10 21:08
 labels:
 - follow-up
 - backup
@@ -56,3 +56,8 @@ Counted, not accepted as a limit: the census in `Tests/Architecture/test_backup_
 - AC#3: no production file changed for this task; the change is in the test module and the doc.
 - Ceiling (marked `ponytail:` in the scanner): aliases resolve in source order, so a nested function that aliases an outer name bound later in the source is missed.
 - Files: `Tests/Architecture/test_backup_owner_inventory.py`, `backlog/docs/backup-recovery-owner-inventory.md`.
+
+**Review r13b-rev1 fixes (2026-11-10).**
+- M1: the os-helper text prefilter is now `\breturn\W*(?:<os names>)\b`, so `return(os)` and a backslash-continued return find their helper. Pinned in `test_census_tracks_os_returned_by_a_helper` with each spelling as the module's only return of `os`; it was red before the fix (`AssertionError: return(os)`, `assert 0 == 1`).
+- M2: also counted now: a method helper (`self._os()`), a helper that returns another helper's call (`return base()`), a helper call used in place (`h().replace(a, b)`), and annotated or walrus bindings (`f: T = h()`, `(f := h())`, which also apply to the native aliases). `test_census_tracks_other_forms_of_an_os_helper` was red (`assert 0 == 1`) and passes. Not handled, and listed in the scanner's `ponytail:` note and the doc's vocabulary section: a returned local alias (`m = os; return m`), a helper imported from another module, `os` held in an attribute or container, and a nested function's alias of an outer alias bound later in the source.
+- Cost: paired CPU time of `production_census()`, base and head alternating three times (load 38-52): base 29.6-31.6 s, head 31.9-33.4 s (about +5-8%). The first draft of these fixes measured head 33.3-34.2 s; the binding check now does one `isinstance` per node and skips the helper lookups when a module has no helper. Recompute: 0 added, 0 gone, 0 changed.

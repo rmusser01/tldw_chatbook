@@ -86,7 +86,8 @@ class _Assets(_Definition):
                     "SELECT storage_relpath,bytes,sha256 FROM persona_visual_assets"
                 ):
                     validate_recovery_relative_path(row[0])
-                    if (row[0].split("/", 1)[0] == "actor_packs") != (
+                    # Same test as the core's dependency query (recovery_core).
+                    if row[0].startswith("actor_packs/") != (
                         self.owner_id == "persona.actor_packs"
                     ):
                         continue

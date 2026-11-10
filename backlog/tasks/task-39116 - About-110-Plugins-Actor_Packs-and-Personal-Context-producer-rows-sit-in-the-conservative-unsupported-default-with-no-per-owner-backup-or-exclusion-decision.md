@@ -4,7 +4,7 @@ title: "About 110 Plugins, Actor_Packs and Personal Context producer rows sit in
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-07 02:03
-updated_date: 2026-11-10 19:02
+updated_date: 2026-11-10 21:08
 labels:
 - follow-up
 - backup
@@ -56,7 +56,7 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-1
 - Actor_Packs: "Capture (Recommended)". The option read: "Capture actor_packs/ with the persona asset group and fix the persona.assets validator so it accepts that folder (it currently fails on it). Small immutable images and JSON, no secrets." Implemented here.
 - Personal Context: the 2026-11-06 ruling "Capture it" stands (quoted in TASK-39148). Personal Context code and rows are unchanged.
 - Key material: decision 1 of TASK-39148's design answers the "whether Personal Context key material travels" clause. The profile key travels as a credential record inside the encrypted archive, only when a backup includes credentials (which already forces encryption). Owner approval 2026-11-10 (AskUserQuestion): "Approve all 11". Spec: `Docs/superpowers/specs/2026-11-10-personal-context-backup-key-custody-design.md` (branch fu/r13-pcdesign); task: TASK-39148.
-- The Personal Context doc rows stay as they are until the implementation tasks filed from TASK-39148 (TASK-40133 to TASK-40138) land.
+- The Personal Context doc rows stay as they are until the implementation tasks filed from TASK-39148 (TASK-40133 to TASK-40136, TASK-40138 and TASK-40139; TASK-40137 is the sync-state investigation) land. Those tasks, the spec and TASK-40132 live on fu/r13-pcdesign and fu/r13-plugins, which land before this branch.
 
 **Survey check.** Verified at ae9f9e8d21: `_prepare_persona_sections` (`Actor_Packs/activation.py` :505-560) publishes `asset-NNNN.<ext>` and `manifest.json` under `<user data>/actor_packs/<digest>/persona-runtime/` and stores `actor_packs/...` locators in `persona_visual_assets`; `_Assets` resolves persona.assets locators against `persona_visual/` (`_path`, and `relative_to(self.leaf)` in the restore check); the group table is `data_groups._GROUP_OWNERS["conversations"]` and the limit `storage_admission._RAW_RECOVERY_LIMITS`. Two more places needed the owner: the ChaChaNotes core's optional-dependency queries in `DB/recovery_core.py` (discovery and validation) and the detached layout's validated owner set.
 
@@ -69,3 +69,11 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-1
 **Limits recorded in the doc** (not fixed here): activation writes take no participant token; the owner is outside the later-rollback safety scope (as persona.visual_identity is); it has no recovery-review label ("Other saved data").
 
 Files: `tldw_chatbook/Persona_Visual/recovery.py`, `tldw_chatbook/DB/recovery_core.py`, `tldw_chatbook/Backup_Recovery/data_groups.py`, `tldw_chatbook/Backup_Recovery/storage_admission.py`, `tldw_chatbook/Backup_Recovery/detached_layout.py`, `Tests/Architecture/test_backup_owner_inventory.py`, `backlog/docs/backup-recovery-owner-inventory.md`.
+
+**Review r13b-rev1 fixes (2026-11-10).**
+- I1: `test_actor_pack_persona_images_are_validated_in_a_detached_source` (`Tests/Backup_Recovery/test_detached_layout.py`, intact and changed file) expects the changed actor_packs/ file to refuse with `detached_owner_unavailable:persona.actor_packs`. With `persona.actor_packs` removed from the detached layout's validated set, both cases failed with `ValueError: dependency_unavailable` (the folder then takes the generic tree path and the core's dependency edge refuses), so the set entry is now pinned.
+- M3: `_references` now gives a row to `persona.actor_packs` only when it `startswith("actor_packs/")`, the same prefix the core's two `substr(...,1,12) = 'actor_packs/'` queries test. The Architecture test now pins a row that is exactly `actor_packs`: the core depends on persona.assets only, and persona.assets reports it `references_unavailable`. That assertion was red before the fix (`assert [] == ['references_unavailable']`). The doc's split sentence now names the prefix.
+- M4: the `importer.py | _preflight_space` row is `unsupported` / `actor_packs.import_staging`, since it runs on the staging root (:348, creating it) and on the profile data root before activation (:540).
+- M5: the Personal Context implementation task ids are corrected to TASK-40133 to TASK-40136, TASK-40138 and TASK-40139 in the doc and these notes. The spec, those tasks and TASK-40132 are on fu/r13-pcdesign and fu/r13-plugins, which land before this branch.
+- Round trip: `test_actor_pack_persona_images_survive_capture_and_isolated_restore` (`Tests/Backup_Recovery/test_complete_roundtrip.py`) seeds actor_packs/ rows in a running app, previews (complete, both files `included` under `persona.actor_packs`), captures, writes the archive, acquires it, plans and runs an isolated restore, and reads the restored rows and files back: same digests, rows still under `actor_packs/`, source unchanged. With the `persona.actor_packs` adapter removed it failed in the capture child: `AssertionError: (('dependency_unavailable', 'unsupported', 'unsupported_owner'), [('unknown', '.../actor_packs', ...`. That file is in no PR lane (backup-recovery-qualification.yml is dispatch-only).
+- Covering set (21 Backup_Recovery files, `test_backup_data_groups.py` and the new round trip, `-n 4`, load 37-80): 641 passed, 3 skipped, 8 failed, 19 errors; the 27 red nodes are exactly the 27 red at base ae9f9e8d21.
