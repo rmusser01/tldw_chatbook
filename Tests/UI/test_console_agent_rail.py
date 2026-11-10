@@ -1918,7 +1918,7 @@ async def test_old_log_probe_cannot_settle_newer_pending_generation():
 async def test_modal_log_predicate_uses_turn_token_without_metadata_reads():
     import threading
 
-    from textual.widgets import TextArea
+    from textual.widgets import Button, TextArea
 
     from Tests.UI.test_console_run_log_paging import page, settled
 
@@ -1956,15 +1956,22 @@ async def test_modal_log_predicate_uses_turn_token_without_metadata_reads():
             pilot, lambda: isinstance(host.screen_stack[-1], ConsoleRunLogModal)
         )
         modal = host.screen_stack[-1]
-        await pilot.click("#console-run-log-next")
-        await settled(pilot, lambda: "SECOND" in modal.query_one(TextArea).text)
+        await _wait_for_selector(modal, pilot, "#console-run-log-next")
+        next_button = modal.query_one("#console-run-log-next", Button)
+        text = modal.query_one(TextArea)
+        assert not next_button.disabled and "FIRST" in text.text
+        center = (next_button.region.width // 2, next_button.region.height // 2)
+        assert await pilot.click(next_button, offset=center)
+        await settled(pilot, lambda: "SECOND" in text.text)
         assert len(metadata_reads) == 1
         assert len(page_reads) == 2 and all(
             thread != ui_thread for thread in page_reads
         )
         token[0] = "replacement-turn"
-        await pilot.click("#console-run-log-next")
+        assert not next_button.disabled
+        assert await pilot.click(next_button, offset=center)
         await pilot.pause()
+        assert "SECOND" in text.text
         assert len(metadata_reads) == 1
         assert len(page_reads) == 2
 
