@@ -310,12 +310,6 @@ def format_approval_reason(entry: Mapping[str, Any]) -> str:
 #: recovery-route error `validate_path_multi` raises at dispatch).
 _PATH_PRECHECK_SUFFIX = " -- path outside allowed folders; will fail even if approved"
 
-#: TASK-1845: needs-decision was a border + 10% tint with no text change, so
-#: the state vanished in monochrome. PRODUCT.md: "colour must never be the
-#: only carrier of meaning."
-NEEDS_DECISION_PREFIX = "needs decision · "
-
-
 def _coerce_timeout_total(timeout_seconds: float | None) -> int:
     """Return `timeout_seconds` as a whole-second count, or 0 when unarmed.
 
@@ -619,13 +613,8 @@ class ChatApprovalCard(Container):
         #: `DECISION_SCOPE_COPY` on every `Select.Changed`.
         self._batch_scope_statics: list[Static] = []
         #: task-32282: index-parallel to `_batch_rows` -- whether that row
-        #: is the reserved raw-shell row (`_is_raw_shell_row`), and the
-        #: header text it renders when NOT flagged needs-decision. A bulk
-        #: action that skips a raw-shell row restores this exact text
-        #: (never a `_format_row_header` re-render, so a row's ×N/badge
-        #: suffixes survive a mark/clear cycle unchanged).
+        #: is the reserved raw-shell row (`_is_raw_shell_row`).
         self._batch_is_raw_shell: list[bool] = []
-        self._batch_base_headers: list[str] = []
         #: The current batch's fast-approval buttons (task-1234 review
         #: round 1), if any -- membership-guards `on_button_pressed`
         #: against a stale press the same way `_on_batch_row_select_
@@ -1319,7 +1308,6 @@ class ChatApprovalCard(Container):
             self._batch_scope_statics = []
             self._batch_fast_buttons = []
             self._batch_is_raw_shell = []
-            self._batch_base_headers = []
             return
 
         self.display = True
@@ -1414,7 +1402,6 @@ class ChatApprovalCard(Container):
         scope_statics: list[Static] = []
         fast_buttons: list[Button] = []
         is_raw_shell: list[bool] = []
-        base_headers: list[str] = []
         for index, entry in enumerate(grouped):
             # The verdict key must match what the RUNTIME looks up, and it
             # looks up `call_id` first, then name. Emitting the name here
@@ -1447,7 +1434,6 @@ class ChatApprovalCard(Container):
                 if names[-1] in captured
                 else _format_row_header(entry)
             )
-            base_headers.append(base_header)
             is_raw_shell.append(_is_raw_shell_row(entry))
             header_static = Static(
                 base_header,
@@ -1649,7 +1635,6 @@ class ChatApprovalCard(Container):
             )
         self._batch_fast_buttons = fast_buttons
         self._batch_is_raw_shell = is_raw_shell
-        self._batch_base_headers = base_headers
 
         mounts = []
         if single_call:
@@ -1823,7 +1808,6 @@ class ChatApprovalCard(Container):
             context_widgets[0].update(
                 f"[dim italic]{CONTEXT_LABEL} {escape(context)}[/dim italic]"
             )
-        row.remove_class("needs-decision")
         for old_opener in row.query(".approval-details-open"):
             old_opener.remove()
         openers = self._new_details_opener(
@@ -1899,7 +1883,6 @@ class ChatApprovalCard(Container):
         # only calls it when `not _is_raw_shell_row(grouped[0])` -- so the
         # flag is always False here.
         self._batch_is_raw_shell = [False]
-        self._batch_base_headers = [base_header]
         self._defer_decisions(mounts)
         return True
 
@@ -2082,79 +2065,9 @@ class ChatApprovalCard(Container):
         if self._options_open and not self.has_class("approval-single"):
             self._sync_batch_apply(self.query_one("#approval-submit", Button))
 
-    def _mark_row_needs_decision(self, row: Vertical, base_header: str) -> None:
-        """Flag ``row`` as needing an explicit decision -- class AND text.
-
-        TASK-1845: colour is never the only carrier of state, so the
-        ``needs-decision`` CSS class (border/tint) is paired with a
-        ``NEEDS_DECISION_PREFIX`` on the header Static itself.
-        """
-        row.add_class("needs-decision")
-        try:
-            header = row.query_one(".approval-row-header", Static)
-        except NoMatches:
-            return
-        header.update(f"{NEEDS_DECISION_PREFIX}{base_header}")
-
-    def _clear_row_needs_decision(self, row: Vertical, base_header: str) -> None:
-        """Clear a needs-decision flag -- class AND text -- back to normal."""
-        row.remove_class("needs-decision")
-        try:
-            header = row.query_one(".approval-row-header", Static)
-        except NoMatches:
-            return
-        header.update(base_header)
-
-    def _set_all_batch_decisions(self, candidates: tuple[str, ...]) -> None:
-        """Bulk-set every row to the first of ``candidates`` that row legally offers.
-
-        A narrowed row (task-5's per-row ``options``) may not offer every
-        bulk target -- assigning a value outside a ``Select``'s own option
-        list raises Textual's ``InvalidSelectValueError``. ``candidates`` is
-        a preference order (e.g. "Approve all" prefers ``approve_once``,
-        falling back to ``approve_session`` -- both are approvals, so
-        falling back between them is honest); a row that legally offers
-        none of ``candidates`` is left on its current value rather than
-        crashing or silently doing nothing useful.
-
-        task-32282: the raw-shell row is a second, deliberate reason to
-        skip -- its options legally INCLUDE ``approve_once`` (it is a real
-        per-call choice), so the legality check alone would happily bulk-
-        approve it right along with every ordinary row, defeating its
-        Deny-by-default posture (`_default_decision_for_row`). "Approve
-        all" must never move it off Deny; only an explicit per-row choice
-        (or "Deny all", which the row already legally offers) may.
-
-        A row left untouched this way is otherwise visually identical to a
-        row nobody has looked at yet, so it gets `_mark_row_needs_decision`
-        -- a ``needs-decision`` class on its row container AND a text
-        prefix on its header (TASK-1845: colour is never the only carrier
-        of state). A row that DOES receive a bulk value has both cleared,
-        so a stale flag from an earlier bulk press (e.g. "Approve all"
-        skipped it, then "Deny all" successfully set it) never lingers.
-        """
-        for select, legal_values, row, is_raw_shell, base_header in zip(
-            self._batch_selects,
-            self._batch_legal_values,
-            self._batch_rows,
-            self._batch_is_raw_shell,
-            self._batch_base_headers,
-        ):
-            applied = False
-            if not (is_raw_shell and "approve_once" in candidates):
-                for candidate in candidates:
-                    if candidate in legal_values:
-                        select.value = candidate
-                        applied = True
-                        break
-            if applied:
-                self._clear_row_needs_decision(row, base_header)
-            else:
-                self._mark_row_needs_decision(row, base_header)
-
     @on(Select.Changed)
     def _on_batch_row_select_changed(self, event: Select.Changed) -> None:
-        """Track a row's chosen decision: scope line, ``needs-decision`` flag.
+        """Track a row's chosen decision: its draft stage and scope line.
 
         The only ``Select`` widgets under this card are the per-row batch
         decision selects, so no id/class scoping is needed on the
@@ -2174,15 +2087,6 @@ class ChatApprovalCard(Container):
             self._draft.stage(
                 self._batch_names[index], str(event.value), deliberate=False
             )
-        # task-32282: the user just made an explicit choice for this row --
-        # clear both the CSS flag and any needs-decision text prefix a
-        # bulk button left on its header.
-        if index < len(self._batch_base_headers):
-            self._clear_row_needs_decision(
-                self._batch_rows[index], self._batch_base_headers[index]
-            )
-        else:
-            self._batch_rows[index].remove_class("needs-decision")
         # task-32278 AC#2: the scope line describes the CURRENT choice.
         if index < len(self._batch_scope_statics):
             self._batch_scope_statics[index].update(

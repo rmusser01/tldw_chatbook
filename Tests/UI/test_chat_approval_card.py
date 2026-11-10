@@ -280,7 +280,7 @@ def test_grouped_rows_take_the_first_non_empty_rationale():
 # TASK-1845's "colour is never the only carrier of state" contract for a row
 # still needing a decision is exercised end to end in
 # ``test_console_mcp_approval.py`` (e.g.
-# ``test_approve_all_leaves_raw_shell_row_on_deny_and_flags_needs_decision``):
+# ``test_review_individually_keeps_raw_shell_row_on_deny_and_requires_its_choice``):
 # since #3036 (a2fcbe61bc) no bulk press partially applies, so that state is
 # the staged review's text hint and disabled Apply, not a row flag.
 # A unit test used to cover the same claim here via a `needs_decision` key

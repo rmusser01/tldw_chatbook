@@ -570,7 +570,8 @@ async def test_bulk_approve_and_deny_all_are_row_aware_and_never_raise():
     row must always land on a value it legally offers -- never an
     out-of-list value silently assigned to its own ``Select``.
 
-    Before this fix, ``_set_all_batch_decisions`` unconditionally assigned
+    Before this fix, ``_set_all_batch_decisions`` (deleted with the
+    needs-decision flag, TASK-40097) unconditionally assigned
     the bulk target to every row's ``Select.value``, which is safe only when
     every row carries all four options (true before task-5). Three rows
     here exercise every relevant shape:
@@ -665,25 +666,21 @@ def _row_options_excluding_every_bulk_candidate() -> list[str]:
     (``approve_once``/``approve_session``) nor "Deny all"'s ``deny`` --
     unreachable by either bulk button. Unlike today's only shipped narrowed
     shape (``approve_once``/``approve_session``/``deny``, which BOTH bulk
-    buttons can reach), a row narrowed to just this genuinely exercises the
-    skip path in ``_set_all_batch_decisions``."""
+    buttons can reach), a row narrowed to just this is one no bulk press can
+    decide, so `ChatApprovalCard._commit_bulk` must commit nothing."""
     return ["always_allow"]
 
 
 @pytest.mark.asyncio
-async def test_bulk_actions_flag_a_row_they_could_not_apply_to():
-    """Task 5: a row a bulk button could not touch must not look identical
-    to a row nobody has decided on yet -- it gets a `needs-decision` class
-    on its row container so the user notices it still needs an explicit
-    choice. Covers both bulk buttons and confirms an applied row (here,
-    the unnarrowed row) never carries the class.
+async def test_bulk_actions_commit_nothing_when_a_row_cannot_take_the_bulk_choice():
+    """A bulk press never decides only part of a batch.
 
-    TASK-40097: a2fcbe61bc (#3036) replaced the partial bulk with one
-    all-or-nothing commit (`ChatApprovalCard._commit_bulk`), so no bulk
-    press leaves one row decided and another not: with a row that offers
-    neither bulk target, "Allow all" opens the staged per-row choices for
-    that explicit decision and "Deny all" commits nothing. No row is
-    flagged, because no row was skipped."""
+    Task 5 first flagged a row a bulk button could not reach. Since
+    a2fcbe61bc (#3036, TASK-40097) each bulk button is one all-or-nothing
+    commit (`ChatApprovalCard._commit_bulk`): with a row that offers neither
+    bulk target, "Allow all" commits nothing and opens the staged per-row
+    choices for that row's explicit decision, "Deny all" commits nothing,
+    and both rows keep their values."""
     calls = _sample_calls()
     calls[0]["options"] = _row_options_excluding_every_bulk_candidate()
 
@@ -694,9 +691,7 @@ async def test_bulk_actions_flag_a_row_they_could_not_apply_to():
         await pilot.pause()
 
         rows = list(app.query(".approval-row"))
-        row_a, row_b = rows  # row A: narrowed & unreachable; row B: unnarrowed
-        assert not row_a.has_class("needs-decision")  # untouched card starts clean
-        assert not row_b.has_class("needs-decision")
+        assert len(rows) == 2  # row A: narrowed & unreachable; row B: unnarrowed
 
         await _until_actionable(card, pilot)
         select_a, select_b = card._batch_selects
@@ -713,20 +708,15 @@ async def test_bulk_actions_flag_a_row_they_could_not_apply_to():
         await pilot.pause()
         assert app.decided == []  # row A cannot take Deny: nothing commits
         assert (select_a.value, select_b.value) == ("always_allow", "approve_once")
-        assert not row_a.has_class("needs-decision")
-        assert not row_b.has_class("needs-decision")
 
 
 @pytest.mark.asyncio
 async def test_unrelated_select_changed_does_not_touch_batch_rows():
     """A `Select.Changed` from a `Select` that isn't one of this card's
     batch-row selects must be a no-op -- guards the membership check in
-    `_on_batch_row_select_changed` (it must not, say, clear every row's
-    flag on any incoming event).
-
-    TASK-40097: no bulk press flags a row since a2fcbe61bc (#3036), so the
-    guard is pinned by what the handler still owns: each row's scope line,
-    the count summary and the staged values."""
+    `_on_batch_row_select_changed`: each row's scope line, the count summary
+    and the staged values stay as they were (TASK-40097: what the handler
+    owns since a2fcbe61bc, #3036)."""
     calls = _sample_calls()
     calls[0]["options"] = _row_options_excluding_every_bulk_candidate()
 
@@ -782,20 +772,17 @@ async def test_approve_all_and_deny_all_bulk_set_every_row():
 
 
 @pytest.mark.asyncio
-async def test_approve_all_leaves_raw_shell_row_on_deny_and_flags_needs_decision():
-    """task-32282: "Approve all" must never move a raw-shell row off its
-    deliberate Deny default. The row's narrowed options legally include
-    ``approve_once`` (a real, explicit per-call choice), so the pre-fix
-    ``_set_all_batch_decisions`` -- which only checked legality, not row
-    identity -- bulk-set it right along with every ordinary MCP row. It
-    must be skipped, and the skip must be visible in TEXT (TASK-1845:
-    colour is never the only carrier of state), not just the CSS class.
+async def test_review_individually_keeps_raw_shell_row_on_deny_and_requires_its_choice():
+    """task-32282: a bulk press must never move a raw-shell row off its
+    deliberate Deny default, though its options legally include
+    ``approve_once``.
 
-    TASK-40097: since a2fcbe61bc (#3036) a batch holding a raw-shell row
+    Since a2fcbe61bc (#3036, TASK-40097) a batch holding a raw-shell row
     offers "Review individually" instead of a one-press Allow all. The press
     commits nothing and opens the staged choices with the raw-shell row still
-    on Deny; Apply stays disabled and the hint says, in text, that the shell
-    row still needs a deliberate choice.
+    on Deny; Apply stays disabled and the hint says, in text (TASK-1845:
+    colour is never the only carrier of state), that the shell row still
+    needs a deliberate choice.
     """
     calls = [_sample_calls()[0], _raw_shell_call("printf unsafe")]
 
@@ -828,15 +815,14 @@ async def test_approve_all_leaves_raw_shell_row_on_deny_and_flags_needs_decision
 
 
 @pytest.mark.asyncio
-async def test_changing_raw_shell_select_after_approve_all_clears_needs_decision_prefix():
-    """task-32282: once the user gives the flagged raw-shell row its own
-    explicit decision, both the CSS flag and the header text prefix must
-    clear.
+async def test_deliberate_raw_shell_choice_after_review_individually_enables_apply():
+    """task-32282: once the user gives the raw-shell row its own explicit
+    decision, the review requirement clears.
 
-    TASK-40097: since a2fcbe61bc (#3036) the review requirement lives on
-    Apply and the hint, not the row header: a deliberate overlay choice for
-    the shell row (`ApprovalChoice.Deliberate`, here keeping Deny) clears the
-    hint and enables Apply, which then submits each row's staged choice."""
+    Since a2fcbe61bc (#3036, TASK-40097) that requirement lives on Apply and
+    the hint, not the row header: a deliberate overlay choice for the shell
+    row (`ApprovalChoice.Deliberate`, here keeping Deny) clears the hint and
+    enables Apply, which then submits each row's staged choice."""
     calls = [_sample_calls()[0], _raw_shell_call("printf unsafe")]
 
     app = _CardHarnessApp()
@@ -871,14 +857,13 @@ async def test_changing_raw_shell_select_after_approve_all_clears_needs_decision
 
 
 @pytest.mark.asyncio
-async def test_deny_all_sets_raw_shell_row_to_deny_and_clears_needs_decision_prefix():
+async def test_deny_all_after_review_individually_denies_every_row_and_commits():
     """task-32282 (c): "Deny all" is legal for a raw-shell row (``deny`` is
-    always one of its options), so it must apply normally -- setting the
-    Select and clearing any stale needs-decision state left by an earlier
-    "Approve all" press.
+    always one of its options), so it applies normally.
 
-    TASK-40097: since a2fcbe61bc (#3036) "Deny all" also commits the round in
-    the same press, even from the staged review "Review individually" opened."""
+    Since a2fcbe61bc (#3036, TASK-40097) it sets every row to Deny and commits
+    the round in the same press, even from the staged review that "Review
+    individually" opened."""
     calls = [_sample_calls()[0], _raw_shell_call("printf unsafe")]
 
     app = _CardHarnessApp()
