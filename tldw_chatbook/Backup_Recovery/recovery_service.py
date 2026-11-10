@@ -154,10 +154,14 @@ _ISSUE_MESSAGES = {
     "backup_operation_failed": "Review the selected file and local folders, then try again. Open the detailed recovery evidence if the problem continues.",
     "plugin_writers_active": (
         "Plugins are in use, so their files are not copied. Chatbook keeps plugins "
-        "running from their first use until you quit: quit Chatbook, reopen it and "
-        "back up before opening Plugins. If this remains after reopening, a plugin "
-        "process from an earlier session is still recorded as running. Either way, "
-        "a partial backup without plugins is available now."
+        "running from their first use, in Plugins or in a Console chat that uses "
+        "one, until you quit: quit Chatbook, reopen it and back up before using "
+        "plugins. If this remains after reopening, an earlier session left a plugin "
+        "process recorded as running. To clear it, open Plugins and choose "
+        "Authority… to unlock plugin authority (or recover it if already unlocked); "
+        "if that session stopped unexpectedly, also review the plugin's reboot "
+        "reconciliation. Then quit and reopen Chatbook and back up before using "
+        "plugins. Either way, a partial backup without plugins is available now."
     ),
 }
 

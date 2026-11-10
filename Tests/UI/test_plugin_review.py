@@ -2429,3 +2429,37 @@ async def test_confirmed_explicit_test_survives_close_during_child_prune(
                 hold.release.set()
     finally:
         await runtime.close_hooks_v2()
+
+
+@pytest.mark.asyncio
+async def test_unlock_mismatch_shows_restore_copy_not_passphrase_advice():
+    """TASK-40132 M3: when unlock finds the marker's authority files missing (a
+    restored backup older than the plugin files here), the dialog shows the
+    truthful mismatch copy, not "passphrase incorrect"."""
+    from textual.app import App
+    from textual.widgets import Input, Static
+
+    from tldw_chatbook.Widgets.plugin_review_modal import PluginAuthorityDialog
+
+    class Service:
+        async def unlock(self, password):
+            raise FileNotFoundError("authority snapshot")
+
+    app = App()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app.push_screen(PluginAuthorityDialog(Service(), "unlock"))
+        await pilot.pause()
+        dialog = app.screen
+        field = dialog.query_one("#password-input", Input)
+        field.value = "a long enough passphrase"
+        dialog.query_one("#submit-button", Button).focus()
+        await pilot.press("enter")
+        for _ in range(100):
+            await pilot.pause(0.02)
+            if not dialog._submitting:
+                break
+        error = str(dialog.query_one("#error-message", Static).render())
+        assert app.screen is dialog and field.value == ""
+        assert "does not match the plugin files here" in error
+        assert "cannot recover these plugins yet" in error
+        assert "passphrase incorrect" not in error

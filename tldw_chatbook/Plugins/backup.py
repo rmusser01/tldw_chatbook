@@ -5,9 +5,11 @@ SQLite member, captured through the SQLite backup route (committed WAL frames
 fold in) and validated against the exact frozen catalog below. Every other file
 is raw bytes, including staging snapshots and ``acquisition-custody/``: plugin
 recovery re-verifies git-installed packages from them. Left out: the runtime
-owner's ``runtime.lock``, and inside each ``staging/<name>/`` the fetch-time host
-git/SSH configuration copies (they can hold credential helpers and SSH config),
-``repository.git`` and ``content/`` (owner decision D1, 2026-11-10).
+owner's ``runtime.lock``, and inside each ``staging/<name>/`` everything but
+``snapshot/`` (owner decision D1, 2026-11-10, as an allow-list): the fetch-time
+host git/SSH configuration copies (they can hold credential helpers and SSH
+config), ``repository.git``, ``content/`` and whatever a later fetch leaves there.
+Each is one excluded row whose contents are never listed.
 
 While a plugin process may be running, or a live runtime owner holds the lock,
 the preview shows one unavailable plugin root and the issue
@@ -71,17 +73,10 @@ REGISTRY_SCHEMAS = (
 )
 
 
-def _staging_excluded(root: Path, path: Path) -> bool:
-    """Fetch-time host configuration and git working copies beside a snapshot."""
-    parts = path.relative_to(root).parts
-    return (
-        len(parts) > 2
-        and parts[0] == "staging"
-        and (
-            parts[2] in {"host-git-config", "repository.git", "content"}
-            or parts[2].startswith("host-ssh-")
-        )
-    )
+def _staging_excluded(relative: str) -> bool:
+    """Whether a root-relative path is a fetch folder member other than snapshot/."""
+    parts = Path(relative).parts
+    return len(parts) > 2 and parts[0] == "staging" and parts[2] != "snapshot"
 
 
 @contextmanager
@@ -204,7 +199,10 @@ class _Plugins(_Definition):
                 for child in value:
                     yield from materialized(child)
 
-        root = item.path.parent
+        from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
+
+        # The registry names the root as the runtime owner resolves it (M8).
+        root = PluginRuntimeOwner(item.path.parent).root
         with open_recovery_validation(
             self.owner_id, candidate, writable=False
         ) as connection:
@@ -224,6 +222,9 @@ class _Plugins(_Definition):
     def relocate(self, candidate, mapping):
         raise ValueError("owner_relocation_unverified:" + self.owner_id)
 
+    def _tree(self, config, root, **kwargs):
+        return super()._tree(config, root, prune=_staging_excluded, **kwargs)
+
     def discover(self, config):
         context = discovery_context(config)
         root = self._definition_path(config)
@@ -235,10 +236,10 @@ class _Plugins(_Definition):
                 continue  # Declared as transient SQLite sidecars by inventory.
             if item.status == "included" and item.path == root / LOCK:
                 item = replace(item, status="intentionally_excluded")
-            elif item.status in {
-                "included",
-                "included_directory",
-            } and _staging_excluded(root, item.path):
+            elif root in item.path.parents and _staging_excluded(
+                item.path.relative_to(root).as_posix()
+            ):
+                # Whatever it is (even a link), it is never copied: never blocks.
                 item = replace(item, status="intentionally_excluded")
             elif item.status == "included" and item.path == journal:
                 # A stray rollback journal could undo a restored registry copy.
@@ -279,7 +280,7 @@ class _Plugins(_Definition):
 
     def capture(self, item: StorageItem, destination: Path, cancel: Event) -> None:
         root = _root_of(item)
-        if _staging_excluded(root, item.path):
+        if _staging_excluded(item.metadata.relative_path):
             raise ValueError("plugin_staging_member_excluded")
         with _runtime_lock(root, create=True):
             if self.restore_role(item) != "sqlite":

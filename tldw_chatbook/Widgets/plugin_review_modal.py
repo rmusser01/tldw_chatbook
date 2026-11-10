@@ -390,7 +390,11 @@ class PluginAuthorityDialog(PasswordDialog):
                 field.value = ""
 
     @on(Button.Pressed, "#submit-button")
-    async def on_submit(self):
+    async def on_submit(self, event=None):
+        if event is not None:
+            # PasswordDialog's own submit handler would run next and replace this
+            # dialog's error with "Password cannot be empty" (fields are cleared).
+            event.prevent_default()
         if self._submitting:
             return
         password = self.query_one("#password-input", Input).value
@@ -421,6 +425,7 @@ class PluginAuthorityDialog(PasswordDialog):
 
     @on(Input.Submitted)
     async def on_input_submitted(self, event):
+        event.prevent_default()  # the base handler would submit a second time
         if self.mode == "setup" and event.input.id == "password-input":
             self.query_one("#confirm-input", Input).focus()
         else:

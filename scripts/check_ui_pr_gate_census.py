@@ -977,6 +977,10 @@ MINIMUM_FILES = 2004
 # and the Plugins screen file's fifteen tests at the tail. The floor is the
 # measured entry count.
 MINIMUM_FILES = 2020
+# TASK-40132 review r13g-rev2 (2026-11-10): append the Plugins authority
+# dialog's restore-mismatch copy test at the tail. The floor is the measured
+# entry count.
+MINIMUM_FILES = 2021
 
 
 def read_census(path: Path) -> list[str]:

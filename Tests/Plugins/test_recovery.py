@@ -821,6 +821,7 @@ def _plugin_root(tmp_path, *, process_state=None, config=None):
     from contextlib import closing
 
     from tldw_chatbook.Plugins.registry import _schema_statements
+    from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
 
     config = config or tmp_path / "selected.toml"
     config.write_text(
@@ -838,6 +839,9 @@ def _plugin_root(tmp_path, *, process_state=None, config=None):
         "staging/op/host-ssh-config": b"Host x\n",
         "staging/op/repository.git/HEAD": b"ref: refs/heads/main\n",
         "staging/op/content/plugin.json": b'{"name": "git"}',
+        # I1: anything else in a fetch folder is excluded too, known or not.
+        "staging/op/host-git-config.lock": b"",
+        "staging/op/later-member/state": b"unknown",
         "acquisition-custody/op.json": b'{"phase": "terminal"}',
         "cache/index.json": b"{}",
         "runtime.lock": b"",
@@ -864,7 +868,8 @@ def _plugin_root(tmp_path, *, process_state=None, config=None):
         connection.execute(
             "INSERT INTO data_roots(root_id, installation_id, path, generation)"
             " VALUES ('root-1', 'inst', ?, 0)",
-            (str(root / "data" / "root-1"),),
+            # As the runtime owner names it: parent links resolved (M8).
+            (str(PluginRuntimeOwner(root).root / "data" / "root-1"),),
         )
         if process_state is not None:
             connection.execute(
@@ -898,9 +903,10 @@ def _plugin_rows(config, root):
 @platform_support.package_capture
 def test_backup_preview_captures_plugin_root_except_runtime_lock(tmp_path):
     """AC1/AC2: registry, packages, revisions, every data root, staging snapshots and
-    acquisition custody are captured; runtime.lock and the staged host git/SSH
-    configuration, repository.git and content/ are excluded (D1), and the
-    registry's live WAL/SHM stay transient SQLite sidecars."""
+    acquisition custody are captured; runtime.lock and every other member of a
+    fetch folder are excluded (D1 as an allow-list, I1), each as one row whose
+    contents are never listed, and the registry's live WAL/SHM stay transient
+    SQLite sidecars."""
     config, root = _plugin_root(tmp_path)
     registry = root / "registry.sqlite3"
     reader = sqlite3.connect(registry)  # keeps -wal/-shm present, as a live store does
@@ -917,17 +923,23 @@ def test_backup_preview_captures_plugin_root_except_runtime_lock(tmp_path):
     }
     assert statuses.get("runtime.lock") == ("plugins", "intentionally_excluded")
     del statuses["runtime.lock"]
-    # D1 (2026-11-10): fetch-time host configuration and git working copies stay out.
+    # D1 (2026-11-10), I1: inside staging/<name>/ only snapshot/ is captured;
+    # every other member is excluded at the directory level, unlisted inside.
     for relative in (
         "staging/op/host-git-config",
         "staging/op/host-ssh-input",
         "staging/op/host-ssh-config",
         "staging/op/repository.git",
-        "staging/op/repository.git/HEAD",
         "staging/op/content",
-        "staging/op/content/plugin.json",
+        "staging/op/host-git-config.lock",
+        "staging/op/later-member",
     ):
         assert statuses.pop(relative) == ("plugins", "intentionally_excluded"), relative
+    assert not [
+        relative
+        for relative in statuses
+        if relative.startswith("staging/op/") and relative.split("/")[2] != "snapshot"
+    ]
     assert statuses.pop("registry.sqlite3-wal") == (
         "sqlite.transient",
         "intentionally_excluded",
@@ -1101,6 +1113,9 @@ def test_restored_registry_must_name_its_own_plugin_root(tmp_path):
     bare = tmp_path / "bare-registry.sqlite3"
     shutil.copyfile(candidate, bare)
     bare.chmod(0o600)
+    from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
+
+    owned = PluginRuntimeOwner(root).root  # the root as the registry names it
     # Closed, so the WAL is checkpointed into the file the restore route reads.
     with closing(sqlite3.connect(bare)) as connection, connection:
         connection.execute("DELETE FROM data_roots")
@@ -1108,9 +1123,9 @@ def test_restored_registry_must_name_its_own_plugin_root(tmp_path):
             "INSERT INTO revisions VALUES ('inst', 'digest', ?)",
             (
                 '{"materialized_identity": "'
-                + str(root / "packages" / "inst")
+                + str(owned / "packages" / "inst")
                 + '", "acquisition_reference": {"materialized_identity": "'
-                + str(root / "staging" / "op" / "snapshot")
+                + str(owned / "staging" / "op" / "snapshot")
                 + '"}}',
             ),
         )
@@ -1139,6 +1154,97 @@ def test_restored_registry_must_name_its_own_plugin_root(tmp_path):
                     adapter.relocate_restore(item, candidate, {})
             else:
                 adapter.relocate_restore(item, candidate, {})
+
+@platform_support.package_capture
+def test_restored_registry_matches_its_root_through_a_symlinked_data_dir(tmp_path):
+    """M8: the registry names its root as the runtime owner resolves it, so a
+    restore onto the same root reached through a linked data folder is in place,
+    and another root still refuses."""
+    from tldw_chatbook.Backup_Recovery.models import FileMetadata, StorageItem
+    from tldw_chatbook.Backup_Recovery.storage_admission import _preview_reads
+    from tldw_chatbook.Plugins.backup import recovery_adapters
+
+    real = tmp_path / "real"
+    real.mkdir(mode=0o700)
+    _, root = _plugin_root(real)
+    link = tmp_path / "linked"
+    link.symlink_to(real, target_is_directory=True)
+    (adapter,) = recovery_adapters()
+    metadata = FileMetadata(
+        1, "profile:p:plugins", "registry.sqlite3", "profile:p:plugins",
+        "file", 0o600, 0, "private",
+    )
+    # The lexical destination, as the restore plan names it through the link.
+    for destination, refused in (
+        (link / root.relative_to(real), False),
+        (tmp_path / "elsewhere" / "plugins", True),
+    ):
+        item = StorageItem(
+            "plugins", "profile:p:plugins:registry", destination / "registry.sqlite3",
+            "included", (), metadata=metadata,
+        )
+        with _preview_reads():
+            if refused:
+                with pytest.raises(ValueError, match="owner_relocation_unverified:plugins"):
+                    adapter.relocate_restore(item, root / "registry.sqlite3", {})
+            else:
+                adapter.relocate_restore(item, root / "registry.sqlite3", {})
+
+
+@platform_support.package_capture
+@pytest.mark.parametrize("member", ["host-git-config", "later-member/state"])
+def test_capture_refuses_an_included_item_at_an_excluded_staging_path(
+    tmp_path, monkeypatch, member
+):
+    """M2: capture re-checks the staging allow-list, so an item claiming to be
+    included at an excluded fetch member is refused and never copied."""
+    from threading import Event
+
+    from Tests.Backup_Recovery.test_core_owners import application_authority
+    from tldw_chatbook.Plugins.backup import recovery_adapters
+
+    config, root = _plugin_root(tmp_path)
+    snapshot = _plugin_rows(config, root)[1][root / "staging/op/snapshot/plugin.json"]
+    assert snapshot.status == "included"
+    relative = "staging/op/" + member
+    item = replace(
+        snapshot,
+        path=root / relative,
+        metadata=replace(snapshot.metadata, relative_path=relative),
+    )
+    (adapter,) = recovery_adapters()
+    authority = application_authority(tmp_path, root, monkeypatch)
+    stage = tmp_path / "stage"
+    stage.mkdir(mode=0o700)
+    destination = stage / "member"
+    with (
+        authority.maintenance(("core", "bootstrap.unbound"), 1) as session,
+        session.capture_scope((item.path,), stage),
+    ):
+        with pytest.raises(ValueError, match="plugin_staging_member_excluded"):
+            adapter.capture(item, destination, Event())
+    assert not destination.exists()
+
+
+@platform_support.package_capture
+def test_excluded_staging_members_are_never_walked(tmp_path, monkeypatch):
+    """I1/M9: a local-source repository.git can hold tens of thousands of files.
+    An excluded member is one row whose contents are never listed, so they count
+    toward no entry limit and produce no preview rows."""
+    from tldw_chatbook.Backup_Recovery import file_inventory
+
+    config, root = _plugin_root(tmp_path)
+    objects = root / "staging/op/repository.git/objects"
+    objects.mkdir(mode=0o700)
+    for index in range(80):
+        (objects / f"{index:02x}").write_bytes(b"object")
+    # The plugin root itself holds about 35 entries; the planted tree alone is over.
+    monkeypatch.setattr(file_inventory, "MAX_ENTRIES", 60)
+    _, rows = _plugin_rows(config, root)
+    assert rows[root].status == "included_directory"
+    assert rows[root / "staging/op/repository.git"].status == "intentionally_excluded"
+    assert not [path for path in rows if path == objects or objects in path.parents]
+
 
 @platform_support.package_capture
 def test_capture_holds_the_runtime_lock_even_when_none_existed(tmp_path, monkeypatch):
@@ -1262,13 +1368,20 @@ def test_unlock_mismatch_copy_is_truthful_and_has_no_dead_end_step():
     )
 
 
-def test_live_writer_reason_sends_nobody_into_plugins():
-    """M4: opening Plugins takes the lock, so the reason must not suggest it."""
+def test_live_writer_reason_gives_the_way_out_of_a_stale_process_record():
+    """M4/M7: a live service clears by quitting; Console plugin use starts it too.
+    A process row left by an earlier session clears only through the plugin
+    runtime's recovery, so the copy gives those steps, ending in quit and reopen
+    (opening Plugins takes the lock again) before backing up."""
     from tldw_chatbook.Backup_Recovery.recovery_service import issue_message
 
     message = issue_message("plugin_writers_active")
     assert "quit Chatbook" in message and "partial backup" in message
-    assert "in Plugins" not in message
+    assert "Console" in message
+    steps = message[message.index("earlier session") :]
+    assert steps.index("open Plugins") < steps.index("Authority…") < steps.index(
+        "quit and reopen Chatbook"
+    ) < steps.index("back up")
 
 
 _HELD_LOCK_SETUP = r"""
