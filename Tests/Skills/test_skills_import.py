@@ -638,6 +638,7 @@ async def test_local_candidate_rejects_post_inspection_swap(tmp_path, swap_kind)
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_mounted_library_multi_skill_choice_imports_one_to_trust_review(tmp_path):
     source = tmp_path / "repository"
     for name in ("alpha", "zeta"):
@@ -700,6 +701,7 @@ async def test_mounted_library_multi_skill_choice_imports_one_to_trust_review(tm
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_candidate_modal_replays_when_inspection_finishes_while_away(
     tmp_path, monkeypatch
 ):
@@ -753,6 +755,7 @@ async def test_candidate_modal_replays_when_inspection_finishes_while_away(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_replacement_library_hydrates_pending_candidate_modal(tmp_path):
     _local, service = _real_skills_scope_service_with_trust(tmp_path / "store")
     app = _build_test_app(configured_default="library")
@@ -1207,6 +1210,7 @@ async def test_coordinator_repeated_outer_cancellation_waits_for_one_outcome(
         ("url", "button", "remote-skill"),
     ),
 )
+@pytest.mark.bootstrap_profile
 async def test_skill_import_is_single_flight_across_every_route_and_navigation(
     tmp_path, monkeypatch, route, second_trigger, expected_name
 ):
@@ -1342,6 +1346,7 @@ async def test_skill_import_is_single_flight_across_every_route_and_navigation(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_routed_library_replacement_observes_and_refuses_app_owned_import(
     tmp_path, monkeypatch
 ):
@@ -1434,6 +1439,7 @@ async def test_routed_library_replacement_observes_and_refuses_app_owned_import(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_completed_import_receipt_survives_rail_departure_and_return(tmp_path):
     """A completed receipt remains visible after ordinary Library navigation."""
     source = tmp_path / "completed-skill.md"
@@ -1474,6 +1480,7 @@ async def test_completed_import_receipt_survives_rail_departure_and_return(tmp_p
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_import_completed_while_away_survives_another_rail_move(
     tmp_path, monkeypatch
 ):
@@ -1540,6 +1547,7 @@ async def test_import_completed_while_away_survives_another_rail_move(
         LibraryScreen.handle_library_skills_import_browse_folder,
     ),
 )
+@pytest.mark.bootstrap_profile
 async def test_abandoned_picker_cannot_write_into_reopened_import_row(
     tmp_path, monkeypatch, browse_handler
 ):
@@ -1585,6 +1593,7 @@ async def test_abandoned_picker_cannot_write_into_reopened_import_row(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_import_real_superpowers_skills_lands_trust_pending(tmp_path):
     """Import every real superpowers fixture skill through the actual
     Library Import row (rail row -> Import… -> path -> Import), then
@@ -1629,6 +1638,7 @@ async def test_import_real_superpowers_skills_lands_trust_pending(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_import_skill_via_skill_md_file_path_derives_name_from_parent_directory(
     tmp_path,
 ):
@@ -1706,6 +1716,7 @@ async def test_import_skill_via_skill_md_file_path_derives_name_from_parent_dire
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_loose_file_import_success_line_names_the_service_derived_skill(tmp_path):
     """task-291 review: the loose-file branch imports via
     ``import_skill_file`` with NO explicit name, so the service derives it
@@ -1736,6 +1747,7 @@ async def test_loose_file_import_success_line_names_the_service_derived_skill(tm
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_import_skill_with_supporting_reference_file_threads_it_through(tmp_path):
     """``requesting-code-review`` has one real flat sibling file
     (``code-reviewer.md``) alongside its ``SKILL.md`` -- importing it by
@@ -1769,6 +1781,7 @@ async def test_import_skill_with_supporting_reference_file_threads_it_through(tm
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_import_skill_with_extra_frontmatter_fields_applies_recognized_and_drops_unknown(
     tmp_path,
 ):
@@ -1830,6 +1843,7 @@ async def test_import_skill_with_extra_frontmatter_fields_applies_recognized_and
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_reimporting_the_same_skill_name_is_skipped_not_duplicated(tmp_path):
     """Importing the same real skill twice must skip the second attempt
     (never silently overwrite, matching the prompts import's own
@@ -1864,6 +1878,7 @@ async def test_reimporting_the_same_skill_name_is_skipped_not_duplicated(tmp_pat
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_import_row_reports_missing_skill_md_and_unknown_path_gracefully(
     tmp_path,
 ):
@@ -1903,6 +1918,7 @@ async def test_import_row_reports_missing_skill_md_and_unknown_path_gracefully(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_import_row_rejects_name_too_long_without_partial_state(tmp_path):
     """A skill whose DIRECTORY name exceeds the 64-character
     ``skills_schemas`` limit must fail cleanly (a real incompatibility a
@@ -1940,6 +1956,7 @@ async def test_import_row_rejects_name_too_long_without_partial_state(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_import_row_rejects_oversized_content_without_partial_state(tmp_path):
     """A ``SKILL.md`` whose content exceeds ``skills_schemas``'s 500,000
     character limit must fail cleanly rather than crash or silently
@@ -1974,6 +1991,7 @@ async def test_import_row_rejects_oversized_content_without_partial_state(tmp_pa
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_import_row_imports_nested_reference_subfolder(
     tmp_path,
 ):
@@ -2035,6 +2053,7 @@ async def test_import_row_imports_nested_reference_subfolder(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_import_row_url_routes_to_remote_install_and_primes_review(
     tmp_path, monkeypatch
 ):
@@ -2103,6 +2122,7 @@ async def test_import_row_url_routes_to_remote_install_and_primes_review(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_import_row_url_remote_skill_error_becomes_status_line(
     tmp_path, monkeypatch
 ):
@@ -2143,6 +2163,7 @@ async def test_import_row_url_remote_skill_error_becomes_status_line(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_import_row_url_generic_failure_uses_classified_name_guess(
     tmp_path, monkeypatch
 ):
