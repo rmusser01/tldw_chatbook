@@ -299,10 +299,8 @@ def repository_types():
     from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
     from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
     from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
-    from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
 
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
     from tldw_chatbook.Notifications.client_notifications_db import (
         ClientNotificationsDB,
     )
@@ -317,6 +315,12 @@ def repository_types():
     # optional runtime stacks just to compare an unrelated source's exact type.
     optional = {}
     for module_name, class_name, owner_id in (
+        ("tldw_chatbook.DB.AgentRuns_DB", "AgentRunsDB", "db.agent_runs"),
+        (
+            "tldw_chatbook.DB.Library_Ingest_Jobs_DB",
+            "LibraryIngestJobsDB",
+            "db.library_ingest_jobs",
+        ),
         ("tldw_chatbook.Backup_Recovery.recovered_media", "RecoveredMedia", "recovered.media"),
         ("tldw_chatbook.DB.Workspace_Project_Index_DB", "WorkspaceProjectIndexDB", "db.workspace_project_index"),
         ("tldw_chatbook.DB.Evals_DB", "EvalsDB", "db.evals"),
@@ -351,7 +355,6 @@ def repository_types():
     return {
         **optional,
         WorkspaceDB: "db.workspaces",
-        AgentRunsDB: "db.agent_runs",
         ClientNotificationsDB: "notifications.client",
         ScheduledTasksDB: "db.scheduled_tasks",
         LocalResearchService: "research.local",
@@ -360,7 +363,6 @@ def repository_types():
         MediaDatabase: "db.media.primary",
         PromptsDatabase: "db.prompts.primary",
         LibraryCollectionsDB: "db.library_collections",
-        LibraryIngestJobsDB: "db.library_ingest_jobs",
         EventStateRepository: "runtime.event_state",
         SyncStateRepository: "runtime.sync_state",
     }
