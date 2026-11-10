@@ -78,6 +78,17 @@
     min-width: $ds-size-36;
 }
 
+/* TASK-39134, owner decision 2026-11-06 ("Inspector waits for room"): from
+   101 columns until the floor above applies, the detail pane holds 64 cells
+   (SETTINGS_DETAIL_HOLD_WIDTH, settings_screen.py). Before the inspector
+   fits beside it the spare columns stay empty; after, the inspector takes
+   them, so widening the terminal never narrows this pane. A width, not a
+   max-width: the 6fr share is 63.75 at 127 columns and would round down.
+   The workbench id outranks the compact pane rule's width. */
+#settings-workbench #settings-detail-pane.settings-detail-holds {
+    width: $ds-size-64;
+}
+
 /* TASK-31665 AC#15: visible thumb -- see the first of these rules. */
 #settings-detail-pane-body,
 #settings-impact-pane-body {
@@ -105,11 +116,12 @@
 }
 
 /* Narrow-width compact workbench (task-1342), following the personas
-   precedent (personas-workbench-compact): at <=100 cols the 3:6:2 split
-   leaves slivers, so the category pane becomes a fixed-width sidebar, the
-   inspector pane and its divider drop out, and the detail pane takes the
-   rest. The search help/status rows hide so category rows stay visible at
-   24-row heights. */
+   precedent (personas-workbench-compact): below 127 cols the 3:6:2 split
+   leaves slivers, so the category pane becomes a fixed-width sidebar and the
+   inspector pane and its divider drop out. The detail pane takes the rest up
+   to 100 cols and holds 64 cells from 101 (TASK-39134,
+   .settings-detail-holds). The search help/status rows hide so category rows
+   stay visible at 24-row heights. */
 #settings-workbench.settings-workbench-compact {
     padding: $ds-space-0;
 }

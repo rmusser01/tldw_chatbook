@@ -578,7 +578,19 @@ _BUDGETS: dict[str, int] = {
     # _INSPECTOR_GUIDANCE entry it shipped without (+14).
     # 2026-11-06, TASK-38964: 35,669 -> 35,654; the koboldcpp route refusal
     # wrapper is gone, the save reads Provider_Contract's rule directly.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35728,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver)
+    # 2026-11-07, TASK-39133 (owner waiver): +10, the llama.cpp default
+    # handoff consumer is scheduled and claims its own channel. TASK-39135
+    # (owner waiver): +21, real input withdraws a switch's pending focus.
+    # TASK-39134 (owner waiver): +19, the detail pane holds its width
+    # until the Scope Inspector has room.
+    # 2026-11-07, review r12s-rev1 (owner waiver): +8, the swap checks focus
+    # state instead of input events (TASK-39135) and the llama.cpp recovery
+    # copy is composed from one helper (TASK-39133).
+    # 2026-11-07, review r12s-rev2 (owner waiver): +28, the landing is also
+    # checked after the rebuild, and moves into the rebuilt panes do not count.
+    # 2026-11-07, review r12s-rev3 (owner waiver): +38, a focus that was in
+    # the old panes keeps the landing; new detail-pane focus counts as a move.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35852,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver)
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -830,7 +842,17 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-07: the DB singletons, lazy getters, initialize_all_databases
     # and its lazy-init log are gone (TASK-36947.6, -141); measured after the
     # 2026-11-08 rebase onto dev: 8983 -> 8842.
-    "tldw_chatbook/config.py": 8842,
+    # 2026-11-07, TASK-38987 (owner waiver): 8983 -> 8989; config writes
+    # run inside the shared switch-interval scope.
+    # 2026-11-07, TASK-38987 (owner waiver): 8983 -> 8990; config writes
+    # run inside the shared switch-interval scope, lifted while waiting on
+    # another process's lock (review r12s-rev1 M4).
+    # 2026-11-09, round-12 restack onto dev 3a6498ae14 (owner size waiver):
+    # dev's 8,983 plus TASK-38987's +20 (the write's scope, the lock wait's
+    # release and the interval constant, with their comments).
+    # 2026-11-10, restack onto dev e78b62f0e7 (owner size waiver): dev's 8,842
+    # plus TASK-38987's +20; exact measurement.
+    "tldw_chatbook/config.py": 8862,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):

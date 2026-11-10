@@ -1,7 +1,7 @@
 {
   "_comment": "Screen pre-importer payload census. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
   "pass_added_modules": 556,
-  "pass_added_loc": 426575,
+  "pass_added_loc": 427617,
   "routes": {
     "acp": {
       "loc": 535,
@@ -11,7 +11,7 @@
       ]
     },
     "ccp": {
-      "loc": 59881,
+      "loc": 61090,
       "modules": [
         "tldw_chatbook.Backup_Recovery.persona_visual_participants",
         "tldw_chatbook.Character_Chat.Character_Chat_Lib",
@@ -19,6 +19,7 @@
         "tldw_chatbook.Character_Chat.character_events",
         "tldw_chatbook.Character_Chat.character_generation",
         "tldw_chatbook.Character_Chat.expression_generation",
+        "tldw_chatbook.Character_Chat.local_chat_dictionary_service",
         "tldw_chatbook.Character_Chat.persona_list_paging",
         "tldw_chatbook.Character_Chat.world_book_import",
         "tldw_chatbook.Media_Creation",
@@ -89,7 +90,7 @@
       "modules": []
     },
     "chatbooks": {
-      "loc": 985,
+      "loc": 981,
       "modules": [
         "tldw_chatbook.Chatbooks.database_paths",
         "tldw_chatbook.UI.Chatbooks_Window_Improved",
@@ -373,7 +374,7 @@
       ]
     },
     "llm": {
-      "loc": 23775,
+      "loc": 23777,
       "modules": [
         "tldw_chatbook.Event_Handlers.LLM_Management_Events",
         "tldw_chatbook.Event_Handlers.LLM_Management_Events.gguf_source_modes",
@@ -465,7 +466,7 @@
       ]
     },
     "schedules": {
-      "loc": 15113,
+      "loc": 15097,
       "modules": [
         "tldw_chatbook.Scheduling.automation_health",
         "tldw_chatbook.Scheduling.events",
@@ -489,11 +490,10 @@
       ]
     },
     "settings": {
-      "loc": 78704,
+      "loc": 78526,
       "modules": [
         "tldw_chatbook.Audio.voice_process_types",
         "tldw_chatbook.Backup_Recovery.rag_definition_participant",
-        "tldw_chatbook.Canvas.config_policy",
         "tldw_chatbook.Chat.console_voice_settings",
         "tldw_chatbook.Internal_Prompts.authoring",
         "tldw_chatbook.MCP.hub_test_execution",
@@ -556,7 +556,7 @@
       ]
     },
     "stts": {
-      "loc": 21303,
+      "loc": 21282,
       "modules": [
         "tldw_chatbook.Audio.dictation_service_lazy",
         "tldw_chatbook.Audio.duplex_contracts",
@@ -602,7 +602,7 @@
       ]
     },
     "watchlists_collections": {
-      "loc": 34192,
+      "loc": 34242,
       "modules": [
         "tldw_chatbook.Subscriptions.briefing_audio",
         "tldw_chatbook.Subscriptions.briefing_export",

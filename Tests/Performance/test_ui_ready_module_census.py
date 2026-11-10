@@ -180,7 +180,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: `PruneSafeSelect`, resident at ready. Measured 1037 alone; the bootbudget
 #: step measured 1038 when `DB.character_conversation_search` also loaded
 #: before ready (the +/-1 wobble). Limit = measured + 1, as above.
-MAX_TLDW_MODULES_AT_UI_READY = 1038
+#: 1038 -> 1039 (2026-11-07, TASK-38987; owner size waiver): the shared
+#: switch-interval owner `Utils.switch_interval` (ref-counted scopes for config
+#: writes and Console preparation reads) is imported on first use, and a read
+#: or write runs before ready. It is kept off the app-import path (687/688).
+#: Limit = the 1038 measured + the documented +/-1 wobble, as above.
+MAX_TLDW_MODULES_AT_UI_READY = 1039
 
 #: Families that must not be resident anywhere in the first-paint window.
 #: The two package prefixes are TASK-21731's; the exact module names are the

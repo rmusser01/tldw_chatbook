@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import os
-import sys
 import threading
 from collections.abc import Callable, Coroutine
-from contextlib import contextmanager
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field
 from typing import Any
@@ -31,31 +29,17 @@ class ConsolePreparationRead:
 _READS_LOCK = threading.RLock()
 
 _READ_HANDOFF_LIMIT = 0.001
-_read_handoff_users = 0
-_read_handoff_intervals: tuple[float, float] | None = None
 
 
-@contextmanager
 def _preparation_handoffs():
-    """Limit GIL convoys only while original finite callback bodies run."""
-    global _read_handoff_users, _read_handoff_intervals
-    with _READS_LOCK:
-        if _read_handoff_users == 0:
-            previous = sys.getswitchinterval()
-            if previous > _READ_HANDOFF_LIMIT:
-                sys.setswitchinterval(_READ_HANDOFF_LIMIT)
-                _read_handoff_intervals = previous, sys.getswitchinterval()
-        _read_handoff_users += 1
-    try:
-        yield
-    finally:
-        with _READS_LOCK:
-            _read_handoff_users -= 1
-            if _read_handoff_users == 0 and _read_handoff_intervals is not None:
-                previous, installed = _read_handoff_intervals
-                _read_handoff_intervals = None
-                if sys.getswitchinterval() == installed:
-                    sys.setswitchinterval(previous)
+    """Limit GIL convoys only while original finite callback bodies run.
+
+    TASK-38987: the shared owner, so a config write overlapping a read
+    cannot leave the interval lowered. Imported on first use (boot budget).
+    """
+    from tldw_chatbook.Utils.switch_interval import switch_interval_at_most
+
+    return switch_interval_at_most(_READ_HANDOFF_LIMIT)
 
 
 def _observe_locked(read, observer):

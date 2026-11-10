@@ -914,6 +914,20 @@ MINIMUM_FILES = 1832
 # TASK-38948 (2026-11-07): append the two 100 ms Send-feedback route nodes
 # at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1834
+# TASK-39133 / TASK-39135 / TASK-39134 (2026-11-07): append the llama.cpp
+# Settings handoff nodes (9), the moved-focus swap nodes (3) and the detail
+# width sweep (1) at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1847
+# TASK-39135 review r12s-rev1 (2026-11-07): append the PageDown case of the
+# moved-focus swap test at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1848
+# TASK-39135 review r12s-rev2 (2026-11-07): append the mid-rebuild move and
+# the Tab-into-the-rebuilt-panes nodes at the tail. The floor is the measured
+# entry count.
+MINIMUM_FILES = 1850
+# TASK-39135 review r12s-rev3 (2026-11-07): append the focus-reset and the
+# new-pane control nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1852
 
 
 def read_census(path: Path) -> list[str]:

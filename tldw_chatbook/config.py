@@ -4550,7 +4550,14 @@ def _bind_config_interprocess_lock(definition):
                         locked = True
                         break
                     except portalocker.exceptions.AlreadyLocked:
-                        _threading.Event().wait(0.05)
+                        # TASK-38987: never wait on another process at a write's
+                        # short switch interval.
+                        from tldw_chatbook.Utils.switch_interval import (
+                            switch_interval_released,
+                        )
+
+                        with switch_interval_released():
+                            _threading.Event().wait(0.05)
                 _config_participants.check_lock_wait(sys.modules[__name__], operation)
                 yield
             finally:
@@ -6129,6 +6136,12 @@ def _apply_literal_mutation_unlocked(
     return set_any or deleted_any
 
 
+#: TASK-38987: a write makes ~10,000 GIL-releasing syscalls (storage admission
+#: and private-path checks), and beside a thread running Python each one waited
+#: out that thread's 5 ms switch interval (a 0.09 s save took 5.7-6.4 s).
+_CONFIG_WRITE_SWITCH_INTERVAL = 0.0001
+
+
 def _apply_literal_settings_transaction_locked(
     mutation_builder: Callable[
         [AtomicLiteralMutationSnapshot], LiteralSettingsMutation
@@ -6165,6 +6178,13 @@ def _apply_literal_settings_transaction_locked(
         return LiteralConfigMutationResult(False, False, None, "before_replace")
 
     with ExitStack() as locks:
+        # TASK-38987: the whole write, its lock's admission checks included,
+        # runs at a short switch interval; the wait for another process's
+        # lock lifts it (_config_interprocess_lock). Imported here: no config
+        # write runs at boot.
+        from tldw_chatbook.Utils.switch_interval import switch_interval_at_most
+
+        locks.enter_context(switch_interval_at_most(_CONFIG_WRITE_SWITCH_INTERVAL))
         try:
             locks.enter_context(_config_write_lock(config_path))
         except Exception as error:

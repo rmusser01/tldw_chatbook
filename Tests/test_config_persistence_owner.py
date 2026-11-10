@@ -343,3 +343,242 @@ def test_production_config_persistence_has_one_owner_and_no_mutable_imports():
     assert "persist_cli_config_for_shutdown" in app_source
     assert "load_cli_config_and_ensure_existence" in app_source
     assert inspect.isfunction(config.replace_cli_config_serialized)
+
+
+# TASK-38987: a config write makes ~10,000 GIL-releasing syscalls (storage
+# admission and private-path checks). Beside a thread running Python, each one
+# waited out that thread's 5 ms switch interval, so a 0.09 s save took 5.7-6.4 s.
+# Writes now run with a short interval, restored however they end.
+_SHORT_INTERVAL = 0.001
+
+
+@pytest.fixture
+def default_interval():
+    previous = sys.getswitchinterval()
+    sys.setswitchinterval(0.005)
+    try:
+        yield sys.getswitchinterval()
+    finally:
+        sys.setswitchinterval(previous)
+
+
+def _fresh_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    target = tmp_path / "override" / "config.toml"
+    target.parent.mkdir(mode=0o700)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    module = install_config_source(monkeypatch)
+    monkeypatch.setattr(sys.modules[__name__], "config", module)
+    module.load_cli_config_and_ensure_existence(force_reload=True)
+    return module
+
+
+def _write(module, days: int, before_replace=None):
+    return module.apply_settings_mutation_to_cli_config(
+        {"sync": {"sync_log_retention_days": days}}, before_replace=before_replace
+    )
+
+
+def test_a_config_write_runs_with_a_short_switch_interval_then_restores_it(
+    tmp_path, monkeypatch, default_interval
+):
+    module = _fresh_config(tmp_path, monkeypatch)
+    seen = []
+
+    assert _write(module, 91, lambda: seen.append(sys.getswitchinterval())).fully_applied
+    assert seen and seen[0] < _SHORT_INTERVAL
+    assert sys.getswitchinterval() == default_interval
+
+
+def test_a_config_write_that_raises_restores_the_switch_interval(
+    tmp_path, monkeypatch, default_interval
+):
+    module = _fresh_config(tmp_path, monkeypatch)
+
+    class Stop(BaseException):
+        pass
+
+    seen = []
+
+    def stop():
+        seen.append(sys.getswitchinterval())
+        raise Stop
+
+    with pytest.raises(Stop):
+        _write(module, 92, stop)
+    assert seen and seen[0] < _SHORT_INTERVAL
+    assert sys.getswitchinterval() == default_interval
+
+
+def test_overlapping_config_writes_keep_the_short_interval_until_the_last_ends(
+    tmp_path, monkeypatch, default_interval
+):
+    import threading
+
+    module = _fresh_config(tmp_path, monkeypatch)
+    first_in, release_first = threading.Event(), threading.Event()
+    second_waits, second_in, release_second = (
+        threading.Event(),
+        threading.Event(),
+        threading.Event(),
+    )
+    real_lock = module._config_write_lock
+    calls = []
+
+    def lock(path):
+        calls.append(path)
+        if len(calls) == 2:
+            second_waits.set()  # the second write is inside its scope
+        return real_lock(path)
+
+    monkeypatch.setattr(module, "_config_write_lock", lock)
+
+    def hold(entered, release):
+        def wait():
+            entered.set()
+            assert release.wait(10)
+
+        return wait
+
+    results = {}
+    first = threading.Thread(
+        target=lambda: results.update(a=_write(module, 93, hold(first_in, release_first)))
+    )
+    second = threading.Thread(
+        target=lambda: results.update(
+            b=_write(module, 94, hold(second_in, release_second))
+        )
+    )
+    try:
+        first.start()
+        assert first_in.wait(10)
+        second.start()
+        assert second_waits.wait(10)
+        release_first.set()
+        first.join(10)
+        assert second_in.wait(10)
+        assert sys.getswitchinterval() < _SHORT_INTERVAL
+        release_second.set()
+        second.join(10)
+    finally:
+        release_first.set()
+        release_second.set()
+        first.join(10)
+        second.join(10)
+    assert results["a"].fully_applied and results["b"].fully_applied
+    assert sys.getswitchinterval() == default_interval
+
+
+def test_a_preparation_read_ending_inside_a_config_write_still_restores(
+    tmp_path, monkeypatch, default_interval
+):
+    """The scopes overlap without nesting: the read began first, ends first."""
+    import threading
+
+    from tldw_chatbook.Chat.console_preparation_reads import _preparation_handoffs
+
+    module = _fresh_config(tmp_path, monkeypatch)
+    in_write, release = threading.Event(), threading.Event()
+
+    def hold():
+        in_write.set()
+        assert release.wait(10)
+
+    read = _preparation_handoffs()
+    read.__enter__()
+    writer = threading.Thread(target=lambda: _write(module, 95, hold))
+    try:
+        writer.start()
+        assert in_write.wait(10)
+        read.__exit__(None, None, None)
+        release.set()
+        writer.join(10)
+    finally:
+        release.set()
+        writer.join(10)
+    assert sys.getswitchinterval() == default_interval
+
+
+def test_an_interval_other_code_sets_inside_a_config_write_is_kept(
+    tmp_path, monkeypatch, default_interval
+):
+    module = _fresh_config(tmp_path, monkeypatch)
+
+    assert _write(module, 96, lambda: sys.setswitchinterval(0.002)).fully_applied
+    assert sys.getswitchinterval() == pytest.approx(0.002)
+
+
+def test_a_write_waiting_on_another_process_lock_does_not_shorten_the_interval(
+    tmp_path, monkeypatch, default_interval
+):
+    """Review r12s-rev1 M4: while another process holds the config's OS lock,
+    the waiting write must not leave the whole process at the short interval
+    (CPU-bound threads ran 28-47% slower). The write still runs short once it
+    holds the lock."""
+    import threading
+
+    import portalocker
+
+    module = _fresh_config(tmp_path, monkeypatch)
+    lock_path = module._get_effective_config_path()
+    lock_path = lock_path.with_name(f"{lock_path.name}.lock")
+    waits: list[float] = []
+    waiting = threading.Event()
+
+    class _Event:
+        def __init__(self) -> None:
+            self._event = threading.Event()
+
+        def wait(self, timeout=None):
+            waits.append(sys.getswitchinterval())
+            waiting.set()
+            return self._event.wait(timeout)
+
+    class _Threading:
+        Event = _Event
+
+        def __getattr__(self, name):
+            return getattr(threading, name)
+
+    seen = []
+    results = {}
+    with open(lock_path, "a", encoding="utf-8") as other_process:
+        portalocker.lock(other_process, portalocker.LockFlags.EXCLUSIVE)
+        monkeypatch.setattr(module, "_threading", _Threading())
+        writer = threading.Thread(
+            target=lambda: results.update(
+                r=_write(module, 97, lambda: seen.append(sys.getswitchinterval()))
+            )
+        )
+        writer.start()
+        try:
+            assert waiting.wait(10)
+            assert waits[0] == default_interval
+        finally:
+            portalocker.unlock(other_process)
+            writer.join(10)
+    assert results["r"].fully_applied
+    assert seen and seen[0] < _SHORT_INTERVAL
+    assert sys.getswitchinterval() == default_interval
+
+
+def test_switch_interval_releases_nest_and_reopen(default_interval):
+    """Review r12s-rev2 M-b: a release inside a release, and a release after a
+    scope opened inside one, raised ValueError, because the thread's open
+    scopes still listed the limits the first release had closed."""
+    from tldw_chatbook.Utils.switch_interval import (
+        switch_interval_at_most,
+        switch_interval_released,
+    )
+
+    with switch_interval_at_most(0.0001):
+        with switch_interval_released():
+            with switch_interval_released():
+                assert sys.getswitchinterval() == default_interval
+            with switch_interval_at_most(0.002):
+                assert sys.getswitchinterval() == pytest.approx(0.002)
+                with switch_interval_released():
+                    assert sys.getswitchinterval() == default_interval
+                assert sys.getswitchinterval() == pytest.approx(0.002)
+            assert sys.getswitchinterval() == default_interval
+        assert sys.getswitchinterval() < _SHORT_INTERVAL
+    assert sys.getswitchinterval() == default_interval

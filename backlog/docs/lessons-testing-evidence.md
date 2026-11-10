@@ -49,6 +49,12 @@ A separate trap in the same test: the held provider read gave up waiting for the
 
 **What to do.** Do not infer a busy thread's lost time from another process's sleep latency. CPU time on the thread that does the work is the better load-tolerant budget, but start the interval with no collection owed (`gc.collect()`; never `gc.unfreeze()` in a test, which thaws the product's own frozen heap), and keep the interval short. If you also gate a wall-clock budget on host load, say plainly in the test and the task that a loaded host only reports wall misses. Keep an ordering bound that holds at any load: here the Sending frame must land before the held read is released.
 
+## A GIL convoy's slowdown disappears when the machine is loaded, so a fix measured under load proves nothing (TASK-38987, 2026-11-07)
+
+**Incident.** TASK-38987 filed a config save that took 0.08-0.09 s alone and 5.7-6.4 s beside a thread spinning in Python, at load 9.6-13.3. Re-measured on base with the same probe (run.sh, one save on a worker thread), the spinner cost almost nothing while other agents loaded the machine: at load 57-70 base saved in 0.40-0.82 s spinning against 0.27-0.48 s idle, under the criterion's 1.0 s with no fix at all. At load 30-32 the convoy came back (base 0.87-2.08 s spinning, 0.11-0.17 s idle). A second trap in the same probe: saving the same value twice is a no-op write, so a warm-up save made every timed save skip the replace; each timed save must write a new value.
+
+**What to do.** Before trusting a GIL-contention measurement, measure base and head back to back in the same minutes, record the 1-minute load with each run, and check that base still shows the slowdown at that load. If it does not, the run is not evidence either way. For a config write, change the value on every timed save.
+
 ## A census's "gone" row can be a live producer the scanner stopped seeing (TASK-39053, 2026-11-06)
 
 **Incident.** The backup owner inventory reported 194 gone producer rows, and the task that filed it read them as removed or moved code. But 24 of them were live `os.replace` / `os.unlink` calls. Their modules had switched to `from tldw_chatbook.Utils.platform_files import os`, and the census only bound `os` from `import os`. Other reviewed rows looked gone for the same kind of reason:

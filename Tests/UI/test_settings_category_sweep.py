@@ -338,6 +338,52 @@ async def test_full_screen_settings_keeps_all_three_panes(size, request):
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_widening_the_terminal_never_narrows_the_detail_pane(request):
+    """TASK-39134. Owner decision (2026-11-06): "Inspector waits for room: show
+    the Scope Inspector only once the detail pane can keep at least the width
+    it had just below the breakpoint, so widening the terminal never narrows
+    the detail pane." On dev the pane (its region) went from 63 cells to 38 at
+    100/101 columns, where the inspector arrived at its 21-cell minimum, and
+    from 68 to 56 at 133/134, where it took its 36-cell floor."""
+    app = _build_test_app()
+    host = _BundledSettingsHarness(app, "settings")
+
+    async with host.run_test(size=(96, 30)) as pilot:
+        await _settle_settings(pilot)
+        screen = pilot.app.screen
+        detail = screen.query_one("#settings-detail-pane")
+        inspector = screen.query_one("#settings-impact-pane")
+
+        def read() -> tuple[int, int]:
+            shown = inspector.display and screen.is_attached
+            return detail.region.width, inspector.region.width if shown else 0
+
+        widths: dict[int, tuple[int, int]] = {}
+        for width in range(96, 146):  # the criterion's 96-140, and the floor
+            await pilot.resize_terminal(width, 30)
+            reading = None
+            for _ in range(20):  # settled: the same reading across two pauses
+                await pilot.pause()
+                if (now := read()) == reading:
+                    break
+                reading = now
+            widths[width] = reading
+
+    narrowed = [
+        (width, widths[width - 1][0], widths[width][0])
+        for width in range(97, 146)
+        if widths[width][0] < widths[width - 1][0]
+    ]
+    assert narrowed == [], str(widths)
+    held = widths[100][0]
+    early = [(width, d) for width, (d, i) in widths.items() if i and d < held]
+    assert early == [], str(widths)
+    assert widths[140][1] >= 21, str(widths)  # the inspector did come
+    assert widths[145][1] == 36, str(widths)  # and reached its floor
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_slash_in_one_pane_mode_opens_the_rail_with_its_filter(request):
     """TASK-38953 review r11g-rev1 I2: "/" focused the hidden category
     filter, so typing filtered a rail nobody could see."""

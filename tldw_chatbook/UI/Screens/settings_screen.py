@@ -482,6 +482,7 @@ from ..Navigation.vllm_handoff import (
 )
 
 if TYPE_CHECKING:
+    from textual.widget import Widget
     from ...Widgets.Settings_Widgets.composer_paste_panel import ComposerPasteSettingsPanel
     from ...Agents.hook_permissions import HookReviewSnapshot
     from ...Tool_Packs.service import ToolProfileListing
@@ -966,23 +967,31 @@ def _internal_prompts_save_target() -> Path:
 
 
 MAX_CATEGORY_SEARCH_QUERY_CHARS = 80
-# At or below this terminal width the Settings workbench switches to its
-# compact layout (fixed-width category sidebar, inspector pane hidden),
+# At or below this terminal width the detail pane takes all the room beside
+# the compact layout's fixed-width category sidebar (inspector pane hidden),
 # following the personas-workbench-compact precedent (task-1342).
 SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH = 100
+# TASK-39134, owner decision (2026-11-06), "Inspector waits for room": wider
+# than that, the detail pane holds 64 cells (.settings-detail-holds, the 63 it
+# has at 100 columns rounded up to the $ds-size-64 token) and the layout stays
+# compact until the Scope Inspector fits beside it at its 21-cell minimum. The
+# inspector then takes each new column up to its 36-cell floor, so widening
+# the terminal never narrows the detail pane. Rail and gutters take 42.
+SETTINGS_DETAIL_HOLD_WIDTH = 64
+SETTINGS_INSPECTOR_ENTRY_MIN_WIDTH = 42 + SETTINGS_DETAIL_HOLD_WIDTH + 21
 # TASK-38953: at or below this width the compact rail would leave the open
 # category under 30 content cells (it is the width minus 41: 19 at 60, 0 at
 # 40), so Settings shows one pane at a time, like Library below 64.
 SETTINGS_SINGLE_PANE_MAX_WIDTH = 70
 # TASK-33003.7: from this width the Scope Inspector keeps 36 columns
-# (.settings-inspector-floor) and the detail pane still keeps 56: a 24-cell
-# label plus a 20-cell field (test_settings_compact_fields). Rail and
-# gutters take 42.
-SETTINGS_INSPECTOR_FLOOR_MIN_WIDTH = 42 + 56 + 36
+# (.settings-inspector-floor); the floor and the held detail width hand over
+# at this one column (TASK-39134).
+SETTINGS_INSPECTOR_FLOOR_MIN_WIDTH = 42 + SETTINGS_DETAIL_HOLD_WIDTH + 36
 # cubic review of #2937: the detail pane width that fits the widest action row
 # (Library > RAG's built-in profile row, 83 cells). Narrower, the rows stack:
-# at 140 columns the floor above leaves the pane 62, which cut "Open Advanced
-# Config" to "Open Adva" (test_settings_action_rows_keep_every_button_whole).
+# at 140 columns the pane is 64 (the held width above; 62 before TASK-39134),
+# which cut "Open Advanced Config" to "Open Adva" before the rows stacked
+# (test_settings_action_rows_keep_every_button_whole).
 SETTINGS_ACTION_ROWS_INLINE_MIN_WIDTH = 84
 PROVIDER_ENDPOINT_KEYS = ("api_base_url", "api_base", "base_url", "api_url", "endpoint")
 PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
@@ -4207,6 +4216,14 @@ class SettingsScreen(BaseAppScreen):
         #: focus survives the rebuild. (`recompose()` still consumes it too,
         #: for the rarer whole-screen rebuild.)
         self._pending_category_focus_value: str | None = None
+        #: TASK-39135: what had focus when that intent was recorded. A swap
+        #: that finds focus elsewhere skips the landing: the user moved it.
+        self._pending_category_focus_from: Widget | None = None
+        #: TASK-39135 review r12s-rev3: focus was in the old panes while the
+        #: landing was pending, so a later move may be Textual's focus reset
+        #: after their removal; and whether this swap rebuilt the detail pane.
+        self._pending_focus_reset_possible = False
+        self._pending_detail_rebuilt = False
         # TASK-33072: entering Theme lands in its list after the swap,
         # unless an F6 pressed mid-swap claimed the focus first.
         self._theme_list_focus_pending = False
@@ -4763,6 +4780,8 @@ class SettingsScreen(BaseAppScreen):
                 if not getattr(self, "is_mounted", False):
                     return
                 focus_id = self._focused_id_in_category_panes()
+                if self._focus_left_pending_origin():
+                    self._withdraw_pending_category_focus()
                 self.release_mouse_capture_for_teardown()
                 async with self.batch():
                     for pane_id in ("#settings-detail-pane", "#settings-impact-pane"):
@@ -4772,14 +4791,21 @@ class SettingsScreen(BaseAppScreen):
                             # Screen torn down (navigated away) mid-swap.
                             continue
                         await pane.recompose()
+                        if pane_id == "#settings-detail-pane":
+                            self._pending_detail_rebuilt = True
                 # A MouseDown already queued on a child's pump can capture that
                 # child DURING the removal drain, after the release above.
                 self.sweep_stale_mouse_capture()
                 if not getattr(self, "is_mounted", False):
                     return
+                if self._focus_left_pending_origin():
+                    # TASK-39135 review r12s-rev2: input keeps running while the
+                    # panes rebuild, so a move can land mid-rebuild as well.
+                    self._withdraw_pending_category_focus()
+                    focus_id = None  # the user's focus stands
                 category_value = self._pending_category_focus_value
                 if category_value is not None:
-                    self._pending_category_focus_value = None
+                    self._withdraw_pending_category_focus(keep_theme_list=True)
                     self._focus_category(category_value)
                 elif focus_id:
                     self._restore_category_pane_focus(focus_id)
@@ -4796,6 +4822,54 @@ class SettingsScreen(BaseAppScreen):
                 # the winner's own follow-ups into a queue nothing drains.
                 if revision == self._category_swap_revision:
                     self._category_pane_swap_pending = False
+
+    def _withdraw_pending_category_focus(self, *, keep_theme_list: bool = False) -> None:
+        """Drop a switch's pending landing and what had focus when it was made."""
+        self._pending_category_focus_value = None
+        self._pending_category_focus_from = None
+        self._pending_focus_reset_possible = False
+        self._pending_detail_rebuilt = False
+        if not keep_theme_list:
+            self._theme_list_focus_pending = False
+
+    @staticmethod
+    def _in_category_panes(
+        widget, panes=("settings-detail-pane", "settings-impact-pane")
+    ) -> bool:
+        """Whether ``widget`` is in one of ``panes`` (default: both a swap rebuilds)."""
+        return any(
+            getattr(node, "id", None) in panes for node in widget.ancestors_with_self
+        )
+
+    def _in_new_detail_pane(self, widget) -> bool:
+        """New content: attached in the detail pane after this swap rebuilt it."""
+        return (
+            self._pending_detail_rebuilt
+            and widget.is_attached
+            and self._in_category_panes(widget, ("settings-detail-pane",))
+        )
+
+    def _focus_left_pending_origin(self) -> bool:
+        """TASK-39135: whether the user moved focus since a switch recorded it.
+
+        - Never after focus was in the old panes: Textual's reset after their
+          removal looks exactly like a move (reviews r12s-rev2 M-a, rev3).
+        - In the panes: only after the detail pane was rebuilt, when an
+          attached widget there can only be new content someone chose.
+        - Outside them: a move from an origin that is still attached.
+        """
+        origin, focused = self._pending_category_focus_from, self.focused
+        if (
+            self._pending_category_focus_value is None
+            or self._pending_focus_reset_possible
+            or focused is None
+            or not focused.is_attached
+            or focused is origin
+        ):
+            return False
+        if self._in_category_panes(focused):
+            return self._in_new_detail_pane(focused)
+        return origin is not None and origin.is_attached
 
     def _focused_id_in_category_panes(self) -> str | None:
         """The focused widget's id, if this swap is about to destroy it.
@@ -5068,6 +5142,7 @@ class SettingsScreen(BaseAppScreen):
         self.call_after_refresh(self._update_inspector_overflow_hint)
         self.call_after_refresh(self._refresh_provider_picker)
         self.call_after_refresh(self._consume_pending_vllm_default_intent)
+        self.call_after_refresh(self._consume_pending_llamacpp_default_intent)
         self.call_after_refresh(self._consume_audio_cpp_model_library_result)
         if self.active_category == SettingsCategoryId.TOOL_PROFILES.value:
             self.call_after_refresh(self._request_tool_profiles_listing)
@@ -5194,7 +5269,15 @@ class SettingsScreen(BaseAppScreen):
         self._update_provider_test_result()
 
     def _workbench_compact_now(self) -> bool:
-        return self.size.width <= SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH
+        return self.size.width < SETTINGS_INSPECTOR_ENTRY_MIN_WIDTH
+
+    def _detail_holds_now(self) -> bool:
+        width = self.size.width
+        return (
+            SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH
+            < width
+            < SETTINGS_INSPECTOR_FLOOR_MIN_WIDTH
+        )
 
     def _single_pane_now(self) -> bool:
         # A detached screen has no app to size it (a bare "/" on_key test).
@@ -5250,6 +5333,9 @@ class SettingsScreen(BaseAppScreen):
         try:
             self.query_one("#settings-impact-pane").set_class(
                 self._inspector_floor_now(), "settings-inspector-floor"
+            )
+            self.query_one("#settings-detail-pane").set_class(
+                self._detail_holds_now(), "settings-detail-holds"
             )
         except QueryError:
             pass
@@ -14412,14 +14498,29 @@ class SettingsScreen(BaseAppScreen):
         button.display = recovery is not None
         if recovery is None:
             return
-        status.update(
-            "Verified vLLM handoff cleanup needs attention. Retry cleanup to "
-            "unlock provider actions."
-            if recovery.automatic_retry_exhausted
-            else "Verified vLLM handoff cleanup is retrying; provider actions "
+        status.update(self._vllm_default_recovery_copy(recovery))
+        button.disabled = False
+
+    @staticmethod
+    def _handoff_provider_label(recovery) -> str:
+        """TASK-39133: the provider whose default handoff release is retained."""
+        llama = (
+            recovery is not None
+            and recovery.channel is HandoffChannel.LLAMACPP_DEFAULT
+        )
+        return "llama.cpp" if llama else "vLLM"
+
+    def _vllm_default_recovery_copy(self, recovery) -> str:
+        label = self._handoff_provider_label(recovery)
+        if recovery is None or recovery.automatic_retry_exhausted:
+            return (
+                f"Verified {label} handoff cleanup needs attention. Retry cleanup "
+                "to unlock provider actions."
+            )
+        return (
+            f"Verified {label} handoff cleanup is retrying; provider actions "
             "remain locked."
         )
-        button.disabled = False
 
     def _restore_vllm_default_presentation(
         self,
@@ -14542,9 +14643,11 @@ class SettingsScreen(BaseAppScreen):
         if type(store) is not PendingHandoffStore:
             return False
         store = cast(PendingHandoffStore, store)
-        if store.release_recovery(HandoffChannel.VLLM_DEFAULT) is not None:
+        # TASK-39133: either default channel's retained release blocks both.
+        recovery = self._vllm_default_recovery()
+        if recovery is not None:
             recovery_result = store.retry_release_recovery(
-                HandoffChannel.VLLM_DEFAULT,
+                recovery.channel,
                 automatic=True,
             )
             self._sync_vllm_default_recovery_widgets()
@@ -14552,16 +14655,16 @@ class SettingsScreen(BaseAppScreen):
                 if recovery_result == "pending":
                     self._schedule_vllm_default_cleanup_retry()
                 return False
-        claim = store.claim(HandoffChannel.VLLM_DEFAULT)
+        claim = store.claim(channel)
         if claim is None:
             return False
         try:
             intent = claim.value
-            owner = getattr(self.app_instance, "_vllm_connection_owner", None)
-            if type(intent) is not VllmDefaultIntent:
-                raise TypeError("vLLM Settings handoff was not exact")
-            if not owner_has_current_intent(owner, intent):
-                raise ValueError("vLLM Settings handoff is stale")
+            owner = getattr(self.app_instance, owner_attribute, None)
+            if type(intent) is not intent_type:
+                raise TypeError("verified provider Settings handoff was not exact")
+            if not current_intent(owner, intent):
+                raise ValueError("verified provider Settings handoff is stale")
             if (
                 not self.is_mounted
                 or self._active_category_id() is not SettingsCategoryId.PROVIDERS_MODELS
@@ -14583,17 +14686,18 @@ class SettingsScreen(BaseAppScreen):
             endpoint_input = self.query_one("#settings-provider-endpoint-value", Input)
             with endpoint_input.prevent(Input.Changed):
                 endpoint_input.value = intent.api_url
-            endpoint_input.placeholder = self._provider_endpoint_placeholder("vllm")
-            self._sync_provider_credential_widget("vllm")
-            self._sync_provider_model_profile_widgets("vllm", intent.model_id)
-            provider_settings = self._provider_config("vllm")
+            endpoint_input.placeholder = self._provider_endpoint_placeholder(provider)
+            self._sync_provider_credential_widget(provider)
+            self._sync_provider_model_profile_widgets(provider, intent.model_id)
+            provider_settings = self._provider_config(provider)
             if generic_endpoint_differs(intent.api_url, provider_settings):
                 self._provider_save_result = unsaved_endpoint_copy(
                     intent.api_url, provider_settings
                 )
             else:
                 self._provider_save_result = (
-                    "Verified vLLM target staged. Review it, then choose Save "
+                    f"Verified {'llama.cpp' if provider == 'llama_cpp' else 'vLLM'}"
+                    " target staged. Review it, then choose Save "
                     "to make it the default for new chats."
                 )
             self._set_static_text(
@@ -14608,7 +14712,7 @@ class SettingsScreen(BaseAppScreen):
                 intent,
             )
             if scheduled is False:
-                raise RuntimeError("vLLM Settings acknowledgment was not scheduled")
+                raise RuntimeError("provider Settings acknowledgment was not scheduled")
             return True
         except BaseException as error:
             self._rollback_vllm_default_intent(claim=claim)
@@ -14786,9 +14890,11 @@ class SettingsScreen(BaseAppScreen):
         store = getattr(self.app_instance, "pending_handoffs", None)
         if type(store) is not PendingHandoffStore:
             return
-        result = store.retry_release_recovery(
-            HandoffChannel.VLLM_DEFAULT,
-            automatic=True,
+        recovery = self._vllm_default_recovery()
+        result = (
+            "missing"
+            if recovery is None
+            else store.retry_release_recovery(recovery.channel, automatic=True)
         )
         self._sync_vllm_default_recovery_widgets()
         if result == "pending":
@@ -14804,9 +14910,11 @@ class SettingsScreen(BaseAppScreen):
         store = getattr(self.app_instance, "pending_handoffs", None)
         if type(store) is not PendingHandoffStore:
             return False
-        result = store.retry_release_recovery(
-            HandoffChannel.VLLM_DEFAULT,
-            automatic=False,
+        recovery = self._vllm_default_recovery()
+        result = (
+            "missing"
+            if recovery is None
+            else store.retry_release_recovery(recovery.channel, automatic=False)
         )
         self._sync_vllm_default_recovery_widgets()
         if result != "released":
@@ -23575,15 +23683,14 @@ class SettingsScreen(BaseAppScreen):
             if summary.category is SettingsCategoryId.PROVIDERS_MODELS:
                 recovery = self._vllm_default_recovery()
                 recovery_status = Static(
-                    "Verified vLLM handoff cleanup needs attention. Retry cleanup "
-                    "to unlock provider actions.",
+                    self._vllm_default_recovery_copy(recovery),
                     id="settings-vllm-handoff-recovery-status",
                     classes="settings-status-row",
                 )
                 recovery_status.display = recovery is not None
                 yield recovery_status
                 recovery_button = Button(
-                    "Retry vLLM handoff cleanup",
+                    "Retry provider handoff cleanup",
                     id="settings-vllm-handoff-recovery",
                     variant="warning",
                     tooltip=(
@@ -23955,6 +24062,7 @@ class SettingsScreen(BaseAppScreen):
                 # Inline height: same bundle-collapse guard as the impact
                 # pane below.
                 detail_pane.add_class("h-full")
+                detail_pane.set_class(self._detail_holds_now(), "settings-detail-holds")
                 yield detail_pane
                 yield self._column_divider("settings-detail-impact-divider")
                 impact_pane = SettingsRegion(
@@ -25863,7 +25971,12 @@ class SettingsScreen(BaseAppScreen):
                 # focused widget; a call_after_refresh restore races it
                 # (task-1338: focus ended up <none>), so record an intent the
                 # swap consumes after the fresh children mount.
+                self._withdraw_pending_category_focus(keep_theme_list=True)
                 self._pending_category_focus_value = category_value
+                self._pending_category_focus_from = self.focused
+                self._pending_focus_reset_possible = bool(
+                    self.focused and self._in_category_panes(self.focused)
+                )
             else:
                 self.call_after_refresh(self._focus_category, category_value)
             if category_value == SettingsCategoryId.THEME.value:
@@ -25897,11 +26010,19 @@ class SettingsScreen(BaseAppScreen):
         category_value = self._pending_category_focus_value
         if category_value is None:
             return
-        self._pending_category_focus_value = None
+        self._withdraw_pending_category_focus(keep_theme_list=True)
         self._focus_category(category_value)
 
     @on(DescendantFocus)
     def handle_descendant_focus(self, event: DescendantFocus) -> None:
+        if (
+            self._pending_category_focus_value is not None
+            and self._in_category_panes(event.widget)
+            and not self._in_new_detail_pane(event.widget)
+        ):
+            # TASK-39135 review r12s-rev3: focus in the old panes may be reset
+            # once they go, so a later move no longer withdraws the landing.
+            self._pending_focus_reset_possible = True
         self._update_focus_help(event.widget)
         # Clear the pending navigation focus intent only when SATISFIED (the
         # intended widget landed focus). Clearing on any focus is too eager:
@@ -31234,17 +31355,20 @@ class SettingsScreen(BaseAppScreen):
         """Expose an explicit retry after bounded automatic cleanup fails."""
 
         event.stop()
+        label = self._handoff_provider_label(self._vllm_default_recovery())
         if self.recover_vllm_default_handoff():
             self.app.notify(
-                "Verified vLLM handoff cleanup completed. Provider actions are "
+                f"Verified {label} handoff cleanup completed. Provider actions are "
                 "available again.",
                 severity="information",
+                markup=False,
             )
         else:
             self.app.notify(
-                "Verified vLLM handoff cleanup is still blocked. Retry again or "
+                f"Verified {label} handoff cleanup is still blocked. Retry again or "
                 "reopen Settings.",
                 severity="warning",
+                markup=False,
             )
 
     @on(Button.Pressed, "#settings-briefing-schedules-toggle")

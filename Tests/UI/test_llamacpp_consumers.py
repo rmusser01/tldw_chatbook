@@ -5,7 +5,7 @@ import tomllib
 import pytest
 
 from Tests.private_profile import private_profile_test
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, Static
 
 from Tests.UI.test_console_provider_apply_defaults_flow import (
     _console_app,
@@ -47,13 +47,14 @@ def _ready_target(
     return owner, target
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("change_model", "change_endpoint"),
     ((False, False), (True, False), (False, True)),
 )
 async def test_settings_acknowledges_llamacpp_even_when_fields_are_already_saved(
-    change_model: bool, change_endpoint: bool
+    request, change_model: bool, change_endpoint: bool
 ):
     """A clean or partly clean prefill must settle its exact handoff."""
 
@@ -117,8 +118,9 @@ async def test_console_adopts_verified_llamacpp_for_active_session_only(request)
         assert not app.pending_handoffs.has_pending(HandoffChannel.LLAMACPP_CONSOLE)
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_settings_stages_verified_llamacpp_without_persisting():
+async def test_settings_stages_verified_llamacpp_without_persisting(request):
     app = _console_app()
     _, target = _ready_target(app)
     config_path = get_cli_config_path()
@@ -150,8 +152,41 @@ async def test_settings_stages_verified_llamacpp_without_persisting():
         assert config_path.read_bytes() == before
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_llamacpp_default_persists_only_after_settings_save():
+async def test_each_default_consumer_leaves_the_other_providers_intent_pending(
+    request,
+):
+    """TASK-39133: each Settings default consumer claims only its own channel."""
+
+    app = _console_app()
+    _, llama_target = _ready_target(app)
+    _, vllm_target = _install_ready_vllm_target(app)
+    async with _SettingsFlowHarness(app).run_test(size=(180, 50)) as pilot:
+        screen = pilot.app.screen
+        await _wait_for_selector(screen, pilot, "#settings-provider-save-result")
+        await pilot.pause(0.3)
+        store = app.pending_handoffs
+        store.stage(
+            HandoffChannel.VLLM_DEFAULT, VllmDefaultIntent.from_target(vllm_target)
+        )
+        assert screen._consume_pending_llamacpp_default_intent() is False
+        assert screen._vllm_default_claim is None
+        assert store.has_pending(HandoffChannel.VLLM_DEFAULT)
+        store.clear_pending(HandoffChannel.VLLM_DEFAULT)
+        store.stage(
+            HandoffChannel.LLAMACPP_DEFAULT,
+            LlamaCppDefaultIntent.from_target(llama_target),
+        )
+        assert screen._consume_pending_vllm_default_intent() is False
+        assert screen._vllm_default_claim is None
+        assert store.has_pending(HandoffChannel.LLAMACPP_DEFAULT)
+        assert screen._provider_draft() is None
+
+
+@private_profile_test
+@pytest.mark.asyncio
+async def test_llamacpp_default_persists_only_after_settings_save(request):
     app = _console_app()
     _, target = _ready_target(app)
     config_path = get_cli_config_path()
@@ -200,8 +235,11 @@ async def test_stale_llamacpp_target_cannot_change_console_or_settings(request):
         assert app.pending_handoffs.has_pending(HandoffChannel.LLAMACPP_DEFAULT)
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_llamacpp_settings_late_owner_expiry_compensates_before_ack(monkeypatch):
+async def test_llamacpp_settings_late_owner_expiry_compensates_before_ack(
+    request, monkeypatch
+):
     app = _console_app()
     owner, target = _ready_target(app)
     async with _SettingsFlowHarness(app).run_test(size=(180, 50)) as pilot:
@@ -279,8 +317,10 @@ async def test_llamacpp_console_adoption_failure_restores_session_and_requeues(
         assert app.pending_handoffs.has_pending(HandoffChannel.LLAMACPP_CONSOLE)
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_llamacpp_default_recovery_blocks_other_default_until_released(
+    request,
     monkeypatch,
 ):
     app = _console_app()
@@ -304,6 +344,34 @@ async def test_llamacpp_default_recovery_blocks_other_default_until_released(
         recovery_button = screen.query_one("#settings-vllm-handoff-recovery", Button)
         assert recovery_button.display is True
         assert str(recovery_button.label) == "Retry provider handoff cleanup"
+
+        # Review r12s-rev1 M2: the copy names llama.cpp, also once a pane
+        # rebuild re-composes the row and in the button's notices.
+        def recovery_copy() -> str:
+            status = screen.query_one("#settings-vllm-handoff-recovery-status", Static)
+            return str(status.content)
+
+        assert recovery_copy().startswith("Verified llama.cpp handoff cleanup")
+        for pane_id in ("#settings-detail-pane", "#settings-impact-pane"):
+            await screen.query_one(pane_id).recompose()
+        await pilot.pause()
+        assert recovery_copy().startswith("Verified llama.cpp handoff cleanup")
+        notices: list[str] = []
+        real_notify = pilot.app.notify
+
+        def record_notify(message, *args, **kwargs):
+            notices.append(str(message))
+            return real_notify(message, *args, **kwargs)
+
+        monkeypatch.setattr(pilot.app, "notify", record_notify)
+        screen.query_one("#settings-vllm-handoff-recovery", Button).press()
+        for _ in range(40):
+            if notices:
+                break
+            await pilot.pause(0.05)
+        assert notices and notices[-1].startswith(
+            "Verified llama.cpp handoff cleanup is still blocked"
+        ), notices
         app.pending_handoffs.stage(
             HandoffChannel.VLLM_DEFAULT, VllmDefaultIntent.from_target(vllm_target)
         )
