@@ -18,16 +18,21 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import warnings
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+import pytest_asyncio
 from textual.widgets import Button, DataTable, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
-from Tests.UI.schedules_test_helpers import rendered_row_cells
+from Tests.UI.schedules_test_helpers import (
+    rendered_row_cells,
+    settle_schedules_workbench,
+)
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.services import SchedulingService
 from tldw_chatbook.Scheduling.services.server_client import SchedulingServerClient
@@ -417,13 +422,21 @@ async def test_empty_state_shown_when_no_results():
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def results_db(tmp_path):
+@pytest_asyncio.fixture
+async def results_db(tmp_path, isolate_test_environment, request):
     database = ScheduledTasksDB(tmp_path / "scheduled_tasks.db")
-    try:
-        yield database
-    finally:
-        database.close()
+    yield database
+    from tldw_chatbook.app_lifecycle import WORKER_CANCELLATION_GRACE_SECONDS
+
+    # Textual cancellation does not join work already running on the executor.
+    request.node._test_app_native_workers_uncertain = True
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        await asyncio.get_running_loop().shutdown_default_executor(
+            timeout=WORKER_CANCELLATION_GRACE_SECONDS
+        )
+    request.node._test_app_native_workers_uncertain = False
+    database.close()
 
 
 class ResultsWorkbenchTestApp(ConsolidatedCSSApp):
@@ -528,6 +541,10 @@ async def _open_results_overlay(pilot, *, row: int = 0):
     """
     workbench = pilot.app.screen
     workbench.query_one("#scheduling-results-badge", Button).press()
+    await _until_results(
+        lambda: isinstance(pilot.app.screen, ResultsHostScreen)
+        and bool(pilot.app.screen.query("#scheduling-results-table"))
+    )
     await pilot.pause()
     screen = pilot.app.screen
     assert isinstance(screen, ResultsHostScreen), screen
@@ -538,6 +555,7 @@ async def _open_results_overlay(pilot, *, row: int = 0):
     return workbench, screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_badge_and_table_span_every_owner(results_db):
     db = results_db
@@ -620,6 +638,7 @@ async def test_conflicts_badge_renders_too(results_db):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_solved_resolves_a_server_keyed_result(results_db):
     """Live verification task 6, D3: a synced result's `definition_id` is
@@ -667,6 +686,7 @@ async def test_mark_solved_resolves_a_server_keyed_result(results_db):
         assert row["resolution_state"] == "solved"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_read_action_marks_local_result_read(results_db):
     """redesign PR-4 task 5: `r` used to be `action_run_task_now` routed
@@ -710,6 +730,7 @@ async def test_read_action_marks_local_result_read(results_db):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dismiss_action_queues_server_pushback_mutation(results_db):
     """redesign PR-4 task 5: `d` used to be `action_delete` routed by
@@ -749,6 +770,7 @@ async def test_dismiss_action_queues_server_pushback_mutation(results_db):
         assert mutations[0]["payload"]["server_result_id"] == "srv-res-1"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_all_read_fans_out_per_row(results_db):
     """redesign PR-4 task 5: no tab to activate first --
@@ -769,11 +791,11 @@ async def test_mark_all_read_fans_out_per_row(results_db):
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
         workbench = pilot.app.screen
+        await settle_schedules_workbench(pilot, workbench)
 
         workbench.action_mark_all_results_read()
         await pilot.pause()
-        await pilot.app.workers.wait_for_complete()
-        await pilot.pause()
+        await _until_results(lambda: not list(pilot.app.workers))
 
         assert db.get_automation_result(r1)["review_state"] == "read"
         assert db.get_automation_result(r2)["review_state"] == "read"
@@ -782,6 +804,7 @@ async def test_mark_all_read_fans_out_per_row(results_db):
         assert any("Marked 2 result" in n.message for n in notifications)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_all_read_reaches_unread_rows_beyond_the_inbox_window(
     results_db,
@@ -851,6 +874,7 @@ async def test_mark_all_read_reaches_unread_rows_beyond_the_inbox_window(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rail_mark_all_read_button_fans_out_and_hides_itself(results_db):
     """redesign PR-2, Task 3: the rail's `Mark all read` button reuses the
@@ -891,6 +915,7 @@ async def test_rail_mark_all_read_button_fans_out_and_hides_itself(results_db):
         assert button.display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_solved_local_round_trip(results_db):
     """redesign PR-4 task 5: driven through the pushed view's `o`
@@ -918,6 +943,7 @@ async def test_mark_solved_local_round_trip(results_db):
         assert definition["resolved_by"] == "local"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_solved_refuses_failure_row_without_reaching_the_service(
     results_db,
@@ -948,6 +974,7 @@ async def test_mark_solved_refuses_failure_row_without_reaching_the_service(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_solved_server_round_trip(results_db):
     """redesign PR-4 task 5: driven through the pushed view's `o`; the
@@ -988,6 +1015,7 @@ async def test_mark_solved_server_round_trip(results_db):
         assert result_id  # sanity: the local->server id translation ran
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_solved_refused_offline_surfaces_the_reason(results_db):
     """redesign PR-4 task 5: driven through the pushed view's `o`; the
@@ -1036,6 +1064,7 @@ async def test_mark_solved_refused_offline_surfaces_the_reason(results_db):
 # `test_rail_mark_all_read_button_fans_out_and_hides_itself` above.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_inbox_lists_the_sync_window_and_says_what_it_hides(results_db):
     """HIGH (Qodo): the refresh took the DB's default `limit=50` while the
@@ -1079,6 +1108,7 @@ async def test_inbox_lists_the_sync_window_and_says_what_it_hides(results_db):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_inbox_heading_stays_plain_when_everything_fits(results_db):
     """The count line is truncation-only -- an inbox that fits must not
