@@ -2246,10 +2246,21 @@ class ConsoleComposerBar(Horizontal):
         nodes: list[Widget] = [self]
         for selector in self.INTERACTION_STYLED_DESCENDANTS:
             nodes.extend(self.query(selector))
+        shown = self.visual_style
         try:
             self.app.stylesheet.update_nodes(nodes, animate=True)
         except NoActiveAppError:
-            pass
+            return
+        if self.visual_style == shown:
+            return
+        # TASK-39156: the focused rule moves the bar's background, which a
+        # descendant reads through its ancestors and caches keyed on its own
+        # styles only. No rule keyed on the bar's state styles them, so drop
+        # that cache and repaint instead of restyling them.
+        for node in self.walk_children(Widget):
+            if node not in nodes:
+                node.notify_style_update()
+                node.refresh()
 
     def has_sendable_payload(self) -> bool:
         """Return whether a Send now would carry anything: Send's readiness input.

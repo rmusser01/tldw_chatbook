@@ -907,6 +907,56 @@ async def test_a_compact_flip_restyles_only_what_its_rules_style(monkeypatch):
             )
 
 
+#: The composer rows with no background of their own (TASK-39156).
+_COMPOSER_ROWS = ("#console-composer-expanded", "#console-composer-actions")
+
+
+def _stale_visual_styles(root, selectors) -> list[str]:
+    """Each node whose cached visual style differs from a fresh computation."""
+    stale = []
+    for selector in selectors:
+        node = root.query_one(selector)
+        shown = node.visual_style
+        node._visual_style = None
+        node._visual_style_cache.clear()
+        fresh = node.visual_style
+        if shown != fresh:
+            stale.append(f"{selector}: {shown.background} != {fresh.background}")
+    return stale
+
+
+@pytest.mark.asyncio
+async def test_the_composer_rows_follow_the_bar_background_through_breakpoint_flips():
+    """TASK-39156: the composer's rows repaint when the bar's background moves.
+
+    The bar's focus and draft classes restyle only the bar and its visible
+    draft (TASK-33620.15.8), and the focused rule sets the bar's background,
+    which a child reads through its ancestors. The expanded and actions rows
+    have no background of their own and cached the unfocused one at mount,
+    so they kept painting it under a focused bar, before and after every
+    compact (34/35 rows) and header (24/25 rows) breakpoint flip.
+    """
+    from textual import events
+    from textual.geometry import Size
+
+    host = _ready_host()
+    async with host.run_test(size=(160, 40)) as pilot:
+        await _mounted(host, pilot, "#console-workbench-header")
+        console = host.screen
+        await pilot.pause(0.5)
+        bar = console.query_one("#console-native-composer")
+        assert bar.has_class("console-composer-focused")
+        assert _stale_visual_styles(console, _COMPOSER_ROWS) == [], "after mount"
+        for height in (34, 24, 30, 40):
+            await console._on_message(events.Resize(Size(160, height), Size(160, height)))
+            await pilot.pause()
+            assert _stale_visual_styles(console, _COMPOSER_ROWS) == [], height
+        bar.blur()  # The bar's background moves back with its focus.
+        await pilot.pause()
+        assert not bar.has_class("console-composer-focused")
+        assert _stale_visual_styles(console, _COMPOSER_ROWS) == [], "after blur"
+
+
 @pytest.mark.asyncio
 async def test_an_app_class_that_moved_while_the_console_was_covered_shows_on_return():
     """TASK-38950: an App class change the Console missed restyles it on return.
