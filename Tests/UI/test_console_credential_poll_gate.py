@@ -51,7 +51,12 @@ def _screen(monkeypatch, *, status="ready"):
     )[1]
     syncs = []
     screen._sync_console_settings_summary = lambda: syncs.append("summary")
-    screen._sync_console_control_bar = lambda: syncs.append("bar")
+
+    def sync_control_bar():
+        syncs.append("bar")
+        return True
+
+    screen._sync_console_control_bar = sync_control_bar
     return screen, builds, syncs, state, revision
 
 

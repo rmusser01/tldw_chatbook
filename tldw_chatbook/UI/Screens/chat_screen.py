@@ -10808,13 +10808,10 @@ class ChatScreen(BaseAppScreen):
                 )
                 if snapshot != self._console_credential_snapshot:
                     self._sync_console_settings_summary()
-                    if self._sync_console_control_bar():
-                        self._console_credential_snapshot = snapshot
-                # TASK-36511.4: an unchanged snapshot is a completed pass too.
-                # Commit the pre-gate only from a completed pass (review
-                # finding): lock contention, a dropped deferred sync, or a
-                # build failure must leave it unset so the next tick
-                # retries -- the contract the old comment promised.
+                    if not self._sync_console_control_bar():
+                        return
+                    self._console_credential_snapshot = snapshot
+                # An unchanged snapshot is also a completed pass (TASK-36511.4).
                 self._console_credential_pre_gate = pre_gate
 
         with ExitStack() as acquired:

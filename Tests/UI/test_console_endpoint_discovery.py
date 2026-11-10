@@ -962,6 +962,7 @@ async def test_shared_evidence_change_refreshes_the_console_once(request):
         _ConsoleFlowHarness,
         _persisted_console_app,
     )
+    from Tests.UI.test_console_switcher_local_probe import _fresh_readiness_display
     from Tests.UI.test_destination_shells import _wait_for_selector
     from tldw_chatbook.Chat.provider_endpoint_contract import (
         canonical_connection_identity,
@@ -976,6 +977,7 @@ async def test_shared_evidence_change_refreshes_the_console_once(request):
         console = harness.screen
         await _wait_for_selector(console, pilot, "#console-settings-summary")
         console._stop_console_credential_poll_timer()
+        await _fresh_readiness_display(console, pilot)
         console._poll_console_credential_readiness()
         refreshes = []
         real_sync = console._sync_console_settings_summary
@@ -1018,6 +1020,7 @@ async def test_shared_evidence_change_refreshes_the_console_once(request):
         from tldw_chatbook import config
         from tldw_chatbook.Backup_Recovery import storage_admission
 
+        await _fresh_readiness_display(console, pilot)
         identity = console._active_console_settings_readiness()[1].connection
         assert identity is not None
         assert console._console_config_snapshot_is_disk_loaded(
@@ -1083,15 +1086,24 @@ async def test_shared_evidence_change_refreshes_the_console_once(request):
 
         selected = os.environ["TLDW_CONFIG_PATH"]
         snapshot = console._console_credential_snapshot
+        store.settle(
+            store.begin(identity), ProviderProbeResult("reachable", ("model-a",))
+        )
         os.environ["TLDW_CONFIG_PATH"] = selected + ".other"
         try:
+            # New evidence opens the gate; the first cold tick defers.
+            console._poll_console_credential_readiness()
+            assert console._console_credential_snapshot == snapshot
             with pytest.raises(RecoveryRequired):
                 console._poll_console_credential_readiness()
             assert console._console_credential_snapshot == snapshot
         finally:
             os.environ["TLDW_CONFIG_PATH"] = selected
         console._poll_console_credential_readiness()
-        assert console._console_credential_snapshot == snapshot
+        assert (
+            console._console_credential_snapshot[2]
+            == provider_connection_evidence(harness).version
+        )
 
 
 _KEYED_VLLM_CONFIG = {

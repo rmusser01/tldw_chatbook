@@ -73,6 +73,8 @@ an entry later refuses display, retry waits for physical retirement and cleanup
 errors still propagate. No source, pause, ownership, lifetime or action fence is
 relaxed.
 
+The credential poll records its evidence only after both the settings summary and the control bar refresh. If the controls defer, the next poll can retry the same evidence. A successful pass with an unchanged snapshot still records the pre-gate, so idle ticks skip the read (TASK-39402.183).
+
 Independent provider-label and readiness builds also open that existing synchronous
 scope (TASK-35613). Each loads current config once, reuses an enclosing scope when
 present, and drops the memo on return or failure. The next independent call reads
