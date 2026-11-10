@@ -16,6 +16,11 @@ from tldw_chatbook.Backup_Recovery.profile_paths import database_path, user_data
 from tldw_chatbook.Backup_Recovery.recovery_files import _tree_member_id
 from tldw_chatbook.Utils.path_validation import validate_recovery_relative_path
 
+# Owners whose persona_visual_assets locators are profile-relative ("<leaf>/...").
+# Actor Pack activation publishes persona images under actor_packs/ (TASK-39116);
+# persona.assets keeps every other row, so a stray locator still fails there.
+_PERSONA_ROW_OWNERS = frozenset({"persona.assets", "persona.actor_packs"})
+
 
 class _Assets(_Definition):
     def validate_restore_dependencies(self, item, candidate, candidates, *, topology):
@@ -49,7 +54,7 @@ class _Assets(_Definition):
             for locator, size, digest in self._references(candidates[core_key]):
                 validate_recovery_relative_path(locator)
                 relative = Path(locator)
-                if self.owner_id == "persona.assets":
+                if self.owner_id in _PERSONA_ROW_OWNERS:
                     relative = relative.relative_to(self.leaf)
                 keys = located.get(relative.as_posix(), ())
                 if len(keys) != 1:
@@ -75,12 +80,16 @@ class _Assets(_Definition):
         with closing(
             connect_private_sqlite("recovery.files.persona", candidate, read_only=True)
         ) as connection:
-            if self.owner_id == "persona.assets":
+            if self.owner_id in _PERSONA_ROW_OWNERS:
                 references = []
                 for row in connection.execute(
                     "SELECT storage_relpath,bytes,sha256 FROM persona_visual_assets"
                 ):
                     validate_recovery_relative_path(row[0])
+                    if (row[0].split("/", 1)[0] == "actor_packs") != (
+                        self.owner_id == "persona.actor_packs"
+                    ):
+                        continue
                     references.append(row)
                     if len(references) > 100_000:
                         raise ValueError("asset_reference_limit")
@@ -142,7 +151,7 @@ class _Assets(_Definition):
         validate_recovery_relative_path(value)
         if not value:
             raise ValueError("invalid_asset_locator")
-        if self.owner_id == "persona.assets":
+        if self.owner_id in _PERSONA_ROW_OWNERS:
             path = root.parent / value
         else:
             path = root / value
@@ -261,6 +270,7 @@ class _Assets(_Definition):
 def recovery_adapters() -> tuple[OwnerAdapter, ...]:
     return (
         _Assets("persona.assets", leaf="persona_visual", tree=True),
+        _Assets("persona.actor_packs", leaf="actor_packs", tree=True),
         _Assets(
             "persona.visual_identity",
             leaf="visual_identities",

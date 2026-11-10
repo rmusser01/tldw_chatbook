@@ -51,7 +51,8 @@ class _CoreAdapter:
                 ) as connection:
                     optional_groups = {
                         "notes.file_notes": "SELECT 1 FROM notes WHERE file_path_on_disk IS NOT NULL OR sync_root_folder IS NOT NULL LIMIT 1",
-                        "persona.assets": "SELECT 1 FROM persona_visual_assets LIMIT 1",
+                        "persona.assets": "SELECT 1 FROM persona_visual_assets WHERE substr(storage_relpath,1,12) <> 'actor_packs/' LIMIT 1",
+                        "persona.actor_packs": "SELECT 1 FROM persona_visual_assets WHERE substr(storage_relpath,1,12) = 'actor_packs/' LIMIT 1",
                         "persona.visual_identity": "SELECT 1 FROM visual_identity_assets a JOIN visual_identity_pack_versions v ON a.pack_version_id=v.id JOIN visual_identity_packs p ON v.pack_id=p.id WHERE p.source_kind != 'builtin' LIMIT 1",
                         "persona.visual_identity_builtin": "SELECT 1 FROM visual_identity_assets a JOIN visual_identity_pack_versions v ON a.pack_version_id=v.id JOIN visual_identity_packs p ON v.pack_id=p.id WHERE p.source_kind = 'builtin' LIMIT 1",
                         "chat.dictionaries": "SELECT 1 FROM chat_dictionaries WHERE file_path IS NOT NULL LIMIT 1",
@@ -121,6 +122,7 @@ class _CoreAdapter:
                             "chat.attachments",
                             "chat.dictionaries",
                             "persona.assets",
+                            "persona.actor_packs",
                             "persona.visual_identity",
                             "persona.visual_identity_builtin",
                             "skills",
@@ -390,8 +392,12 @@ class _CoreAdapter:
                             "chat.dictionaries",
                         ),
                         (
-                            "SELECT 1 FROM persona_visual_assets LIMIT 1",
+                            "SELECT 1 FROM persona_visual_assets WHERE substr(storage_relpath,1,12) <> 'actor_packs/' LIMIT 1",
                             "persona.assets",
+                        ),
+                        (
+                            "SELECT 1 FROM persona_visual_assets WHERE substr(storage_relpath,1,12) = 'actor_packs/' LIMIT 1",
+                            "persona.actor_packs",
                         ),
                         (
                             "SELECT 1 FROM visual_identity_assets a JOIN visual_identity_pack_versions v ON a.pack_version_id=v.id JOIN visual_identity_packs p ON v.pack_id=p.id WHERE p.source_kind != 'builtin' LIMIT 1",
@@ -589,6 +595,7 @@ def core_adapters() -> tuple[OwnerAdapter, ...]:
                 "notes.sync_bindings",
                 "chat.dictionaries",
                 "persona.assets",
+                "persona.actor_packs",
                 "persona.visual_identity",
                 "persona.visual_identity_builtin",
                 "chat.attachments",

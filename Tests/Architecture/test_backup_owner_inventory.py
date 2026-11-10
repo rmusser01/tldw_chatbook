@@ -763,3 +763,135 @@ def probe():
     assert result[("by_name", "renameatx_np")] == 1
     assert result[("literal", "renameat2")] == 1
     assert not any(symbol == "probe" for symbol, _ in result)
+
+
+def test_actor_pack_persona_images_preview_and_validate_with_persona_artwork(
+    tmp_path,
+):
+    """TASK-39116: activating an Actor Pack publishes its persona images under
+    ``<user data>/actor_packs/<digest>/persona-runtime/`` and points ChaChaNotes
+    ``persona_visual_assets`` rows at them. They previewed as owner ``unknown``,
+    and ``persona.assets`` refused those rows. Owner decision 2026-11-10: capture
+    them with the persona artwork group."""
+    from Tests.Persona_Visual.test_persona_visual_publication import _snapshot
+    from tldw_chatbook.Backup_Recovery.data_groups import group_for_owner
+    from tldw_chatbook.Backup_Recovery.inventory import discover
+    from tldw_chatbook.Backup_Recovery.owner_registry import (
+        install_adapters,
+        registered,
+    )
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Persona_Visual.publication import publish_persona_visual
+    from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
+
+    config = tmp_path / "selected.toml"
+    config.write_text(
+        f'[general]\nusers_name = "Ada"\n[paths]\ndata_dir = "{tmp_path / "data"}"\n'
+    )
+    root = tmp_path / "data" / "Ada"
+    root.mkdir(parents=True)
+    source = tmp_path / "source"
+    source.mkdir()
+    runtime = root / "actor_packs" / ("a" * 64) / "persona-runtime"
+    install_adapters()
+
+    def core_edges():
+        core = next(
+            item
+            for item in discover((config,)).items
+            if item.logical_id.endswith(":db.chachanotes.primary")
+        )
+        return {
+            owner
+            for owner in ("persona.assets", "persona.actor_packs")
+            if core.logical_id.replace("db.chachanotes.primary", owner)
+            in core.dependencies
+        }
+
+    db = CharactersRAGDB(root / "tldw_chatbook_ChaChaNotes.db", "recovery")
+    try:
+        publish_persona_visual(
+            PersonaVisualRepository(db),
+            _snapshot(source),
+            source_root=source,
+            profile_root=root,
+            authority_guard=lambda: True,
+        )
+        # The core depends only on the owner whose rows exist: an absent
+        # actor_packs/ folder would otherwise be a dependency_unavailable.
+        assert core_edges() == {"persona.assets"}
+        # The activation's stored shape: the asset rows name actor_packs/ files.
+        runtime.mkdir(parents=True)
+        connection = db.get_connection()
+        for row_id, relpath in connection.execute(
+            "SELECT id, storage_relpath FROM persona_visual_assets"
+        ).fetchall():
+            moved = runtime.relative_to(root) / f"asset-{row_id:04d}.png"
+            (root / relpath).rename(root / moved)
+            connection.execute(
+                "UPDATE persona_visual_assets SET storage_relpath = ? WHERE id = ?",
+                (moved.as_posix(), row_id),
+            )
+        connection.commit()
+    finally:
+        db.close()
+    (runtime / "manifest.json").write_text("{}")
+    asset = next(runtime.glob("asset-*.png"))
+    assert core_edges() == {"persona.actor_packs"}
+
+    def preview():
+        items = discover((config,)).items
+        return items, {
+            item.path: item
+            for item in items
+            if item.path is not None and item.path.is_relative_to(root / "actor_packs")
+        }
+
+    items, under = preview()
+    assert {item.owner for item in under.values()} == {"persona.actor_packs"}
+    assert (under[asset].status, under[runtime / "manifest.json"].status) == (
+        "included",
+        "included",
+    )
+    # persona.assets no longer refuses the actor_packs/ rows as unreadable.
+    assert [
+        item.logical_id
+        for item in items
+        if item.owner == "persona.assets" and item.path is None
+    ] == []
+    assert group_for_owner("persona.actor_packs") == group_for_owner("persona.assets")
+    adapters = {adapter.owner_id: adapter for adapter in registered()}
+    available = {item.logical_id: item.path for item in items if item.path is not None}
+    tops = {
+        owner: next(item for item in items if item.logical_id.endswith(":" + owner))
+        for owner in ("persona.actor_packs", "persona.assets", "db.chachanotes.primary")
+    }
+    assert under[asset].logical_id in tops["persona.actor_packs"].dependencies
+    assert tops["persona.actor_packs"].logical_id in (
+        tops["db.chachanotes.primary"].dependencies
+    )
+    for owner, top in tops.items():
+        candidates = {key: available[key] for key in top.dependencies}
+        assert adapters[owner].validate_dependencies(top, top.path, candidates) == ()
+    # A restore validates the archived tree topology the same way.
+    topology = {
+        item.logical_id: (
+            item.metadata.root_id,
+            item.metadata.parent_id,
+            item.metadata.relative_path,
+            item.metadata.kind,
+        )
+        for item in items
+        if item.metadata is not None
+    }
+    for owner in ("persona.actor_packs", "persona.assets"):
+        top = tops[owner]
+        assert (
+            adapters[owner].validate_restore_dependencies(
+                top, top.path, available, topology=topology
+            )
+            == ()
+        )
+    # The row's recorded digest is checked against the actor_packs/ file.
+    asset.write_bytes(b"changed")
+    assert preview()[1][asset].status == "unsupported"

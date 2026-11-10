@@ -3116,6 +3116,60 @@ or are listed as accepted limits is the owner's decision (TASK-39111).
 | tldw_chatbook/css/build_css.py | _atomic_write_text | NamedTemporaryFile | 1 | unsupported | miscellaneous |
 | tldw_chatbook/css/check_bundle_sync.py | main | TemporaryDirectory | 1 | process_artifact | process |
 
+## Plugins, Actor Packs and Personal Context cohorts (TASK-39116)
+
+The owner chose each package's cohort on 2026-11-10:
+
+- **Plugins: "Capture all".** The option as offered read: "Full capture: registry
+  schema catalog, quiescing plugin processes, an execution gate. Large, and a
+  restore still lands in recovery_required without the keyring marker." That work,
+  including the Plugins rows, is TASK-40132; the Plugins rows are unchanged here.
+- **Actor_Packs: "Capture (Recommended)".** The option read: "Capture actor_packs/
+  with the persona asset group and fix the persona.assets validator so it accepts
+  that folder (it currently fails on it). Small immutable images and JSON, no
+  secrets." Installed here, below.
+- **Personal Context:** the 2026-11-06 ruling stands: "Capture it: back up the
+  database and design key custody so a restore can read it — a larger feature that
+  needs its own design task." The capture waits for TASK-39148's design; the
+  Personal Context rows and the two `personal_context.*` owners above are unchanged.
+
+### `persona.actor_packs`
+
+Activating an Actor Pack that has a persona-runtime section publishes its images and
+`manifest.json` under `<user data>/actor_packs/<content digest>/persona-runtime/`
+(`Actor_Packs/activation.py` `_prepare_persona_sections`), and ChaChaNotes
+`persona_visual_assets` rows name those files. Until TASK-39116 the folder previewed
+as owner `unknown`, and `persona.assets` reported the whole owner unsupported
+(`references_unavailable`), because it resolved every row inside `persona_visual/`.
+
+`Persona_Visual/recovery.py` now installs `persona.actor_packs`, a second `_Assets`
+tree owner rooted at `actor_packs/`. The two owners split the `persona_visual_assets`
+rows: a locator whose first component is `actor_packs` belongs to
+`persona.actor_packs`, every other row to `persona.assets` (so a stray locator still
+fails there). Each owner checks its rows' files, sizes and SHA-256 digests in
+discovery, `validate_dependencies` and `validate_restore_dependencies`. The new owner
+is in the `conversations` group beside `persona.assets`, has the same 256 GiB raw-file
+limit, is a ChaChaNotes core dependency when such rows exist (the core check splits
+the row query the same way), and the detached layout discovers it through its own
+validator. The shared-visual half of an activation lives under
+`visual_identities/actor_packs/` and was already captured by
+`persona.visual_identity`.
+
+Limits, as of 2026-11-10: activation writes (`_publish_immutable`,
+`_cleanup_published`) are raw native writes that take no participant token, as the
+activation's writes under `visual_identities/actor_packs/` already were. The owner is
+not in the later-rollback safety scope that `persona.assets` and the builtin owner
+have (neither is `persona.visual_identity`), and it has no recovery-review label of
+its own ("Other saved data").
+
+The Actor_Packs rows: activation producers are `qualified` under the owner they write
+into; import staging rows take the installed `actor_packs.import_staging` owner,
+which reports staged packs `unsupported` and an empty root unused; reads of the
+user's selected archive are `external_input` / `external`; publication into the
+user-confirmed export destination is `external_input` /
+`external-notes-workspace-or-export`; the archive writer serializes into its
+caller's stream (`generic_boundary`). The three image-decode rows stay `memory`.
+
 ## Census reconciliation (TASK-39053)
 
 This inventory had not matched production since it landed. Recomputed at dev
@@ -3390,36 +3444,36 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/MCP/permission_store.py | MCPPermissionStore._save_locked | mkdir | 1 | unsupported | mcp |
 | tldw_chatbook/MCP/permission_store.py | MCPPermissionStore._save_locked | os.replace | 1 | unsupported | mcp |
 | tldw_chatbook/MCP/permission_store.py | _fsync_parent_directory | open | 2 | unsupported | mcp |
-| tldw_chatbook/Actor_Packs/activation.py | ActorPackActivationService._prepare_character_sections | secure_private_directory | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/activation.py | ActorPackActivationService._prepare_persona_sections | secure_private_directory | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/activation.py | _cleanup_published | os.unlink | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/activation.py | _publish_immutable | open | 2 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/activation.py | _publish_immutable | os.unlink | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/activation.py | _publish_immutable | write | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/export.py | write_actor_pack_archive | ZipFile | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/export.py | write_actor_pack_archive | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/export.py | write_actor_pack_archive | write | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | ActorPackImportService.inspect_archive | ZipFile | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | ActorPackImportService.sweep_staging | secure_private_directory | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _candidate_current | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _cleanup_candidate | open | 2 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _create_candidate | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _create_candidate | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _extract_member | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _extract_member | open | 2 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _pin_source | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _preflight_space | secure_private_directory | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _read_candidate_authority | open | 2 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _read_member | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _read_staged | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _remove_directory_contents | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _remove_directory_contents | os.unlink | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _stage_root | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _write_all | write | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/publication.py | _open_parent | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/publication.py | _remove_owned_temporary | os.unlink | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/publication.py | publish_actor_pack | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/publication.py | publish_actor_pack | os.replace | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Actor_Packs/activation.py | ActorPackActivationService._prepare_character_sections | secure_private_directory | 1 | qualified | persona.visual_identity; Actor Pack activation publication, no participant token |
+| tldw_chatbook/Actor_Packs/activation.py | ActorPackActivationService._prepare_persona_sections | secure_private_directory | 1 | qualified | persona.actor_packs; Actor Pack activation publication, no participant token |
+| tldw_chatbook/Actor_Packs/activation.py | _cleanup_published | os.unlink | 1 | qualified | persona.actor_packs / persona.visual_identity; Actor Pack activation publication, no participant token |
+| tldw_chatbook/Actor_Packs/activation.py | _publish_immutable | open | 2 | qualified | persona.actor_packs / persona.visual_identity; Actor Pack activation publication, no participant token |
+| tldw_chatbook/Actor_Packs/activation.py | _publish_immutable | os.unlink | 1 | qualified | persona.actor_packs / persona.visual_identity; Actor Pack activation publication, no participant token |
+| tldw_chatbook/Actor_Packs/activation.py | _publish_immutable | write | 1 | qualified | persona.actor_packs / persona.visual_identity; Actor Pack activation publication, no participant token |
+| tldw_chatbook/Actor_Packs/export.py | write_actor_pack_archive | ZipFile | 1 | generic_boundary | caller-supplied stream: Actor Pack export destination (external) or buddy-conversion staging (assets) |
+| tldw_chatbook/Actor_Packs/export.py | write_actor_pack_archive | open | 1 | generic_boundary | caller-supplied stream: Actor Pack export destination (external) or buddy-conversion staging (assets) |
+| tldw_chatbook/Actor_Packs/export.py | write_actor_pack_archive | write | 1 | generic_boundary | caller-supplied stream: Actor Pack export destination (external) or buddy-conversion staging (assets) |
+| tldw_chatbook/Actor_Packs/importer.py | ActorPackImportService.inspect_archive | ZipFile | 1 | external_input | external |
+| tldw_chatbook/Actor_Packs/importer.py | ActorPackImportService.sweep_staging | secure_private_directory | 1 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/importer.py | _candidate_current | open | 1 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/importer.py | _cleanup_candidate | open | 2 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/importer.py | _create_candidate | mkdir | 1 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/importer.py | _create_candidate | open | 1 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/importer.py | _extract_member | mkdir | 1 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/importer.py | _extract_member | open | 2 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/importer.py | _pin_source | open | 1 | external_input | external |
+| tldw_chatbook/Actor_Packs/importer.py | _preflight_space | secure_private_directory | 1 | qualified | persona.actor_packs / persona.visual_identity; Actor Pack activation publication, no participant token |
+| tldw_chatbook/Actor_Packs/importer.py | _read_candidate_authority | open | 2 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/importer.py | _read_member | open | 1 | external_input | external |
+| tldw_chatbook/Actor_Packs/importer.py | _read_staged | open | 1 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/importer.py | _remove_directory_contents | open | 1 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/importer.py | _remove_directory_contents | os.unlink | 1 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/importer.py | _stage_root | open | 1 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/importer.py | _write_all | write | 1 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/publication.py | _open_parent | open | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Actor_Packs/publication.py | _remove_owned_temporary | os.unlink | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Actor_Packs/publication.py | publish_actor_pack | open | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Actor_Packs/publication.py | publish_actor_pack | os.replace | 1 | external_input | external-notes-workspace-or-export |
 | tldw_chatbook/Audio/diarizer_worker.py | read_pcm16_span | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Audio/meeting_capture.py | MeetingCapture._on_mic_frame | write | 3 | unsupported | miscellaneous |
 | tldw_chatbook/Audio/meeting_owner.py | MeetingSessionOwner.start | mkdir | 1 | unsupported | miscellaneous |
