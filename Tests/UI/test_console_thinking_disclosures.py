@@ -115,6 +115,7 @@ def _disclosure(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_first_live_evidence_expands_and_delta_updates_same_widgets() -> None:
     app = ThinkingTranscriptHarness()
@@ -151,6 +152,7 @@ async def test_first_live_evidence_expands_and_delta_updates_same_widgets() -> N
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("width", [60, 100])
 async def test_streaming_thinking_never_paints_an_empty_body(
@@ -203,6 +205,7 @@ async def test_streaming_thinking_never_paints_an_empty_body(
         assert disclosure.detail_stack.children[0].renderable.plain == text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("boundary", ["answer", "tool", "terminal"])
 async def test_first_answer_tool_or_terminal_boundary_auto_collapses_once(
@@ -242,6 +245,7 @@ async def test_first_answer_tool_or_terminal_boundary_auto_collapses_once(
         assert not disclosure.detail_stack.children
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unowned_tool_arrival_collapses_only_current_live_thinking() -> None:
     """Arrival, not a guessed round, is the boundary for ordinal-less tools."""
@@ -292,6 +296,7 @@ async def test_unowned_tool_arrival_collapses_only_current_live_thinking() -> No
         assert second_disclosure.status == "live"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("boundary", ["answer", "tool", "terminal"])
 async def test_live_proprietary_notice_expands_then_collapses_at_real_boundary(
@@ -337,6 +342,7 @@ async def test_live_proprietary_notice_expands_then_collapses_at_real_boundary(
         assert not disclosure.detail_stack.children
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_proprietary_status_is_fully_painted_at_narrow_width() -> None:
     """The literal unavailable state must not be clipped to a color-only cue."""
@@ -354,6 +360,7 @@ async def test_proprietary_status_is_fully_painted_at_narrow_width() -> None:
         assert disclosure.header.region.height == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("control", ["mouse", "enter", "space", "o"])
 async def test_manual_toggle_wins_over_pending_auto_collapse(control: str) -> None:
@@ -387,6 +394,7 @@ async def test_manual_toggle_wins_over_pending_auto_collapse(control: str) -> No
         assert disclosure.activity_message_id in transcript._manual_thinking_disclosures
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_manual_expand_also_wins_over_pending_auto_collapse() -> None:
     app = ThinkingTranscriptHarness()
@@ -410,6 +418,7 @@ async def test_manual_expand_also_wins_over_pending_auto_collapse() -> None:
         assert disclosure.expanded
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_historical_detail_is_collapsed_lazy_and_resolved_on_demand() -> None:
     app = ThinkingTranscriptHarness()
@@ -442,6 +451,7 @@ async def test_historical_detail_is_collapsed_lazy_and_resolved_on_demand() -> N
         assert not disclosure.detail_stack.children
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_late_terminal_proprietary_evidence_starts_collapsed() -> None:
     app = ThinkingTranscriptHarness()
@@ -464,6 +474,7 @@ async def test_late_terminal_proprietary_evidence_starts_collapsed() -> None:
         assert disclosure.detail_stack.children
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_no_actual_evidence_mounts_no_thinking_disclosure() -> None:
     app = ThinkingTranscriptHarness()
@@ -633,6 +644,7 @@ def test_plain_transcript_real_grouping_keeps_activities_but_omits_thinking() ->
     assert PROPRIETARY_THINKING_NOTICE not in plain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_collapsed_thinking_copy_uses_full_body() -> None:
     app = ThinkingTranscriptHarness()
@@ -688,6 +700,7 @@ def test_session_switch_prunes_thinking_owner_state_and_tool_expansion_survives_
     assert not transcript._manual_thinking_disclosures
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_editable_block_resolves_owner_block_and_text() -> None:
     app = ThinkingTranscriptHarness()
@@ -712,6 +725,7 @@ async def test_editable_block_resolves_owner_block_and_text() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_editable_block_returns_none_for_proprietary() -> None:
     app = ThinkingTranscriptHarness()
@@ -732,6 +746,7 @@ async def test_editable_block_returns_none_for_proprietary() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_editable_block_refuses_streaming_owner() -> None:
     app = ThinkingTranscriptHarness()
