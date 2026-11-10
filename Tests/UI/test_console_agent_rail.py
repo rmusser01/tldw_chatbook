@@ -182,6 +182,7 @@ def test_conversation_row_height_tracks_name_lines_and_badge():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_agent_rail_section_mounts():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -266,6 +267,7 @@ def test_bridge_subagent_counts_batches_in_one_db_call(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_subagent_counts_are_batched_and_gated_not_refreshed_every_tick(
     monkeypatch,
 ):
@@ -502,6 +504,7 @@ def test_spawn_subagent_summary_does_not_escape_markup_brackets(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_agent_section_lines_render_brackets_literally_not_escaped():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -544,6 +547,7 @@ async def test_agent_section_lines_render_brackets_literally_not_escaped():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_agent_section_falls_back_to_historical_snapshot_when_live_is_idle():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -586,6 +590,7 @@ async def test_agent_section_falls_back_to_historical_snapshot_when_live_is_idle
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_agent_section_prefers_live_snapshot_over_historical_when_present():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -671,6 +676,7 @@ def test_resume_rederives_top_level_agent_summary_from_durable_run_store(tmp_pat
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_drilldown_falls_back_to_overview_after_conversation_switch():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -734,6 +740,7 @@ async def test_drilldown_falls_back_to_overview_after_conversation_switch():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_drilldown_render_path_rejects_record_from_other_conversation():
     """Even if the drill-down id itself weren't cleared on switch, the
     render path independently verifies the record's own conversation_id
@@ -790,6 +797,7 @@ _A_LONG_RESULT = (
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_drilldown_step_text_grows_with_a_configured_cap_above_eighty(
     monkeypatch,
 ):
@@ -965,6 +973,7 @@ async def test_full_log_probe_is_cached_per_run_id_while_open():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_view_full_log_loads_off_thread_then_opens_the_modal():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -1024,6 +1033,7 @@ async def test_view_full_log_loads_off_thread_then_opens_the_modal():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_view_full_log_no_ops_when_there_is_no_target_run():
     """No bridge/conversation/target -- must not dispatch a worker or push anything."""
     app = _build_test_app()
@@ -1045,6 +1055,7 @@ async def test_view_full_log_no_ops_when_there_is_no_target_run():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_activate_native_console_session_clears_stale_drilldown():
     """The shared session-activation path (tab click / Ctrl+K / Alt+1..9)
     clears the drill-down immediately on switch, not just on the next
@@ -1080,6 +1091,7 @@ async def test_activate_native_console_session_clears_stale_drilldown():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_clicking_a_specific_subagent_row_drills_into_that_run_directly():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -1175,6 +1187,7 @@ async def test_clicking_a_specific_subagent_row_drills_into_that_run_directly():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_agent_fleet_token_total_sums_live_handles():
     """Sums `FleetHandle.total_tokens` off the LIVE fleet snapshot -- the
     same source `_console_agent_fleet_rows` itself reads for the row
@@ -1229,6 +1242,7 @@ async def test_console_agent_fleet_token_total_sums_live_handles():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_agent_fleet_token_total_is_zero_with_no_bridge():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -1241,6 +1255,7 @@ async def test_console_agent_fleet_token_total_is_zero_with_no_bridge():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_cancel_console_agent_fleet_row_delegates_to_the_bridge():
     """`_cancel_console_agent_fleet_row` forwards the ACTIVE conversation
     id plus the row's own id straight through to `ConsoleAgentBridge.
@@ -1268,6 +1283,7 @@ async def test_cancel_console_agent_fleet_row_delegates_to_the_bridge():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_cancel_console_agent_fleet_row_returns_false_with_no_bridge():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -1280,6 +1296,7 @@ async def test_cancel_console_agent_fleet_row_returns_false_with_no_bridge():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_cancel_console_agent_fleet_row_returns_false_with_no_row_id():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -1312,6 +1329,7 @@ async def test_cancel_console_agent_fleet_row_returns_false_with_no_row_id():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_drilldown_shows_a_live_childs_steps_before_they_reach_the_db():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -1361,6 +1379,7 @@ async def test_drilldown_shows_a_live_childs_steps_before_they_reach_the_db():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_drilldown_still_prefers_the_persisted_steps_once_they_exist():
     """The DB record is COMPLETE; the live slot only keeps the last few.
 
@@ -1502,6 +1521,7 @@ async def test_negative_availability_retries_after_real_first_record_append(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_pending_negative_probe_never_restarts_and_updates_real_affordance(
     monkeypatch,
 ):
@@ -1558,6 +1578,7 @@ async def test_pending_negative_probe_never_restarts_and_updates_real_affordance
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("replace_bridge", [False, True])
+@pytest.mark.bootstrap_profile
 async def test_initial_page_rejects_target_change_without_availability_scan(
     replace_bridge,
 ):
@@ -1608,6 +1629,7 @@ async def test_initial_page_rejects_target_change_without_availability_scan(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("state", ["absent", "empty-end", "empty-continuation"])
+@pytest.mark.bootstrap_profile
 async def test_initial_empty_log_semantics(state):
     from tldw_chatbook.Agents.run_log_paging import RunLogPage, RunLogPageCursor
 
@@ -1647,6 +1669,7 @@ async def test_initial_empty_log_semantics(state):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cancel", [False, True])
+@pytest.mark.bootstrap_profile
 async def test_log_probe_settles_stale_or_cancelled_generation(cancel):
     import threading
 
@@ -1702,6 +1725,7 @@ async def test_log_probe_settles_stale_or_cancelled_generation(cancel):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("open_viewer", [False, True])
+@pytest.mark.bootstrap_profile
 async def test_log_target_metadata_resolution_is_off_thread_and_stale_safe(open_viewer):
     import threading
 
@@ -1799,6 +1823,7 @@ def test_log_target_metadata_and_binding_token(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_log_path_does_not_initialize_an_absent_runtime(monkeypatch):
     host = ConsoleHarness(_build_test_app())
     async with host.run_test(size=(180, 48)) as pilot:
@@ -1820,6 +1845,7 @@ async def test_log_path_does_not_initialize_an_absent_runtime(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_old_log_probe_cannot_settle_newer_pending_generation():
     import threading
 
@@ -1874,6 +1900,7 @@ async def test_old_log_probe_cannot_settle_newer_pending_generation():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_modal_log_predicate_uses_turn_token_without_metadata_reads():
     import threading
 
@@ -1929,6 +1956,7 @@ async def test_modal_log_predicate_uses_turn_token_without_metadata_reads():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_log_probe_cancelled_before_entry_retries_on_existing_tick(monkeypatch):
     from Tests.UI.test_console_run_log_paging import settled
 
