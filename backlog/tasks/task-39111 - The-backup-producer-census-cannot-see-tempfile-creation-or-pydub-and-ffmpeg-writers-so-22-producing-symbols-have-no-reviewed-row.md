@@ -1,8 +1,10 @@
 ---
 id: TASK-39111
 title: "The backup producer census cannot see tempfile creation or pydub and ffmpeg writers, so 22 producing symbols have no reviewed row"
-status: To Do
+status: In Progress
+assignee: ['@claude']
 created_date: 2026-11-07 02:03
+updated_date: 2026-11-10 18:23
 labels:
 - follow-up
 - backup
@@ -35,7 +37,26 @@ A backup owner review that cannot see these writers cannot classify them.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every tempfile creation call in production has a reviewed census row, and a synthetic `tempfile.mkdtemp()` in a fresh symbol turns the census red (recorded)
+- [x] #1 Every tempfile creation call in production has a reviewed census row, and a synthetic `tempfile.mkdtemp()` in a fresh symbol turns the census red (recorded)
 - [ ] #2 pydub `export` and subprocess output writers either have reviewed rows or are each listed in the doc as owner-accepted known limits; the owner decides which, and the decision is recorded
-- [ ] #3 The inventory test stays green on its PR lane, with its serial time before and after recorded
+- [x] #3 The inventory test stays green on its PR lane, with its serial time before and after recorded
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Add the tempfile constructors (NamedTemporaryFile, TemporaryFile, SpooledTemporaryFile, TemporaryDirectory, mkstemp, mkdtemp) to the census vocabulary, with a unit test red first.
+2. Recompute the drift with the test's own helpers; give every new tempfile row a reviewed classification (a call in an already-reviewed symbol takes that symbol's disposition; new symbols are read in source: system-temp scratch is process_artifact, profile-directory staging takes its owner's cohort, else unsupported).
+3. Record the synthetic `tempfile.mkdtemp()` negative control in a fresh production symbol.
+4. pydub export / subprocess outputs: survey the sites; AC#2 needs the owner's choice (reviewed rows or listed limits).
+5. Record the inventory test's serial time before and after.
+
+## Implementation Notes
+
+The census in `Tests/Architecture/test_backup_owner_inventory.py` now counts tempfile creation: `NamedTemporaryFile`, `TemporaryFile`, `SpooledTemporaryFile`, `TemporaryDirectory`, `mkstemp` and `mkdtemp`, by name, through `from tempfile import ... as ...` aliases, and passed by reference. At base ae9f9e8d21 that is 86 rows (NamedTemporaryFile 24, mkstemp 23, mkdtemp 21, TemporaryDirectory 14, TemporaryFile 4), 22 of them in symbols with no other row, matching the filing. Recomputed with the test's own helpers, the whole branch adds 98 rows (with TASK-39112 and TASK-39115) and changes or removes none.
+
+- Classification (AC#1), in the doc's new "Census vocabulary extension" section: the doc's rules in order. 74 rows are new calls in reviewed symbols and take that symbol's disposition (rule 2); the two mixed symbols take their scratch rows' disposition. The 24 lone rows were each read in source: system-temp scratch (no `dir=`) is `process_artifact` / `process`, as the existing `VideoStore._atomic_publish` and `CodeExecutionRunner._execute_code` rows are; child-process log/output capture files are `process-transport`; scratch inside a reviewed module's own directory takes that module's cohort (Chatbooks import extraction, File Notes git proof/hook directories); `Utils/secure_temp_files` is a generic boundary. One row is in a Plugins symbol (`SourceService.commit_import.operation`, `unsupported` / `miscellaneous`, left for TASK-40132).
+- Red/green: `test_census_counts_tempfile_creation` failed on the base scanner with `AssertionError: NamedTemporaryFile` (`assert 0 == 1`) and passes now.
+- Synthetic control (AC#1): a temporary `def _r13b_negative_control(): return tempfile.mkdtemp()` appended to `tldw_chatbook/Utils/secure_temp_files.py` turned `test_every_persistence_source_symbol_has_reviewed_owner_row` red: "1 added, 0 gone, 0 changed ... added | tldw_chatbook/Utils/secure_temp_files.py | _r13b_negative_control | mkdtemp | 1 |". Reverted.
+- Timing (AC#3), serial, whole file, through the scratch wrapper: before 19 passed in 41.17 s (the census node 38.09 s; load average 15-24); after 23 passed in 50.62 s (census node 37.54 s, the new Actor_Packs node 10.93 s; load 21-31). A paired CPU-time run of `production_census()` in one process, base and head scanners alternating, measured base 27.2-29.0 s and head 29.1-30.1 s: about +3%. A text prefilter keeps the os-helper walk (TASK-39112) to modules that have a `return <os name>`; without it head measured 58 s wall against base 36-50 s. The file is in derived-artifacts.yml's lane step.
+- AC#2 is open: it needs the owner's choice, which this round's brief did not carry. Survey for that choice: pydub `export` writes a file in `TTS/audio_service.py` `AudioService.create_m4b_with_chapters` (the temporary `.m4a`, :479, and the chapterless fallback straight to `output_path`, :521); the other five `export` calls write into in-memory buffers (`audio_service` :342/:344, `audio_stitch` :180, `audiobook_generator` :772/:856). A by-name `export` vocabulary entry would also hit `stts_profile_library`, `meetings_screen`, `Evals/exporters` and the OPML service. Production has 71 `subprocess.run/Popen/call/check_call/check_output` and `create_subprocess_*` calls in 58 files; the output-writing ones found include the ffmpeg M4B in `create_m4b_with_chapters`, ffmpeg conversions in `STT/parakeet_onnx`, `STT/transcribe_cpp` and `stts_events` (:2641, next to its input), the `stable-diffusion.cpp` image into a temporary directory, and yt-dlp downloads in `Local_Ingestion`. Options: (a) count pydub `export` only in modules that import pydub (7 calls in 3 modules) and list subprocess outputs per site as accepted limits; (b) count every subprocess call as a candidate and review ~71 rows; (c) list both as accepted limits.
+- Files: `Tests/Architecture/test_backup_owner_inventory.py`, `backlog/docs/backup-recovery-owner-inventory.md`.
