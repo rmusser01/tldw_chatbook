@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-08 06:54
-updated_date: 2026-11-10 17:39
+updated_date: 2026-11-10 18:17
 labels:
 - follow-up
 - tests
@@ -120,4 +120,6 @@ Base dev ae9f9e8d21, 2026-11-10. Test-only changes in both files. One listed nod
 - The fix is product code (resolve the history path off the loop), so it is left for the coordinator (NEEDS_CONTEXT). This node is a UI census entry.
 
 **Files.** `Tests/UI/test_console_response_rules.py`, `Tests/UI/test_console_received_intent_feedback.py`, `backlog/docs/lessons-testing-evidence.md` (new entry).
+
+**Parent's combined runs (2026-11-10, for TASK-38977 AC#1).** Ten runs of this file and `test_console_prompts_modal.py` in one `-n 4` invocation, at load 36-47: 4 passed. `[roleplay]` failed 4 times on the `PromptHistory` wait above. `test_rule_phase_events_project_only_the_mounted_current_session[rebuild]` failed once, on the watch, with a second UI-thread config read: `_sync_console_native_session_tabs` -> `_maybe_show_fleet_coachmark` -> `_ensure_console_chat_controller` -> `_sync_console_chat_core_state` -> `_build_console_provider_selection_uncached` -> `_provider_readiness_app_config` -> `load_settings()` -> the participant lock loop (`config_participants.py:427`). Whether the real app routes that read the same way under `ConsoleHarness`'s own App was not checked. Two unlisted nodes also failed and were not captured: `test_actual_stop_after_generation_cancels_rule_check` (3 of the first 3 runs, 0 of the next 7; it waits a fixed 60 and 10 `pilot.pause()` turns) and, in the prompts file, `test_preservation_veto_retains_candidate_in_review_and_tamper_blocks_apply` (once).
 <!-- SECTION:NOTES:END -->

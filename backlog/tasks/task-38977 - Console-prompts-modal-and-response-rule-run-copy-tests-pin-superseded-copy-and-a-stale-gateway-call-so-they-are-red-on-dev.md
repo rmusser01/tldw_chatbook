@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:42
-updated_date: 2026-11-07 22:31
+updated_date: 2026-11-10 18:17
 labels:
 - follow-up
 - tests
@@ -99,4 +99,12 @@ They failed 1-6 per run, plus `test_compact_recipe_working_copy_scrolls_to_the_b
 **Lane (AC#4).** The five nodes are appended at the UI census tail, one entry per test (0.6-9.1 s each serially at load about 27; 13-17 s for all five). They land on shards 18-22 at the current census length. The slowest of the last 12 PR runs on those shards was 14.15, 14.4, 13.72, 13.95 and 13.25 min (collected 2026-11-07 06:05Z), so each stays more than 5 min under the 20-min cap.
 
 **Files.** `Tests/UI/test_console_prompts_modal.py`, `Tests/UI/test_console_response_rules.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
+
+**Round 13 re-check of AC#1 (2026-11-10, branch fu/r13-load after TASK-39165 and TASK-39166).** The coordinator's run on dev ae9f9e8d21 at load 9-13: the five nodes 3 of 3; both files whole 2 of 3, the one failure `test_console_syncs_never_wait_for_a_config_rebuild[full-ui-held]` ("waited 2.417s for the config rebuild"), which TASK-39166 has since replaced with a loop-liveness watch. Here, both files in one `-n 4` invocation, ten runs at load 36-47: 4 passed; the five nodes passed in all ten. The failures:
+- `test_console_mount_refreshes_never_wait_for_a_config_rebuild[roleplay]`, 4 runs: the UI thread waiting on the config rebuild in `PromptHistory.load` (a product wait; TASK-39166's notes);
+- `test_rule_phase_events_project_only_the_mounted_current_session[rebuild]`, 1 run: a UI-thread `load_settings()` through `_provider_readiness_app_config` during the hold;
+- `test_actual_stop_after_generation_cancels_rule_check`, 3 runs (the first three, none since), message not captured;
+- `test_preservation_veto_retains_candidate_in_review_and_tamper_blocks_apply`, 1 run, message not captured.
+
+AC#1 stays unticked: the whole files did not pass 3 of 3, and two of the failures are product waits that TASK-39166 left for a ruling.
 <!-- SECTION:NOTES:END -->
