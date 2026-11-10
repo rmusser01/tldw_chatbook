@@ -63,6 +63,7 @@ def hold_final_edit_render(screen):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_final_render_edit_is_consumed_without_another_keystroke(lab_app):
     from tldw_chatbook.Chunking import lab_state
 
@@ -96,6 +97,7 @@ async def test_final_render_edit_is_consumed_without_another_keystroke(lab_app):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_real_navigation_routes_lab_and_checkpoints_return_to_opener(lab_app):
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 
@@ -120,6 +122,7 @@ async def test_real_navigation_routes_lab_and_checkpoints_return_to_opener(lab_a
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_invalid_structural_json_remains_editable_and_visible(lab_app):
     from tldw_chatbook.Chunking import lab_state
 
@@ -143,6 +146,7 @@ async def test_invalid_structural_json_remains_editable_and_visible(lab_app):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_narrow_results_paging_and_inspector_are_keyboard_reachable(lab_app):
     from textual.widgets import DataTable
 
@@ -204,6 +208,7 @@ async def test_narrow_results_paging_and_inspector_are_keyboard_reachable(lab_ap
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_template_export_retains_tags_and_recovery_transfer(lab_app, tmp_path):
     route = resolve_screen_route("chunking_lab")
     assert route is not None
@@ -290,8 +295,13 @@ def test_file_excerpt_is_explicit_utf8_and_never_silently_truncated(tmp_path):
 
 
 @pytest.fixture
-def lab_app(tmp_path, monkeypatch):
-    monkeypatch.setattr("tldw_chatbook.config.get_user_data_dir", lambda: tmp_path)
+def lab_app(tmp_path):
+    from tldw_chatbook import config
+
+    data_dir = tmp_path / "lab-data"
+    data_dir.mkdir(mode=0o700)
+    assert config.save_setting_to_cli_config("paths", "data_dir", str(data_dir))
+    assert config.get_user_data_dir().parent == data_dir
     app = _build_test_app()
     # This fixture mounts its own initial Lab screen during each test.
     app._initial_screen_pushed = True
@@ -361,6 +371,7 @@ async def test_template_import_refuses_file_replaced_by_fifo_at_open(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_manually_mounted_lab_owns_deferred_initial_screen(lab_app):
     async with lab_app.run_test():
         screen = resolve_screen_route("chunking_lab").load_screen_class()(lab_app)
@@ -471,6 +482,7 @@ async def test_builtin_dialog_defaults_to_copy_and_preserves_builtin(lab_app, tm
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_unsupported_authored_template_exports_without_run_or_save_admission(
     lab_app, tmp_path
 ):
@@ -526,6 +538,7 @@ async def test_unsupported_authored_template_exports_without_run_or_save_admissi
         ),
     ],
 )
+@pytest.mark.bootstrap_profile
 async def test_sample_source_and_extent_are_visible_after_reopen(
     lab_app, source, labels
 ):
@@ -553,6 +566,7 @@ async def test_sample_source_and_extent_are_visible_after_reopen(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_initial_load_survives_yielding_mount_handler(
     lab_app: "TldwCli", monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -589,6 +603,7 @@ async def test_initial_load_survives_yielding_mount_handler(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_lazy_screen_workers_abandon_work_after_teardown(
     lab_app: "TldwCli", monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -628,6 +643,7 @@ async def test_lazy_screen_workers_abandon_work_after_teardown(
     "size,outcome",
     [((80, 24), "failed"), ((120, 40), "canceled"), ((160, 50), "pending")],
 )
+@pytest.mark.bootstrap_profile
 async def test_previous_choice_survives_reopen_without_completing_failed_batch(
     lab_app, size, outcome
 ):
@@ -885,6 +901,7 @@ def test_lab_is_library_owned_and_lazy():
     assert route.module_path == "tldw_chatbook.UI.Screens.chunking_lab_screen"
 
 
+@pytest.mark.bootstrap_profile
 def test_library_handoff_uses_local_id_and_refuses_server(lab_app):
     from types import SimpleNamespace
 
@@ -917,6 +934,7 @@ def test_library_handoff_uses_local_id_and_refuses_server(lab_app):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_profile_owner_is_single_flight_and_recovers(lab_app):
     assert hasattr(lab_app, "get_chunking_lab_coordinator")
     first, second = await asyncio.gather(
@@ -942,6 +960,7 @@ async def test_profile_owner_is_single_flight_and_recovers(lab_app):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_local_shortcuts_do_not_steal_editor_text(lab_app):
     route = resolve_screen_route("chunking_lab")
     assert route is not None
