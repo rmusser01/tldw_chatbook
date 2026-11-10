@@ -938,7 +938,7 @@ async def test_console_undo_after_accepted_send_does_not_resurrect_sent_content(
     as the session's "live" draft."""
     gateway = CapturingGateway()
     app = _build_test_app()
-    attach_chachanotes_db(app)
+    attach_chachanotes_db(app, retire_with_app=True)
     _configure_native_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)

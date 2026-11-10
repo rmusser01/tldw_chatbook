@@ -73,7 +73,7 @@ from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 _ROUTING_SIZE = (160, 44)
 
 
-def _install_real_marks_service(app, tmp_path) -> ConversationLocalMarksService:
+def _install_real_marks_service(app, tmp_path, request) -> ConversationLocalMarksService:
     """Give the test app a marks service backed by a real sqlite file.
 
     `_build_test_app` leaves `chachanotes_db` unset, so the production
@@ -81,6 +81,12 @@ def _install_real_marks_service(app, tmp_path) -> ConversationLocalMarksService:
     assertion is only worth making against a real row, so build one.
     """
     db = CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="button-routing")
+
+    def retire():
+        with db.quiesce_connections(timeout_seconds=2.0):
+            pass
+
+    request.addfinalizer(retire)
     service = ConversationLocalMarksService(db)
     app.conversation_local_marks_service = service
     return service
@@ -190,8 +196,11 @@ def _browser_config(app) -> dict:
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(tmp_path):
+async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(
+    tmp_path, request
+):
     """Pressing the star persists through `conversation_local_marks_service`.
 
     The mark is the whole point of the branch: the row repaints from the
@@ -199,7 +208,7 @@ async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(tmp_p
     repaint ran. Assert the service.
     """
     app = _build_test_app()
-    marks = _install_real_marks_service(app, tmp_path)
+    marks = _install_real_marks_service(app, tmp_path, request)
     rows = (
         _browser_row(
             "conv-star-1",
