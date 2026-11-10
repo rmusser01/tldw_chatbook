@@ -3001,7 +3001,10 @@ changes below add 99 producer rows and change or remove none:
   name stay out. An export whose target (first argument or `out_f=`) is a
   `BytesIO(...)`, or a name that the same function (not an enclosing one) binds
   only to `BytesIO(...)`, writes no file and is not counted; a parameter, or a name
-  the function also binds to anything else, is a file target and is counted. Three modules import pydub (`TTS/audio_service`,
+  the function also binds another way (an assignment or walrus to anything else, a
+  loop, `with ... as`, `except ... as`, unpacking or comprehension target), is a file
+  target and is counted. Not seen, a known limit: a match-case capture, an import alias and
+  `global`/`nonlocal` rebinding of the name. Three modules import pydub (`TTS/audio_service`,
   `TTS/audio_stitch`, `TTS/audiobook_generator`) with seven `export` calls; the
   five BytesIO exports stay out, and the one new row is
   `AudioService.create_m4b_with_chapters` `pydub.export` 2: the temporary `.m4a`

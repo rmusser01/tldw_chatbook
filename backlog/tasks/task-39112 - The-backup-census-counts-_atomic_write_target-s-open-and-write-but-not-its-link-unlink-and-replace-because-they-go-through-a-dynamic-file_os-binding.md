@@ -4,7 +4,7 @@ title: "The backup census counts _atomic_write_target's open and write but not i
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-07 02:03
-updated_date: 2026-11-10 21:08
+updated_date: 2026-11-10 21:44
 labels:
 - follow-up
 - backup
@@ -61,3 +61,5 @@ Counted, not accepted as a limit: the census in `Tests/Architecture/test_backup_
 - M1: the os-helper text prefilter is now `\breturn\W*(?:<os names>)\b`, so `return(os)` and a backslash-continued return find their helper. Pinned in `test_census_tracks_os_returned_by_a_helper` with each spelling as the module's only return of `os`; it was red before the fix (`AssertionError: return(os)`, `assert 0 == 1`).
 - M2: also counted now: a method helper (`self._os()`), a helper that returns another helper's call (`return base()`), a helper call used in place (`h().replace(a, b)`), and annotated or walrus bindings (`f: T = h()`, `(f := h())`, which also apply to the native aliases). `test_census_tracks_other_forms_of_an_os_helper` was red (`assert 0 == 1`) and passes. Not handled, and listed in the scanner's `ponytail:` note and the doc's vocabulary section: a returned local alias (`m = os; return m`), a helper imported from another module, `os` held in an attribute or container, and a nested function's alias of an outer alias bound later in the source.
 - Cost: paired CPU time of `production_census()`, base and head alternating three times (load 38-52): base 29.6-31.6 s, head 31.9-33.4 s (about +5-8%). The first draft of these fixes measured head 33.3-34.2 s; the binding check now does one `isinstance` per node and skips the helper lookups when a module has no helper. Recompute: 0 added, 0 gone, 0 changed.
+
+**Review r13b-rev2 fix (2026-11-10).** I1: `returned` was a dict keyed by function name and filled in walk order, so a later same-named def (`class Later: def base(self): pass`, `class Other: def _os(self): pass`) replaced the helper's return list and the helper vanished, a regression from base's set comprehension. Same-named defs now share one list (`setdefault(...).extend(...)`): any of them returning `os` makes the name a helper, as base did. Both plants are in `test_census_tracks_other_forms_of_an_os_helper`, which was red with them (`assert 0 == 1` at `Store.publish`) and passes. Recompute: 0 added, 0 gone, 0 changed.

@@ -4,7 +4,7 @@ title: "About 110 Plugins, Actor_Packs and Personal Context producer rows sit in
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-07 02:03
-updated_date: 2026-11-10 21:08
+updated_date: 2026-11-10 21:44
 labels:
 - follow-up
 - backup
@@ -77,3 +77,5 @@ Files: `tldw_chatbook/Persona_Visual/recovery.py`, `tldw_chatbook/DB/recovery_co
 - M5: the Personal Context implementation task ids are corrected to TASK-40133 to TASK-40136, TASK-40138 and TASK-40139 in the doc and these notes. The spec, those tasks and TASK-40132 are on fu/r13-pcdesign and fu/r13-plugins, which land before this branch.
 - Round trip: `test_actor_pack_persona_images_survive_capture_and_isolated_restore` (`Tests/Backup_Recovery/test_complete_roundtrip.py`) seeds actor_packs/ rows in a running app, previews (complete, both files `included` under `persona.actor_packs`), captures, writes the archive, acquires it, plans and runs an isolated restore, and reads the restored rows and files back: same digests, rows still under `actor_packs/`, source unchanged. With the `persona.actor_packs` adapter removed it failed in the capture child: `AssertionError: (('dependency_unavailable', 'unsupported', 'unsupported_owner'), [('unknown', '.../actor_packs', ...`. That file is in no PR lane (backup-recovery-qualification.yml is dispatch-only).
 - Covering set (21 Backup_Recovery files, `test_backup_data_groups.py` and the new round trip, `-n 4`, load 37-80): 641 passed, 3 skipped, 8 failed, 19 errors; the 27 red nodes are exactly the 27 red at base ae9f9e8d21.
+
+**Review r13b-rev2 fix (2026-11-10).** M3: `Tests/Backup_Recovery/test_detached_layout.py::test_actor_pack_persona_images_are_validated_in_a_detached_source` now runs in the Architecture guard step of `.github/workflows/derived-artifacts.yml`, right after the inventory file, and in `ARCHITECTURE_GUARD_TARGETS` (`Tests/CI/test_ci_queue_pressure_contract.py`). With the workflow line and the old tuple, `test_architecture_guards_lane_is_one_serial_minimal_python_312_job` was red ("At index 30 diff"); it passes with both. `Tests/CI` at `-n 4`: 1240 passed, 1 skipped. The two cases take about 25 s serially. The round trip in `test_complete_roundtrip.py` stays dispatch-only (disclosed; laning the Backup_Recovery suites is a coordinator follow-up).

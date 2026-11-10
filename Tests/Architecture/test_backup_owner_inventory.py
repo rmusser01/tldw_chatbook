@@ -126,15 +126,16 @@ def census(source: str) -> Counter:
     returns_os = os_names and re.search(
         r"\breturn\W*(?:%s)\b" % "|".join(map(re.escape, os_names)), source
     )
-    returned = {
-        node.name: [
-            child.value
-            for child in ast.walk(node)
-            if isinstance(child, ast.Return) and child.value is not None
-        ]
-        for node in (ast.walk(tree) if returns_os else ())
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
+    # Same-named defs share one entry: any of them returning os makes the name a
+    # helper (review r13b-rev2: a later `def base(self): pass` erased it).
+    returned = {}
+    for node in ast.walk(tree) if returns_os else ():
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            returned.setdefault(node.name, []).extend(
+                child.value
+                for child in ast.walk(node)
+                if isinstance(child, ast.Return) and child.value is not None
+            )
     os_helpers = set()
     while found := {
         name
@@ -162,9 +163,13 @@ def census(source: str) -> Counter:
             else [node.module or ""]
         )
     )
-    # name -> bound only to BytesIO(...) in that scope; read in the innermost
-    # scope only, so a parameter or a rebinding is a file target again.
+    # name -> True when every binding of it in that scope is `= BytesIO(...)`.
+    # Read in the innermost scope only, so a parameter is a file target, and any
+    # other binding (an assignment or walrus to anything else, a loop, with-as,
+    # except-as, unpacking or comprehension target) makes it one too. ponytail: match-case captures, imports
+    # and global/nonlocal rebinding are not seen; add them if a writer uses one.
     buffers = {}
+    bytes_io_targets = set()  # the Name nodes of `x = BytesIO(...)`
 
     def is_bytes_io(value):
         return isinstance(value, ast.Call) and "BytesIO" in (
@@ -239,6 +244,18 @@ def census(source: str) -> Counter:
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
                 collect_assignments(child, (*owners, child))
                 continue
+            if imports_pydub:
+                stored = (
+                    child.id
+                    if isinstance(child, ast.Name)
+                    and isinstance(child.ctx, ast.Store)
+                    and child not in bytes_io_targets
+                    else child.name
+                    if isinstance(child, ast.ExceptHandler)
+                    else None
+                )
+                if stored:
+                    buffers.setdefault(owners[-1], {})[stored] = False
             # `x = v`, `x: T = v` and `(x := v)` bind alike.
             if isinstance(child, BINDINGS) and child.value:
                 bound = child.value
@@ -273,9 +290,9 @@ def census(source: str) -> Counter:
                         and callee(value) in os_helpers
                     ):
                         os_aliases.setdefault(owners[-1], set()).add(name.id)
-                    if imports_pydub:
-                        scope = buffers.setdefault(owners[-1], {})
-                        scope[name.id] = scope.get(name.id, True) and is_bytes_io(value)
+                    if imports_pydub and is_bytes_io(value):
+                        bytes_io_targets.add(name)
+                        buffers.setdefault(owners[-1], {}).setdefault(name.id, True)
             collect_assignments(child, owners)
 
     collect_assignments(tree, (None,))
@@ -854,7 +871,17 @@ def annotated(a, b):
 def walrus(a, b):
     if (f := base()):
         f.rename(a, b)
+
+class Later:
+    def base(self):
+        pass
+
+class Other:
+    def _os(self):
+        pass
 """
+    # Review r13b-rev2: a later def with the same name that returns nothing
+    # (`Later.base`, `Other._os`) must not erase the helper.
     result = census(source)
     assert result[("Store.publish", "os.replace")] == 1
     assert result[("in_place", "os.replace")] == 1
@@ -921,6 +948,28 @@ def rebound(segment, path):
     out = io.BytesIO()
     out = path
     segment.export(out)
+
+def looped(segment, paths):
+    buf = io.BytesIO()
+    for buf in paths:
+        segment.export(buf)
+
+def opened(segment, path):
+    buf = io.BytesIO()
+    with open(path, "wb") as buf:
+        segment.export(buf)
+
+def unpacked(segment, pair):
+    buf = io.BytesIO()
+    buf, other = pair
+    segment.export(buf)
+
+def excepted(segment):
+    buf = io.BytesIO()
+    try:
+        pass
+    except OSError as buf:
+        segment.export(buf)
 """
     result = census(importing)
     assert result[("save", "pydub.export")] == 2
@@ -928,6 +977,9 @@ def rebound(segment, path):
     # name rebound away from BytesIO is a file target again.
     assert result[("to_parameter", "pydub.export")] == 1
     assert result[("rebound", "pydub.export")] == 1
+    # Review r13b-rev2: loop, with-as, unpacking and except-as bind it too.
+    for symbol in ("looped", "opened", "unpacked", "excepted"):
+        assert result[(symbol, "pydub.export")] == 1, symbol
     assert not any(symbol == "encode" for symbol, _ in result)
     assert census("def save(exporter, path):\n    exporter.export(path)\n") == Counter()
 

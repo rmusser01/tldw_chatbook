@@ -4,7 +4,7 @@ title: "The backup producer census cannot see tempfile creation or pydub and ffm
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-07 02:03
-updated_date: 2026-11-10 21:08
+updated_date: 2026-11-10 21:44
 labels:
 - follow-up
 - backup
@@ -64,3 +64,5 @@ The census in `Tests/Architecture/test_backup_owner_inventory.py` now counts tem
 **Review r13b-rev1 fixes (2026-11-10).**
 - M2 (pydub): the BytesIO lookup now reads only the innermost scope, and a name counts as a buffer only if every binding of it in that scope is `BytesIO(...)`. A function parameter that shares a module-level buffer's name, or a name rebound from a BytesIO to a path, is a file target again and counted. The added cases in `test_census_counts_pydub_export_only_where_pydub_is_imported` were red (`assert 0 == 1`) and pass. Production rows are unchanged (recompute: 0 added, 0 gone, 0 changed).
 - AC#3 timing after the fixes: serial, whole file, 25 passed in 95.94 s with the census node at 70.41 s (load 47-80); the earlier pydub-change run was 24 passed in 60.25 s (load 46-56). Wall time follows the load; paired CPU time is base 29.6-31.6 s and head 31.9-33.4 s, about +5-8%. The lane's per-test timeout is 180 s.
+
+**Review r13b-rev2 fix (2026-11-10).** M2: the pydub buffer rule now sees every binding of a name, not only `=`, `: T =` and `:=`. Each `Name` stored in the scope, other than the target of `x = BytesIO(...)`, and each `except ... as` name makes the name a file target, which covers loop, `with ... as`, unpacking and comprehension targets. The new `looped`, `opened`, `unpacked` and `excepted` cases were red (`AssertionError: looped`, `assert 0 == 1`) and pass. Match-case captures, import aliases and `global`/`nonlocal` rebinding are not seen; the scanner's `ponytail:` note and the doc say so. Production rows unchanged (0 added, 0 gone, 0 changed). Serial run of the inventory file plus the laned detached node: 27 passed in 80.86 s, census node 44.94 s (load 30-38).

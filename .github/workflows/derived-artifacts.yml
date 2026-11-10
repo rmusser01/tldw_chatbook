@@ -1268,6 +1268,7 @@ jobs:
             Tests/Architecture/test_worker_exclusive_group_inventory.py \
             Tests/Persona_Buddy/test_controller_failure_logging.py \
             Tests/Architecture/test_backup_owner_inventory.py \
+            Tests/Backup_Recovery/test_detached_layout.py::test_actor_pack_persona_images_are_validated_in_a_detached_source \
             Tests/test_persistent_diagnostic_boundary.py \
             Tests/Utils/test_log_sanitizer.py \
             Tests/Architecture/test_no_undefined_module_globals.py \
