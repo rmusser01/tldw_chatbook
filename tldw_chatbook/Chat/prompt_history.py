@@ -90,8 +90,9 @@ async def _resolve_default_path_off_loop() -> None:
     ``default_prompt_history_path()`` on the UI loop. When the kept path is
     stale (a config rebuild dropped the cache), that ran ``get_user_data_dir()``
     there, and the loop waited for the rebuild's lock. The resolution runs on a
-    worker thread instead until the kept path matches the current inputs; a
-    resolution whose inputs moved under it is not kept, so it is retried.
+    worker thread instead. A resolution whose inputs moved under it is not
+    kept, so it is retried, at most three times; after that the caller's own
+    resolution on the loop runs as before.
     """
     for _ in range(3):
         memo = _DEFAULT_PATH_MEMO
@@ -154,15 +155,18 @@ class PromptHistory:
     """Manages a JSONL prompt-history file with async IO and draft stashing."""
 
     def __init__(
-        self, path: Path | str, max_entries: int = DEFAULT_MAX_ENTRIES
+        self, path: Path | str | None = None, max_entries: int = DEFAULT_MAX_ENTRIES
     ) -> None:
         """Initialize the history store.
 
         Args:
             path: Path of the JSONL history file (created on first write).
+                None means the default per-user file, resolved off the UI loop
+                on first use (TASK-39166): a build on the loop during a config
+                rebuild would wait for it.
             max_entries: Cap on stored entries; the most recent entries win.
         """
-        self.path = lexical_path(path)
+        self.path = lexical_path(path) if path is not None else None
         self.max_entries = max_entries
         self._entries: list[HistoryEntry] = []
         self._current: str | None = None
@@ -293,8 +297,10 @@ class PromptHistory:
 
     async def _file_job(self) -> FileJob:
         # Only the exact class is checked against the default path (TASK-39166).
-        if type(self) is PromptHistory:
+        if type(self) is PromptHistory or self.path is None:
             await _resolve_default_path_off_loop()
+        if self.path is None:
+            self.path = lexical_path(default_prompt_history_path())
         return FileJob(self, "prompt_history")
 
     async def _load_locked(self) -> None:
