@@ -9230,6 +9230,7 @@ async def test_console_selected_message_edit_action_opens_modal_and_saves_conten
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
@@ -9307,6 +9308,7 @@ async def test_console_edit_resend_clears_replaced_descendant_original_attempt()
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{user_message.id}")
         transcript.select_message(user_message.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
@@ -9351,6 +9353,7 @@ async def test_console_selected_message_edit_action_cancel_preserves_content():
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
@@ -9389,6 +9392,7 @@ async def test_console_selected_message_edit_action_blank_save_stays_open_with_e
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
