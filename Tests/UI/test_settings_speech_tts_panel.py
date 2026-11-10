@@ -156,6 +156,7 @@ class _PanelHarness(App[None]):
         *,
         configure_provider: str = "audio_cpp",
         state=None,
+        config_snapshot: dict[str, object] | None = None,
         profiles: object = _PROFILES_UNSET,
         profiles_unavailable: bool = False,
         observation: TTSNativeCapabilityObservation | None = None,
@@ -166,6 +167,7 @@ class _PanelHarness(App[None]):
         super().__init__()
         self.configure_provider = configure_provider
         self.state = state or load_global_speech_tts_state({})
+        self.config_snapshot = {} if config_snapshot is None else config_snapshot
         self.profiles = (
             list(_DEFAULT_TEST_PROFILES) if profiles is _PROFILES_UNSET else profiles
         )
@@ -180,6 +182,7 @@ class _PanelHarness(App[None]):
     def compose(self) -> ComposeResult:
         yield SpeechTTSSettingsPanel(
             state=self.state,
+            config_snapshot=self.config_snapshot,
             configure_provider=self.configure_provider,
             profiles=self.profiles,
             profiles_unavailable=self.profiles_unavailable,
@@ -1056,6 +1059,8 @@ async def test_first_settings_mount_probes_local_speech_dependencies_once(
         "kokoro_onnx",
         "chatterbox",
         "boson_multimodal",
+        "onnxruntime",
+        "tokenizers",
     ]
     assert imported_local_runtimes == []
 
@@ -3680,18 +3685,16 @@ async def test_realtime_semantic_mode_deletes_the_server_vad_keys(
 ) -> None:
     """Switching back to semantic must not leave stale server_vad numbers
     in config for a later reader to hand the provider."""
-    monkeypatch.setattr(
-        speech_tts_settings_panel_module,
-        "_read_realtime_turn_detection",
-        lambda: "server_vad",
-    )
     calls: list[tuple[tuple, dict]] = []
     monkeypatch.setattr(
         speech_tts_settings_panel_module,
         "save_settings_to_cli_config",
         lambda *args, **kwargs: calls.append((args, kwargs)) or True,
     )
-    app = _PanelHarness(configure_provider="audio_cpp")
+    app = _PanelHarness(
+        configure_provider="audio_cpp",
+        config_snapshot={"realtime": {"turn_detection": "server_vad"}},
+    )
     async with app.run_test(size=(150, 60)) as pilot:
         await _settle(pilot)
         app.query_one(
@@ -3721,16 +3724,16 @@ async def test_realtime_unsupported_configured_provider_is_not_silently_rewritte
     unsupported provider made the panel report unsaved changes the instant
     it opened -- and Save silently rewrote the user's value to "openai"
     without anyone touching the field."""
-    monkeypatch.setattr(
-        speech_tts_settings_panel_module, "_read_realtime_provider", lambda: "gemini"
-    )
     calls: list[tuple[tuple, dict]] = []
     monkeypatch.setattr(
         speech_tts_settings_panel_module,
         "save_settings_to_cli_config",
         lambda *args, **kwargs: calls.append((args, kwargs)) or True,
     )
-    app = _PanelHarness(configure_provider="audio_cpp")
+    app = _PanelHarness(
+        configure_provider="audio_cpp",
+        config_snapshot={"realtime": {"provider": "gemini"}},
+    )
     async with app.run_test(size=(150, 60)) as pilot:
         panel = app.query_one("#panel", SpeechTTSSettingsPanel)
         await _settle(pilot)
