@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from Tests.UI.background_signals import await_background_task, wait_for_background_signal
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
 from tldw_chatbook.Personal_Context.context_service import (
     ProfileContextRequest,
@@ -196,11 +197,14 @@ async def test_screen_factory_rechecks_inputs_after_async_validation():
     )
     result = await factory()
     pending = asyncio.create_task(result.is_current())
-    await started.wait()
-    screen.draft = "edited during validation"
-    release.set()
+    try:
+        await wait_for_background_signal(started, pending, what="selection validation")
+        screen.draft = "edited during validation"
+    finally:
+        release.set()
+        current = await await_background_task(pending, what="selection validation")
 
-    assert not await pending
+    assert not current
 
 
 @pytest.mark.asyncio
@@ -219,10 +223,13 @@ async def test_screen_factory_rechecks_canvas_after_async_validation():
     )
     result = await factory()
     pending = asyncio.create_task(result.is_current())
-    await started.wait()
-    controller.canvas_current = False
-    release.set()
-    assert not await pending
+    try:
+        await wait_for_background_signal(started, pending, what="canvas validation")
+        controller.canvas_current = False
+    finally:
+        release.set()
+        current = await await_background_task(pending, what="canvas validation")
+    assert not current
 
 
 @pytest.mark.asyncio
