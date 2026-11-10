@@ -52,6 +52,9 @@ class Surface(SimpleNamespace):
   if not callable(attr):raise TypeError(f'Surface has no instance answer for ChatScreen.{name}')
   return MethodType(attr,self)
 screen=Surface()
+# Instance state ChatScreen.__init__ sets, which the coalesced callback reads
+# since dev 0aa96f8d1b moved it to config_sync (TASK-38973's rule: name it).
+screen._console_sync_in_progress=False
 scheduled=[]
 screen.set_timer=lambda delay,callback:scheduled.append((delay,callback))
 screen.call_after_refresh=lambda callback:scheduled.append((0,callback))

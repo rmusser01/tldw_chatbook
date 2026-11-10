@@ -87,4 +87,13 @@ Owner decision (2026-11-09), resolving the contradiction with dev 0aa96f8d1b (th
 
 **Docs.** `Docs/User_Guide/console.md`, Quirks & troubleshooting: "it keeps trying for about three seconds, then stops trying and shows this notice once".
 
-Files: `tldw_chatbook/UI/Console_Modules/config_sync.py`, `tldw_chatbook/UI/Console_Modules/console_spend_projection.py`, `tldw_chatbook/Widgets/Console/console_status_chips.py`, `Tests/UI/test_console_projection_reads_off_loop.py`, `Tests/Performance/test_console_keystroke_work_census.py` (reverted to dev), `Docs/User_Guide/console.md`.
+
+**TASK-39043's lifetime file (recorded here, 2026-11-09).** `Tests/Backup_Recovery/test_console_config_sync_lifetime.py` had 9 red nodes on plain dev 3a6498ae14 (9 failed, 18 passed): `test_console_busy_config_locks_defer_both_refresh_callers` (6 cases), `test_console_refresh_retries_after_native_pause_without_stale_state[native-canceled|native-duplicates]` and `test_console_native_retry_uses_one_screen_owned_timer[timer-retry]`.
+- Cause: dev 0aa96f8d1b moved the coalesced callback to `config_sync.run_coalesced_control_bar_sync`, which reads `screen._console_sync_in_progress`. The `Surface` stub screen has no such attribute (ChatScreen sets it in `__init__`), so the read fell through to the class and raised.
+- Fix: the stub now sets `_console_sync_in_progress = False`, following TASK-38973's rule of naming instance state. The fix is in the double only; no node showed a product defect.
+- Evidence:
+  - Head with the old stub: 9 failed, 18 passed.
+  - Fixed stub with dev's `config_sync.py`: 27 passed.
+  - Fixed stub on head: 27 passed 3 times at `-n 4` (concurrent runs, load 37).
+
+Files: `tldw_chatbook/UI/Console_Modules/config_sync.py`, `tldw_chatbook/UI/Console_Modules/console_spend_projection.py`, `tldw_chatbook/Widgets/Console/console_status_chips.py`, `Tests/Backup_Recovery/test_console_config_sync_lifetime.py`, `Tests/UI/test_console_projection_reads_off_loop.py`, `Tests/Performance/test_console_keystroke_work_census.py` (reverted to dev), `Docs/User_Guide/console.md`.
