@@ -404,6 +404,7 @@ async def test_dismiss_does_not_write_config_synchronously(tmp_path):
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_confirm_coalesces_recent_and_last_dir_into_one_write(tmp_path):
     """task-15470 review round: once persistence does run, it must be the
