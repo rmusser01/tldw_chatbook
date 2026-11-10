@@ -62,6 +62,7 @@ async def test_audio_service_converts_one_complete_utterance(audio_format):
         assert result == pcm
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("audio_format", ["wav", "pcm", "aac", "flac", "opus", "mp3"])
 async def test_elevenlabs_delivers_the_requested_format_repeatedly(audio_format):
@@ -102,6 +103,7 @@ async def test_elevenlabs_delivers_the_requested_format_repeatedly(audio_format)
         await backend.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_alltalk_pcm_is_raw_audio_at_the_declared_rate():
     def handle(request):
