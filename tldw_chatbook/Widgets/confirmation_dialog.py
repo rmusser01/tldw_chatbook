@@ -362,10 +362,18 @@ def _closed_but_still_stacked(screen: Any) -> bool:
     """Whether ``screen``'s own dismiss already delivered a result.
 
     Textual 8.2.8 gives every push a ``ResultCallback`` whose future is
-    resolved only by that screen's ``dismiss``. Resolved -- not cancelled,
-    which a cancelled ``push_screen_wait`` waiter does to a screen still
-    legitimately open -- while the screen is still on the stack means its
-    pop went to the screen that was above it.
+    resolved only by that screen's ``dismiss``. Textual never cancels it,
+    and ``push_screen_wait`` awaits it through ``asyncio.shield``, so a
+    cancelled waiter leaves it pending. Resolved while the screen is still
+    on the stack means its pop went to the screen that was above it.
+
+    A cancelled future is excluded: only a caller cancelled while awaiting a
+    bare ``push_screen(..., wait_for_dismiss=True)`` future (or timing out on
+    one) cancels it, and that screen was never dismissed, so it is still
+    legitimately open. No package code does that any more:
+    ``test_no_unshielded_dismiss_waits`` fails on a new bare wait, and the
+    one allowed site, ``await_quit_prompt``, waits with ``asyncio.wait``,
+    which never cancels. The exclusion is kept as a guard, not a live path.
     """
     callbacks = getattr(screen, "_result_callbacks", None)
     if not callbacks:
