@@ -24,6 +24,7 @@ from textual.widgets import Button, Collapsible, Input, Select, Static
 import tldw_chatbook.Chat.console_settings_defaults as defaults_module
 from Tests.console_provider_doubles import provider_resolution
 from Tests.private_profile import private_profile_test
+from Tests.test_utilities import wait_for_condition
 from Tests.UI.background_signals import (
     await_background_task,
     wait_for_background_signal,
@@ -718,12 +719,12 @@ async def test_normal_sync_projects_delayed_first_persist_failure_for_switched_s
 
         await console._session._activate_native_console_session(failed_session.id)
         context_retry = console.query_one("#console-retry-context-settings", Button)
-        assert context_row.display is True
+        assert await wait_for_condition(lambda: context_row.display)
         assert context_retry.console_settings_session_id == failed_session.id
         assert context_retry.console_settings_revision == failure.revision
 
         await console._session._activate_native_console_session(clean_session.id)
-        assert context_row.display is False
+        assert await wait_for_condition(lambda: not context_row.display)
         assert context_retry.disabled is True
 
 
