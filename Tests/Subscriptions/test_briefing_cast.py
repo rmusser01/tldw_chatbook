@@ -1120,8 +1120,9 @@ async def test_row_scoped_exclude_still_sweeps_a_same_briefing_zombie_once_the_i
 
 
 @pytest.mark.asyncio
-async def test_generate_script_from_text_happy_path_writes_into_kept_scripts(tmp_path):
-    subs_db = _db(tmp_path)
+@pytest.mark.bootstrap_profile
+async def test_generate_script_from_text_happy_path_writes_into_kept_scripts(tmp_path, db):
+    subs_db = db
     chacha_db = _chacha_db(tmp_path)
     try:
         kept_id = _kept_briefing(chacha_db, body="## Kept\n\nAcme shipped a thing.")
@@ -1153,21 +1154,23 @@ async def test_generate_script_from_text_happy_path_writes_into_kept_scripts(tmp
         # Findable via the listing interface, newest first.
         assert chacha_db.list_kept_scripts(kept_id)[0]["id"] == row["id"]
     finally:
-        chacha_db.close_connection()
+        with chacha_db.quiesce_connections(timeout_seconds=2.0):
+            pass
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_generate_script_from_text_app_default_when_preset_id_is_none(
-    tmp_path, monkeypatch
+    tmp_path, db
 ):
     """`preset_id=None`: app default provider/model, no style notes,
     `preset_name` is the literal `APP_DEFAULT_PRESET_NAME`, and the roster
     is a single unbound "Narrator" speaker (there is no other source for a
     roster when no preset supplies one)."""
-    monkeypatch.setattr(
-        app_config, "default_api_endpoint", "local-llama", raising=False
+    assert app_config.save_settings_to_cli_config(
+        {"chat_defaults": {"provider": "llama_cpp", "model": "briefing-test-model"}}
     )
-    subs_db = _db(tmp_path)
+    subs_db = db
     chacha_db = _chacha_db(tmp_path)
     try:
         kept_id = _kept_briefing(chacha_db)
@@ -1178,15 +1181,16 @@ async def test_generate_script_from_text_app_default_when_preset_id_is_none(
         )
 
         assert row["preset_name"] == APP_DEFAULT_PRESET_NAME
-        assert row["model_used"] == "local-llama"
-        assert chat.calls[0]["api_endpoint"] == "local-llama"
+        assert row["model_used"] == "llama_cpp"
+        assert chat.calls[0]["api_endpoint"] == "llama_cpp"
         assert chat.calls[0].get("model") is None
         snapshot = load_roster(row["roster_snapshot_json"])
         assert [speaker["name"] for speaker in snapshot] == ["Narrator"]
         # No style notes reached the prompt for an app-default cast.
         assert "Style notes" not in chat.calls[0]["system_message"]
     finally:
-        chacha_db.close_connection()
+        with chacha_db.quiesce_connections(timeout_seconds=2.0):
+            pass
 
 
 @pytest.mark.asyncio
@@ -1252,13 +1256,14 @@ async def test_generate_script_from_text_refuses_when_preset_is_missing(tmp_path
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_generate_script_from_text_fails_naming_the_card_when_load_character_is_none(
-    tmp_path,
+    tmp_path, db,
 ):
     """The roster always comes from the PRESET being cast with, never from
     the kept briefing's own (roster-less) snapshot -- so a card-bound
     speaker fails exactly like a live cast's does."""
-    subs_db = _db(tmp_path)
+    subs_db = db
     chacha_db = _chacha_db(tmp_path)
     try:
         kept_id = _kept_briefing(chacha_db)
@@ -1276,16 +1281,18 @@ async def test_generate_script_from_text_fails_naming_the_card_when_load_charact
 
         assert chacha_db.list_kept_scripts(kept_id) == []
     finally:
-        chacha_db.close_connection()
+        with chacha_db.quiesce_connections(timeout_seconds=2.0):
+            pass
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_generate_script_from_text_chat_failure_raises_and_writes_no_row(
-    tmp_path,
+    tmp_path, db,
 ):
     """The named asymmetry: unlike `generate_script`, a chat failure here
     RAISES rather than becoming a `failed` row."""
-    subs_db = _db(tmp_path)
+    subs_db = db
     chacha_db = _chacha_db(tmp_path)
     try:
         kept_id = _kept_briefing(chacha_db)
@@ -1299,14 +1306,16 @@ async def test_generate_script_from_text_chat_failure_raises_and_writes_no_row(
 
         assert chacha_db.list_kept_scripts(kept_id) == []
     finally:
-        chacha_db.close_connection()
+        with chacha_db.quiesce_connections(timeout_seconds=2.0):
+            pass
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_generate_script_from_text_parse_failure_raises_and_writes_no_row(
-    tmp_path,
+    tmp_path, db,
 ):
-    subs_db = _db(tmp_path)
+    subs_db = db
     chacha_db = _chacha_db(tmp_path)
     try:
         kept_id = _kept_briefing(chacha_db)
@@ -1323,16 +1332,18 @@ async def test_generate_script_from_text_parse_failure_raises_and_writes_no_row(
 
         assert chacha_db.list_kept_scripts(kept_id) == []
     finally:
-        chacha_db.close_connection()
+        with chacha_db.quiesce_connections(timeout_seconds=2.0):
+            pass
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_generate_script_from_text_never_touches_the_kept_briefing_row(
-    tmp_path,
+    tmp_path, db,
 ):
     """THE named invariant, both directions: a cast failure AND a cast
     success leave `kept_briefings` byte-for-byte unchanged."""
-    subs_db = _db(tmp_path)
+    subs_db = db
     chacha_db = _chacha_db(tmp_path)
     try:
         kept_id = _kept_briefing(chacha_db)
@@ -1358,16 +1369,18 @@ async def test_generate_script_from_text_never_touches_the_kept_briefing_row(
         assert row["kept_briefing_id"] == kept_id
         assert before == after_success
     finally:
-        chacha_db.close_connection()
+        with chacha_db.quiesce_connections(timeout_seconds=2.0):
+            pass
 
 
 @pytest.mark.asyncio
-async def test_recast_needs_no_subscriptions_rows(tmp_path):
+@pytest.mark.bootstrap_profile
+async def test_recast_needs_no_subscriptions_rows(tmp_path, db):
     """Named test (AC #4): keep a briefing, delete the watchlist AND the
     original preset through real paths, then cast with a DIFFERENT
     currently-existing preset -- succeeds, lands in `kept_scripts` with
     the new preset's name and `source_script_id=NULL`."""
-    subs_db = _db(tmp_path)
+    subs_db = db
     chacha_db = _chacha_db(tmp_path)
     try:
         watchlist_id = WatchlistBundleService(subs_db).create(name="Security")["id"]
@@ -1406,7 +1419,8 @@ async def test_recast_needs_no_subscriptions_rows(tmp_path):
         # The kept briefing itself is untouched by the recast.
         assert chacha_db.get_kept_briefing(kept_id) is not None
     finally:
-        chacha_db.close_connection()
+        with chacha_db.quiesce_connections(timeout_seconds=2.0):
+            pass
 
 
 # --- In-process kept-cast claims (task-1780, Task 4) -------------------------
