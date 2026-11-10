@@ -1281,9 +1281,8 @@ jobs:
     # pull-request lane. A first attempt appended them to pr-fast-lane, whose
     # run then hit its 35-min cap (PR #3399); the job's own note says to add
     # a job, not minutes. Their own job, so no existing lane moves toward its
-    # cap. Sandboxed only (no bootstrap_profile node), one invocation, same
-    # minimal dependency set and serial pytest as the other lanes. All 14 ran
-    # in about 2.5 min locally.
+    # cap: one invocation, same minimal dependency set and serial pytest as
+    # the other lanes. Those 14 ran in about 2.5 min locally.
     # TASK-37173: PR #3494 reached the 35-minute fast-lane cap at 99%.
     # Run the four package-wide AST censuses here, where the same attempt
     # took 2m28s against this job's 20-minute cap.
@@ -1293,9 +1292,10 @@ jobs:
     #
     # TASK-39114 appends the private-SQLite registry and inventory files, red
     # on no required lane before. Tests/DB keeps the bootstrap profile, so they
-    # run last (TASK-32873). The inventory's response-rule node also runs in
-    # console-p0-gate, so the exclusive recovered-suites and Architecture
-    # guard jobs cannot take the file.
+    # run last (TASK-32873); with them the step took 5-8 min locally at load
+    # 32-52. The inventory's response-rule node also runs in console-p0-gate,
+    # so the exclusive recovered-suites and Architecture guard jobs cannot
+    # take the file.
     name: PR Fast Lane (architecture-review tests)
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
     runs-on: ubuntu-latest
