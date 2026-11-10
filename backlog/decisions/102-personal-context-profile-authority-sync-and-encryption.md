@@ -283,7 +283,7 @@ disabled at runtime without deleting data or silently stopping synchronization.
 
 The profile key travels in a backup only inside an encrypted archive, as a credential record. There is still no plaintext-key fallback. A missing or changed key still locks the profile, and nothing silently replaces the key.
 
-Design: [Personal Context backup and key custody](../../Docs/superpowers/specs/2026-11-10-personal-context-backup-key-custody-design.md). Implementation: TASK-40133 to TASK-40138.
+Design: [Personal Context backup and key custody](../../Docs/superpowers/specs/2026-11-10-personal-context-backup-key-custody-design.md). Implementation: TASK-40133 to TASK-40136, TASK-40138 and TASK-40139.
 
 ## Links
 

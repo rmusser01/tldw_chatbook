@@ -1,5 +1,5 @@
 ---
-id: TASK-40139
+id: TASK-40137
 title: "Investigate whether a restored runtime.sync_state lets Notes and Chat sync resume as the old device after a cross-machine restore"
 status: To Do
 created_date: 2026-11-10 17:13
@@ -36,20 +36,24 @@ What restore does:
 What is gated:
 - Server Sync V2 calls are gated after a restore. `_sync_call` holds `execution_scope(("config", "runtime.sync_state"), …)` and raises `sync_activation_required` (`Sync_Interop/server_sync_service.py:51-95`, `:85-88`), checked with `git show ae9f9e8d21:…`.
 - It wraps `send_changes`, `get_changes`, `run_v2_dry_run`, `push_v2_envelopes`, `pull_v2_envelopes`, the Notes organization bootstrap, the Personal Context link calls, and the conflict and recovery-bundle calls.
-- `Sync_Interop/local_first_sync_service.py` uses the same decorator.
+- `Sync_Interop/local_first_sync_service.py` uses the same decorator. `LocalFirstSyncService.sync_once` (`:70-71`) syncs Notes, Chat and Personal Context in one call.
+- Activation approval is per owner and generation (`Backup_Recovery/activation.py:351-384`), so every Sync V2 call needs both `config` and `runtime.sync_state` approved.
+- That includes the Personal Context link calls (`Personal_Context/link_service.py:170`, `:730` → `server_sync_service.py:710-712`, `:811-813`).
 
 **Unknown.**
 - What approves `config` and `runtime.sync_state` for a restored generation. No approver naming either was found; the approvers found are Notes, RAG, Skills, MCP and models, each for its own owner.
 - Whether that approval is a plain approval. After a cross-machine replace restore, with credentials entered again, Notes and Chat sync would then push and pull with the restored device id and cursors. The restored device would act as the old one, and two devices could share one identity.
 - Whether any Notes or Chat sync path reaches the server without going through `_sync_call`.
 
-TASK-40137 rebinds the Personal Context side of that shared row, and its notes say what that does to Notes and Chat.
+**Why a ruling is needed.** A fresh Personal Context first link after a restore cannot pass `_sync_call` unless something approves `config` and `runtime.sync_state`. Approving them must not let Notes and Chat resume as the old device.
+
+**Scope.** This task produces findings and a ruling. It does not implement a gate, a rebind or a review.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 The task notes record, with file:line evidence, which Notes and Chat sync paths go through the `_sync_call` activation gate and which do not, and what approves `config` and `runtime.sync_state` after a restore
 - [ ] #2 The task notes record, with a test or probe run through the scratch wrapper, whether Notes and Chat sync send the old device id and cursors once that gate is approved after a cross-machine replace restore
-- [ ] #3 If they do, the notes propose the guard (gate, rebind or reset after restore) for the owner to decide, and the proposed follow-up is listed; if they do not, the guard that prevents it is named and a test pins it
-- [ ] #4 The finding is checked against TASK-40137's Personal Context device rebind, and any conflict is recorded
+- [ ] #3 The notes give the ruling: who may approve `config` and `runtime.sync_state` after a restore, and through what review, such that Notes and Chat sync never resume as the old device after a cross-machine restore, and how a fresh Personal Context first link then passes `_sync_call`; where the ruling needs an owner decision, that decision is recorded verbatim with its date
+- [ ] #4 If current behaviour lets Notes and Chat resume as the old device, the notes propose the guard (gate, rebind or reset after restore) as a follow-up; if not, the guard that prevents it is named and a test pins it
 <!-- AC:END -->

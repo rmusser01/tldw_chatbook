@@ -1,6 +1,6 @@
 # Personal Context backup and key custody
 
-**Status:** Approved by the owner, 2026-11-10 (all 11 decisions as written; see "Decisions"). Implementation is filed as TASK-40133 to TASK-40138, with follow-ups TASK-40139 and TASK-40140.
+**Status:** Approved by the owner, 2026-11-10 (all 11 decisions as written; see "Decisions"). Implementation is filed as TASK-40133 to TASK-40136, TASK-40138 and TASK-40139, with follow-ups TASK-40137 (an investigation TASK-40139 depends on) and TASK-40140.
 **Task:** TASK-39148. **Base:** dev `ae9f9e8d21`, 2026-11-10. Line numbers are that commit's.
 
 ## Owner rulings
@@ -208,13 +208,15 @@ The lock gets reasons and copy that name the cause:
 | Situation | Reason | Copy (draft) |
 |---|---|---|
 | The archive had no key (Q1a), and no account on this device authenticates the restored database | `personal_context_key_not_in_backup` | "Personal Context is locked: this backup did not include its key, and this device does not have it. Your profile data is kept. To read it, restore again with Replace from an encrypted backup that includes credentials." |
-| Isolated restored profile (F12), from an archive that included the key | `personal_context_keyring_unavailable` | "Personal Context can't open in a separately restored copy, because that copy has no access to the system keyring. Its data and key are kept. Restore with Replace to use it." |
+| Isolated restored profile (F12), when the archive included the key or an account on this device authenticates the restored database | `personal_context_keyring_unavailable` | "Personal Context can't open in a separately restored copy, because that copy has no access to the system keyring. Its data and key are kept. Restore with Replace to use it." |
 | Replace restore when this device has no secure keyring | `personal_context_key_install_unavailable` | "Personal Context was restored but stays locked: this device has no secure keyring to hold its key. The key is kept in the encrypted restore copy. Set up a secure keyring, then restore again." |
 | The stored account's key does not authenticate the database's manifest, including a different key with the same `key_version` (F5) | `personal_context_key_mismatch` | "Personal Context is locked: the key on this device belongs to a different copy of the profile. Your data is kept. Use Backup & Restore to roll back or restore the matching copy, then choose Try again." |
 
 The restore plan shows the first three as acknowledged issues **before** the restore runs (constraint 4).
 
-An isolated restore of an archive without the key uses the key-not-in-backup reason and copy. Its retained copy holds no key, so "Restore with Replace" alone would only lock again.
+An isolated restore uses the key-not-in-backup reason and copy only when row 1's condition holds: the archive had no key, and no account on this device authenticates the restored database. Otherwise it uses `personal_context_keyring_unavailable`, whose "Restore with Replace" is then true.
+- `restore_isolated` (`isolated_restore.py:49`) runs in the live process with the device keyring, so the check is possible there.
+- Only the launched isolated copy uses the null backend (`:393`, `:423-426`).
 
 A locked service refuses Remove local profile and Start fresh (`service.py:184-186`). The copy therefore names only what the user can do while locked: restore or roll back through Backup & Restore, then choose **Try again**.
 
@@ -233,6 +235,13 @@ The code facts are F6, F7, F8 and F14.
 - **Generic gate.** After every restore, Personal Context sync stays off until the restored generation is reviewed.
   - That review approves Personal Context sync only after a restore that published neither `personal_context.repository` nor `runtime.sync_state`.
   - After one that published either, sync stays off with a named reason shown to the user, until the review that clears the link state approves it.
+  - **The Personal Context review approves only Personal Context's own owner, `personal_context.repository`. It never approves `config` or `runtime.sync_state`.**
+    - Approval is per owner and generation (`activation.py:351-384`).
+    - Every Sync V2 call also needs those two shared owners approved (`_sync_call`, `server_sync_service.py:85-88`). That includes `LocalFirstSyncService.sync_once`, which syncs Notes, Chat and Personal Context in one call (`local_first_sync_service.py:70-71`), and the link calls (`link_service.py:170`, `:730` → `server_sync_service.py:710-712`, `:811-813`).
+    - Approving them would turn Notes and Chat sync back on with the restored device id.
+- **Who approves the shared owners.** Who may approve `config` and `runtime.sync_state` after a restore, and through what review, without letting Notes and Chat resume as the old device, is TASK-40137's ruling.
+  - The fresh Personal Context link gets past `_sync_call` under that ruling.
+  - If the ruling needs an owner decision, the link task stops and brings it to the owner.
 - **Fresh link.** A restore that publishes `personal_context.repository` or `runtime.sync_state` also forces a fresh reviewed first link. On a new machine, that link registers a new device with a new wrapping key.
   - This includes an automation-only restore, which publishes only `runtime.sync_state` and can rewind `personal_context_link_state` under a live repository.
 - Mechanism:
@@ -241,7 +250,7 @@ The code facts are F6, F7, F8 and F14.
   - `_load_personal_context_sync_runtime` (`app.py:2625`) checks `execution_allowed` for `personal_context.repository` and `runtime.sync_state`.
   - For a restore that published either owner, the Personal Context review clears that server profile's `personal_context_link_state` before approving, so the next **Link to home server** starts fresh.
   - The fresh link rebinds Personal Context's device without changing Notes and Chat sync state (device id, dataset cursors, outbox) for that profile. Note that `_seed_sync_profile` carries `dataset_cursors` forward (`link_service.py:1029`).
-  - What Notes and Chat sync do after a cross-machine restore is investigated separately (TASK-40139).
+  - What Notes and Chat sync do after a cross-machine restore is investigated in TASK-40137.
 - The restored records stay readable locally. The integrity key restored with them keeps them authenticated, and the next link rebaselines it (F5).
 
 **Option B: capture and restore the link keys.**
@@ -336,8 +345,8 @@ This spec does not design Plugins.
     - what approves `config` and `runtime.sync_state` for a restored generation (no approver naming them was found);
     - whether that approval then lets Notes and Chat sync run with the restored shared `sync_profile_state.device_id` (F8), which carries the old device identity;
     - whether any Notes or Chat path bypasses `_sync_call`.
-  - Whether general Sync can resume as the old device after a cross-machine restore with re-entered server credentials is **unverified** here. It is filed as TASK-40139.
-  - A fresh Personal Context link on a new machine will hit `personal_context_sync_profile_binding_conflict` (`link_service.py:1024-1028`) while that row holds the old device. TASK-40137 rebinds Personal Context and leaves Notes and Chat sync state unchanged.
+  - Whether general Sync can resume as the old device after a cross-machine restore with re-entered server credentials is **unverified** here. It is filed as TASK-40137, which also rules who may approve `config` and `runtime.sync_state` after a restore.
+  - A fresh Personal Context link on a new machine will hit `personal_context_sync_profile_binding_conflict` (`link_service.py:1024-1028`) while that row holds the old device. TASK-40139 rebinds Personal Context and leaves Notes and Chat sync state unchanged.
 - **Personal Context recovery-export import** (F17): still unshipped. It is unrelated to backup.
 - **ADR records:** written on approval as dated notes on ADR-102 and ADR-126.
   - The ADR-102 note gives decision 8's reading of "never leave Chatbook", with ADR-203's qualifier. ADR-203 is Accepted. It sets the ceiling at Sync and automatic remote model egress, and it distinguishes qualified local model execution and separately authorized owner exports from that ceiling.
@@ -384,13 +393,13 @@ Filed 2026-11-10 after approval, in this order. Each delivers one testable outco
    - Isolated restores now publish the repository, with the marker (decision 6).
    - Outcome: no keyring entry is created. Every table except `key_account` is unchanged, `key_account` carries the marker with its reason, and Personal Context is locked with that reason, including after a restart.
    - The restore plan and the Settings panel show the Q2 copy, and the User Guide is updated.
-5. **TASK-40137, "A restored Personal Context does not resume its old link."**
-   - Outcome: after a restore that publishes the repository or `runtime.sync_state` (including an automation-only one), Personal Context sync stays off until a fresh reviewed first link. The old link state for that server profile is cleared. The rebind leaves Notes and Chat sync state unchanged, and no link key is ever in an archive.
+5. **TASK-40139, "A restored Personal Context does not resume its old link."** It depends on TASK-40137's ruling.
+   - Outcome: after a restore that publishes the repository or `runtime.sync_state` (including an automation-only one), Personal Context sync stays off until a fresh reviewed first link. Its review approves only `personal_context.repository`, so Notes and Chat sync stay refused. The old link state for that server profile is cleared. The rebind leaves Notes and Chat sync state unchanged, and no link key is ever in an archive.
 6. **TASK-40138, "A detached source holding Personal Context files is treated by name."** (AC#3: detached treatment of the drafts file.)
    - Outcome: drafts are an excluded row with a review line, instead of `detached_unknown_content`. The repository is refused as `detached_owner_unavailable:personal_context.repository`.
 
 Follow-ups:
-- **TASK-40139:** investigate whether a restored `runtime.sync_state` lets Notes and Chat sync resume as the old device after a cross-machine restore (security).
+- **TASK-40137:** investigate whether a restored `runtime.sync_state` lets Notes and Chat sync resume as the old device after a cross-machine restore (security). It rules who may approve `config` and `runtime.sync_state` after a restore, which TASK-40139 needs.
 - **TASK-40140:** re-encrypt the Personal Context profile after a restore (decision 4).
 
 ## Not verified
@@ -398,4 +407,4 @@ Follow-ups:
 - **Server behaviour on a fresh link after restore.** This covers whether a new `device_id` is issued for a reused wrapping key, and whether the integrity key is re-issued. tldw_server was not read.
 - **Inert extraction of `credential-recovery.json`.** It looks impossible, since credentials have no group (`group_selection.py:96`), but no test pins it. TASK-40134 must pin it.
 - **The set of v8 catalog variants** produced by the repository's in-place migrations (`repository.py:636-733`). These were not enumerated.
-- **General Sync impersonation after a restore** (TASK-40139).
+- **General Sync impersonation after a restore** (TASK-40137).

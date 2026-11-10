@@ -4,7 +4,7 @@ title: "Personal Context's repository database cannot be captured by a backup, a
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-08 06:54
-updated_date: 2026-11-10 19:19
+updated_date: 2026-11-10 19:36
 labels:
 - follow-up
 - backup
@@ -90,11 +90,11 @@ Found in round 12 of the 2026-10-23 burn-down (backup stream, TASK-39110 on roun
 - TASK-40134: capture the repository database.
 - TASK-40135: a replace restore makes the restored records readable.
 - TASK-40136: a restore without a usable key keeps the data and says what to do.
-- TASK-40137: a restored profile does not resume its old link. This includes the `personal_context_sync_profile_binding_conflict` rebind.
+- TASK-40139: a restored profile does not resume its old link. This includes the `personal_context_sync_profile_binding_conflict` rebind, and depends on TASK-40137's ruling.
 - TASK-40138: the detached-layout treatment, by name.
 
 Follow-ups:
-- TASK-40139 (security): investigate whether a restored `runtime.sync_state` lets Notes and Chat sync resume as the old device.
+- TASK-40137 (security): investigate whether a restored `runtime.sync_state` lets Notes and Chat sync resume as the old device. It rules who may approve `config` and `runtime.sync_state` after a restore.
 - TASK-40140: re-encrypt the profile after a restore (decision 4).
 
 **ADR notes.** Added dated notes, "2026-11-10 note (TASK-39148, owner-approved)":
@@ -134,13 +134,21 @@ Follow-ups:
 - **TASK-40134.** Until readable restores ship, no restore publishes the repository. The live database is left byte-for-byte unchanged, the archive keeps its copy, and the plan says Personal Context was not restored.
 - **TASK-40135.** Replace restores now publish the repository, and a restore that will end locked is announced in the plan before it runs.
 - **TASK-40136.** Isolated restores now publish the repository.
-- **TASK-40137.** It now depends on TASK-40135.
+- **The link task** (now TASK-40139) depends on TASK-40135.
 - **Markers.** Every marker a task writes has the form `recovery:setup_required:<reason>`, and the marker criteria compare "every table except `profile_meta.key_account`".
 
 **Review r13k-rev4 fixes (2026-11-10).** The review found one Important, two Minor and two factual items, and all are fixed. The decisions' text is unchanged.
-- **TASK-40134's interim review** approves Personal Context sync only after restores that published neither the repository nor `runtime.sync_state`. Otherwise sync stays off with a named reason; TASK-40137 builds on this.
+- **TASK-40134's interim review** approves Personal Context sync only after restores that published neither the repository nor `runtime.sync_state`. Otherwise sync stays off with a named reason; the link task (now TASK-40139) builds on this.
 - **Isolated restores** leave the repository out, and the plan says so, pinned in TASK-40134 AC#5.
 - **Isolated restore of a key-less archive** uses the key-not-in-backup reason and copy.
 - **Locked-state copy** no longer mentions Remove local profile, which a locked service refuses (`service.py:184-186`).
-- **Spec F1 and TASK-40139** now state that Sync V2 calls are gated through `_sync_call` (`server_sync_service.py:85-88`).
+- **The spec's out-of-scope `runtime.sync_state` item and the investigation task** (now TASK-40137) state that Sync V2 calls are gated through `_sync_call` (`server_sync_service.py:85-88`).
+
+**Review r13k-rev5 fixes (2026-11-10).** The review found one Important and two Minor issues, and all are fixed. The decisions' text is unchanged.
+- **Ids swapped.** These ids exist only on this unmerged branch, so I swapped two of them. TASK-40137 is now the `runtime.sync_state` investigation, and TASK-40139 is the link task, which depends on TASK-40137. Every reference is updated: spec, tasks, ADR notes and these notes.
+- **What the Personal Context review approves.** Only `personal_context.repository`, never `config` or `runtime.sync_state` (spec Q3, TASK-40134, TASK-40139).
+  - After that review, Notes and Chat `sync_once` stays refused (TASK-40139).
+  - The fresh link passes `_sync_call` under TASK-40137's ruling, which is now that task's outcome. If the ruling needs an owner decision, the link task stops and brings it to the owner.
+- **Isolated restores.** They use key-not-in-backup only when no account on this device authenticates the restored database.
+- **This note's wording.** It now names the spec's out-of-scope `runtime.sync_state` item, not F1.
 <!-- SECTION:NOTES:END -->

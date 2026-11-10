@@ -36,7 +36,8 @@ The restore cases in the approved design (spec Q2 table; decisions 3 and 6):
 - **Isolated restored profile.** It runs with `keyring.backends.null.Keyring` (`Backup_Recovery/isolated_restore.py:393`, `:423-426`), which the key protector refuses (`key_protector.py:138-141`).
   - Isolated restores have so far left the repository out (TASK-40134, TASK-40135).
   - From this task they publish it with the marker reason `keyring_unavailable`, the key retained in the encrypted restore copy (decision 6), and a plan line saying it will be locked.
-  - Precedence: an isolated restore of an archive that had no key uses `key_not_in_backup` and its copy instead. Its retained copy holds no key, so "Restore with Replace" alone would only lock again.
+  - Precedence: an isolated restore uses `key_not_in_backup` and its copy only when the spec's row-1 condition holds: the archive had no key, and no account on this device authenticates the restored database. Otherwise it uses `keyring_unavailable`, whose "Restore with Replace" is then true.
+  - `restore_isolated` (`isolated_restore.py:49`) runs in the live process with the device keyring, so this can be checked there. Only the launched copy uses the null backend (`:393`, `:423-426`).
 - **No secure keyring on a replace restore.** The key stays in the retained encrypted restore copy (`replacement.py:1604-1620`).
 - **Key mismatch.** The stored account's key does not authenticate the database's manifest.
   - This is detected by authentication (TASK-40133), never by version. `key_version` starts at 1 (`key_protector.py:48`) and only a link bumps it (`repository.py:2051-2055`), so two unrelated keys usually share a version.
@@ -57,7 +58,7 @@ The spec's Q2 table gives each case a named reason and the copy.
 - [ ] #2 The case's reason is recorded with the marker, so after a restart Personal Context still shows that case's reason and copy; a no-keyring restore of a backup that did include credentials never reads as `personal_context_key_not_in_backup`
 - [ ] #3 A database whose stored account holds a different key, including a different key with the same `key_version`, fails manifest authentication at open and is locked as `personal_context_key_mismatch`, not `profile_integrity_invalid`; integrity failures beyond the manifest stay `profile_integrity_invalid`; the data is byte-identical and no keyring entry changes (red first)
 - [ ] #4 The restore plan lists the first three cases as issues the user must acknowledge before the restore runs
-- [ ] #5 The Settings panel's locked state shows the spec's copy for each reason, naming only actions available while locked (restore or roll back through Backup & Restore, then Try again); an isolated restore of an archive without the key shows the key-not-in-backup reason and copy; `scripts/check_markup_interpolation.py` passes
+- [ ] #5 The Settings panel's locked state shows the spec's copy for each reason, naming only actions available while locked (restore or roll back through Backup & Restore, then Try again); an isolated restore shows the key-not-in-backup reason and copy only when the archive had no key and no account on this device authenticates the restored database, and the keyring-unavailable reason and copy otherwise; `scripts/check_markup_interpolation.py` passes
 - [ ] #6 After a replace restore with no secure keyring, a second replace restore from the same archive once a keyring is available makes the records readable
 - [ ] #7 The Personal Context User Guide troubleshooting table describes these states
 <!-- AC:END -->
