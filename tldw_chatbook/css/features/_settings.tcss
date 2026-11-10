@@ -126,6 +126,19 @@
     padding: $ds-space-0 $ds-space-1;
 }
 
+/* Keep the full Test Tool editor within the existing compact Settings scroll. */
+#settings-workbench.settings-workbench-compact #settings-tools-hub {
+    min-height: $ds-size-20;
+}
+
+#settings-workbench.settings-workbench-compact #settings-tools-hub #mcp-hub-workbench {
+    min-height: $ds-size-15;
+}
+
+#settings-workbench.settings-workbench-compact #settings-tools-hub .mcp-stacked #mcp-hub-inspector {
+    min-height: $ds-size-12;
+}
+
 #settings-impact-pane.settings-workbench-compact-pane,
 #settings-workbench.settings-workbench-compact #settings-detail-impact-divider {
     display: none;

@@ -58,6 +58,7 @@ from tldw_chatbook.MCP.readiness import (
 )
 from tldw_chatbook.MCP.redaction import redact_mapping
 from tldw_chatbook.MCP.unified_control_plane_service import MCPHubGateDeniedError
+from tldw_chatbook.UI.MCP_Modules import mcp_inspector_reveal
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import (
     PermissionProfileContext,
     tool_state_kind,
@@ -931,7 +932,10 @@ class MCPInspector(VerticalScroll):
 
     # F-056: Escape closes the Test Tool panel when it's open (same path as
     # its Close button); no-op otherwise.
-    BINDINGS = [Binding("escape", "close_test_panel", "Close test panel", show=False)]
+    BINDINGS = [
+        Binding("escape", "close_test_panel", "Close test panel", show=False),
+        Binding("up", "test_approval_up", "Reveal test approval", show=False),
+    ]
 
     BUNDLED_CSS = """
     MCPInspector {
@@ -1480,19 +1484,11 @@ class MCPInspector(VerticalScroll):
         self._test_panel_token: object | None = None
 
     def on_resize(self) -> None:
-        """Keep the current editor visible after the viewport settles."""
-        self.call_after_refresh(self._reveal_focused_control)
+        self.call_after_refresh(mcp_inspector_reveal.reveal_other_focus, self)
 
-    def _reveal_focused_control(self) -> None:
-        if (
-            not self.is_attached
-            or not self.display
-            or self.app.screen is not self.screen
-        ):
-            return
-        focused = self.app.focused
-        if focused is not None and self in focused.ancestors:
-            focused.scroll_visible(animate=False, immediate=True)
+    def _action_test_approval_up(self) -> None:
+        if not mcp_inspector_reveal.reveal_test_approval(self):
+            super().action_scroll_up()
 
     def _advanced_object_label(self) -> str:
         """Compute the "Showing: <object>" text for `#mcp-adv-object`.

@@ -554,6 +554,11 @@ $ds-portrait-review-lines: 13;
     padding: $ds-space-0 $ds-space-1;
 }
 
+/* Keep the full Test Tool editor within the existing compact Settings scroll. */
+#settings-workbench.settings-workbench-compact #settings-tools-hub {
+    min-height: $ds-size-20;
+}
+
 #settings-impact-pane.settings-workbench-compact-pane,
 #settings-workbench.settings-workbench-compact #settings-detail-impact-divider {
     display: none;

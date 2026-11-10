@@ -339,6 +339,7 @@ from ...state.settings_config_models import (
     SettingsDraft,
     SettingsOwnershipRecord,
 )
+from ..MCP_Modules import mcp_inspector_reveal
 from .settings_tools_hub import (
     TOOL_PROFILES_OWNERSHIP_RECORD,
     TOOLS_HUB_CATEGORY_SUMMARY,
@@ -25904,6 +25905,7 @@ class SettingsScreen(BaseAppScreen):
     @on(DescendantFocus)
     def handle_descendant_focus(self, event: DescendantFocus) -> None:
         self._update_focus_help(event.widget)
+        mcp_inspector_reveal.queue_test_focus(event.widget)
         # Clear the pending navigation focus intent only when SATISFIED (the
         # intended widget landed focus). Clearing on any focus is too eager:
         # the stale category-chip focus the intent is meant to supersede
@@ -26315,12 +26317,10 @@ class SettingsScreen(BaseAppScreen):
 
     def _reveal_settings_focus_after_refresh(self) -> None:
         """Keep the same attached control, and its field guide, visible after a layout change."""
-        # TASK-33003.9: a resize re-wraps the inspector but keeps its scroll
-        # offset, which slid the guide past the fold, and (#3057, focused or
-        # not) left a section's tail on top.
+        # TASK-33003.9: re-wrapping can move the retained field guide past the fold.
         self._scroll_impact_pane_to_field_guide(self._active_category_id())
         focused = self.focused
-        if focused is None:
+        if focused is None or mcp_inspector_reveal.queue_test_focus(focused):
             return
 
         def reveal_retained_focus() -> None:

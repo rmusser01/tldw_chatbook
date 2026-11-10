@@ -11225,6 +11225,14 @@ RecoveryPassphraseDialog {
 
 .tldw-split-source-header-end { }
 
+#settings-workbench.settings-workbench-compact #settings-tools-hub #mcp-hub-workbench {
+    min-height: $ds-size-15;
+}
+
+#settings-workbench.settings-workbench-compact #settings-tools-hub .mcp-stacked #mcp-hub-inspector {
+    min-height: $ds-size-12;
+}
+
 .settings-workbench-compact #settings-providers-models-card > .settings-input-row > .settings-input-label,
 .settings-workbench-compact #settings-generation-defaults .settings-input-row > .settings-input-label,
 .settings-workbench-compact #settings-advanced-context-window .settings-input-row > .settings-input-label,
