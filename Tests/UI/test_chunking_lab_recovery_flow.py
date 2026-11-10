@@ -639,11 +639,11 @@ async def test_cancel_button_reaps_real_noncooperative_child(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_forced_app_crash_recovers_committed_invalid_draft_and_result(
-    lab_app, tmp_path, monkeypatch
+    lab_app, tmp_path
 ):
-    profile = tmp_path / "crash-profile"
-    profile.mkdir(mode=0o700)
+    profile = _select_recovery_profile(tmp_path / "crash-profile")
     config_root = tmp_path / "subprocess-isolation"
     config_root.mkdir(mode=0o700)
     marker = tmp_path / "checkpoint-committed"
@@ -654,9 +654,12 @@ from pathlib import Path
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook import config
 from tldw_chatbook.UI.Screens.chunking_lab_screen import ChunkingLabScreen
-config.get_user_data_dir = lambda: Path(os.environ["LAB_CRASH_PROFILE"])
+profile = Path(os.environ["LAB_CRASH_PROFILE"])
+assert config.save_setting_to_cli_config("paths", "data_dir", str(profile.parent))
+assert config.get_user_data_dir() == profile
 async def main():
     app = _build_test_app()
+    app._initial_screen_pushed = True
     async with app.run_test(size=(80,24)) as pilot:
         screen = ChunkingLabScreen(app)
         await app.push_screen(screen)
@@ -699,8 +702,8 @@ asyncio.run(main())
         if process.poll() is None:
             process.kill()
             await asyncio.to_thread(process.wait, 5)
-    monkeypatch.setattr("tldw_chatbook.config.get_user_data_dir", lambda: profile)
     coordinator = await lab_app.get_chunking_lab_coordinator()
+    assert coordinator.session.profile_key == str(profile)
     draft = next(
         c["draft"] for c in coordinator.session.candidates.values() if c["role"] == "B"
     )
