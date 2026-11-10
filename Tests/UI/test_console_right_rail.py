@@ -329,6 +329,7 @@ def test_inspector_boundary_inventory_has_approved_order_and_specialized_owners(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_mounted_inspector_semantic_census_matches_actual_right_rail_order():
     exhaustive_rows = tuple(
         ConsoleDisplayRow(label, "value")
@@ -431,6 +432,7 @@ async def test_mounted_inspector_semantic_census_matches_actual_right_rail_order
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_new_specialized_sibling_fails_mounted_production_census():
     async with make_console_pilot() as pilot:
         await pilot.click("#console-inspector-rail-open")
@@ -452,6 +454,7 @@ async def test_new_specialized_sibling_fails_mounted_production_census():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_agent_fleet_section_lives_in_the_right_rail():
     """task-10: the agent-fleet mini-section moved out of the left rail.
 
@@ -472,6 +475,7 @@ async def test_agent_fleet_section_lives_in_the_right_rail():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_sources_use_exact_twenty_line_content_ceiling():
     async with make_console_pilot(size=(235, 52)) as pilot:
         await pilot.click("#console-inspector-rail-open")
@@ -523,6 +527,7 @@ async def test_sources_use_exact_twenty_line_content_ceiling():
     ),
 )
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
     monkeypatch,
     direction,
@@ -688,6 +693,7 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_real_inspector_producer_variants_are_strictly_owned(monkeypatch):
     ownership = importlib.import_module(
         "tldw_chatbook.Widgets.Console.console_inspector_ownership"
@@ -750,6 +756,7 @@ async def test_real_inspector_producer_variants_are_strictly_owned(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_active_run_alone_never_produces_a_setup_recovery_row(monkeypatch):
     """task-32345: an active turn is not a provider-configuration problem.
 
@@ -798,6 +805,7 @@ async def test_active_run_alone_never_produces_a_setup_recovery_row(monkeypatch)
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_rail_recompose_retains_unknown_fingerprint_deduper(monkeypatch):
     ownership = importlib.import_module(
         "tldw_chatbook.Widgets.Console.console_inspector_ownership"
@@ -876,6 +884,7 @@ def test_inspector_composition_boundary_resolves_strict_opt_in(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_inspector_rail_starts_closed_by_default():
     """Fresh harness, no stored rail preferences, 160-column terminal.
 
@@ -891,6 +900,7 @@ async def test_inspector_rail_starts_closed_by_default():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_clicking_open_then_collapse_toggles_visibility_and_persists():
     """A real click on the handle's Open button opens the rail; a real click
     on the rail's own Collapse button closes it again.
@@ -949,6 +959,7 @@ async def test_clicking_open_then_collapse_toggles_visibility_and_persists():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_inspector_header_is_one_full_width_collapse_button() -> None:
     async with make_console_pilot() as pilot:
         await _wait_for_selector(
@@ -983,6 +994,7 @@ async def test_inspector_header_is_one_full_width_collapse_button() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(140, 45), (235, 52)])
+@pytest.mark.bootstrap_profile
 async def test_inspector_root_pins_project_and_authority_above_outer_body(
     size,
 ) -> None:
@@ -1062,6 +1074,7 @@ async def test_control_sync_shares_one_inspector_snapshot_with_both_consumers(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_effective_empty_scope_survives_snapshot_projection_as_no_sources(
     monkeypatch,
 ) -> None:
@@ -1082,6 +1095,7 @@ async def test_effective_empty_scope_survives_snapshot_projection_as_no_sources(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_strict_inspector_rejection_keeps_authority_summary_at_prior_snapshot(
     monkeypatch,
 ) -> None:
@@ -1117,6 +1131,7 @@ async def test_strict_inspector_rejection_keeps_authority_summary_at_prior_snaps
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_authority_focus_f1_discloses_all_five_complete_facts() -> None:
     async with make_console_pilot() as pilot:
         await pilot.click("#console-inspector-rail-open")
@@ -1141,6 +1156,7 @@ async def test_authority_focus_f1_discloses_all_five_complete_facts() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_authority_focus_f1_preserves_literal_rich_markup() -> None:
     async with make_console_pilot() as pilot:
         await pilot.click("#console-inspector-rail-open")
@@ -1171,6 +1187,7 @@ async def test_authority_focus_f1_preserves_literal_rich_markup() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_more_toggle_disappearance_recovers_to_next_inspector_boundary(
     monkeypatch,
 ) -> None:
@@ -1231,6 +1248,7 @@ async def test_more_toggle_disappearance_recovers_to_next_inspector_boundary(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_more_disappearance_does_not_steal_newer_context_focus() -> None:
     async with make_console_pilot() as pilot:
         await pilot.click("#console-inspector-rail-open")
@@ -1265,6 +1283,7 @@ async def test_more_disappearance_does_not_steal_newer_context_focus() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_conditional_demotion_does_not_steal_newer_context_focus() -> None:
     async with make_console_pilot() as pilot:
         await pilot.click("#console-inspector-rail-open")
@@ -1320,6 +1339,7 @@ async def test_conditional_demotion_does_not_steal_newer_context_focus() -> None
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_more_toggle_persists_without_programmatic_repost() -> None:
     async with make_console_pilot() as pilot:
         await pilot.click("#console-inspector-rail-open")
@@ -1350,6 +1370,7 @@ async def test_more_toggle_persists_without_programmatic_repost() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_clicking_inspector_header_title_start_collapses_the_rail() -> None:
     async with make_console_pilot() as pilot:
         await _wait_for_selector(
@@ -1371,6 +1392,7 @@ async def test_clicking_inspector_header_title_start_collapses_the_rail() -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_clicking_the_collapse_button_clears_focus():
     """Pin today's focus behaviour when the Inspector rail's own Collapse
     button is pressed.
@@ -1399,6 +1421,7 @@ async def test_clicking_the_collapse_button_clears_focus():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_context_modal_refresh_factory_keeps_opening_session_after_switch():
     async with make_console_pilot() as pilot:
         console = pilot.app.screen
@@ -1456,6 +1479,7 @@ async def test_context_modal_refresh_factory_keeps_opening_session_after_switch(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(100, 30), (140, 40)])
+@pytest.mark.bootstrap_profile
 async def test_project_status_remains_visible_in_real_thirty_column_rail(size):
     async with make_console_pilot(size=size) as pilot:
         if not _right_rail_open(pilot):
@@ -1477,6 +1501,7 @@ async def test_project_status_remains_visible_in_real_thirty_column_rail(size):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_screen_wires_a_failed_run_into_the_pinned_authority_line():
     """TASK-24602 end to end, not just the projection.
 
@@ -1521,6 +1546,7 @@ async def test_screen_wires_a_failed_run_into_the_pinned_authority_line():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_a_failed_run_stops_describing_the_next_send_once_it_starts():
     """TASK-24602, the recovery direction (Qodo focus area, third round).
 
@@ -1564,6 +1590,7 @@ async def test_a_failed_run_stops_describing_the_next_send_once_it_starts():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_library_search_sits_with_the_empty_state_that_points_at_it():
     """TASK-24611: the control that stages sources lives beside the sentence
     telling you to stage sources.
@@ -1614,6 +1641,7 @@ async def test_library_search_sits_with_the_empty_state_that_points_at_it():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_readiness_card_picks_up_mcp_after_it_connects():
     """TASK-24704 (Qodo #1): the card must not freeze its MCP sample.
 
@@ -1654,6 +1682,7 @@ async def test_readiness_card_picks_up_mcp_after_it_connects():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_a_raising_acp_snapshot_cannot_take_down_the_console_sync_tick():
     """TASK-24704 (Qodo focus area, third round): isolate the tick's read.
 
@@ -1747,6 +1776,7 @@ def test_a_probed_empty_mcp_catalog_is_not_reported_as_unprobed():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_rag_row_probes_instead_of_trusting_the_unset_registry_flag(
     monkeypatch,
 ) -> None:
