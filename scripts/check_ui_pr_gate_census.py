@@ -965,6 +965,10 @@ MINIMUM_FILES = 1995
 # Review r13c-rev1 (2026-11-10): TASK-39170's Collections action node joins
 # the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1996
+# TASK-39171 (2026-11-10): append the theme picker's 80x24 status-line node
+# and its Try-then-clean category switch node at the tail. The floor is the
+# measured entry count.
+MINIMUM_FILES = 1998
 
 
 def read_census(path: Path) -> list[str]:

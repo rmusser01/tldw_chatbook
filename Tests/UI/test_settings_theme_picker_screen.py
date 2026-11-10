@@ -5,6 +5,7 @@ from textual.widgets import ContentSwitcher
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_settings_category_sweep import _wait_for
 from Tests.UI.test_settings_overview_search_journeys import _category
 from Tests.UI.test_settings_speech_tts_panel import _StyledDestinationHarness
 from tldw_chatbook.css.Themes.themes import ALL_THEMES
@@ -1880,7 +1881,17 @@ async def test_try_then_clean_category_switch_restores_the_pre_editor_theme(requ
         await pilot.click("#settings-theme-apply")
         await pilot.pause(0.2)
         settings._select_category(SettingsCategoryId.APPEARANCE.value)
-        await pilot.pause(0.3)
+        # TASK-39171: the switch rebuilds the panes in a worker. Leaving
+        # run_test while it still mounts the Appearance Selects prunes them
+        # mid-Mount, and Textual's Select then raises NoMatches ('#label',
+        # 'SelectOverlay') at teardown.
+        assert await _wait_for(
+            pilot,
+            lambda: (
+                settings.active_category == SettingsCategoryId.APPEARANCE.value
+                and not settings._category_pane_swap_pending
+            ),
+        ), "the Appearance category swap (_swap_category_panes) never finished"
         assert _no_leave_prompt(host)
         assert settings.active_category == SettingsCategoryId.APPEARANCE.value
         assert host.theme == original
