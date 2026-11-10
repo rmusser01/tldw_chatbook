@@ -392,12 +392,13 @@ def _apply_submission(
 
 @pytest.mark.parametrize("activation", ("mouse", "keyboard"))
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_apply_closes_and_changes_only_later_send_context(
     activation: str,
 ) -> None:
     """Removing the live commit or modal callback makes this journey fail."""
 
-    app = _console_app()
+    app = _console_app(retire_chachanotes_db=True)
     notifications: list[str] = []
     app.notify = lambda message, **_kwargs: notifications.append(str(message))
     harness = _ConsoleFlowHarness(app)
@@ -469,10 +470,11 @@ async def test_apply_closes_and_changes_only_later_send_context(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_apply_lifecycle_stages_persists_resumes_and_promotes() -> None:
     """Dropping either durable owner breaks an observable lifecycle assertion."""
 
-    app = _console_app()
+    app = _console_app(retire_chachanotes_db=True)
     harness = _ConsoleFlowHarness(app)
     async with harness.run_test(size=(120, 42)) as pilot:
         console = harness.screen_stack[-1]
@@ -585,6 +587,7 @@ async def test_apply_lifecycle_stages_persists_resumes_and_promotes() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_existing_chat_action_routes_ignore_later_new_chat_default() -> None:
     """Retry, Continue, and both branch routes keep the chat-owned selection.
 
@@ -595,7 +598,7 @@ async def test_existing_chat_action_routes_ignore_later_new_chat_default() -> No
     boundary without inventing a test-only session constructor.
     """
 
-    app = _console_app()
+    app = _console_app(retire_chachanotes_db=True)
     harness = _ConsoleFlowHarness(app)
     async with harness.run_test(size=(120, 42)) as pilot:
         console = harness.screen_stack[-1]
@@ -660,12 +663,13 @@ async def test_existing_chat_action_routes_ignore_later_new_chat_default() -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_normal_sync_projects_delayed_first_persist_failure_for_switched_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A first-persist failure follows the session when it becomes current."""
 
-    app = _console_app()
+    app = _console_app(retire_chachanotes_db=True)
     harness = _ConsoleFlowHarness(app)
     async with harness.run_test(size=(120, 42)) as pilot:
         console = harness.screen_stack[-1]
@@ -712,12 +716,13 @@ async def test_normal_sync_projects_delayed_first_persist_failure_for_switched_s
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_promotion_completion_projects_current_session_recovery_after_switch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A delayed promotion completion projects only the then-current ledger."""
 
-    app = _console_app()
+    app = _console_app(retire_chachanotes_db=True)
     harness = _ConsoleFlowHarness(app)
     async with harness.run_test(size=(120, 42)) as pilot:
         console = harness.screen_stack[-1]
@@ -785,11 +790,10 @@ async def test_promotion_completion_projects_current_session_recovery_after_swit
             )
         finally:
             persistence.release_promotion_context.set()
-
-        await await_background_task(
-            promotion_task,
-            what="the delayed temporary-chat promotion",
-        )
+            await await_background_task(
+                promotion_task,
+                what="the delayed temporary-chat promotion",
+            )
         await wait_for_signal(
             projected,
             what="the promotion completion recovery projection",
@@ -813,12 +817,13 @@ async def test_promotion_completion_projects_current_session_recovery_after_swit
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_stale_compaction_retry_cannot_replace_newer_full_policy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A failed quick write loses ownership when a later policy is applied."""
 
-    app = _console_app()
+    app = _console_app(retire_chachanotes_db=True)
     harness = _ConsoleFlowHarness(app)
     async with harness.run_test(size=(120, 42)) as pilot:
         console = harness.screen_stack[-1]
@@ -1244,10 +1249,11 @@ async def test_quick_save_of_a_stale_blank_max_tokens_keeps_chat_and_profile_in_
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_default_failures_render_exact_sanitized_recovery_actions() -> None:
     """App-owned failure phase selects the only valid recovery controls."""
 
-    app = _console_app()
+    app = _console_app(retire_chachanotes_db=True)
     harness = _ConsoleFlowHarness(app)
     intent = ConsoleDefaultMutationIntent(
         generation=7,
@@ -1312,12 +1318,13 @@ async def test_default_failures_render_exact_sanitized_recovery_actions() -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_custom_and_unconfigured_selection_stays_literal_and_blocks_default() -> (
     None
 ):
     """Catalog/config gaps stay visible instead of selecting a fallback."""
 
-    app = _console_app()
+    app = _console_app(retire_chachanotes_db=True)
     app.app_config.setdefault("api_settings", {})["anthropic"] = {}
     app.providers_models["anthropic"] = []
     harness = _ConsoleFlowHarness(app)
