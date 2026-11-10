@@ -558,6 +558,7 @@ async def test_production_message_controller_prefills_canvas_repair_without_sour
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("invalidate", ["disable", "session-owner", "source"])
 async def test_late_canvas_compile_refusal_cannot_replace_stale_draft(
     monkeypatch, invalidate
@@ -624,7 +625,7 @@ async def test_late_canvas_compile_refusal_cannot_replace_stale_draft(
             store.update_message_content(message.id, "```html\n<p>replacement</p>\n```")
     finally:
         release.set()
-    result = (await asyncio.gather(action, return_exceptions=True))[0]
+        result = (await asyncio.gather(action, return_exceptions=True))[0]
 
     assert isinstance(result, RuntimeError)
     assert store.session_draft(session.id) == "unchanged draft"
