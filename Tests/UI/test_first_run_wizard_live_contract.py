@@ -3166,12 +3166,13 @@ async def test_back_next_mashing_across_provider_model_does_not_double_advance(
             # Quick track is pre-selected on Welcome; advance to Provider,
             # then to Model, each with a real settle so the starting point
             # for the mash is deterministic.
-            _press(app.screen, "#wizard-next")  # welcome -> provider
-            await pilot.pause(0.2)
-            assert container.steps[container.current_step].config.id == STEP_PROVIDER
-            _press(app.screen, "#wizard-next")  # provider -> model
-            await pilot.pause(0.2)
-            assert container.steps[container.current_step].config.id == STEP_MODEL
+            next_button = app.screen.query_one("#wizard-next", Button)
+            for step_id in (STEP_PROVIDER, STEP_MODEL):
+                await _wait_until(pilot, lambda: not next_button.disabled)
+                next_button.press()
+                await _wait_until(
+                    pilot, lambda step_id=step_id: _current_step_id(container) == step_id
+                )
 
             # Rapid, unsettled Back/Next mashing at the provider<->model
             # boundary -- no pilot.pause() between presses in the burst, so
@@ -3213,8 +3214,16 @@ async def test_back_next_mashing_across_provider_model_does_not_double_advance(
             else:
                 raise AssertionError("mashing left the wizard unable to complete")
 
-            _persist_complete_custom_provider_setup()
             summary = container.steps[container.current_step]
+            # on_show coalesces refreshes while its prior read is in flight.
+            await _wait_until(
+                pilot,
+                lambda: (
+                    summary._render_worker is not None
+                    and summary._render_worker.is_finished
+                ),
+            )
+            _persist_complete_custom_provider_setup()
             summary.on_show()
             await _wait_until(
                 pilot,
