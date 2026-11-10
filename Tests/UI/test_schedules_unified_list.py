@@ -1098,7 +1098,7 @@ class _PullService(MockSchedulingServiceMixin):
                 {
                     "id": "result-pulled",
                     "definition_id": "def-1",
-                    "owner_id": "local",
+                    "owner_id": owner_id,
                     "review_state": "unread",
                     "kind": "finding",
                     "created_at": "2026-08-28T00:00:00+00:00",
@@ -1109,10 +1109,14 @@ class _PullService(MockSchedulingServiceMixin):
             _run_phase=_run_phase, _pull_results=object()
         )
 
+    def sync_target_owner_id(self) -> str:
+        return self.owner_id
+
     async def list_tasks(self, owner_id=None, include_projections=True):
         return []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_results_pull_reveals_the_rail_mark_all_read_button():
     """Final review F5: an SSE-triggered pull only refreshed the Results
