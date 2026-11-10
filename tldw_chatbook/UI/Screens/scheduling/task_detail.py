@@ -636,7 +636,11 @@ class TaskDetail(Vertical):
             "Select a task from the queue, or press n to schedule one.",
             id="scheduling-task-detail-empty-state",
         )
-        with Vertical(id="scheduling-task-detail-metadata"):
+        with Vertical(id="scheduling-task-detail-metadata") as metadata:
+            # TASK-39170: compose in the empty state `set_task(None)` paints.
+            # Shown before the first `set_task`, this blank form put Follow in
+            # Console 46 rows below the fold at 140x42 while the queue loaded.
+            metadata.display = False
             # UAT display-blocker fix: this row used to be the LAST thing
             # in the pane, after History -- past the fold at every
             # measured width (`_scheduling_uat_remediation` root-causes
