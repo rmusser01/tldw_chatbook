@@ -289,7 +289,7 @@ async def test_cancel_on_a_capture_pause_gives_back_the_message_and_its_image(
         else:
             assert composer.draft_text() == ""
             # Direct worker capture requires the real lazy sources to be ready.
-            app = case.controller.app
+            app = case.host.app_instance  # the runtime's app (TASK-36947.4)
             trust = await app.ensure_local_skill_trust_service()
             assert app.local_skills_service.trust_service is trust
             runtime.accept_turn(

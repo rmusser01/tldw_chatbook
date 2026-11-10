@@ -266,7 +266,7 @@ def test_controller_metadata_uses_captured_profile_after_active_chat_changes(tmp
         arg_rule_allows_call=lambda *args, **kwargs: False,
     )
     controller = object.__new__(ConsoleChatController)
-    controller.app = SimpleNamespace(unified_mcp_service=service)
+    bind_app(controller, SimpleNamespace(unified_mcp_service=service))
     controller.store = SimpleNamespace(active_session_id="chat-a")
     turn_context = SimpleNamespace(
         tool_configuration={"local_tools_enabled": True},
