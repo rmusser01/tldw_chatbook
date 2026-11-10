@@ -19,6 +19,10 @@ from Tests.Chat.test_console_agent_bridge import (  # noqa: F401 - owned fixture
 from textual.app import ComposeResult
 from textual.widgets import Button, Static
 
+from Tests.UI.background_signals import (
+    await_background_task,
+    wait_for_background_signal,
+)
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat import console_chat_models
 from tldw_chatbook.Chat.console_chat_models import (
@@ -840,12 +844,18 @@ async def test_raw_cli_projection_coalesces_to_one_worker_with_trailing_refresh(
         "exit_on_error": False,
     }
     task = asyncio.create_task(work)
-    await screen.first_sync_started.wait()
-    schedule(screen, "session-1")
-    schedule(screen, "session-1")
-    assert len(screen.workers) == 1
-    screen.release_first_sync.set()
-    await task
+    try:
+        await wait_for_background_signal(
+            screen.first_sync_started, task, what="first raw CLI projection"
+        )
+        schedule(screen, "session-1")
+        schedule(screen, "session-1")
+        assert len(screen.workers) == 1
+    finally:
+        screen.release_first_sync.set()
+        for unscheduled, _ in screen.workers[1:]:
+            unscheduled.close()
+        await await_background_task(task, what="raw CLI projection")
     assert screen.sync_calls == 2
 
     schedule(screen, "session-1")

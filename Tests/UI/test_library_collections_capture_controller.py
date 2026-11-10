@@ -10,6 +10,10 @@ from typing import Any
 
 import pytest
 
+from Tests.UI.background_signals import (
+    await_background_task,
+    wait_for_background_signal,
+)
 from tldw_chatbook.Library.collections_capture_models import (
     CaptureActionResult,
     CaptureAuthority,
@@ -197,18 +201,23 @@ async def test_settled_selection_retains_loaded_item_and_enter_bypasses_delay() 
     assert await controller.load_selected_now()
 
     pending = asyncio.create_task(controller.select_item(_identity(2)))
-    await settle.started.wait()
-    assert controller.state.selected_identity == _identity(2)
-    assert controller.state.loaded_detail == _resolved(1)
-    assert controller.state.identity_actions_enabled is False
-    assert controller.state.retained_reader_copy == (
-        "Loading “Capture 2”… showing “Capture 1” until ready."
-    )
+    try:
+        await wait_for_background_signal(
+            settle.started, pending, what="capture selection settle"
+        )
+        assert controller.state.selected_identity == _identity(2)
+        assert controller.state.loaded_detail == _resolved(1)
+        assert controller.state.identity_actions_enabled is False
+        assert controller.state.retained_reader_copy == (
+            "Loading “Capture 2”… showing “Capture 1” until ready."
+        )
 
-    assert await controller.load_selected_now()
-    assert controller.state.loaded_detail == _resolved(2)
-    settle.release.set()
-    assert await pending is False
+        assert await controller.load_selected_now()
+        assert controller.state.loaded_detail == _resolved(2)
+    finally:
+        settle.release.set()
+        applied = await await_background_task(pending, what="delayed capture selection")
+    assert applied is False
     assert controller.state.loaded_detail == _resolved(2)
 
 

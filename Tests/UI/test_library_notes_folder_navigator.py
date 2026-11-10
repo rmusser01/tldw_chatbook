@@ -13,6 +13,10 @@ from loguru import logger as loguru_logger
 import pytest
 from textual.widgets import Button, Input
 
+from Tests.UI.background_signals import (
+    await_background_task,
+    wait_for_background_signal,
+)
 from Tests.UI.test_destination_shells import StaticLibraryNotesScopeService
 from Tests.UI.test_library_shell import (
     LibraryHarness,
@@ -1188,16 +1192,19 @@ async def test_superseded_locator_cannot_apply_blocked_containing_range(
     task = asyncio.create_task(
         LibraryScreen._locate_library_notes_tree_target(fake, note_id="n1", focus=False)
     )
-    await entered.wait()
-    assert fake._notes_state.navigation_status == "Locating note…"
-    status_projection = LibraryScreen._build_library_notes_tree_projection(fake)
-    assert status_projection is not None
-    assert status_projection.rows[0].placement_id == "status:notes-navigation"
-    assert status_projection.rows[0].disabled
+    try:
+        await wait_for_background_signal(entered, task, what="Notes locator range")
+        assert fake._notes_state.navigation_status == "Locating note…"
+        status_projection = LibraryScreen._build_library_notes_tree_projection(fake)
+        assert status_projection is not None
+        assert status_projection.rows[0].placement_id == "status:notes-navigation"
+        assert status_projection.rows[0].disabled
 
-    LibraryScreen._supersede_library_notes_navigation(fake)
-    release.set()
-    assert not await task
+        LibraryScreen._supersede_library_notes_navigation(fake)
+    finally:
+        release.set()
+        located = await await_background_task(task, what="Notes locator range")
+    assert not located
 
     assert fake._notes_state.navigation_status == ""
     assert fake._notes_state.tree_expanded_ids == set()
@@ -1229,11 +1236,12 @@ async def test_superseded_navigation_filter_cannot_apply_or_error() -> None:
             navigation_generation=generation,
         )
     )
-    await entered.wait()
-
-    LibraryScreen._supersede_library_notes_navigation(fake)
-    release.set()
-    await task
+    try:
+        await wait_for_background_signal(entered, task, what="Notes navigation filter")
+        LibraryScreen._supersede_library_notes_navigation(fake)
+    finally:
+        release.set()
+        await await_background_task(task, what="Notes navigation filter")
 
     state = fake._notes_state.tree_filter_state
     assert state is not None
@@ -1271,11 +1279,12 @@ async def test_superseded_topology_receipt_reload_cannot_apply_blocked_range() -
     task = asyncio.create_task(
         LibraryScreen._reload_library_notes_browse_return_receipt(fake, receipt)
     )
-    await entered.wait()
-
-    LibraryScreen._supersede_library_notes_navigation(fake)
-    release.set()
-    await task
+    try:
+        await wait_for_background_signal(entered, task, what="Notes receipt range")
+        LibraryScreen._supersede_library_notes_navigation(fake)
+    finally:
+        release.set()
+        await await_background_task(task, what="Notes receipt range")
 
     assert fake._notes_state.tree_expanded_ids == set()
     assert all(not state.loading for state in fake._notes_state.tree_branches.values())
