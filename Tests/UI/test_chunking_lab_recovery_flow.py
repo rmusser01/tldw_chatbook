@@ -13,6 +13,9 @@ from unittest.mock import patch
 import pytest
 
 from Tests.UI.test_chunking_lab_screen import (
+    attach_lab_media as attach_lab_media,  # noqa: PLC0414 - re-export shared pytest fixture
+)
+from Tests.UI.test_chunking_lab_screen import (
     lab_app as lab_app,  # noqa: PLC0414 - re-export shared pytest fixture
 )
 from tldw_chatbook.UI.Navigation.screen_registry import resolve_screen_route
@@ -363,16 +366,14 @@ async def test_saved_result_is_not_unsaved_when_only_view_checkpoint_fails(lab_a
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_save_capture_cannot_associate_an_import_during_preparation(
-    lab_app, tmp_path
+    lab_app, attach_lab_media
 ):
     from tldw_chatbook.Chunking import lab_state
-    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
     from tldw_chatbook.UI.Screens import chunking_lab_screen as module
 
-    lab_app.media_db = MediaDatabase(
-        str(tmp_path / "media.sqlite3"), client_id="save-race"
-    )
+    attach_lab_media("media.sqlite3", "save-race")
     async with lab_app.run_test(size=(80, 24)):
         screen = module.ChunkingLabScreen(lab_app)
         await lab_app.push_screen(screen)
@@ -514,10 +515,19 @@ async def test_typing_during_delayed_edit_and_completion_preserves_inputs(lab_ap
         assert requests[0].run_id in screen.coordinator.session.results
 
 
+def _select_recovery_profile(data_dir: Path) -> Path:
+    from tldw_chatbook import config
+
+    data_dir.mkdir(mode=0o700)
+    assert config.save_setting_to_cli_config("paths", "data_dir", str(data_dir))
+    profile = config.get_user_data_dir()
+    assert profile.parent == data_dir
+    return profile
+
+
 @pytest.mark.asyncio
-async def test_failed_checkpoint_blocks_navigation_export_survives(
-    lab_app, tmp_path, monkeypatch
-):
+@pytest.mark.bootstrap_profile
+async def test_failed_checkpoint_blocks_navigation_export_survives(lab_app, tmp_path):
     from Tests.UI.test_chunking_lab_screen import settle_lab
 
     route = resolve_screen_route("chunking_lab")
@@ -549,11 +559,7 @@ async def test_failed_checkpoint_blocks_navigation_export_survives(
         await screen._action("lab-retry")
         assert await screen.confirm_navigation()
         await lab_app.pop_screen()
-        fresh_path = tmp_path / "transfer-profile"
-        fresh_path.mkdir(mode=0o700)
-        monkeypatch.setattr(
-            "tldw_chatbook.config.get_user_data_dir", lambda: fresh_path
-        )
+        fresh_path = _select_recovery_profile(tmp_path / "transfer-profile")
         destination = route.load_screen_class()(lab_app)
         await lab_app.push_screen(destination)
         await destination.wait_until_ready()
@@ -576,11 +582,10 @@ async def test_failed_checkpoint_blocks_navigation_export_survives(
 
 
 @pytest.mark.asyncio
-async def test_profile_switch_failure_retains_old_owner(lab_app, tmp_path, monkeypatch):
+@pytest.mark.bootstrap_profile
+async def test_profile_switch_failure_retains_old_owner(lab_app, tmp_path):
     owner = await lab_app.get_chunking_lab_coordinator()
-    other = tmp_path / "other"
-    other.mkdir(mode=0o700)
-    monkeypatch.setattr("tldw_chatbook.config.get_user_data_dir", lambda: other)
+    other = _select_recovery_profile(tmp_path / "other")
     with patch.object(owner, "close", side_effect=OSError("injected failure")):
         with pytest.raises(OSError):
             await lab_app.get_chunking_lab_coordinator()
