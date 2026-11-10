@@ -2870,6 +2870,7 @@ async def test_external_cancel_is_keyboard_reachable_and_in_bounds_at_80_columns
 
             step = container.steps[container.current_step]
             assert isinstance(step, SpeechSetupStep)
+            await _wait_until(pilot, lambda: not step._loading)
             worker = MagicMock(is_finished=False)
             step._external_selection_worker = worker
             step._external_selection_token = (1, id(step))
@@ -2892,8 +2893,12 @@ async def test_external_cancel_is_keyboard_reachable_and_in_bounds_at_80_columns
             assert step._external_busy is False
             assert "prior source is unchanged" in step._external_status.lower()
             worker.cancel.assert_called_once_with()
-            disk = step.query_one("#setup-speech-use-from-disk", Button)
-            await _wait_until(pilot, lambda: app.focused is disk)
+            await _wait_until(
+                pilot,
+                lambda: any(
+                    app.focused is disk for disk in step.query("#setup-speech-use-from-disk")
+                ),
+            )
 
             await pilot.press("enter")
             await _wait_until(pilot, lambda: isinstance(app.screen, SelectDirectory))
