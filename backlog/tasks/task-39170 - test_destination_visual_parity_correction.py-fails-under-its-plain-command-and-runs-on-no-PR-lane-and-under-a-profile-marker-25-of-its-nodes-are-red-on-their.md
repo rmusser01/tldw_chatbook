@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-08 06:54
-updated_date: '2026-11-10 18:40'
+updated_date: '2026-11-10 20:35'
 labels:
 - follow-up
 - tests
@@ -90,6 +90,21 @@ Files: `Tests/UI/test_destination_visual_parity_correction.py`, `tldw_chatbook/U
 
 **Lane (AC#4).** The file is laned by function: 69 per-function selectors at the UI census tail, charged at each function's slowest serial seconds (about 893 s in all). `--rebalance 13.3` then swapped 6 pairs, and the max shard is 13.1 pytest min over the 22 cached PR runs. The file's whole-file serial runs were 589 s, 741 s and 850 s.
 
-Left out: `test_library_source_browser_collections_action_switches_to_collections_mode` (1 of 3 alone here, 3 of 5 whole-file runs, and red at base under the marker too). Its recorded failure is the Library source snapshot failing because the harness app's chat, notes, study and prompt services are unavailable ("Chat conversation local service is unavailable."), after which `#library-collections-reader-shell` never mounts. It is proposed as a follow-up, so the lane does not gate on a flake.
+The Collections action node was left out at first as a flake. It is now laned too; its cause and its 10-of-10 runs are under "Review r13c-rev1" below.
 
 The covering run for the Settings change (137 census entries that touch the Scope Inspector, `-n 4`, load 40-50): 229 passed, 2 failed. Both failures (`test_add_to_model_list_names_what_it_added_or_how_to_choose_a_default[added-then-already-listed]`, `test_settings_keyless_provider_save_keeps_template_env_name_out[legacy-env-unset]`) then passed 2 of 2 alone at head and 2 of 2 with base `settings_screen.py`, so they are load flakes, not this change.
+
+**Review r13c-rev1.**
+- **I2, the Collections action node (harness timing).** Its cause is now read, and it is laned.
+  - The factory app opens no ChaChaNotes DB (`_open_profile_chachanotes` is patched to None), so `chat_conversation_scope_service` has no local service. The Library source snapshot therefore fails with "Chat conversation local service is unavailable." in passing and failing runs alike (4 of 4 with `-rA`), so the snapshot failure is not the flake.
+  - What fails is `_wait_for_selector`'s 2 s default. Timed with a 30 s wait (temporary), `#library-collections-reader-shell` mounted after 2.67, 2.77, 2.52, 2.67, 2.79 and 2.51 s at load ~46, every run.
+  - Red with the default: 2 of 4 alone. The wait is now 15 s, and the shell must still mount. Green: 10 of 10 alone at load 42-53.
+  - Not a product race: the shell always mounts, only later than 2 s under load.
+  - The node joins the UI census tail; the floor is now 1985, and the replay's max shard is still 13.1 min.
+- **(b) TaskInspector, the sibling of the TaskDetail defect.** Its metadata rows and its "No conflict" card now compose hidden, the empty state `set_task(None)` paints.
+  - New `Tests/UI/test_schedules_ux_fixes.py::test_detail_and_inspector_open_in_their_empty_state_before_any_task`, a whole-file census entry, is red before the change (`assert not True` on `#scheduling-inspector-metadata`) and green after (the file gives 10 passed).
+- **Covering run** (13 Schedules files, temporary bootstrap marker plugin, deleted): 19 failed / 327 passed. With base `task_detail.py` (ae9f9e8d21), the same 19 gave 17 failed, 2 passed. The three nodes red at head and green at base:
+  - `test_returning_to_the_screen_while_stale_refetches_definitions` is red on both trees on rerun.
+  - `test_runs_on_dropdown_confirm_dialog_lists_warnings` is intermittent on both.
+  - `test_at_the_floor_the_queue_is_full_width_and_the_rows_paint` paints only chrome when it fails. In interleaved runs: head 2/8 vs TaskDetail-only 3/8, then head 0/12 vs base 2/12 (load 39-53), so it is a pre-existing load flake.
+- **M5.** The User Guide sentence now says the Boundary note (where this page's responsibility ends) comes "ahead of the ownership rows". It no longer promises a view without scrolling.

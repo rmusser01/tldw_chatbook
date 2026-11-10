@@ -4,7 +4,7 @@ title: "Three Console test files fail under their plain command because they car
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-10 18:40'
+updated_date: '2026-11-10 20:35'
 created_date: 2026-11-08 06:54
 labels:
 - follow-up
@@ -92,13 +92,12 @@ No PR lane runs any of the three files.
 
 No product defect found. Also: `Tests/UI/test_chat_approval_card.py`'s comment pointing at the needs-decision tests now says what they pin since #3036.
 
-**Lane** (AC#3, left to the coordinator). Serial timings, run.sh, `pytest <file> --timeout=180 --tb=short -q`, wall seconds (1-min load before each run), three runs:
+**Lane timings** (AC#3). Serial timings, run.sh, `pytest <file> --timeout=180 --tb=short -q`, wall seconds (1-min load before each run), three runs:
 - `Tests/UI/test_console_mcp_approval.py` (122 passed each run): 294 (98), 250 (65), 255 (72).
 - `Tests/Chat/test_console_rewind_summarize.py` (73 passed): 214 (76), 145 (54), 150 (65).
 - `Tests/Chat/test_console_run_state_per_session.py` (19 passed): 52 (71), 55 (76), 46 (49).
 
 Lane choice: the approval file is a whole-file UI census entry; the two Chat files are bootstrap_profile and go in a derived-artifacts lane after its sandboxed suites.
-<!-- SECTION:NOTES:END -->
 
 **Lanes (AC#3).**
 - `Tests/UI/test_console_mcp_approval.py` is a whole-file UI census entry at the tail. Serial timings with the lane's command: 294 s, 250 s and 255 s (122 passed each; load 98, 65, 72).
@@ -106,3 +105,4 @@ Lane choice: the approval file is a whole-file UI census entry; the two Chat fil
 - The lane runs under `--storage-lease-guard`. The rewind file's first step run failed 58 nodes on the open lease of `_durable_controller`'s CharactersRAGDB, and one more on the startup-rider test's AgentRunsDB plus the workspace store the agent turn opens. An autouse fixture now closes each durable store, and that test closes the kernel stores it records: 73 passed under the guard.
 - `recovered-suites`' whole pytest command, serial through run.sh: 943 s, 1088 s and 1020 s wall, 871 passed and 1 skipped each (1-minute load 32-44). In CI the same step before this round ran 733 passed in 307 s (run 42841528703). This round's additions take about 330 s serial locally at most, so the job should stay near half its 20-minute cap.
 - Census: 71 round-13 entries charged at their local serial seconds, then `--rebalance 13.3` swapped 6 pairs over the 22 cached PR runs' shard logs (max 13.1 pytest min); floor 1984.
+<!-- SECTION:NOTES:END -->

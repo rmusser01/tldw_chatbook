@@ -4,7 +4,7 @@ title: "Twenty-three private-SQLite test nodes are red on dev, 19 because the te
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-10 18:40'
+updated_date: '2026-11-10 20:35'
 created_date: 2026-11-07 02:03
 labels:
 - follow-up
@@ -94,3 +94,9 @@ Results:
 - Step timings (that step's whole pytest command, serial, through run.sh): 484 s, 338 s and 312 s wall (pytest 477/333/307 s), each 541 passed, 2 skipped, 1 xfailed. The 1-minute load fell from 52 to 32 across the runs. The job ran 2.1-2.9 min in CI before (four PR runs on 2026-11-10) against its 20-min cap.
 
 **Files.** `Tests/DB/test_private_sqlite.py`, `Tests/DB/test_private_sqlite_inventory.py`, `tldw_chatbook/DB/private_sqlite.py`, `tldw_chatbook/Backup_Recovery/detached_layout.py`, `backlog/docs/sqlite-private-owner-inventory.md`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, and a lessons entry in `backlog/docs/lessons-testing-evidence.md` (process-wide `os.close` spy).
+
+**Review r13c-rev1.**
+- **C1, missing census row.** `backlog/docs/backup-recovery-owner-inventory.md` lacked the new owner, which turned two nodes in the required architecture-guards job red: `test_sqlite_registry_members_have_explicit_census_rows` ("SQLite registry members without a row: ['recovery.detached_layout']") and `test_every_persistence_source_symbol_has_reviewed_owner_row`.
+  - Fix: a `sqlite:recovery.detached_layout` row now sits beside `recovery.credentials`, and the `_normalize_sqlite` row's call column reads `connect_private_sqlite`.
+  - Before the fix both nodes failed with those messages; after it the file gives 19 passed, serial.
+- **Storage admission (coordinator ruling (a)).** `recovery.detached_layout` still takes storage admission: it is not on `_with_storage_admission`'s bypass list. `recovery.credentials` bypasses admission; adding the new owner to that list was considered and declined as the less conservative choice. The Windows path, which uses `_prepare_artifact` instead of the POSIX helper, is not exercised here.

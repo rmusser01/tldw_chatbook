@@ -4,7 +4,7 @@ title: "Approval tests still pin the approval card as it was before #3036: the c
 status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-10 18:40'
+updated_date: '2026-11-10 20:35'
 created_date: 2026-11-09 23:55
 labels:
 - follow-up
@@ -92,7 +92,20 @@ Two more failed in one run each: `test_stale_generation_fast_button_press_is_a_n
 - Submit payload and rounds: `test_submit_posts_approval_decided_with_per_row_decisions`, `test_submit_echoes_back_the_round_id_stamped_by_set_batch`, `test_new_batch_reenables_submit_after_a_prior_round_disabled_it`, `test_back_to_back_changed_rounds_leave_only_latest_controls`: Apply through More options; payloads and round ids unchanged.
 - Intermittent: `test_stale_generation_fast_button_press_is_a_noop` (seen red once here: the fresh press beat readiness) and `test_fast_approve_button_disables_after_press_to_prevent_double_submit` now wait for readiness, as do the two fast-submit tests that share the race.
 
-**Lane (AC#4)** left to the coordinator. The node's file is module bootstrap_profile. Serial timings, run.sh, `pytest <node> --timeout=180 --tb=short -q`, wall seconds (pytest seconds; 1-min load before each run): 13 (3.1; 62), 10 (2.6; 71), 11 (2.4; 56).
-<!-- SECTION:NOTES:END -->
+**Lane timings** (AC#4). The node's file is module bootstrap_profile. Serial timings, run.sh, `pytest <node> --timeout=180 --tb=short -q`, wall seconds (pytest seconds; 1-min load before each run): 13 (3.1; 62), 10 (2.6; 71), 11 (2.4; 56).
 
 **Lane (AC#4).** `Tests/Chat/test_console_chat_controller.py::test_review_hook_gives_a_mutating_builtin_the_mutation_effect` runs by node id in `recovered-suites` (bootstrap_profile, last block); no other step lists the controller file. Node timings, serial: 13 s, 10 s and 11 s wall. `recovered-suites`' whole pytest command, serial through run.sh: 943 s, 1088 s and 1020 s wall, 871 passed and 1 skipped each (1-minute load 32-44). In CI the same step before this round ran 733 passed in 307 s (run 42841528703). This round's additions take about 330 s serial locally at most, so the job should stay near half its 20-minute cap. `test_console_mcp_approval.py` is laned by TASK-39154 (UI census, whole file).
+
+**Review r13c-rev1.**
+- **M4.** Four tests named or described a needs-decision flag nothing produces. They are renamed to what they assert, docstrings rewritten:
+  - `test_bulk_actions_commit_nothing_when_a_row_cannot_take_the_bulk_choice`
+  - `test_review_individually_keeps_raw_shell_row_on_deny_and_requires_its_choice`
+  - `test_deliberate_raw_shell_choice_after_review_individually_enables_apply`
+  - `test_deny_all_after_review_individually_denies_every_row_and_commits`
+
+  The vacuous `not row.has_class("needs-decision")` asserts are dropped. The `test_chat_approval_card.py` comment points at the new name. No census entry named them; the file is laned whole.
+- **(c) Dead production code removed.** Since a2fcbe61bc nothing produced the needs-decision flag. Removed: `_set_all_batch_decisions`, `_mark_row_needs_decision`, `_clear_row_needs_decision`, `NEEDS_DECISION_PREFIX`, the flag-only `_batch_base_headers` list and the two `remove_class("needs-decision")` calls, plus the `.approval-row.needs-decision` rule in `css/features/_console_approvals.tcss`. The bundle was rebuilt and `check_bundle_sync.py` passes.
+- **Runs.** `git grep` finds no reference outside history. The approval files (`test_console_mcp_approval.py`, `test_chat_approval_card.py`, `Tests/UI/test_approval*.py`, `test_console_approval*.py`) at `-n 4` gave 363 passed, 2 failed:
+  - `test_the_longest_decision_label_paints_on_one_line` passed 2 of 2 on rerun.
+  - `test_first_open_paints_an_answerable_card_nav_away_path` fails "screens are never cached" with the pre-deletion card too, so this change did not cause it.
+<!-- SECTION:NOTES:END -->
