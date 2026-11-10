@@ -71,7 +71,7 @@ a discarded import emits no success notification (TASK-36363).
 | chatterbox | local; via isolated subprocess | subprocess speaks JSON+base64 over pipes; stdout of the child is silenced before imports |
 | higgs | in-process (`[HiggsSettings]`) | zero-shot cloning, multi-speaker, background music |
 
-Kokoro and Higgs resolve configuration before opening the finite scope for related voice files (ADR-126, TASK-39402.120/.193). The config reader retires its own native handles. The voice scope still owns the selected directory, profile reads and related default publication, and refuses fresh work during maintenance.
+Kokoro, Higgs and Chatterbox resolve configuration before opening the finite scope for related voice files (ADR-126, TASK-39402.120/.193/.194). The config reader retires its own native handles. The voice scope still owns the selected directory, profile reads and related default publication, and refuses fresh work during maintenance.
 
 ## Playback model
 

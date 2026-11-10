@@ -101,7 +101,7 @@ assert not backend.save_voice_blend('invalid',[('af_bella',0)])
 settled()
 """,
         }[backend],
-        select_data_root=backend in {"higgs", "kokoro"},
+        select_data_root=backend in {"chatterbox", "higgs", "kokoro"},
     )
 
 
@@ -300,7 +300,7 @@ assert not (root/'new').exists()
 assert pause.drain(time.monotonic()+.03)
 pause.resume()
 """,
-        select_data_root=kind in {"higgs", "kokoro"},
+        select_data_root=kind in {"chatterbox", "higgs", "kokoro"},
     )
 
 
