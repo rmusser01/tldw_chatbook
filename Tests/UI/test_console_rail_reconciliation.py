@@ -1252,6 +1252,19 @@ async def test_bounded_rail_shell_regions_are_compositor_contained(
         assert sources.region.contains_region(sources.viewport.region)
         assert sources.region.contains_region(sources.hint.region)
         assert not sources.viewport.region.overlaps(sources.hint.region)
+        inspector_body = inspector.query_one(
+            "#console-inspector-rail-body", VerticalScroll
+        )
+        if sources.hint.region.y >= inspector_body.content_region.bottom:
+            sources.hint.scroll_visible(animate=False, immediate=True)
+            await _wait_for_rail_condition(
+                pilot,
+                context,
+                lambda: (
+                    sources.hint.region.x + 1,
+                    sources.hint.region.y,
+                ) in inspector_body.content_region,
+            )
         outer_hint = inspector.query_one("#console-inspector-outer-scroll-hint", Static)
         assert outer_hint.display
         assert _shows_outer_hint(outer_hint.renderable)
