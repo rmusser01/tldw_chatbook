@@ -10141,19 +10141,23 @@ async def test_console_continue_action_streams_new_message_from_selected_turn():
         await _select_llamacpp_console(console)
         store = console._ensure_console_chat_store()
         session = store.ensure_session(title="Chat 1")
-        store.append_message(
+        user = store.append_message(
             session.id,
             role=ConsoleMessageRole.USER,
             content="prompt",
+            persist=True,
         )
         source = store.append_message(
             session.id,
             role=ConsoleMessageRole.ASSISTANT,
             content="seed",
+            persist=True,
         )
+        assert user.persisted_message_id and source.persisted_message_id
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{source.id}")
         transcript.select_message(source.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
@@ -10188,16 +10192,19 @@ async def test_console_regenerate_action_streams_selected_variant():
         await _select_llamacpp_console(console)
         store = console._ensure_console_chat_store()
         session = store.ensure_session(title="Chat 1")
-        store.append_message(
+        user = store.append_message(
             session.id,
             role=ConsoleMessageRole.USER,
             content="prompt",
+            persist=True,
         )
         source = store.append_message(
             session.id,
             role=ConsoleMessageRole.ASSISTANT,
             content="seed",
+            persist=True,
         )
+        assert user.persisted_message_id and source.persisted_message_id
         controller = console._ensure_console_chat_controller()
         store.set_citation_presentation(
             source.id,
@@ -10212,6 +10219,7 @@ async def test_console_regenerate_action_streams_selected_variant():
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{source.id}")
         transcript.select_message(source.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
@@ -10283,6 +10291,7 @@ async def test_console_rejected_regenerate_preserves_original_attempt_preview():
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{source.id}")
         transcript.select_message(source.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
@@ -10334,6 +10343,7 @@ async def test_console_sibling_swipe_buttons_navigate_between_regenerated_siblin
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{a2.id}")
         transcript.select_message(a2.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
