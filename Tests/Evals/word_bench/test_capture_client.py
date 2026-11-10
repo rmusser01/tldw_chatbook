@@ -4,11 +4,13 @@ the normalizer's fixtures."""
 from __future__ import annotations
 
 import json
+from contextlib import AsyncExitStack
 from pathlib import Path
 from unittest import mock
 
 import httpx
 import pytest
+import pytest_asyncio
 
 from tldw_chatbook.Evals.word_bench.capture_client import (
     CANARY_PROMPT,
@@ -26,6 +28,18 @@ def _client(handler) -> WordBenchCaptureClient:
     return WordBenchCaptureClient(base_url="http://127.0.0.1:9099", transport=transport)
 
 
+@pytest_asyncio.fixture(loop_scope="function")
+async def make_capture_client():
+    # Close every mock-backed client on the owning test loop.
+    async with AsyncExitStack() as stack:
+        def make(handler) -> WordBenchCaptureClient:
+            client = _client(handler)
+            stack.push_async_callback(client.aclose)
+            return client
+
+        yield make
+
+
 def test_neutral_sampler_does_not_collapse_the_distribution():
     """temperature must be 1.0, not 0 -- zero collapses what we measure."""
     assert NEUTRAL_SAMPLER["temperature"] == 1.0
@@ -33,8 +47,9 @@ def test_neutral_sampler_does_not_collapse_the_distribution():
     assert NEUTRAL_SAMPLER["top_k"] == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_raw_mode_posts_to_completions_with_neutral_sampler():
+async def test_raw_mode_posts_to_completions_with_neutral_sampler(make_capture_client):
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -43,7 +58,7 @@ async def test_raw_mode_posts_to_completions_with_neutral_sampler():
         return httpx.Response(200, json=RAW)
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).capture(
+    result = await make_capture_client(handler).capture(
         "The protestors were met with", target, "raw", 5
     )
 
@@ -60,8 +75,9 @@ async def test_raw_mode_posts_to_completions_with_neutral_sampler():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_raw_mode_prepends_target_prefix_to_the_snippet():
+async def test_raw_mode_prepends_target_prefix_to_the_snippet(make_capture_client):
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -71,12 +87,13 @@ async def test_raw_mode_prepends_target_prefix_to_the_snippet():
     target = Target(
         id="t", name="n", provider="llama_cpp", model_id="m", prefix="Note: "
     )
-    await _client(handler).capture("the snippet", target, "raw", 5)
+    await make_capture_client(handler).capture("the snippet", target, "raw", 5)
     assert seen["body"]["prompt"] == "Note: the snippet"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_chat_mode_sends_system_prompt_as_a_message():
+async def test_chat_mode_sends_system_prompt_as_a_message(make_capture_client):
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -91,15 +108,16 @@ async def test_chat_mode_sends_system_prompt_as_a_message():
         model_id="m",
         system_prompt="Be careful.",
     )
-    await _client(handler).capture("the snippet", target, "chat", 5)
+    await make_capture_client(handler).capture("the snippet", target, "chat", 5)
 
     assert seen["url"].endswith("/v1/chat/completions")
     assert seen["body"]["messages"][0] == {"role": "system", "content": "Be careful."}
     assert seen["body"]["messages"][-1] == {"role": "user", "content": "the snippet"}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_chat_mode_also_carries_the_neutral_sampler():
+async def test_chat_mode_also_carries_the_neutral_sampler(make_capture_client):
     """The two branches share one **NEUTRAL_SAMPLER splat today, but nothing
     stops a chat-specific override from landing in the later payload.update()
     call and shipping undetected. Pin it on chat's wire body too, not just
@@ -111,15 +129,16 @@ async def test_chat_mode_also_carries_the_neutral_sampler():
         return httpx.Response(200, json=RAW)
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    await _client(handler).capture("the snippet", target, "chat", 5)
+    await make_capture_client(handler).capture("the snippet", target, "chat", 5)
 
     assert seen["body"]["temperature"] == 1.0
     assert seen["body"]["top_p"] == 1.0
     assert seen["body"]["top_k"] == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_chat_mode_requests_a_window_not_a_single_token():
+async def test_chat_mode_requests_a_window_not_a_single_token(make_capture_client):
     """It must be able to skip leading control tokens."""
     seen = {}
 
@@ -128,46 +147,54 @@ async def test_chat_mode_requests_a_window_not_a_single_token():
         return httpx.Response(200, json=RAW)
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    await _client(handler).capture("s", target, "chat", 5)
+    await make_capture_client(handler).capture("s", target, "chat", 5)
     assert seen["body"]["max_tokens"] > 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_transport_failure_becomes_a_cell_error_not_an_exception():
+async def test_transport_failure_becomes_a_cell_error_not_an_exception(
+    make_capture_client,
+):
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused")
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).capture("s", target, "raw", 5)
+    result = await make_capture_client(handler).capture("s", target, "raw", 5)
     assert isinstance(result, CellError)
     assert result.reason == "unreachable"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_http_error_status_becomes_a_cell_error():
+async def test_http_error_status_becomes_a_cell_error(make_capture_client):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500, text="boom")
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).capture("s", target, "raw", 5)
+    result = await make_capture_client(handler).capture("s", target, "raw", 5)
     assert isinstance(result, CellError)
     assert result.reason == "http_error"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_preflight_reports_ok_and_actual_k():
+async def test_preflight_reports_ok_and_actual_k(make_capture_client):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=RAW)
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).preflight(target, "raw", 20)
+    result = await make_capture_client(handler).preflight(target, "raw", 20)
     assert result.state == "ok"
     assert result.k_returned == 5, "must report K actually returned, not requested"
     assert result.status_label == "Ready"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_preflight_marks_a_degenerate_canary_without_blocking():
+async def test_preflight_marks_a_degenerate_canary_without_blocking(
+    make_capture_client,
+):
     """A model that continues the canary with nonsense is still runnable --
     it may be exactly what the user wants to study -- but the whole column
     must carry the warning."""
@@ -176,14 +203,17 @@ async def test_preflight_marks_a_degenerate_canary_without_blocking():
         return httpx.Response(200, json=RAW)  # " a", not " Paris"
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).preflight(target, "raw", 5)
+    result = await make_capture_client(handler).preflight(target, "raw", 5)
     assert result.canary == "degenerate"
     assert result.state == "ok"
     assert result.is_warned is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_preflight_passes_canary_when_expected_token_is_present():
+async def test_preflight_passes_canary_when_expected_token_is_present(
+    make_capture_client,
+):
     payload = {
         "choices": [
             {
@@ -213,13 +243,16 @@ async def test_preflight_passes_canary_when_expected_token_is_present():
         return httpx.Response(200, json=payload)
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).preflight(target, "raw", 5)
+    result = await make_capture_client(handler).preflight(target, "raw", 5)
     assert result.canary == "pass"
     assert result.is_warned is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_preflight_passes_canary_when_expected_token_is_present_at_rank_2():
+async def test_preflight_passes_canary_when_expected_token_is_present_at_rank_2(
+    make_capture_client,
+):
     """Rank order has been observed to flip between identical requests, so
     the canary must scan the whole top-K, not only rank 1 -- a rank-1-only
     check would be flaky in exactly this situation. Here the top-1 token is
@@ -254,35 +287,40 @@ async def test_preflight_passes_canary_when_expected_token_is_present_at_rank_2(
         return httpx.Response(200, json=payload)
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).preflight(target, "raw", 5)
+    result = await make_capture_client(handler).preflight(target, "raw", 5)
     assert result.canary == "pass"
     assert result.is_warned is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_preflight_reports_unreachable():
+async def test_preflight_reports_unreachable(make_capture_client):
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("nope")
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).preflight(target, "raw", 5)
+    result = await make_capture_client(handler).preflight(target, "raw", 5)
     assert result.state == "unreachable"
     assert result.status_label == "Unavailable"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_preflight_reports_no_logprobs_as_blocked():
+async def test_preflight_reports_no_logprobs_as_blocked(make_capture_client):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"choices": [{"message": {"content": "hi"}}]})
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).preflight(target, "raw", 5)
+    result = await make_capture_client(handler).preflight(target, "raw", 5)
     assert result.state == "no_logprobs"
     assert result.status_label == "Blocked"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_preflight_reports_no_logprobs_as_blocked_when_top_logprobs_is_empty():
+async def test_preflight_reports_no_logprobs_as_blocked_when_top_logprobs_is_empty(
+    make_capture_client,
+):
     """The critical case this fix closes: an endpoint that honours the
     request shape (choices[0].logprobs.content is present and carries a
     token) but returns an empty top_logprobs at the measured position. Before
@@ -311,13 +349,16 @@ async def test_preflight_reports_no_logprobs_as_blocked_when_top_logprobs_is_emp
         return httpx.Response(200, json=payload)
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).preflight(target, "raw", 5)
+    result = await make_capture_client(handler).preflight(target, "raw", 5)
     assert result.state == "no_logprobs"
     assert result.status_label == "Blocked"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_html_200_response_becomes_a_cell_error_not_an_exception():
+async def test_html_200_response_becomes_a_cell_error_not_an_exception(
+    make_capture_client,
+):
     """A proxy in front of the endpoint can return an HTML error page with a
     200 status. response.json() raises json.JSONDecodeError (a ValueError,
     not an httpx.HTTPError) in that case -- it must not abort an entire
@@ -327,13 +368,16 @@ async def test_html_200_response_becomes_a_cell_error_not_an_exception():
         return httpx.Response(200, text="<html><body>Bad Gateway</body></html>")
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).capture("s", target, "raw", 5)
+    result = await make_capture_client(handler).capture("s", target, "raw", 5)
     assert isinstance(result, CellError)
     assert result.reason == "bad_response"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_malformed_top_logprobs_entry_becomes_a_cell_error_not_an_exception():
+async def test_malformed_top_logprobs_entry_becomes_a_cell_error_not_an_exception(
+    make_capture_client,
+):
     """A top_logprobs entry missing "token" or "logprob" raises KeyError
     inside _to_token_probs -- that must not escape capture() either."""
     payload = {
@@ -360,13 +404,16 @@ async def test_malformed_top_logprobs_entry_becomes_a_cell_error_not_an_exceptio
         return httpx.Response(200, json=payload)
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).capture("s", target, "raw", 5)
+    result = await make_capture_client(handler).capture("s", target, "raw", 5)
     assert isinstance(result, CellError)
     assert result.reason == "bad_response"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_raw_capture_pins_the_unchecked_canary_contract_for_all_call_shapes():
+async def test_raw_capture_pins_the_unchecked_canary_contract_for_all_call_shapes(
+    make_capture_client,
+):
     """TASK-709: two runner tests (test_canary_pass_verdict_is_also_stamped_
     onto_every_cell, test_degenerate_canary_propagates_onto_every_cell) rely
     on capture() NEVER computing a real canary verdict itself -- only
@@ -382,14 +429,15 @@ async def test_raw_capture_pins_the_unchecked_canary_contract_for_all_call_shape
         return httpx.Response(200, json=RAW)
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).capture(CANARY_PROMPT, target, "raw", 5)
+    result = await make_capture_client(handler).capture(CANARY_PROMPT, target, "raw", 5)
 
     assert isinstance(result, CellCapture)
     assert result.canary == "unchecked"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_preflight_reports_a_4xx_as_blocked_not_unavailable():
+async def test_preflight_reports_a_4xx_as_blocked_not_unavailable(make_capture_client):
     """A 4xx means the server was reachable and rejected the request (e.g.
     "logprobs not supported") -- that is Blocked, not Unavailable."""
 
@@ -397,14 +445,17 @@ async def test_preflight_reports_a_4xx_as_blocked_not_unavailable():
         return httpx.Response(422, json={"error": "logprobs not supported"})
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).preflight(target, "raw", 5)
+    result = await make_capture_client(handler).preflight(target, "raw", 5)
 
     assert result.state == "no_logprobs"
     assert result.status_label == "Blocked"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_preflight_reports_a_404_specifically_as_mode_unsupported():
+async def test_preflight_reports_a_404_specifically_as_mode_unsupported(
+    make_capture_client,
+):
     """_build_request always posts to a fixed, mode-selected path, so a 404
     reliably means that path does not exist on this server -- the design
     spec's "raw mode unsupported by endpoint" row."""
@@ -413,14 +464,15 @@ async def test_preflight_reports_a_404_specifically_as_mode_unsupported():
         return httpx.Response(404, text="not found")
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).preflight(target, "raw", 5)
+    result = await make_capture_client(handler).preflight(target, "raw", 5)
 
     assert result.state == "mode_unsupported"
     assert result.status_label == "Blocked"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_preflight_reports_a_5xx_as_unavailable_not_blocked():
+async def test_preflight_reports_a_5xx_as_unavailable_not_blocked(make_capture_client):
     """A 5xx means the server itself failed -- still Unavailable, the same
     as a transport-level failure, not Blocked."""
 
@@ -428,7 +480,7 @@ async def test_preflight_reports_a_5xx_as_unavailable_not_blocked():
         return httpx.Response(503, text="service unavailable")
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).preflight(target, "raw", 5)
+    result = await make_capture_client(handler).preflight(target, "raw", 5)
 
     assert result.state == "unreachable"
     assert result.status_label == "Unavailable"
@@ -491,8 +543,9 @@ async def test_aclose_releases_the_pooled_client_and_is_safe_to_call_twice():
 ##############################################################################
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_preflight_captures_a_continuation_in_raw_mode():
+async def test_preflight_captures_a_continuation_in_raw_mode(make_capture_client):
     """Raw mode's canary is deliberately max_tokens: 1 (see module docstring
     and preflight's own docstring) -- a real continuation needs a genuinely
     separate request, never a lengthened canary. That second request must
@@ -508,7 +561,7 @@ async def test_preflight_captures_a_continuation_in_raw_mode():
         )
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).preflight(target, "raw", 5)
+    result = await make_capture_client(handler).preflight(target, "raw", 5)
 
     assert len(calls) == 2, "one canary request, one separate continuation request"
     assert calls[0]["max_tokens"] == 1, "the canary request itself must stay untouched"
@@ -518,8 +571,11 @@ async def test_preflight_captures_a_continuation_in_raw_mode():
     assert result.continuation == " blue skies ahead"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_preflight_captures_a_continuation_in_chat_mode_without_a_second_request():
+async def test_preflight_captures_a_continuation_in_chat_mode_without_a_second_request(
+    make_capture_client,
+):
     """Chat mode's canary already requests CHAT_TOKEN_WINDOW tokens and
     discards the generated text today -- that discard is a genuine salvage
     opportunity (unlike raw mode's single token), so capturing it must not
@@ -573,7 +629,7 @@ async def test_preflight_captures_a_continuation_in_chat_mode_without_a_second_r
         return httpx.Response(200, json=payload)
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).preflight(target, "chat", 5)
+    result = await make_capture_client(handler).preflight(target, "chat", 5)
 
     assert len(calls) == 1, (
         "chat mode's continuation must be salvaged from the canary response, "
@@ -584,8 +640,11 @@ async def test_preflight_captures_a_continuation_in_chat_mode_without_a_second_r
     assert result.continuation == "<|channel>thought The sky is blue"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_preflight_continuation_request_in_raw_mode_carries_the_target_prefix():
+async def test_preflight_continuation_request_in_raw_mode_carries_the_target_prefix(
+    make_capture_client,
+):
     """Readiness (and its continuation) is a property of what the run will
     actually send -- the same steering contract preflight's own docstring
     already states for the canary applies equally here."""
@@ -603,14 +662,17 @@ async def test_preflight_continuation_request_in_raw_mode_carries_the_target_pre
     target = Target(
         id="t", name="n", provider="llama_cpp", model_id="m", prefix="Note: "
     )
-    result = await _client(handler).preflight(target, "raw", 5)
+    result = await make_capture_client(handler).preflight(target, "raw", 5)
 
     assert seen[1]["prompt"] == f"Note: {CANARY_PROMPT}"
     assert result.continuation == " continues"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_preflight_continuation_in_chat_mode_reflects_system_prompt_steering():
+async def test_preflight_continuation_in_chat_mode_reflects_system_prompt_steering(
+    make_capture_client,
+):
     seen = []
     payload = {
         "choices": [
@@ -649,26 +711,32 @@ async def test_preflight_continuation_in_chat_mode_reflects_system_prompt_steeri
         model_id="m",
         system_prompt="Be careful.",
     )
-    result = await _client(handler).preflight(target, "chat", 5)
+    result = await make_capture_client(handler).preflight(target, "chat", 5)
 
     assert seen[0]["messages"][0] == {"role": "system", "content": "Be careful."}
     assert result.continuation == "steered output"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_preflight_continuation_degrades_to_empty_string_when_the_canary_itself_fails():
+async def test_preflight_continuation_degrades_to_empty_string_when_the_canary_itself_fails(
+    make_capture_client,
+):
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("nope")
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).preflight(target, "raw", 5)
+    result = await make_capture_client(handler).preflight(target, "raw", 5)
 
     assert result.state == "unreachable"
     assert result.continuation == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_preflight_continuation_degrades_to_empty_string_when_the_continuation_request_fails():
+async def test_preflight_continuation_degrades_to_empty_string_when_the_continuation_request_fails(
+    make_capture_client,
+):
     """The canary succeeds (state stays 'ok') but the SEPARATE continuation
     request fails -- must degrade to "" without raising and without touching
     the already-resolved state/canary verdict."""
@@ -681,14 +749,17 @@ async def test_preflight_continuation_degrades_to_empty_string_when_the_continua
         raise httpx.ConnectError("continuation endpoint down")
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).preflight(target, "raw", 5)
+    result = await make_capture_client(handler).preflight(target, "raw", 5)
 
     assert result.state == "ok"
     assert result.continuation == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_preflight_continuation_is_empty_string_when_chat_response_has_no_message_content():
+async def test_preflight_continuation_is_empty_string_when_chat_response_has_no_message_content(
+    make_capture_client,
+):
     payload = {
         "choices": [
             {
@@ -719,14 +790,17 @@ async def test_preflight_continuation_is_empty_string_when_chat_response_has_no_
         return httpx.Response(200, json=payload)
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).preflight(target, "chat", 5)
+    result = await make_capture_client(handler).preflight(target, "chat", 5)
 
     assert result.state == "ok"
     assert result.continuation == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_preflight_continuation_is_capped_to_a_bounded_length():
+async def test_preflight_continuation_is_capped_to_a_bounded_length(
+    make_capture_client,
+):
     calls = []
     long_text = "x" * 5000
 
@@ -737,7 +811,7 @@ async def test_preflight_continuation_is_capped_to_a_bounded_length():
         return httpx.Response(200, json={"choices": [{"text": long_text}]})
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).preflight(target, "raw", 5)
+    result = await make_capture_client(handler).preflight(target, "raw", 5)
 
     assert 0 < len(result.continuation) < len(long_text), (
         "the stored continuation must be capped to a bounded window, "
@@ -746,8 +820,11 @@ async def test_preflight_continuation_is_capped_to_a_bounded_length():
     assert long_text.startswith(result.continuation)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_preflight_canary_verdict_is_unaffected_by_the_continuation_capture():
+async def test_preflight_canary_verdict_is_unaffected_by_the_continuation_capture(
+    make_capture_client,
+):
     """Approach (a) was chosen: the continuation is a separate request/
     response that is never passed through normalize_logprobs, so the canary
     verdict must be identical to what it was before continuation capture
@@ -762,7 +839,7 @@ async def test_preflight_canary_verdict_is_unaffected_by_the_continuation_captur
         return httpx.Response(500, text="boom")  # continuation request fails outright
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).preflight(target, "raw", 5)
+    result = await make_capture_client(handler).preflight(target, "raw", 5)
 
     assert result.canary == "degenerate"
     assert result.state == "ok"
@@ -770,8 +847,11 @@ async def test_preflight_canary_verdict_is_unaffected_by_the_continuation_captur
     assert result.continuation == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_preflight_continuation_degrades_to_empty_string_on_a_timeout():
+async def test_preflight_continuation_degrades_to_empty_string_on_a_timeout(
+    make_capture_client,
+):
     """Review Minor (T1): the continuation leg's failure path is
     structurally covered by the same ``except httpx.HTTPError`` branch
     ``test_preflight_continuation_degrades_to_empty_string_when_the_
@@ -791,7 +871,7 @@ async def test_preflight_continuation_degrades_to_empty_string_on_a_timeout():
         raise httpx.TimeoutException("continuation request timed out")
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result = await _client(handler).preflight(target, "raw", 5)
+    result = await make_capture_client(handler).preflight(target, "raw", 5)
 
     assert len(calls) == 2
     assert result.state == "ok"
@@ -806,8 +886,11 @@ async def test_preflight_continuation_degrades_to_empty_string_on_a_timeout():
 ##############################################################################
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_capture_with_continuation_raw_mode_issues_one_extra_request():
+async def test_capture_with_continuation_raw_mode_issues_one_extra_request(
+    make_capture_client,
+):
     """Raw mode's measured request is deliberately max_tokens: 1 -- a real
     continuation needs a genuinely separate request, exactly like
     preflight's per-target continuation (task-1691), just steered by the
@@ -823,7 +906,7 @@ async def test_capture_with_continuation_raw_mode_issues_one_extra_request():
         )
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result, continuation = await _client(handler).capture_with_continuation(
+    result, continuation = await make_capture_client(handler).capture_with_continuation(
         "The sky is", target, "raw", 5
     )
 
@@ -840,8 +923,11 @@ async def test_capture_with_continuation_raw_mode_issues_one_extra_request():
     assert continuation == " blue skies ahead"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_capture_with_continuation_chat_mode_costs_zero_extra_requests():
+async def test_capture_with_continuation_chat_mode_costs_zero_extra_requests(
+    make_capture_client,
+):
     """Chat mode's measured request already asks for a multi-token window
     and its response is already in hand -- salvaging the continuation from
     it, exactly as preflight's chat-mode continuation already does, must
@@ -895,7 +981,7 @@ async def test_capture_with_continuation_chat_mode_costs_zero_extra_requests():
         return httpx.Response(200, json=payload)
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result, continuation = await _client(handler).capture_with_continuation(
+    result, continuation = await make_capture_client(handler).capture_with_continuation(
         "The sky is", target, "chat", 5
     )
 
@@ -906,8 +992,11 @@ async def test_capture_with_continuation_chat_mode_costs_zero_extra_requests():
     assert continuation == "**blue, the color of the sky"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_capture_with_continuation_raw_mode_carries_the_target_prefix():
+async def test_capture_with_continuation_raw_mode_carries_the_target_prefix(
+    make_capture_client,
+):
     """Steered exactly like the measured request itself -- the same
     contract preflight's per-target continuation already carries (task-1691),
     now applied to the actual snippet being measured."""
@@ -925,7 +1014,7 @@ async def test_capture_with_continuation_raw_mode_carries_the_target_prefix():
     target = Target(
         id="t", name="n", provider="llama_cpp", model_id="m", prefix="Note: "
     )
-    _result, continuation = await _client(handler).capture_with_continuation(
+    _result, continuation = await make_capture_client(handler).capture_with_continuation(
         "the snippet", target, "raw", 5
     )
 
@@ -936,8 +1025,11 @@ async def test_capture_with_continuation_raw_mode_carries_the_target_prefix():
     assert continuation == " continues"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_capture_with_continuation_chat_mode_reflects_system_prompt_steering():
+async def test_capture_with_continuation_chat_mode_reflects_system_prompt_steering(
+    make_capture_client,
+):
     payload = {
         "choices": [
             {
@@ -976,7 +1068,7 @@ async def test_capture_with_continuation_chat_mode_reflects_system_prompt_steeri
         model_id="m",
         system_prompt="Be careful.",
     )
-    _result, continuation = await _client(handler).capture_with_continuation(
+    _result, continuation = await make_capture_client(handler).capture_with_continuation(
         "the snippet", target, "chat", 5
     )
 
@@ -984,8 +1076,11 @@ async def test_capture_with_continuation_chat_mode_reflects_system_prompt_steeri
     assert continuation == "steered continuation"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_capture_with_continuation_skips_the_continuation_when_the_cell_itself_fails():
+async def test_capture_with_continuation_skips_the_continuation_when_the_cell_itself_fails(
+    make_capture_client,
+):
     """A failed measurement has nothing to continue from -- attempting a
     continuation would spend an extra request on a cell the caller is about
     to record as a CellError anyway."""
@@ -996,7 +1091,7 @@ async def test_capture_with_continuation_skips_the_continuation_when_the_cell_it
         raise httpx.ConnectError("connection refused")
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result, continuation = await _client(handler).capture_with_continuation(
+    result, continuation = await make_capture_client(handler).capture_with_continuation(
         "s", target, "raw", 5
     )
 
@@ -1007,8 +1102,11 @@ async def test_capture_with_continuation_skips_the_continuation_when_the_cell_it
     assert continuation == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_capture_with_continuation_degrades_to_empty_string_on_a_500():
+async def test_capture_with_continuation_degrades_to_empty_string_on_a_500(
+    make_capture_client,
+):
     """The measured cell must stay intact -- top-K and all -- when the
     SEPARATE continuation request fails outright; a continuation failure
     must never turn a good measurement into a CellError."""
@@ -1021,7 +1119,7 @@ async def test_capture_with_continuation_degrades_to_empty_string_on_a_500():
         return httpx.Response(500, text="boom")
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result, continuation = await _client(handler).capture_with_continuation(
+    result, continuation = await make_capture_client(handler).capture_with_continuation(
         "s", target, "raw", 5
     )
 
@@ -1031,8 +1129,11 @@ async def test_capture_with_continuation_degrades_to_empty_string_on_a_500():
     assert continuation == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_capture_with_continuation_degrades_to_empty_string_on_connect_error():
+async def test_capture_with_continuation_degrades_to_empty_string_on_connect_error(
+    make_capture_client,
+):
     calls = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -1042,7 +1143,7 @@ async def test_capture_with_continuation_degrades_to_empty_string_on_connect_err
         raise httpx.ConnectError("connection refused")
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result, continuation = await _client(handler).capture_with_continuation(
+    result, continuation = await make_capture_client(handler).capture_with_continuation(
         "s", target, "raw", 5
     )
 
@@ -1050,8 +1151,11 @@ async def test_capture_with_continuation_degrades_to_empty_string_on_connect_err
     assert continuation == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_capture_with_continuation_degrades_to_empty_string_on_a_timeout():
+async def test_capture_with_continuation_degrades_to_empty_string_on_a_timeout(
+    make_capture_client,
+):
     calls = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -1061,7 +1165,7 @@ async def test_capture_with_continuation_degrades_to_empty_string_on_a_timeout()
         raise httpx.TimeoutException("continuation request timed out")
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    result, continuation = await _client(handler).capture_with_continuation(
+    result, continuation = await make_capture_client(handler).capture_with_continuation(
         "s", target, "raw", 5
     )
 
@@ -1069,8 +1173,11 @@ async def test_capture_with_continuation_degrades_to_empty_string_on_a_timeout()
     assert continuation == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_capture_with_continuation_is_capped_to_a_bounded_length():
+async def test_capture_with_continuation_is_capped_to_a_bounded_length(
+    make_capture_client,
+):
     calls = []
     long_text = "y" * 5000
 
@@ -1081,7 +1188,7 @@ async def test_capture_with_continuation_is_capped_to_a_bounded_length():
         return httpx.Response(200, json={"choices": [{"text": long_text}]})
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    _result, continuation = await _client(handler).capture_with_continuation(
+    _result, continuation = await make_capture_client(handler).capture_with_continuation(
         "s", target, "raw", 5
     )
 
@@ -1089,8 +1196,9 @@ async def test_capture_with_continuation_is_capped_to_a_bounded_length():
     assert long_text.startswith(continuation)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_capture_with_continuation_preserves_whitespace():
+async def test_capture_with_continuation_preserves_whitespace(make_capture_client):
     """render_snippet_cell's whitespace convention is the UI's job (Task 2);
     this engine layer must not itself strip anything, or that convention
     would have nothing meaningful left to render."""
@@ -1105,15 +1213,18 @@ async def test_capture_with_continuation_preserves_whitespace():
         )
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
-    _result, continuation = await _client(handler).capture_with_continuation(
+    _result, continuation = await make_capture_client(handler).capture_with_continuation(
         "s", target, "raw", 5
     )
 
     assert continuation == "  leading and trailing  "
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_measured_distribution_is_identical_whether_or_not_a_continuation_is_captured():
+async def test_measured_distribution_is_identical_whether_or_not_a_continuation_is_captured(
+    make_capture_client,
+):
     """THE anti-corruption proof this task exists to guarantee: turning on
     per-cell continuation capture must never change the measured cell
     itself -- same top_k, same k_returned, same content_offset, same
@@ -1132,8 +1243,8 @@ async def test_measured_distribution_is_identical_whether_or_not_a_continuation_
 
     target = Target(id="t", name="n", provider="llama_cpp", model_id="m")
 
-    plain = await _client(handler).capture("The sky is", target, "raw", 5)
-    with_continuation, continuation = await _client(handler).capture_with_continuation(
+    plain = await make_capture_client(handler).capture("The sky is", target, "raw", 5)
+    with_continuation, continuation = await make_capture_client(handler).capture_with_continuation(
         "The sky is", target, "raw", 5
     )
 
