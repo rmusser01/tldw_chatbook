@@ -61,8 +61,10 @@ from tldw_chatbook.Widgets.Console.console_send_authority_summary import (
 from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
 
 from Tests.UI.test_console_native_chat_flow import (
+    _CONTROL_BAR_RENDER_TIMEOUT_S,
     _configure_native_ready_console,
     _sync_console_control_bar_now,
+    _sync_under_config_locks,
 )
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -938,12 +940,15 @@ async def test_clicking_open_then_collapse_toggles_visibility_and_persists():
         assert pilot.app.screen.query_one("#console-run-inspector")
         assert pilot.app.screen.query_one("#console-run-inspector-state")
         assert pilot.app.screen.query_one("#console-settings-summary")
-        controller = pilot.app.screen._ensure_console_chat_controller()
-        assert controller._confirm_project_instruction_dispatch.__self__ is (
-            pilot.app.screen._session
+        screen = pilot.app.screen
+        controller = screen._ensure_console_chat_controller()
+        runtime = screen._console_runtime_ref
+        assert runtime is not None
+        assert controller._confirm_project_instruction_dispatch == (
+            runtime._confirm_project_instruction_dispatch
         )
-        assert controller._select_project_instruction_binding.__self__ is (
-            pilot.app.screen._session
+        assert controller._select_project_instruction_binding == (
+            runtime._select_project_instruction_binding
         )
 
         await pilot.click("#console-project-instruction-status-button")
@@ -1113,19 +1118,23 @@ async def test_strict_inspector_rejection_keeps_authority_summary_at_prior_snaps
         inspector = screen.query_one(
             "#console-run-inspector-state", ConsoleRunInspector
         )
-        inspector.ownership_policy = ownership.InspectorOwnershipPolicy.STRICT
+        await _sync_console_control_bar_now(screen)
         prior = summary.last_state
         rejected = ConsoleInspectorState(
             rows=(ConsoleDisplayRow("Unknown changed row", "must not publish"),)
         )
-        monkeypatch.setattr(
-            screen,
-            "_build_console_inspector_state",
-            lambda _launch: rejected,
-        )
-
-        with pytest.raises(ownership.UnownedInspectorContentError):
-            await _sync_console_control_bar_now(screen)
+        # Only the synchronous test render should see the intentionally invalid row.
+        with monkeypatch.context() as scoped:
+            scoped.setattr(
+                inspector, "ownership_policy", ownership.InspectorOwnershipPolicy.STRICT
+            )
+            scoped.setattr(
+                screen, "_build_console_inspector_state", lambda _launch: rejected
+            )
+            with pytest.raises(ownership.UnownedInspectorContentError):
+                _sync_under_config_locks(
+                    screen, time.monotonic() + _CONTROL_BAR_RENDER_TIMEOUT_S, ()
+                )
 
         assert summary.last_state is prior
 
