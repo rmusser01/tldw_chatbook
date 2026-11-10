@@ -287,6 +287,7 @@ def test_restore_history_discards_orphaned_generated_boundary_entry():
     assert composer.draft_text() == "safe"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_session_switch_restores_current_collapsed_paste_structure():
     _, host = _ready_host()
@@ -660,6 +661,7 @@ def test_ctrl_z_and_ctrl_shift_z_are_not_registered_as_bindings():
     assert "ctrl+shift+Z" not in keys
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_ctrl_z_reverts_typed_run_and_ctrl_shift_z_redoes_it():
     _, host = _ready_host()
@@ -683,6 +685,7 @@ async def test_console_ctrl_z_reverts_typed_run_and_ctrl_shift_z_redoes_it():
         assert composer.draft_text() == "hi"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_ctrl_u_clear_is_undoable_via_ctrl_z():
     _, host = _ready_host()
@@ -704,6 +707,7 @@ async def test_console_ctrl_u_clear_is_undoable_via_ctrl_z():
         assert composer.cursor_index == len("keep me")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_dictation_insertion_is_undoable():
     _, host = _ready_host()
@@ -728,6 +732,7 @@ async def test_console_dictation_insertion_is_undoable():
         assert store.session_draft(session_id) == "hello world"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_undo_and_redo_keep_store_in_sync_with_composer():
     """Store consistency: `store.session_draft(...)` matches the composer
@@ -756,6 +761,7 @@ async def test_console_undo_and_redo_keep_store_in_sync_with_composer():
         assert store.session_draft(session_id) == composer.draft_text()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_undo_redo_empty_stack_is_silent_noop_via_screen():
     """No toast, no bell, no store write on an empty stack (AC-adjacent)."""
@@ -784,6 +790,7 @@ async def test_console_undo_redo_empty_stack_is_silent_noop_via_screen():
         assert composer.draft_text() == "untouched"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_undo_history_scoped_per_session_never_leaks():
     """AC4: editing in session A, switching to B, must not let Ctrl+Z touch
@@ -837,6 +844,7 @@ async def test_console_undo_history_scoped_per_session_never_leaks():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_undo_during_switch_settle_window_does_not_apply_or_corrupt():
     """F1 (HIGH), exact reviewer repro: `store.active_session_id` can change
@@ -889,6 +897,7 @@ async def test_console_undo_during_switch_settle_window_does_not_apply_or_corrup
         assert composer.draft_text() == "bbb-b-own-draft"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_redo_during_switch_settle_window_does_not_apply():
     """F1 (HIGH): the same settle-window guard for redo."""
@@ -920,6 +929,7 @@ async def test_console_redo_during_switch_settle_window_does_not_apply():
         assert store.session_draft(session_b.id) == "b-own-draft"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_undo_after_accepted_send_does_not_resurrect_sent_content():
     """F2, exact reviewer repro: the pre-send mutations stayed reachable on
@@ -957,6 +967,7 @@ async def test_console_undo_after_accepted_send_does_not_resurrect_sent_content(
         assert store.session_draft(store.active_session_id) == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_background_dictation_drops_stale_session_history():
     """F5, exact reviewer repro: a dictation transcript that lands via the
@@ -1003,6 +1014,7 @@ async def test_console_background_dictation_drops_stale_session_history():
         assert composer.draft_text() == "hello dictated words"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_prompt_append_undo_removes_separator_newline_too():
     """N1: `_insert_prompt_text_into_composer(replace=False)` used to record
@@ -1029,6 +1041,7 @@ async def test_console_prompt_append_undo_removes_separator_newline_too():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_delete_left_uninitialized_fallback_is_undoable():
     """NEW-1: `delete_left`'s uninitialized-segments fallback used to
@@ -1054,6 +1067,7 @@ async def test_console_composer_delete_left_uninitialized_fallback_is_undoable()
         assert composer.draft_text() == "legacy"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_undo_redo_re_collapses_over_threshold_restored_segment():
     """NEW-2 (MEDIUM, severity-corrected F7): a restored over-threshold
@@ -1140,6 +1154,7 @@ def test_composer_undo_redo_does_not_double_collapse_already_collapsed_snapshot(
     assert composer.draft_text() == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_refused_send_preserves_undo_history(monkeypatch):
     """NEW-5: a REFUSED send (`result.accepted=False`) must leave a
@@ -1197,6 +1212,7 @@ async def test_console_refused_send_preserves_undo_history(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_undo_of_ordinary_typed_text_stays_literal_not_a_paste_token():
     """W-1 (HIGH): the NEW-2 re-collapse fix reused `paste_collapse_
@@ -1289,6 +1305,7 @@ def test_ctrl_y_is_not_registered_as_a_binding():
     assert "ctrl+y" not in keys
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_ctrl_z_then_ctrl_y_restores_the_undone_edit():
     """AC1/AC2: Ctrl+Y redoes exactly like Ctrl+Shift+Z does, and both keys
@@ -1323,6 +1340,7 @@ async def test_console_ctrl_z_then_ctrl_y_restores_the_undone_edit():
         assert composer.draft_text() == "hi"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_ctrl_y_on_empty_redo_stack_matches_ctrl_shift_z_behavior():
     """Consistency matters more than the choice itself: whatever
@@ -1360,6 +1378,7 @@ def test_composer_help_documents_ctrl_y_alongside_ctrl_shift_z_for_redo():
     assert "ctrl+shift+z" in flat
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_undo_recollapses_regardless_of_collapse_large_pastes_setting():
     """W-2 (LOW): the re-collapse used to also gate on
