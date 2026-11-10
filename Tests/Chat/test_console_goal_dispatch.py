@@ -303,7 +303,9 @@ async def test_cancellation_during_preparation_retains_primary_until_own_cleanup
     controller._apply_skill_substitution = blocked
     task = asyncio.create_task(coordinator.dispatch_once(goal.id))
     try:
-        await asyncio.wait_for(entered.wait(), 2)
+        # TASK-39168 follow-up: the preparation hold's start, or the dispatch's
+        # end naming its result -- not a 2 s clock.
+        await until_provider_starts(entered, task)
         task.cancel()
         await asyncio.sleep(0.02)
         assert not task.done()
@@ -343,21 +345,24 @@ async def test_both_coordinators_wait_for_one_runtime_audit(stores, monkeypatch)
     goal, _store, _session, controller, coordinator, gateway, calls = build_goal_rig(
         stores, monkeypatch
     )
-    entered, release = threading.Event(), threading.Event()
+    loop = asyncio.get_running_loop()
+    entered, release = asyncio.Event(), threading.Event()
     recover = stores[0].automatic_work.recover
     audits = []
 
     def delayed(**kwargs):
+        # TASK-39168 follow-up: no clock bound that could let the audit finish
+        # early under load; the test's finally releases it.
         audits.append(kwargs["current_owner_id"])
-        entered.set()
-        release.wait(3)
+        loop.call_soon_threadsafe(entered.set)
+        release.wait()
         return recover(**kwargs)
 
     monkeypatch.setattr(stores[0].automatic_work, "recover", delayed)
     controller.fleet_wake.start_recovery()
     task = asyncio.create_task(coordinator.dispatch_once(goal.id))
     try:
-        assert await asyncio.to_thread(entered.wait, 2)
+        await until_provider_starts(entered, task)
         await asyncio.sleep(0.02)
         assert calls == [] and not task.done()
         release.set()
