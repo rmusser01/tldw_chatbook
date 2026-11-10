@@ -47,7 +47,10 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.UI.Console_Modules.agent import apply_console_agent_status_state
-from tldw_chatbook.UI.Console_Modules.frame import apply_scoped_breakpoints
+from tldw_chatbook.UI.Console_Modules.frame import (
+    ANCESTOR_READ_RULES,
+    apply_scoped_breakpoints,
+)
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Workbench.workbench_state import (
@@ -63,32 +66,8 @@ pytestmark = pytest.mark.bootstrap_profile
 _CSS_DIR = Path(tldw_chatbook.__file__).resolve().parent / "css"
 #: Every class the Workbench status sync can set.
 _STATUS_CLASSES = frozenset(f"status-{status}" for status in get_args(WorkbenchStatus))
-#: Rules a widget's rendered style reads from its ancestors as well as itself
-#: (Textual 8.2.8 ``Widget.get_visual_style`` / ``DOMNode.rich_style`` walk the
-#: ancestors for these). A child caches that style keyed on its OWN pseudo
-#: classes and clears it only when it is itself restyled, so a status-keyed
-#: rule setting one of these would leave the header's children painting the
-#: old value after a node-only status restyle.
-_ANCESTOR_READ_RULES = frozenset(
-    {
-        "auto_color",
-        "color",
-        "background",
-        "background_tint",
-        "text_style",
-        "opacity",
-        "text_opacity",
-        "tint",
-        "link_color",
-        "auto_link_color",
-        "link_background",
-        "link_style",
-        "link_color_hover",
-        "auto_link_color_hover",
-        "link_background_hover",
-        "link_style_hover",
-    }
-)
+#: One source with the scoped restyle (re-exported for the composer guard).
+_ANCESTOR_READ_RULES = ANCESTOR_READ_RULES
 
 
 def _spy_restyles(host, monkeypatch) -> list:
@@ -737,18 +716,26 @@ async def test_a_return_restyles_the_console_only_when_a_style_input_moved():
         assert restyled, "the return after a theme change restyled nothing"
 
 
-def _breakpoint_styled(console) -> set[int]:
-    """Ids of the Console nodes a rule naming a header breakpoint class can style."""
+def _breakpoint_styled(root, marker: str = ".shell-header-") -> set[int]:
+    """Ids of the nodes under ``root`` a rule whose selector holds ``marker`` styles.
+
+    A target's subtree counts too when the rule sets a property descendants
+    read from their ancestors (TASK-39132).
+    """
     names: set[str] = set()
-    for rule in console.app.stylesheet.rules:
-        if ".shell-header-" in rule.selectors:
+    deep: set[str] = set()
+    for rule in root.app.stylesheet.rules:
+        if marker in rule.selectors:
             names |= rule.selector_names
-    return {
-        id(node)
-        for target in console.walk_children(with_self=True)
-        if target._selector_names & names
-        for node in target.walk_children(with_self=True)
-    }
+            if _ANCESTOR_READ_RULES & rule.styles.get_rules().keys():
+                deep |= rule.selector_names
+    styled: set[int] = set()
+    for target in root.walk_children(with_self=True):
+        if target._selector_names & deep:
+            styled |= {id(node) for node in target.walk_children(with_self=True)}
+        elif target._selector_names & names:
+            styled.add(id(target))
+    return styled
 
 
 @pytest.mark.asyncio
@@ -814,6 +801,89 @@ async def test_a_header_breakpoint_flip_restyles_only_what_its_rules_style(monke
         flipped = _styles(console)
         host.update_styles(console)
         assert _styles(console) == flipped, "a cached scan left a stale style"
+
+
+@pytest.mark.asyncio
+async def test_a_breakpoint_rule_descendants_read_refreshes_their_styles():
+    """TASK-39132 review: a breakpoint rule setting a property descendants read
+    from their ancestors restyles the target's subtree, so each descendant's
+    cached visual style is the one a fresh computation gives. Red when the
+    helper never walks a subtree (its ``deep`` set always empty)."""
+    from textual.widget import Widget
+
+    host = _ready_host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        await _mounted(host, pilot, "#console-workbench-header")
+        console = host.screen
+        await pilot.pause(0.5)
+        shell = console.query_one("#console-shell")
+        nodes = [node for node in shell.walk_children() if isinstance(node, Widget)]
+        for node in nodes:
+            node.visual_style  # Cache each against the old ancestry.
+        host.stylesheet.add_source(
+            ".r12-deep-probe #console-shell { text-style: italic; }",
+            read_from=(__file__, "deep probe"),
+        )
+        apply_scoped_breakpoints(console, [(0, "r12-deep-probe")], 45)
+        shown = {id(node): node.visual_style for node in nodes}
+        for node in nodes:
+            node._visual_style = None
+        fresh = {id(node): node.visual_style for node in nodes}
+        assert any(style.italic for style in fresh.values()), (
+            "the probe rule italicized no descendant"
+        )
+        stale = [
+            f"{type(node).__name__}#{node.id}"
+            for node in nodes
+            if shown[id(node)] != fresh[id(node)]
+        ]
+        assert not stale, f"{len(stale)} descendants kept a stale style: {stale[:5]}"
+
+
+@pytest.mark.asyncio
+async def test_a_compact_flip_restyles_only_what_its_rules_style(monkeypatch):
+    """TASK-39132: crossing 34/35 rows restyles the nodes the compact rules style.
+
+    ``_adapt_console_shell_to_height`` flipped ``-console-compact`` on
+    ``#console-shell`` with ``set_class``, which restyles the shell's whole
+    subtree: 528 nodes at 160x40 on the base, at every crossing. Its rules
+    set padding, margin and border on six nodes, none of which their
+    descendants read, so only those restyle. Heights that stay on one side
+    restyle nothing, and the class is still set for readers such as
+    ``ChatApprovalCard``. The Resize is dispatched straight to the screen,
+    as in the header test above; every height is over 24 rows.
+    """
+    from textual import events
+    from textual.geometry import Size
+
+    host = _ready_host()
+    async with host.run_test(size=(160, 40)) as pilot:
+        await _mounted(host, pilot, "#console-workbench-header")
+        console = host.screen
+        await pilot.pause(0.5)
+        shell = console.query_one("#console-shell")
+        assert not shell.has_class("-console-compact")
+        styled = _breakpoint_styled(shell, ".-console-compact")
+        total = sum(1 for _ in shell.walk_children(with_self=True))
+        assert styled and len(styled) * 20 < total, (len(styled), total)
+        applied = _spy_restyles(host, monkeypatch)
+        for height, crosses in ((38, False), (34, True), (30, False), (36, True)):
+            applied.clear()
+            await console._on_message(
+                events.Resize(Size(160, height), Size(160, height))
+            )
+            assert shell.has_class("-console-compact") is (height < 35)
+            nodes = {id(node) for node in shell.walk_children(with_self=True)}
+            restyled = {id(node) for node in applied if id(node) in nodes}
+            assert restyled == (styled if crosses else set()), (
+                f"40->{height}: restyled {len(restyled)} of {total} shell nodes; "
+                f"the compact rules style {len(styled)}"
+            )
+            flipped = _styles(console)
+            host.update_styles(console)
+            assert _styles(console) == flipped, (
+                f"the compact flip to {height} rows left a stale style"
+            )
 
 
 @pytest.mark.asyncio

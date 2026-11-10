@@ -94,9 +94,8 @@ async def test_goal_native_dispatch_is_automatic_fresh_and_returns_exact_native_
     goal, store, session, _controller, coordinator, gateway, calls = build_goal_rig(
         stores, monkeypatch
     )
-    # A saved earlier turn, as production transcripts are: since 7970fbcada a
-    # turn's mix-in attempt anchors to the last USER row and refuses one that
-    # is not in the database (TASK-39044).
+    # A saved earlier turn, as production transcripts are (TASK-39044). Its
+    # unsaved twin is the TASK-39119 test below.
     store.append_message(
         session.id,
         role=ConsoleMessageRole.USER,
@@ -118,6 +117,129 @@ async def test_goal_native_dispatch_is_automatic_fresh_and_returns_exact_native_
         assert any(
             getattr(m.metadata, "origin", None) == "goal_iteration" for m in rows
         )
+    finally:
+        await gateway.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_goal_iteration_takes_no_mixin_anchor_from_an_unsaved_earlier_turn(
+    stores, monkeypatch
+):
+    """TASK-39119: a goal iteration writes no USER row, so the chat's last
+    USER row is an earlier turn's. The iteration anchored its mix-in attempt
+    there and was blocked while that row was unsaved, held back here by
+    never persisting it."""
+    goal, store, session, _controller, coordinator, gateway, calls = build_goal_rig(
+        stores, monkeypatch
+    )
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="OLD PRIVATE TRANSCRIPT",
+        persist=False,
+    )
+    try:
+        result = await coordinator.dispatch_once(goal.id)
+        assert result.native_run_id and result.outcome.status == "done", result
+        assert len(calls) == 1
+        anchors = (
+            stores[1]
+            .db.get_connection()
+            .execute("SELECT user_message_id FROM console_prompt_mixin_attempts")
+            .fetchall()
+        )
+        assert anchors == [], f"the goal iteration recorded mix-in attempts: {anchors}"
+    finally:
+        await gateway.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("earlier_user_row", [False, True])
+async def test_a_goal_iteration_reply_is_the_durable_active_leaf(
+    stores, monkeypatch, earlier_user_row
+):
+    """TASK-39119 review r12p-rev2 C1: the pre-provider reply row must still
+    become the durable active leaf, or a restored goal chat walks from the
+    iteration's notice and loses the reply."""
+    goal, store, session, _controller, coordinator, gateway, calls = build_goal_rig(
+        stores, monkeypatch
+    )
+    if earlier_user_row:
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="OLD PRIVATE TRANSCRIPT",
+            persist=True,
+        )
+    try:
+        result = await coordinator.dispatch_once(goal.id)
+        assert result.native_run_id and result.outcome.status == "done", result
+        reply = next(
+            row
+            for row in reversed(store.messages_for_session(session.id))
+            if row.role is ConsoleMessageRole.ASSISTANT
+        )
+        leaf = (
+            stores[1]
+            .db.get_connection()
+            .execute(
+                "SELECT active_leaf_message_id FROM conversations WHERE id=?",
+                (goal.conversation_id,),
+            )
+            .fetchone()[0]
+        )
+        rows = {
+            row.persisted_message_id: row
+            for row in store.messages_for_session(session.id)
+        }
+        assert leaf == reply.persisted_message_id, (
+            "the durable leaf is not the iteration's reply: "
+            f"{getattr(rows.get(leaf), 'role', None)} {reply.persisted_message_id!r}"
+        )
+    finally:
+        await gateway.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_goal_iteration_reply_is_saved_as_failed(stores, monkeypatch):
+    """TASK-39119 review: with no mix-in attempt, a goal iteration's reply row
+    still gets its pre-provider save, so a failed reply is kept as failed."""
+
+    def provider_down(**_kwargs):
+        raise RuntimeError("provider down")
+
+    goal, store, session, _controller, coordinator, gateway, calls = build_goal_rig(
+        stores, monkeypatch, provider_down
+    )
+    try:
+        await coordinator.dispatch_once(goal.id)
+        assert calls, "the iteration never reached the provider"
+        rows = (
+            stores[1]
+            .db.get_connection()
+            .execute(
+                "SELECT content, deleted, assistant_generation_state FROM messages "
+                "WHERE conversation_id=? AND lower(sender)='assistant'",
+                (goal.conversation_id,),
+            )
+            .fetchall()
+        )
+        assert [tuple(row) for row in rows] == [("", 0, "failed")], rows
+        from tldw_chatbook.Chat.console_message_actions import (
+            ConsoleMessageActionService,
+        )
+
+        reply = next(
+            row
+            for row in reversed(store.messages_for_session(session.id))
+            if row.role is ConsoleMessageRole.ASSISTANT
+        )
+        offered = [
+            (action.action_id, action.label)
+            for action in ConsoleMessageActionService().available_actions(reply)
+            if action.action_id in {"retry", "regenerate"}
+        ]
+        assert offered == [("retry", "Retry")], offered
     finally:
         await gateway.aclose()
 

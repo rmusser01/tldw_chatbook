@@ -9047,15 +9047,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 raise ValueError("mixin_attempt_owner_changed")
             if session.ephemeral or session.persisted_conversation_id is None:
                 session.prompt_mixin_attempts[batch.attempt_id] = batch
-            elif message.persisted_message_id is None:
-                message.persisted_message_id = message.id
-                message.parent_message_id = self.durable_parent_for_message(message.id)
-                message.provider_continuation_message_version = 1
-                self._pending_persistence_message_ids.discard(message.id)
-                # TASK-39139: this attempt created the row; write the cursor
-                # through as ``_persist_new_message`` does for the active leaf.
-                if message.id == self._active_leaf_by_session.get(session_id):
-                    self._persist_active_leaf(session_id, message.id)
+            else:
+                self._adopt_saved_pending_assistant(message)
             message.mixin_usage_count = len(batch.snapshot.items)
             message.mixin_replay_status = "recorded"
             message.metadata = replace(
@@ -9063,6 +9056,28 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 mixin_attempt_id=batch.attempt_id,
                 mixin_snapshot_schema_version=1,
             )
+
+    def adopt_saved_pending_assistant(self, message_id: str) -> None:
+        """Mark a reply row saved before provider entry as durable (TASK-39119)."""
+        with self._generation_owner_scope(message_id):
+            message = self._message_or_raise(message_id)
+            self._adopt_saved_pending_assistant(message)
+            # No attempt: what a read of an unmarked row returns (r12p-rev2 M1),
+            # so a failed reply offers Retry, not "Regenerate with current mix-ins".
+            message.mixin_usage_count = 0
+            message.mixin_replay_status = "legacy"
+
+    def _adopt_saved_pending_assistant(self, message: ConsoleChatMessage) -> None:
+        if message.persisted_message_id is None:
+            message.persisted_message_id = message.id
+            message.parent_message_id = self.durable_parent_for_message(message.id)
+            message.provider_continuation_message_version = 1
+            self._pending_persistence_message_ids.discard(message.id)
+            # ``_persist_new_message`` no longer runs for this row, so write the
+            # durable active-leaf cursor through under its rule (r12p-rev2 C1).
+            session_id = self._message_session_index.get(message.id)
+            if message.id == self._active_leaf_by_session.get(session_id):
+                self._persist_active_leaf(session_id, message.id)
 
     def replace_prompt_mixin_preferences(
         self,

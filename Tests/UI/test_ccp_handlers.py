@@ -193,13 +193,13 @@ class TestCCPCharacterHandler:
         never included .md, so this pins the no-regression side)."""
         from pathlib import Path
 
-        mock_window.app.push_screen = AsyncMock(return_value=None)
+        mock_window.app.push_screen_wait = AsyncMock(return_value=None)
         handler = CCPCharacterHandler(mock_window)
 
         await handler.handle_import()
 
-        mock_window.app.push_screen.assert_awaited_once()
-        picker = mock_window.app.push_screen.call_args[0][0]
+        mock_window.app.push_screen_wait.assert_awaited_once()
+        picker = mock_window.app.push_screen_wait.call_args[0][0]
         filter_by_name = {
             name: picker.filters[filter_id]
             for name, filter_id in picker.filters.selections

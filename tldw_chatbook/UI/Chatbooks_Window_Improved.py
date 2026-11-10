@@ -822,7 +822,7 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
         wizard = ChatbookCreationWizard(
             self.app_instance, initial_execution_mode=execution_mode
         )
-        result = await self.app_instance.push_screen(wizard, wait_for_dismiss=True)
+        result = await self.app_instance.push_screen_wait(wizard)
 
         if result and result.get("success"):
             self.app_instance.notify(
@@ -872,18 +872,14 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
         from .ChatbookTemplatesWindow import ChatbookTemplatesWindow
 
         templates_window = ChatbookTemplatesWindow(self.app_instance)
-        result = await self.app_instance.push_screen(
-            templates_window, wait_for_dismiss=True
-        )
+        result = await self.app_instance.push_screen_wait(templates_window)
 
         if result:
             # User selected a template, launch creation wizard with pre-filled data
             from .Wizards.ChatbookCreationWizard import ChatbookCreationWizard
 
             wizard = ChatbookCreationWizard(self.app_instance, template_data=result)
-            create_result = await self.app_instance.push_screen(
-                wizard, wait_for_dismiss=True
-            )
+            create_result = await self.app_instance.push_screen_wait(wizard)
 
             if create_result and create_result.get("success"):
                 self.app_instance.notify(
@@ -896,7 +892,7 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
         from .ChatbookExportManagementWindow import ChatbookExportManagementWindow
 
         management_window = ChatbookExportManagementWindow(self.app_instance)
-        await self.app_instance.push_screen(management_window, wait_for_dismiss=True)
+        await self.app_instance.push_screen_wait(management_window)
 
         # Refresh after management in case anything was deleted
         await self._refresh_chatbooks()

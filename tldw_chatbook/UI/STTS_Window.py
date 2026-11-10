@@ -671,8 +671,8 @@ class AudioBookGenerationWidget(Widget):
             )
 
         try:
-            selected_ids = await self.app.push_screen(
-                NoteSelectionDialog(dialog_notes), wait_for_dismiss=True
+            selected_ids = await self.app.push_screen_wait(
+                NoteSelectionDialog(dialog_notes)
             )
         except Exception as e:
             logger.error(f"Failed to import from notes: {e}")
@@ -780,8 +780,8 @@ class AudioBookGenerationWidget(Widget):
             return
 
         try:
-            selection = await self.app.push_screen(
-                ConversationSelectionDialog(conversations), wait_for_dismiss=True
+            selection = await self.app.push_screen_wait(
+                ConversationSelectionDialog(conversations)
             )
         except Exception as e:
             logger.error(f"Failed to import from conversation: {e}")

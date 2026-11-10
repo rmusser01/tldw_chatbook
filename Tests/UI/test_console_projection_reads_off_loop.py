@@ -624,6 +624,141 @@ def test_the_core_state_push_never_waits_for_or_rebuilds_config(monkeypatch):
     assert screen.pushes == 4 and screen.replays == [True, True, True]
 
 
+class _CorePushScreen:
+    """The parts of a Console screen the core-state push touches (TASK-39145)."""
+
+    _console_control_bar_replay_whole_sync = False
+
+    def __init__(self):
+        from types import SimpleNamespace
+
+        self.app_instance = self.app = SimpleNamespace(
+            app_config={"disk-loaded": True}
+        )
+        self.pushes, self.replays = 0, []
+
+    def _console_config_snapshot_is_disk_loaded(self, value):
+        return bool(value)
+
+    def _sync_console_chat_core_state(self):
+        self.pushes += 1
+
+    def _request_console_control_bar_sync(self, *, delayed=False):
+        self.replays.append(delayed)
+
+    def query(self, _widget_type):
+        return []
+
+
+def _hold_config_file_lock():
+    """Hold the config file lock on another thread; returns its release."""
+    from tldw_chatbook import config
+
+    held, release = threading.Event(), threading.Event()
+
+    def hold():
+        with config._config_file_lock():
+            held.set()
+            release.wait(10)
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    assert held.wait(5)
+
+    def stop():
+        release.set()
+        holder.join(5)
+
+    return stop
+
+
+def _refusal_clock(monkeypatch, config, failure):
+    """Warm caches, a replaceable episode clock and a fixed parse failure."""
+    monkeypatch.setattr(config, "_settings_cache_hit", lambda _path: {})
+    monkeypatch.setattr(config, "_warm_config_cache_hit", dict)
+    monkeypatch.setattr(config, "get_config_load_failure", failure)
+    now = [1000.0]
+    monkeypatch.setattr(config_sync, "_clock", lambda: now[0])
+    return now
+
+
+def test_parseable_contention_never_stops_the_whole_replay(monkeypatch):
+    """TASK-39145: only an unreadable config.toml bounds the refused pushes.
+    Ordinary contention keeps owing a whole replay for every refusal, past
+    the episode length, and never shows the notice."""
+    from tldw_chatbook import config
+
+    now = _refusal_clock(monkeypatch, config, lambda: None)
+    screen = _CorePushScreen()
+    release = _hold_config_file_lock()
+    try:
+        for _ in range(40):  # 8 s of refusals 0.2 s apart.
+            config_sync.sync_console_core_state(screen)
+            now[0] += 0.2
+    finally:
+        release()
+    assert screen.replays == [True] * 40, (
+        f"parseable contention stopped replaying after {len(screen.replays)}"
+    )
+    assert getattr(screen, "_console_config_unreadable_installs", None) is None
+    assert screen.pushes == 0
+
+
+def test_a_won_push_starts_a_new_refusal_episode(monkeypatch):
+    """TASK-39145: the episode counts consecutive refusals; a push in between
+    ends it, so a refusal after it starts a new one instead of stopping."""
+    from tldw_chatbook import config
+
+    now = _refusal_clock(monkeypatch, config, object)
+    screen = _CorePushScreen()
+    release = _hold_config_file_lock()
+    try:
+        config_sync.sync_console_core_state(screen)  # Episode starts at 1000.
+        now[0] += 2.9
+        config_sync.sync_console_core_state(screen)
+    finally:
+        release()
+    config_sync.sync_console_core_state(screen)  # Wins the probe and pushes.
+    assert screen.pushes == 1
+    now[0] += 0.6  # 3.5 s after the first refusal.
+    release = _hold_config_file_lock()
+    try:
+        config_sync.sync_console_core_state(screen)
+    finally:
+        release()
+    assert screen.replays == [True] * 3, (
+        "a refusal after a won push was charged to the old episode"
+    )
+    assert getattr(screen, "_console_config_unreadable_installs", None) is None
+
+
+def test_an_install_landing_at_the_stop_never_leaves_the_notice_up(monkeypatch):
+    """TASK-39145 review: the stop reads the install count before the parse
+    failure, so a good install landing between them clears the notice."""
+    from tldw_chatbook import config
+
+    monkeypatch.setattr(config, "_CONFIG_CACHE_INSTALLS", 41)
+
+    def failure_then_good_install():
+        config._CONFIG_CACHE_INSTALLS += 1  # A good load lands here.
+        return object()
+
+    now = _refusal_clock(monkeypatch, config, failure_then_good_install)
+    screen = _CorePushScreen()
+    release = _hold_config_file_lock()
+    try:
+        config_sync.sync_console_core_state(screen)
+        now[0] += config_sync.CORE_REFUSAL_EPISODE_SECONDS
+        config_sync.sync_console_core_state(screen)  # The stop.
+    finally:
+        release()
+    assert len(screen.replays) == 1
+    config_sync.sync_config_unreadable_notice(screen)
+    assert screen._console_config_unreadable_installs is None, (
+        "the notice outlived the good install that landed at the stop"
+    )
+
+
 def test_a_mount_refresh_defers_a_cold_live_read_and_warms_it_off_the_loop(monkeypatch):
     """TASK-36511: ``retry_after_config_rebuild`` defers while a live read is cold.
 
@@ -1118,6 +1253,133 @@ async def test_a_finite_checked_reader_leaves_a_core_push_release_window(request
     assert (
         first["identity"] >= 1
     ), f"finite reader released but identity never ran: {first}"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_refused_core_pushes_stop_replaying_an_unreadable_config_and_say_so(
+    request, monkeypatch
+):
+    """TASK-39145 (owner decision 2026-11-09: "Dev's rule, keep stop+notice").
+
+    With config.toml unparseable, a failing read holds both config locks
+    through its rebuild. Each refused core push still owes a whole replay, as
+    on dev, until the episode has refused for ``CORE_REFUSAL_EPISODE_SECONDS``.
+    Then the refusals stop owing replays and the status strip says the file
+    cannot be read, once. A good load clears the notice and the next push runs.
+    The episode clock is replaced and every probe is made by hand.
+    """
+    from tldw_chatbook import config
+    from tldw_chatbook.Widgets.Console.console_status_chips import (
+        ConsoleStatusChips,
+    )
+
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            await pilot.pause(0.5)
+
+            async def no_full_sync(*_args, **_kwargs):  # Only this test probes.
+                return False
+
+            monkeypatch.setattr(console, "_sync_native_console_chat_ui", no_full_sync)
+            now = [1000.0]
+            monkeypatch.setattr(config_sync, "_clock", lambda: now[0])
+            pushes, replays, shown = [], [], []
+            real_push = console._sync_console_chat_core_state
+
+            def push():
+                if sys._getframe(1).f_code is config_sync.sync_console_core_state.__code__:
+                    pushes.append(1)
+                return real_push()
+
+            monkeypatch.setattr(console, "_sync_console_chat_core_state", push)
+            real_replay = config_sync.replay_whole_console_sync
+            monkeypatch.setattr(
+                config_sync,
+                "replay_whole_console_sync",
+                lambda screen: replays.append(screen) or real_replay(screen),
+            )
+            chips = console.query_one(ConsoleStatusChips)
+            real_notice = getattr(chips, "sync_config_unreadable", None)
+            if real_notice is not None:
+
+                def notice(on):  # Records each change the strip shows.
+                    if on != chips._config_unreadable:
+                        shown.append(on)
+                    real_notice(on)
+
+                monkeypatch.setattr(chips, "sync_config_unreadable", notice)
+
+            def notice_visible() -> bool:
+                return any(
+                    segment.name == "config-unreadable" and segment.visible
+                    for segment in chips._build_segments()
+                )
+
+            path = config._get_effective_config_path()
+            original = path.read_bytes()
+            path.write_bytes(original + b"\n[unterminated\n")
+            await asyncio.to_thread(config.load_settings, True)  # Fails; recorded.
+            assert config.get_config_load_failure() is not None
+            entered, release = threading.Event(), threading.Event()
+            real_aside = config._preserve_corrupt_config_aside
+
+            def parked_aside(config_path):  # Runs inside the failing rebuild.
+                entered.set()
+                release.wait(30)
+                return real_aside(config_path)
+
+            monkeypatch.setattr(config, "_preserve_corrupt_config_aside", parked_aside)
+            reader = threading.Thread(target=config.load_settings, args=(True,))
+            reader.start()
+            try:
+                assert await asyncio.to_thread(entered.wait, 10)
+                episode = getattr(config_sync, "CORE_REFUSAL_EPISODE_SECONDS", 3.0)
+                steps = round(episode / 0.2)
+                for step in range(steps):  # Refusals 0.2 s apart, inside it.
+                    config_sync.sync_console_core_state(console)
+                    assert len(replays) == step + 1, "a refusal owed no whole replay"
+                    now[0] += 0.2
+                assert not notice_visible(), "the notice showed inside the episode"
+                # The replayed FULL's warm-up begins the owed CORE handoff, as
+                # its prepare does, before its own probe is refused.
+                [(_core, token)] = config_sync._begin_console_config_handoffs(
+                    console, spend.ConsoleReadinessConfigProjection.for_screen(console)
+                )
+                assert token is not None and token.active, "no Canvas poll handoff"
+                config_sync.sync_console_core_state(console)  # Past the episode.
+                assert len(replays) == steps, (
+                    "refused pushes kept owing whole replays past the episode"
+                )
+                assert notice_visible(), "the refusals stopped without saying why"
+                # r12p-rev4 I1: a dropped replay retires the handoff, or the
+                # Canvas policy poll stays declined while its token lives.
+                from tldw_chatbook.Canvas import config_policy
+
+                assert "core" not in console._console_config_handoffs, (
+                    "the stop left the CORE handoff owed"
+                )
+                assert not token.active and not any(
+                    issued.owner is console for issued in config_policy._poll_handoffs
+                ), "the stop left a Canvas poll handoff registered"
+                config_sync.sync_console_core_state(console)  # A later refusal.
+                assert len(replays) == steps and shown == [True], shown
+                assert pushes == []
+            finally:
+                release.set()
+                await asyncio.to_thread(reader.join, 10)
+                path.write_bytes(original)
+            await asyncio.to_thread(config.load_settings, True)  # A good load.
+            for _ in range(40):  # The live Console's reads can hold a lock.
+                config_sync.sync_console_core_state(console)
+                if pushes:
+                    break
+                await pilot.pause(0.05)
+            assert pushes == [1], "the first push after a good load did not run"
+            assert not notice_visible(), "the notice outlived a good config load"
+            assert shown == [True, False]
 
 
 def _refused_warm_up(monkeypatch, console):

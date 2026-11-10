@@ -250,9 +250,12 @@ _BUDGETS: dict[str, int] = {
     # closed." again instead of the ownership-changed result.
     # 2026-11-07, TASK-39138 review r12c-rev1 (owner size waiver): +1, the
     # custody-refusal comment moved onto its own line above the check.
+    # 2026-11-07, TASK-39119 (owner size waiver): +2, a wake or goal iteration
+    # takes no mix-in anchor from an earlier turn's USER row.
+    # 2026-11-08, TASK-39119 review (owner size waiver): +3, an anchorless wake or goal iteration saves its reply row first.
     # 2026-11-09, round-12 restack onto dev 3a6498ae14 (owner size waiver):
-    # dev's 29,167 plus TASK-39138's +4.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29171,
+    # dev's 29,167 plus TASK-39138's +4 and TASK-39119's +5.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29176,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
@@ -271,9 +274,14 @@ _BUDGETS: dict[str, int] = {
     # and takes late-joining owners without waiting, the managed seal runs
     # outside the owner scope with a recheck (a purge mid-seal refuses), and
     # the owner-scope nesting order is documented: 22,445, the exact measurement.
-    # 2026-11-07, TASK-39139 (owner size waiver): +4, a prompt mix-in attempt
-    # that creates the active leaf's row writes the durable cursor through.
-    "tldw_chatbook/Chat/console_chat_store.py": 22449,
+    # 2026-11-07, TASK-39139 (owner size waiver): a prompt mix-in attempt that
+    # creates the active leaf's row writes the durable cursor through; on the
+    # round-12 restack that write lives in ``_adopt_saved_pending_assistant``
+    # (TASK-39119), so it adds no lines of its own here.
+    # 2026-11-08, TASK-39119 review (owner size waiver): +9, the store adopts a reply row saved before provider entry.
+    # 2026-11-08, TASK-39119 review r12p-rev2 (owner size waiver): +10, the
+    # adopted reply row writes the durable active-leaf cursor and legacy mix-in state.
+    "tldw_chatbook/Chat/console_chat_store.py": 22464,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).
@@ -1040,7 +1048,8 @@ _BUDGETS: dict[str, int] = {
     # raises the row): 4263 -> 4272 (+9) -- the durable turn commit writes
     # a legacy/imported chat's missing Library-policy row (the safe
     # Never/Blocked default its turn ran under) instead of refusing it.
-    "tldw_chatbook/Chat/chat_persistence_service.py": 4239,
+    # 2026-11-08, TASK-39119 review (owner size waiver): +19, the pending reply row save without a mix-in attempt.
+    "tldw_chatbook/Chat/chat_persistence_service.py": 4258,
     "tldw_chatbook/UI/Screens/evals_screen.py": 4211,
     # 2026-11-02, TASK-37655 review (owner rule: a fix over a size ratchet
     # raises the row with a dated comment): dev 88af9f9379's 4,304 + 1 = 4,305. The

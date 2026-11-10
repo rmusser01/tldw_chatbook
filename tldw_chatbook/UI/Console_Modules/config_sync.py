@@ -20,6 +20,11 @@ RUN_BACKSTOP_SECONDS = 1.0
 #: poll's next tick (this is the poll's own interval), so the syncs a run
 #: start requests share one projection.
 RUN_COALESCE_SECONDS = 0.2
+#: TASK-39145 (owner decisions 2026-11-07 and 2026-11-09): while config.toml
+#: cannot be parsed, refused core-state pushes keep owing whole replays for
+#: this long from the episode's first refusal, then stop and name the file on
+#: the status strip until the next good load.
+CORE_REFUSAL_EPISODE_SECONDS = 3.0
 _clock = time.monotonic
 _POLL_TICK: ContextVar[bool] = ContextVar("console_poll_tick", default=False)
 #: The running sync is the poll's (set at its entry, for its own task).
@@ -445,6 +450,7 @@ def run_console_presentation_sync(screen, sync: Callable[[], None]) -> bool:
             checked_projection=projection,
         )
 
+    sync_config_unreadable_notice(screen)
     if getattr(screen, "_console_sync_maintenance_paused", False) or getattr(
         screen, "_closing", False
     ):
@@ -483,11 +489,19 @@ def sync_console_core_state(screen) -> None:
     would-wait probe held the UI loop 238 ms; a cold read rebuilt config on it.
     The replayed pass pushes after its preparation warmed config off-loop, and
     pushes live if config is still cold (an unparseable file stays cold).
+
+    TASK-39145: with config.toml unparseable, failing reads hold both locks
+    through each rebuild, and under load every replay lost its probe. A refusal
+    still owes the whole replay and its CORE handoff, as on dev (ADR-121
+    amendment, 0aa96f8d1b), but only for ``CORE_REFUSAL_EPISODE_SECONDS`` of an
+    unreadable file (owner decision 2026-11-09); then the status strip says so
+    until the next good load. A parseable file never stops replaying.
     """
     from tldw_chatbook import config
 
     from .console_spend_projection import defer_cold_live_read
 
+    sync_config_unreadable_notice(screen)
     with ExitStack() as held:
         for lock in (config._settings_rebuild_lock(), config._config_file_lock()):
             if not lock.acquire(blocking=False):
@@ -495,6 +509,7 @@ def sync_console_core_state(screen) -> None:
             held.callback(lock.release)
         else:
             if not defer_cold_live_read(screen, "sync_console_core_state"):
+                screen._console_core_refused_since = None  # The episode ends.
                 request = getattr(screen, "_console_config_handoffs", {}).get("core")
                 try:
                     screen._sync_console_chat_core_state()
@@ -502,10 +517,63 @@ def sync_console_core_state(screen) -> None:
                     if request is not None:
                         request.retire()
                 return
+    if not _refusal_owes_replay(screen):
+        # No replay owes it: a dropped replay retires the handoff and its
+        # Canvas poll token (ADR-121 staged handoff; r12p-rev4).
+        request = getattr(screen, "_console_config_handoffs", {}).get("core")
+        if request is not None:
+            request.retire()
+        return
     request = _owe_console_config_sync(screen, "core")
     if request is not None and request.token is not None:
         request.retire(owed=True)  # One guarded attempt; whole replay still owns it.
     replay_whole_console_sync(screen)
+
+
+def _refusal_owes_replay(screen) -> bool:
+    """Whether a refused core-state push still owes its whole replay (TASK-39145)."""
+    from tldw_chatbook import config
+
+    if getattr(screen, "_console_config_unreadable_installs", None) is not None:
+        return False  # Stopped and said so: nothing more until a good load.
+    installs = config._CONFIG_CACHE_INSTALLS  # Before the failure, never after.
+    if config.get_config_load_failure() is None:
+        screen._console_core_refused_since = None
+        return True  # A parseable file never stops replaying.
+    since = getattr(screen, "_console_core_refused_since", None)
+    if since is None:
+        screen._console_core_refused_since = _clock()
+        return True
+    if _clock() - since < CORE_REFUSAL_EPISODE_SECONDS:
+        return True
+    screen._console_core_refused_since = None
+    screen._console_config_unreadable_installs = installs  # Once per episode.
+    sync_config_unreadable_notice(screen)
+    return False
+
+
+def sync_config_unreadable_notice(screen) -> None:
+    """Paint the unreadable-config notice, or clear it after a good load.
+
+    TASK-39145 (owner decision 2026-11-07). The notice stands from the install
+    count recorded when the push stopped until any good load installs config
+    (``_CONFIG_CACHE_INSTALLS`` moves); that also starts a new episode. Called
+    by FULL and control-bar syncs and by a successful readiness read.
+    """
+    from tldw_chatbook import config
+
+    installs = getattr(screen, "_console_config_unreadable_installs", None)
+    if installs is not None and installs != config._CONFIG_CACHE_INSTALLS:
+        installs = screen._console_config_unreadable_installs = None
+        screen._console_core_refused_since = None
+    shown = installs is not None
+    if not shown and not getattr(screen, "_console_config_unreadable_painted", False):
+        return  # Nothing shown or to clear: no DOM query on the sync path.
+    from ...Widgets.Console.console_status_chips import ConsoleStatusChips
+
+    for chips in screen.query(ConsoleStatusChips):
+        chips.sync_config_unreadable(shown)
+    screen._console_config_unreadable_painted = shown
 
 
 

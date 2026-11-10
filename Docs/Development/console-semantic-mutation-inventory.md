@@ -300,7 +300,7 @@ FTS and Sync-log triggers are derived indexes/logs, not canonical semantic owner
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.commit_durable_turn::call:dispatch:insert_with_messages` — model-visible
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.commit_completed_voice_pair::call:db:add_message` — model-visible
 - `tldw_chatbook/Chat/chat_conversation_service.py::ChatConversationService.copy_conversation_active_path::call:db:add_message` — model-visible
-- `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.save_conversation_mixin_attempt::call:persistence:create_message` — model-visible
+- `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService._create_pending_assistant::call:persistence:create_message` — model-visible
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.create_message::call:db:add_message_with_semantic_sidecars` — model-visible
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.delete_full_exchanges_for_conversation::call:db:delete_full_exchanges_for_conversation` — presentation-only
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.delete_message_subtree::call:db:soft_delete_message_subtree` — visibility/ownership-only

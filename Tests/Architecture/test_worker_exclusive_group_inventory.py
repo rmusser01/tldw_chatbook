@@ -958,3 +958,126 @@ def test_raw_loader_in_an_ungrouped_or_uninventoried_body_is_flagged() -> None:
         assert "await self.load_tasks(...) is forbidden" in violations.get(
             "ScratchScreen._request_tasks_refresh._bypass", ""
         ), sibling_schedule
+
+
+# TASK-39146: a worker parked on a bare ``await app.push_screen(...,
+# wait_for_dismiss=True)`` cancels the dialog's result future when it is
+# cancelled (shutdown, or the exclusive restart this module is about), so the
+# dialog's later close raises ``InvalidStateError`` and leaves it on the stack.
+# ``App.push_screen_wait`` awaits the same future through ``asyncio.shield``.
+# Review r12p-rev1: any ``push_screen`` that asks for that future counts, not
+# only one awaited directly (a stored future awaited later, ``wait_for``,
+# a ``**`` splat), unless it is the direct argument of ``asyncio.shield``.
+
+
+#: Sites that keep the dismiss future unshielded on purpose, keyed
+#: ``"<path>::<owning function>"``, each with the reason it is safe.
+UNSHIELDED_DISMISS_WAIT_ALLOWLIST: dict[str, str] = {
+    "tldw_chatbook/Widgets/confirmation_dialog.py::await_quit_prompt": (
+        "Waits with asyncio.wait, which never cancels the future it waits on, "
+        "and polls whether the prompt left the stack (TASK-33622.10)."
+    ),
+}
+
+
+def _waits_for_dismiss(call: ast.Call) -> bool:
+    """Whether ``call`` may pass a non-False ``wait_for_dismiss``."""
+    if any(isinstance(arg, ast.Starred) for arg in call.args):
+        return True  # An unprovable ``*`` splat fails closed too.
+    wait = _keyword(call, "wait_for_dismiss")
+    if wait is None and len(call.args) >= 3:
+        wait = call.args[2]
+    for keyword in call.keywords:
+        if keyword.arg is not None:
+            continue
+        if not isinstance(keyword.value, ast.Dict):
+            return True  # An unprovable ``**`` splat fails closed.
+        for key, value in zip(keyword.value.keys, keyword.value.values):
+            if key is None:
+                return True
+            if isinstance(key, ast.Constant) and key.value == "wait_for_dismiss":
+                wait = value
+    return wait is not None and not (
+        isinstance(wait, ast.Constant) and wait.value is False
+    )
+
+
+def _unshielded_dismiss_waits(tree: ast.AST) -> list[int]:
+    """Lines of ``push_screen`` calls that ask for an unshielded dismiss future."""
+    shielded = {
+        id(node.args[0])
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and _call_name(node) == "shield" and node.args
+    }
+    return sorted(
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and _call_name(node) == "push_screen"
+        and id(node) not in shielded
+        and _waits_for_dismiss(node)
+    )
+
+
+def _unshielded_dismiss_wait_sites() -> dict[str, list[str]]:
+    """Every flagged site in the package, grouped by ``path::owner``."""
+    sites: dict[str, list[str]] = {}
+    for path in sorted(PACKAGE_ROOT.rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        if "push_screen" not in source:
+            continue
+        tree = ast.parse(source)
+        lines = _unshielded_dismiss_waits(tree)
+        if not lines:
+            continue
+        relative = path.relative_to(PACKAGE_ROOT.parent)
+        owners = _owner_index(tree)
+        for line in lines:
+            key = f"{relative}::{owners.get(line, '<module>')}"
+            sites.setdefault(key, []).append(f"{relative}:{line}")
+    return sites
+
+
+def test_no_unshielded_dismiss_waits() -> None:
+    """No code asks for a dialog's result future without a shield."""
+    sites = _unshielded_dismiss_wait_sites()
+    flagged = [
+        line
+        for key, lines in sites.items()
+        if key not in UNSHIELDED_DISMISS_WAIT_ALLOWLIST
+        for line in lines
+    ]
+    assert not flagged, (
+        "push_screen(..., wait_for_dismiss=True) hands back a future that is "
+        "cancelled with whoever awaits it, and the dialog's later close then "
+        "raises InvalidStateError and stays on the stack. Use `await "
+        "app.push_screen_wait(screen)`, which shields it, or add the site to "
+        "UNSHIELDED_DISMISS_WAIT_ALLOWLIST with the reason:\n" + "\n".join(flagged)
+    )
+    stale = sorted(set(UNSHIELDED_DISMISS_WAIT_ALLOWLIST) - set(sites))
+    assert not stale, f"Stale UNSHIELDED_DISMISS_WAIT_ALLOWLIST entries: {stale}"
+
+
+def test_unshielded_dismiss_wait_forms_are_flagged() -> None:
+    """Every way to ask for the future is flagged unless asyncio.shield wraps it."""
+    tree = ast.parse(
+        "async def f(app, s, cb, flag, opts, args):\n"
+        "    await app.push_screen(s, wait_for_dismiss=True)\n"
+        "    await self.app.push_screen(\n"
+        "        s,\n"
+        "        wait_for_dismiss=flag,\n"
+        "    )\n"
+        "    await app.push_screen(s, cb, True)\n"
+        "    fut = app.push_screen(s, wait_for_dismiss=True)\n"
+        "    await fut\n"
+        "    await asyncio.wait_for(app.push_screen(s, wait_for_dismiss=True), 5)\n"
+        "    await app.push_screen(s, **{'wait_for_dismiss': True})\n"
+        "    await app.push_screen(s, **opts)\n"
+        "    await app.push_screen(*args)\n"
+        "    await app.push_screen_wait(s)\n"
+        "    await asyncio.shield(app.push_screen(s, wait_for_dismiss=True))\n"
+        "    await app.push_screen(s)\n"
+        "    await app.push_screen(s, wait_for_dismiss=False)\n"
+        "    await app.push_screen(s, **{'wait_for_dismiss': False})\n"
+    )
+    assert _unshielded_dismiss_waits(tree) == [2, 3, 7, 8, 10, 11, 12, 13]

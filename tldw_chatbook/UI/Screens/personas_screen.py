@@ -958,10 +958,10 @@ class PersonasScreen(BaseAppScreen):
         }
         self._ready_center_views: dict[str, Widget] = {}
         # Refuse-reentry flag for the import/export file dialogs. Cancelling
-        # an in-flight dialog worker (exclusive=True) would orphan a modal
-        # pushed via push_screen_wait, whose dismissal then calls
-        # set_result on a cancelled future (InvalidStateError on Textual
-        # 8.2.7), so a second request is ignored instead.
+        # an in-flight dialog worker (exclusive=True) would orphan its modal:
+        # on Textual 8.2.8 push_screen_wait shields the result future, so the
+        # dialog stays open and closes cleanly, but nothing reads its answer.
+        # So a second request is ignored instead (TASK-39146).
         self._io_dialog_active: bool = False
         # The one Import picker's worker is running (frame slice B2b): a
         # second Import says an import is in progress.

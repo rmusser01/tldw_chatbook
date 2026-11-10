@@ -58,6 +58,9 @@ DIRECT_TRANSITION_ROUTES = frozenset(
         # (persisted/parent ids) run inside the assistant message's
         # _generation_owner_scope, which publishes its session's fork marker.
         "publish_prompt_mixin_attempt",
+        # TASK-39119: the same durable-anchor writes for an anchorless wake's
+        # pre-provider reply row, under the same generation owner scope.
+        "adopt_saved_pending_assistant",
         "prepare_dispatch_recovery_message",
         "prepare_message_retry",
         "prepare_session_roleplay_projection_refresh",

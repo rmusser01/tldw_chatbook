@@ -25015,6 +25015,8 @@ class ConsoleChatController:
         )
 
         # The transcript owner supplies the anchor, never a tool/hook role=user row.
+        # A wake or goal iteration (the turns given a wake authorization) writes
+        # none, so it takes no anchor and no attempt (ADR-286 point 5, TASK-39119).
         transcript = self.store.messages_for_session(owner_id)
         assistant_position = next(
             i for i, row in enumerate(transcript) if row.id == assistant_message_id
@@ -25026,7 +25028,10 @@ class ConsoleChatController:
                 if row.role is ConsoleMessageRole.USER
             ),
             None,
-        )
+        ) if wake_authorization is None else None
+        if current_user is None and wake_authorization is not None:
+            # The attempt's write was the reply row's only pre-provider save.
+            await self.prompt_mixin_service().save_pending_reply(owner_id, assistant_message_id)
         if current_user is not None:
             attempt_id = mixin_attempt_id or turn_context.library_authority.attempt_id
             assistant_row = self.store.get_message(assistant_message_id)

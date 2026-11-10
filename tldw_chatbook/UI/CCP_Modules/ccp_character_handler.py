@@ -1038,7 +1038,7 @@ class CCPCharacterHandler:
             )
 
             # Push the file picker screen
-            file_path = await self.window.app.push_screen(picker, wait_for_dismiss=True)
+            file_path = await self.window.app.push_screen_wait(picker)
 
             if file_path:
                 await self.handle_import_character(str(file_path))

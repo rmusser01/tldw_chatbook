@@ -141,10 +141,11 @@ BOUNDARY_CALL_ROUTE_CLASSIFICATION: dict[str, str] = {
             # TASK-38702: each creates canonical message rows. The voice pair
             # (#2504) inserts the user/assistant turn, the agent fork copy
             # (#2643) re-inserts the source's active path verbatim, and the
-            # mix-in attempt (#3346) creates the pending assistant row.
+            # mix-in attempt (#3346) creates the pending assistant row, through
+            # the helper an anchorless wake's reply save shares (TASK-39119).
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.commit_completed_voice_pair::call:db:add_message",
             "tldw_chatbook/Chat/chat_conversation_service.py::ChatConversationService.copy_conversation_active_path::call:db:add_message",
-            "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.save_conversation_mixin_attempt::call:persistence:create_message",
+            "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService._create_pending_assistant::call:persistence:create_message",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.create_message::call:db:add_message_with_semantic_sidecars",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.fork_console_conversation_bundle::call:persistence:create_message",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.keep_message_attachment::call:db:swap_message_attachment_with_scalar",

@@ -2553,7 +2553,7 @@ The fix patches nothing of Textual's.
 - **Pin each check with its own input.** A theme switch moves the rules and the App classes together, so it cannot show that either check is needed on its own. Review r11c-rev1's mutants that dropped one check each passed the first suite.
   - Give each input a case of its own: an `add_source` rule while away (the rules check), and an App class set while the screen is current and cleared while it is away (the suspend check).
   - Compare every node's `_css_styles.get_rules()` with a forced `app.update_styles(screen)` (`Tests/UI/test_console_projection_restyles.py`).
-- **The same shape elsewhere.** `#console-shell`'s `-console-compact` class still restyles 517 nodes when the height crosses 34 rows.
+- **The same shape elsewhere.** `#console-shell`'s `-console-compact` class restyled all 528 shell nodes at each crossing of 34/35 rows (160x40). TASK-39132 moved it onto the same helper (`apply_scoped_breakpoints` takes any node; an empty class name means no class at or above its threshold). Its rules set padding, margin and border on six nodes, and their descendants read none of those, so the helper now restyles a target's subtree only when the rule sets a property in `frame.ANCESTOR_READ_RULES`: six nodes per crossing.
 
 ## A one-shot close gated on `is_mounted` is lost when it lands between push and mount (TASK-38979, 2026-11-06)
 

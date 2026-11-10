@@ -151,6 +151,15 @@ class ConsoleCostChip:
         """Posted when the cost segment is activated from keyboard or mouse."""
 
 
+#: TASK-39145 (owner decisions 2026-11-07 and 2026-11-09): shown once refused
+#: core pushes stop owing replays for a config.toml that cannot be parsed; it
+#: clears at the first sync after the next good config load
+#: (``config_sync.sync_config_unreadable_notice``).
+CONSOLE_CONFIG_UNREADABLE_STRIP_LABEL = (
+    "Config file can't be read: showing the last loaded settings"
+)
+
+
 @dataclass(frozen=True)
 class StatusSegment:
     """One rendered segment of the single-line status strip.
@@ -547,6 +556,7 @@ class ConsoleStatusChips(Horizontal):
         # TASK-35100: settled-only badge, hidden at mount (nothing has
         # settled yet); the live rate rides the run segment instead.
         self._rate_chip_state: tuple[bool, str, str] = (False, "", "")
+        self._config_unreadable = False  # TASK-39145
         # ◀ ▶ mount-layout race budget (see _apply_arrow_state).
         self._arrow_retries = self.ARROW_RETRY_LIMIT
         self.remove_class(*(name for name in self.classes if name.startswith("h-")))
@@ -665,6 +675,13 @@ class ConsoleStatusChips(Horizontal):
                 name="estop-clear",
                 label=CONSOLE_EMERGENCY_STOP_CLEAR_LABEL,
                 visible=held,
+                alert=True,
+            ),
+            StatusSegment(
+                name="config-unreadable",
+                label=CONSOLE_CONFIG_UNREADABLE_STRIP_LABEL,
+                visible=self._config_unreadable,
+                actionable=False,
                 alert=True,
             ),
             self._temporary_segment(),
@@ -1100,6 +1117,13 @@ class ConsoleStatusChips(Horizontal):
             _event: Textual resize notification; unused (segment labels
                 are width-independent; the line scrolls when it overflows).
         """
+        self._refresh_text()
+
+    def sync_config_unreadable(self, shown: bool) -> None:
+        """Show or clear the unreadable-config notice segment (TASK-39145)."""
+        if shown == self._config_unreadable:
+            return
+        self._config_unreadable = shown
         self._refresh_text()
 
     def sync_state(self, state: ConsoleControlState) -> None:

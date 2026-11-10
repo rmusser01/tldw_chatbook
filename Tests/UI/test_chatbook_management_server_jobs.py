@@ -363,7 +363,7 @@ async def test_manage_exports_action_pushes_management_window(monkeypatch):
         def compose(self) -> ComposeResult:
             yield ChatbooksWindowImproved(self)
 
-        async def push_screen(self, screen, wait_for_dismiss=False):
+        async def push_screen_wait(self, screen):
             self.pushed = screen
             return None
 

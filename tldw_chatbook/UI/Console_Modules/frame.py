@@ -231,46 +231,77 @@ def skip_unchanged_resume_restyle(screen: Any, event: Any) -> None:
     screen._console_resume_style_inputs = inputs
 
 
+#: Style rules a widget's rendered style reads from its ancestors as well as
+#: itself (Textual 8.2.8 ``Widget.get_visual_style`` / ``DOMNode.rich_style``
+#: walk the ancestors for these). A child caches that style keyed on its OWN
+#: pseudo classes and clears it only when it is itself restyled, so a rule
+#: setting one of these on a node needs the node's subtree restyled too.
+ANCESTOR_READ_RULES = frozenset(
+    {
+        "auto_color",
+        "color",
+        "background",
+        "background_tint",
+        "text_style",
+        "opacity",
+        "text_opacity",
+        "tint",
+        "link_color",
+        "auto_link_color",
+        "link_background",
+        "link_style",
+        "link_color_hover",
+        "auto_link_color_hover",
+        "link_background_hover",
+        "link_style_hover",
+    }
+)
+
+
 def apply_scoped_breakpoints(
-    screen: Any, breakpoints: list[tuple[int, str]], height: int
+    node: Any, breakpoints: list[tuple[int, str]], height: int
 ) -> None:
-    """Set the screen's vertical breakpoint class, restyling only what it styles.
+    """Set ``node``'s breakpoint class, restyling only what its rules style.
 
     TASK-38950: Textual's ``Screen._on_resize`` flips a breakpoint class with a
     whole-screen restyle, on the Console's first layout and at every height
     change across 24/25 rows. A rule naming the class can style only the nodes
     its target selector names (the key Textual's ``rules_map`` matches nodes
-    by), and their subtrees, which inherit from them. Same class choice as
-    ``Screen._get_breakpoint_classes``.
+    by); their subtrees are restyled too only when the rule sets a property
+    descendants read from them (``ANCESTOR_READ_RULES``, TASK-39132). Same
+    class choice as ``Screen._get_breakpoint_classes``; an empty name means
+    no class at or above its threshold (the shell's ``-console-compact``).
     """
-    wanted = dict.fromkeys((name for _, name in breakpoints), False)
+    wanted = dict.fromkeys((name for _, name in breakpoints if name), False)
     for threshold, name in sorted(breakpoints, reverse=True):
         if height >= threshold:
-            wanted[name] = True
+            if name:
+                wanted[name] = True
             break
-    if all(screen.has_class(name) == on for name, on in wanted.items()):
+    if all(node.has_class(name) == on for name, on in wanted.items()):
         return
-    screen.update_classes(wanted, update=False)
-    stylesheet = screen.app.stylesheet
+    node.update_classes(wanted, update=False)
+    stylesheet = node.app.stylesheet
     rules = stylesheet.rules
-    cached = getattr(screen, "_console_breakpoint_names", None)
+    cached = getattr(node, "_console_breakpoint_names", None)
     if cached is not None and cached[0] is rules and cached[1] == frozenset(wanted):
-        names = cached[2]
+        names, deep = cached[2:]
     else:  # One scan per parsed sheet: 5,843 selector strings cost 139 ms at load 86.
-        names = set()
+        names, deep = set(), set()
         for rule in rules:
             selectors = rule.selectors
             if any(f".{name}" in selectors for name in wanted):
                 names |= rule.selector_names
-        screen._console_breakpoint_names = (rules, frozenset(wanted), names)
-    targets = [
-        node
-        for node in screen.walk_children(with_self=True)
-        if node._selector_names & names
-    ]
+                if ANCESTOR_READ_RULES & rule.styles.get_rules().keys():
+                    deep |= rule.selector_names
+        node._console_breakpoint_names = (rules, frozenset(wanted), names, deep)
+    targets = [n for n in node.walk_children(with_self=True) if n._selector_names & names]
     stylesheet.update_nodes(
         dict.fromkeys(
-            chain.from_iterable(n.walk_children(with_self=True) for n in targets)
+            chain.from_iterable(
+                n.walk_children(with_self=True) if n._selector_names & deep else (n,)
+                for n in targets
+            )
         ),
         animate=False,
     )

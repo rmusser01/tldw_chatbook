@@ -757,6 +757,159 @@ async def test_a_redelivered_drain_cannot_double_deliver(tmp_path, request):
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_a_wake_takes_no_mixin_anchor_from_an_earlier_unsaved_user_row(
+    tmp_path, request
+):
+    """TASK-39119: a wake writes no USER row, so the chat's last USER row is an
+    earlier turn's. The wake anchored its mix-in attempt there, and when that
+    row was not saved yet the turn was blocked ("Mix-in attempt could not be
+    saved; response was not sent.") and never reached the provider. The save
+    is held back here by never persisting the row."""
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
+    )
+    try:
+        earlier = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="An earlier question",
+            persist=False,
+        )
+        _parent, run_id = _terminal_subagent_run(runs_db, session.id)
+        controller.fleet_wake.on_fleet_drained(
+            _drain(session.id, _survivor(run_id, session_id=session.id))
+        )
+        assert await _settle(lambda: gateway.payloads), (
+            "the wake never reached the provider: "
+            f"{controller.run_state_for(session.id)!r}"
+        )
+        anchors = chacha.get_connection().execute(
+            "SELECT user_message_id FROM console_prompt_mixin_attempts"
+        ).fetchall()
+        assert anchors == [], f"the wake recorded mix-in attempts: {anchors}"
+        assert earlier.id not in str(gateway.payloads[0][-1])
+    finally:
+        chacha.close()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_failed_wake_reply_is_saved_as_failed(tmp_path, request):
+    """TASK-39119 review: a wake takes no mix-in anchor, and the attempt's
+    transaction was its reply row's only save before provider entry. Without
+    it a failed wake reply left no row: nothing to show or retry after a
+    restart. The empty reply row is saved before the provider is entered."""
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
+    )
+    try:
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="An earlier question",
+            persist=True,
+        )
+
+        def provider_down():
+            raise RuntimeError("provider down")
+
+        gateway.on_stream = provider_down
+        _parent, run_id = _terminal_subagent_run(runs_db, session.id)
+        controller.fleet_wake.on_fleet_drained(
+            _drain(session.id, _survivor(run_id, session_id=session.id))
+        )
+
+        def failed_rows():
+            return chacha.get_connection().execute(
+                "SELECT content, deleted, assistant_generation_state FROM messages "
+                "WHERE conversation_id=? AND lower(sender)='assistant'",
+                (session.persisted_conversation_id,),
+            ).fetchall()
+
+        assert await _settle(lambda: gateway.payloads)
+        assert await _settle(
+            lambda: [tuple(row) for row in failed_rows()] == [("", 0, "failed")]
+        ), f"the failed wake reply was not saved as failed: {failed_rows()}"
+        # r12p-rev2 M1: it recorded no mix-ins, so it offers a plain Retry,
+        # not "Regenerate with current mix-ins".
+        from tldw_chatbook.Chat.console_message_actions import (
+            ConsoleMessageActionService,
+        )
+
+        reply = next(
+            row
+            for row in reversed(store.messages_for_session(session.id))
+            if row.role is ConsoleMessageRole.ASSISTANT
+        )
+        offered = [
+            (action.action_id, action.label)
+            for action in ConsoleMessageActionService().available_actions(reply)
+            if action.action_id in {"retry", "regenerate"}
+        ]
+        assert offered == [("retry", "Retry")], offered
+    finally:
+        chacha.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("earlier_user_row", [False, True])
+@private_profile_test
+async def test_a_wake_reply_is_the_durable_active_leaf(
+    tmp_path, request, earlier_user_row
+):
+    """TASK-39119 review r12p-rev2 C1: the reply row saved before provider
+    entry left pending persistence, so the write that moves the durable
+    active-leaf cursor onto it never ran. A restart then walked from the
+    wake's notice and lost the reply."""
+    chacha, app, runs_db, store, session, gateway, bridge, controller = _controller_rig(
+        tmp_path
+    )
+    try:
+        if earlier_user_row:
+            store.append_message(
+                session.id,
+                role=ConsoleMessageRole.USER,
+                content="An earlier question",
+                persist=True,
+            )
+        _parent, run_id = _terminal_subagent_run(runs_db, session.id)
+        controller.fleet_wake.on_fleet_drained(
+            _drain(session.id, _survivor(run_id, session_id=session.id))
+        )
+
+        def reply():
+            rows = store.messages_for_session(session.id)
+            return next(
+                (
+                    row
+                    for row in reversed(rows)
+                    if row.role is ConsoleMessageRole.ASSISTANT
+                    and row.content == gateway.reply
+                    and row.persisted_message_id is not None
+                ),
+                None,
+            )
+
+        def durable_leaf():
+            return chacha.get_connection().execute(
+                "SELECT active_leaf_message_id FROM conversations WHERE id=?",
+                (session.persisted_conversation_id,),
+            ).fetchone()[0]
+
+        assert await _settle(lambda: reply() is not None, 10)
+        await _settle(lambda: durable_leaf() == reply().persisted_message_id, 5)
+        rows = {row.persisted_message_id: row for row in store.messages_for_session(session.id)}
+        leaf = rows.get(durable_leaf())
+        assert durable_leaf() == reply().persisted_message_id, (
+            "the durable leaf is not the wake's reply: "
+            f"{leaf.role.value if leaf else None} {getattr(leaf, 'content', '')[:40]!r}"
+        )
+    finally:
+        chacha.close()
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_a_refused_wake_loses_nothing_and_is_retried(tmp_path, request):
     """Refusal direction of notification dedupe: the provider blocks the first
     attempt -> no notice row, pending + mark retained; the retry

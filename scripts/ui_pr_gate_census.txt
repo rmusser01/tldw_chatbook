@@ -2633,3 +2633,5 @@ Tests/UI/test_approval_details.py::test_mounted_details_keep_unicode_separators_
 
 # TASK-34569: actual compatibility MessagePump dispatch after first-use boot deferral.
 Tests/UI/test_approval_feedback.py::test_feedback_message_compatibility_alias_reaches_current_screen_handler
+Tests/UI/test_portrait_region_editor.py::test_retiring_the_editor_before_it_mounts_still_closes_it[cancel]
+Tests/UI/test_cancelled_dialog_waits.py

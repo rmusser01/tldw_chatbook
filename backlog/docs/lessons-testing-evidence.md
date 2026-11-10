@@ -18,6 +18,15 @@ completion recorded a rejection. The live symptom could not identify which path 
 claim a provider/store fix from an empty ledger or HTTP success; identify the first
 refusal with appropriately scoped evidence, or state that its payload is unavailable.
 
+## Name a lock's holder before acting on a correlation with it (TASK-39131, 2026-11-07)
+
+**Incident.** TASK-38745 and TASK-38967 both saw the Console's FULL render refuse on `storage_admission._lock.acquire(blocking=False)`, and neither captured who held it. TASK-38967's counts pointed at the warm-up re-read: 8 of 35 renders after a re-read refused, against 3 of 92 without one. TASK-39131 recorded the holder of every refusal. Over 13 interleaved runs, 0 of 83 renders after a re-read refused, and 6 of 165 without one; no holder was the re-read: an agent run's interrupt-round storage scope, and off-loop preparation reads admitting their DB connections. A fix aimed at the re-read would have changed nothing.
+
+**What to do.**
+- `repr()` of a held `threading.RLock` names its owner (`owner=<ident>`), and `sys._current_frames()[ident]` gives that thread's frame. That is enough to name the holder at the moment a non-blocking acquire fails.
+- If the holder may release before you capture it, record each acquirer through a delegating proxy over the module's lock. A `Condition` built on the original lock still works, because the proxy takes the same underlying lock.
+- Load the probe with `PYTEST_PLUGINS`, from a runner that adds its directory to `PYTHONPATH`. That reaches xdist workers and private-profile children in both worktrees, without putting a file in either.
+
 ## A census's "gone" row can be a live producer the scanner stopped seeing (TASK-39053, 2026-11-06)
 
 **Incident.** The backup owner inventory reported 194 gone producer rows, and the task that filed it read them as removed or moved code. But 24 of them were live `os.replace` / `os.unlink` calls. Their modules had switched to `from tldw_chatbook.Utils.platform_files import os`, and the census only bound `os` from `import os`. Other reviewed rows looked gone for the same kind of reason:
