@@ -142,6 +142,7 @@ def higgs_backend(tmp_path):
     return backend
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("result", ["exception", "missing", "empty", "nonfinite"])
 async def test_higgs_generation_failure_never_becomes_audio(higgs_backend, result):
@@ -172,6 +173,7 @@ async def test_higgs_generation_failure_never_becomes_audio(higgs_backend, resul
         await higgs_backend.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_higgs_completed_generation_leaves_no_shutdown_waiters(higgs_backend):
     higgs_backend._invoke_serve_engine_generate = lambda *a, **k: SimpleNamespace(
@@ -198,6 +200,7 @@ async def test_higgs_completed_generation_leaves_no_shutdown_waiters(higgs_backe
         await higgs_backend.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_higgs_cancel_keeps_inference_owned_until_it_finishes(higgs_backend):
     started = threading.Event()
@@ -235,6 +238,7 @@ async def test_higgs_cancel_keeps_inference_owned_until_it_finishes(higgs_backen
         await higgs_backend.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_higgs_manager_close_cannot_retire_running_inference(
     higgs_backend, monkeypatch
@@ -292,6 +296,7 @@ async def test_higgs_manager_close_cannot_retire_running_inference(
         await higgs_backend.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_higgs_host_deadline_retains_manager_cleanup_until_native_work_finishes(
     higgs_backend,
@@ -357,6 +362,7 @@ async def test_higgs_host_deadline_retains_manager_cleanup_until_native_work_fin
         await higgs_backend.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("dtype", "shape", "oversized"),
@@ -465,6 +471,7 @@ async def test_empty_remote_success_is_rejected(provider):
         await backend.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("bad_section", [False, True])
 async def test_higgs_multi_speaker_delivers_all_sections_or_fails(
@@ -507,6 +514,7 @@ async def test_higgs_multi_speaker_delivers_all_sections_or_fails(
         await higgs_backend.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cancel", [False, True])
 async def test_higgs_model_load_retains_thread_and_has_no_shutdown_waiter(
@@ -544,6 +552,7 @@ async def test_higgs_model_load_retains_thread_and_has_no_shutdown_waiter(
     assert not [task for task in asyncio.all_tasks() - before if not task.done()]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("audio_format", ["wav", "mp3", "aac", "flac", "opus", "pcm"])
 async def test_higgs_repeated_complete_formats(higgs_backend, audio_format):

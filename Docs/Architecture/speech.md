@@ -71,6 +71,8 @@ a discarded import emits no success notification (TASK-36363).
 | chatterbox | local; via isolated subprocess | subprocess speaks JSON+base64 over pipes; stdout of the child is silenced before imports |
 | higgs | in-process (`[HiggsSettings]`) | zero-shot cloning, multi-speaker, background music |
 
+Kokoro and Higgs resolve configuration before opening the finite scope for related voice files (ADR-126, TASK-39402.120/.193). The config reader retires its own native handles. The voice scope still owns the selected directory, profile reads and related default publication, and refuses fresh work during maintenance.
+
 ## Playback model
 
 Two paths, never concurrently for one response: **PCM output** through `StreamingPcmSink` (raw streaming or an eligible complete PCM16 WAV body; PortAudio, prebuffered, `stop()` must reach silence within two audio blocks, no PortAudio stream operations from the callback), or an **artifact file** played by an external player (`afplay`/mpv/…; format catalogues are deliberately conservative — `afplay` excludes opus/ogg because it silently "succeeds" without decoding). PCM is sink-only (no external player decodes bare PCM); `locally_playable_formats()` is re-probed at every call so mid-run player installs take effect. Legacy playback completion is a poll with a text-length-derived timeout because `AudioPlayerInfo.duration` is never populated.
