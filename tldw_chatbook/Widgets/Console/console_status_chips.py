@@ -151,9 +151,10 @@ class ConsoleCostChip:
         """Posted when the cost segment is activated from keyboard or mouse."""
 
 
-#: TASK-39145 (owner decision 2026-11-07): shown once the core push has
-#: stopped retrying a config.toml that cannot be parsed; it clears on the next
-#: good config load (``config_sync.sync_config_unreadable_notice``).
+#: TASK-39145 (owner decisions 2026-11-07 and 2026-11-09): shown once refused
+#: core pushes stop owing replays for a config.toml that cannot be parsed; it
+#: clears at the first sync after the next good config load
+#: (``config_sync.sync_config_unreadable_notice``).
 CONSOLE_CONFIG_UNREADABLE_STRIP_LABEL = (
     "Config file can't be read: showing the last loaded settings"
 )
