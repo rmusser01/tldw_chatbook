@@ -1,11 +1,11 @@
 ---
 id: TASK-40132
 title: "Back up Plugins: capture the plugin registry, package bytes and plugin data instead of leaving them unsupported"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-10 16:15
-updated_date: 2026-11-10 20:26
+updated_date: 2026-11-10 21:51
 labels:
 - follow-up
 - backup
@@ -38,14 +38,14 @@ Today every one of these producers sits in the backup review's conservative `uns
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A backup preview of a profile with an installed plugin and plugin data shows the plugins root as captured, not unsupported: the registry database, the package bytes and every plugin data root
-- [ ] #2 Only runtime.lock and, inside staging, the host git/SSH configuration copies (host-git-config, host-ssh-*), repository.git and content/ are left out of the capture, each named in the notes with its reason and shown in the preview as excluded; anything else under the plugins root, including staging snapshots and acquisition custody records, is captured
-- [ ] #3 The registry database is captured consistently, like the other SQLite owners (schema catalog, WAL folded), with a test that is red before the change
-- [ ] #4 While a plugin process or another plugin data writer is running, capture either waits for it to stop or is refused with a reason the preview shows, so no capture holds half-written plugin data; a test shows it
-- [ ] #5 A restore puts the registry, packages and data back byte for byte. The plugin system then reports its documented state when the keyring marker is missing or does not match the restored files, and the user sees copy that says truthfully what works (an in-place restore with plugins unchanged since the backup needs only Unlock) and what does not yet (the other cases keep plugins off, with their files and data on disk), with no step that dead-ends; no plugin data is lost. Tests cover both
-- [ ] #6 The owner inventory doc's Plugins rows and the backup User Guide page describe the new behaviour
-- [ ] #7 After a restore, the plugin service refuses to run plugins until plugin authority recovery completes, which approves them; a test shows both
-- [ ] #8 A restore into a separate profile refuses the plugins owner with the reason owner_relocation_unverified, and a same-profile restore is unaffected; a test shows both
+- [x] #1 A backup preview of a profile with an installed plugin and plugin data shows the plugins root as captured, not unsupported: the registry database, the package bytes and every plugin data root
+- [x] #2 Only runtime.lock and, inside staging, the host git/SSH configuration copies (host-git-config, host-ssh-*), repository.git and content/ are left out of the capture, each named in the notes with its reason and shown in the preview as excluded; anything else under the plugins root, including staging snapshots and acquisition custody records, is captured
+- [x] #3 The registry database is captured consistently, like the other SQLite owners (schema catalog, WAL folded), with a test that is red before the change
+- [x] #4 While a plugin process or another plugin data writer is running, capture either waits for it to stop or is refused with a reason the preview shows, so no capture holds half-written plugin data; a test shows it
+- [x] #5 A restore puts the registry, packages and data back byte for byte. The plugin system then reports its documented state when the keyring marker is missing or does not match the restored files, and the user sees copy that says truthfully what works (an in-place restore with plugins unchanged since the backup needs only Unlock) and what does not yet (the other cases keep plugins off, with their files and data on disk), with no step that dead-ends; no plugin data is lost. Tests cover both
+- [x] #6 The owner inventory doc's Plugins rows and the backup User Guide page describe the new behaviour
+- [x] #7 After a restore, the plugin service refuses to run plugins until plugin authority recovery completes, which approves them; a test shows both
+- [x] #8 A restore into a separate profile refuses the plugins owner with the reason owner_relocation_unverified, and a same-profile restore is unaffected; a test shows both
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -197,6 +197,16 @@ Implemented on dev ae9f9e8d21 plus the filing commit, 2026-11-10. Owner decision
   - the e2e test.
 - `Tests/Backup_Recovery/test_detached_layout.py::test_detached_import_refuses_a_plugin_root_by_name`.
 - UI: `test_backup_data_groups.py::test_backup_review_explains_refused_live_plugins` and `test_plugins_browse.py::test_authority_recovery_names_restore_and_reset`. Both files are now on the UI census tail: the backup file whole (~21 s serial) and the plugins file as 15 node ids (12–25 s each serially). The floor is 1929. The shard replay was not run, so the coordinator rebalances if needed.
+
+**Covering runs (review round, load 25–60).**
+- Tests/Plugins plus 12 Backup_Recovery files, the DB SQLite inventory and 5 CI census/workflow pins, at `-n 4`: 1902 passed, 19 failed. All 19 also fail at base 42fc21939d:
+  - 10 recovered-media console image specs;
+  - 2 shipped76 restore-plan cases;
+  - 3 `detached_layout._normalize_sqlite` SQLite-inventory census checks;
+  - `test_storage_worker_retires_its_workspace_lookup_connection`, `test_actual_console_registers_selected_managed_agent`, `test_actual_native_fields_stable_in_separate_processes` and `test_existing_owned_directory_metadata_uses_verified_node_rollback`.
+- `Tests/Architecture/test_backup_owner_inventory.py` (serial) and the module and screen size ratchets: 224 passed.
+- `test_plugin_review.py`, `test_plugins_browse.py` and `test_backup_data_groups.py`: 101 passed, 2 failed. One is `test_refresh_growth…[size1]`, which also fails at base (1 pass and 1 fail in two base runs). The other is `test_confirmed_explicit_test_survives_close_during_child_prune[success]`, which passed twice when run alone.
+- `./scripts/preflight.sh` passes, and `ruff --select F` is clean.
 
 **Docs (AC6).**
 - `backlog/docs/backup-recovery-owner-inventory.md`: the Plugins section, rows reclassified, and the I1 identity text.
