@@ -5,12 +5,21 @@ from __future__ import annotations
 import pytest
 from textual.widget import Widget
 
+from Tests.UI.app_factory import _build_test_app, persist_seeded_config
 from Tests.UI.test_console_shell_regions import make_console_pilot
 
 
 _LEFT_OWNERS = ("#console-left-rail", "#console-context-rail-handle")
 _RIGHT_OWNERS = ("#console-right-rail", "#console-inspector-rail-handle")
 
+
+def _make_console_pilot_without_onboarding(*, size: tuple[int, int]):
+    """Mount the ordinary post-onboarding Console for physical rail checks."""
+    app = _build_test_app(
+        config_overrides={"console": {"onboarding": {"first_send_completed": True}}}
+    )
+    persist_seeded_config(app, "console.onboarding")
+    return make_console_pilot(size=size, app=app, hide_setup_overlay=False)
 
 def _visible(screen, selectors: tuple[str, ...]) -> Widget:
     candidates = [screen.query_one(selector) for selector in selectors]
@@ -110,6 +119,7 @@ def _assert_edge_owned_workbench(screen) -> tuple[int, int]:
     return screen.size.width, screen.size.height
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "size",
@@ -123,19 +133,20 @@ def _assert_edge_owned_workbench(screen) -> tuple[int, int]:
 async def test_production_workspace_regions_touch_application_edges(
     size: tuple[int, int],
 ) -> None:
-    async with make_console_pilot(size=size) as pilot:
+    async with _make_console_pilot_without_onboarding(size=size) as pilot:
         _assert_edge_owned_workbench(pilot.app.screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_expanded_and_collapsed_rail_owners_keep_one_divider() -> None:
-    async with make_console_pilot(size=(160, 45)) as pilot:
+    async with _make_console_pilot_without_onboarding(size=(160, 45)) as pilot:
         screen = pilot.app.screen
         assert await pilot.click("#console-inspector-rail-open")
         await pilot.pause()
         _assert_edge_owned_workbench(screen)
 
-    async with make_console_pilot(size=(160, 45)) as pilot:
+    async with _make_console_pilot_without_onboarding(size=(160, 45)) as pilot:
         screen = pilot.app.screen
         assert await pilot.click("#console-context-rail-collapse")
         await pilot.pause()
@@ -222,10 +233,11 @@ async def test_f6_transcript_focus_marks_only_stable_title_without_geometry_chan
         _assert_edge_owned_workbench(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_live_resize_reasserts_edge_ownership_and_preserves_rail_intent() -> None:
     """One mounted Console retains physical ownership through every band."""
-    async with make_console_pilot(size=(150, 30)) as pilot:
+    async with _make_console_pilot_without_onboarding(size=(150, 30)) as pilot:
         screen = pilot.app.screen
         assert await pilot.click("#console-inspector-rail-open")
         await pilot.pause()
