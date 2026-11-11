@@ -2143,11 +2143,17 @@ class ProjectIndexService:
                             old is None
                             or (resume_id is not None and old.job_id != resume_id)
                             or current.state
-                            not in {"Paused", "Interrupted", "Partial", "Error"}
+                            not in {
+                                "Building",
+                                "Paused",
+                                "Interrupted",
+                                "Partial",
+                                "Error",
+                            }
                         ):
                             raise ValueError("stale_job")
-                        # The held exclusive acquisition proves every prior
-                        # inherited holder retired. This callback performs no I/O.
+                        # Status projects an orphaned Building claim as Interrupted.
+                        # The exclusive lifetime proves its prior holder retired.
                         claim = store.replace_retired_job(
                             old,
                             owner_token=token,
@@ -2238,10 +2244,16 @@ class ProjectIndexService:
                 else:
                     run.stop.wait(delay)
             else:
-                group = run.claim.scope.key.binding_namespace
-                with self._lock:
+                # Dispatch can hold the service lock while the writer starts.
+                # A reader handoff is advisory and must not block that writer.
+                if run.stop.is_set() or not self._lock.acquire(blocking=False):
+                    return result
+                try:
+                    group = run.claim.scope.key.binding_namespace
                     handoff = bool(self._pending_reads.get(group)) and not self._closed
-                if handoff and not run.stop.is_set():
+                finally:
+                    self._lock.release()
+                if handoff:
                     # The prior SQL/fence/gate unit has positively retired.
                     run.stop.wait(0.025)
                 return result

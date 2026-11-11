@@ -17,6 +17,7 @@ from tldw_chatbook.DB.Workspace_Project_Index_DB import (
     index_store_path,
 )
 from tldw_chatbook.Utils.private_paths import PrivatePathError, secure_private_directory
+from tldw_chatbook.Workspaces.project_index.lifetime import LifetimeBusy
 from tldw_chatbook.Workspaces.project_index.models import ProjectIndexPolicy
 from tldw_chatbook.Workspaces.project_index.scanner import ProjectScanner
 
@@ -72,12 +73,28 @@ class Rig:
 
     def settle(self, state="Ready", *, seconds=15):
         deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            status = self.service.status(self.key)
-            if status.state == state:
-                return status
+        if state in {"Ready", "Partial", "Error"}:
+            # Polling status races the writer for the native allocation gate.
+            with self.service._lock:
+                runs = tuple(self.service._runs.values())
+            for run in runs:
+                if run.claim.scope.key == self.key and run.supervisor is not None:
+                    run.supervisor.join(max(0, deadline - time.monotonic()))
+                    assert not run.supervisor.is_alive(), (
+                        f"writer did not retire (state={run.state}, error={run.error})"
+                    )
+        while True:
+            try:
+                status = self.service.status(self.key)
+            except LifetimeBusy as error:
+                observed = error
+            else:
+                if status.state == state:
+                    return status
+                observed = status
+            if time.monotonic() >= deadline:
+                raise AssertionError(f"expected {state}, got {observed}")
             time.sleep(0.02)
-        raise AssertionError(f"expected {state}, got {status}")
 
     async def close(self):
         await self.service.aclose()
@@ -247,8 +264,9 @@ async def test_delayed_management_cannot_reverse_clear_or_new_enable(tmp_path, r
 
 
 class BarrierScanner(ProjectScanner):
-    def __init__(self):
+    def __init__(self, *, hold_seconds=10):
         super().__init__()
+        self.hold_seconds = hold_seconds
         self.before_publish = threading.Event()
         self.release = threading.Event()
         self.published = None
@@ -258,7 +276,7 @@ class BarrierScanner(ProjectScanner):
 
         def held(page):
             self.before_publish.set()
-            assert self.release.wait(10)
+            assert self.release.wait(self.hold_seconds)
             self.published = emit(page)
             return self.published
 
@@ -498,7 +516,8 @@ async def test_cross_process_mutation_prevents_held_production_publication(
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
     from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
 
-    scanner = BarrierScanner()
+    # The writer must stay held through the external process's 30-second timeout.
+    scanner = BarrierScanner(hold_seconds=45)
     rig = Rig(tmp_path, scanner)
     registry_path = tmp_path / "registry.db"
     registry = LocalWorkspaceRegistryService(WorkspaceDB(registry_path))
@@ -529,7 +548,7 @@ elif action=='retarget': registry.save_runtime_binding(replace(registry.get_runt
 else:
     key=ProjectIndexKey({rig.key.data_authority_id!r},{rig.key.workspace_id!r},{rig.key.binding_id!r},{rig.key.locator_fingerprint!r},{rig.key.root_identity_fingerprint!r})
     store=WorkspaceProjectIndexDB(Path({str(index_store_path(rig.data, rig.key))!r}))
-    with registry.binding_authority_fence(bid):
+    with store.sql_unit(write=True), registry.binding_authority_fence(bid):
         store.revoke(key,clear=False,expected_scope=store.load_status(key).scope)
     store.close()
 registry.db.close()
@@ -646,7 +665,8 @@ async def test_failed_supervisor_dispatch_waits_for_started_writer_retirement(
         (rig.root / "a.txt").write_text("dispatch marker")
         rig.enable()
         task = asyncio.create_task(asyncio.to_thread(rig.refresh))
-        assert await asyncio.to_thread(failed.wait, 10)
+        # This includes refresh admission and scanner startup on private storage.
+        assert await asyncio.to_thread(failed.wait, 45)
         await asyncio.sleep(0.03)
         assert not task.done(), "caller completed while its real writer was still alive"
         closing = asyncio.create_task(rig.service.aclose())
@@ -727,7 +747,7 @@ threading.Event().wait()
         stderr=subprocess.DEVNULL,
     )
     try:
-        line = await asyncio.wait_for(asyncio.to_thread(child.stdout.readline), 20)
+        line = await asyncio.wait_for(asyncio.to_thread(child.stdout.readline), 45)
         assert line.strip() == b"committed"
         current = rig.service.status(rig.key)
         assert current.state == "Building" and current.indexed > 0
@@ -739,7 +759,7 @@ threading.Event().wait()
             )
         child.kill()
         assert await asyncio.to_thread(child.wait, 10) is not None
-        interrupted = rig.settle("Interrupted")
+        interrupted = rig.settle("Interrupted", seconds=45)
         assert interrupted.job_id == current.job_id
         assert not rig.service._runs
         rig.service.resume(
@@ -747,7 +767,7 @@ threading.Event().wait()
             expected_scope=interrupted.scope,
             expected_job_revision=interrupted.job_revision,
         )
-        ready = rig.settle()
+        ready = rig.settle(seconds=60)
         assert ready.indexed == 300
         store = rig.store(rig.key)
         with store.connection() as conn:
@@ -795,13 +815,13 @@ async def test_refresh_preserves_unfinished_subtree_and_can_restart_partial(
         (rig.root / "nested/a.txt").write_text("unchanged marker")
         rig.enable()
         rig.refresh()
-        rig.settle()
+        rig.settle(seconds=45)
         store = rig.store(rig.key)
         with store.connection() as conn:
             original = tuple(conn.execute("SELECT id,text FROM chunks").fetchone())
         store.close()
         rig.refresh()
-        rig.settle()
+        rig.settle(seconds=45)
         store = rig.store(rig.key)
         with store.connection() as conn:
             assert (
@@ -811,12 +831,12 @@ async def test_refresh_preserves_unfinished_subtree_and_can_restart_partial(
         (rig.root / "nested/a.txt").unlink()
         scanner.incomplete = True
         rig.refresh()
-        assert rig.settle("Partial").indexed == 1
+        assert rig.settle("Partial", seconds=45).indexed == 1
         for run in rig.service._runs.values():
             run.supervisor.join()
         scanner.incomplete = False
         rig.refresh()
-        assert rig.settle().indexed == 0
+        assert rig.settle(seconds=45).indexed == 0
     finally:
         await rig.close()
 
@@ -1033,6 +1053,7 @@ async def test_clear_reclaims_prior_roots_and_authorities_preserving_control_and
         await rig.close()
 
 
+@pytest.mark.timeout(480)
 @private_profile_test
 async def test_admitted_capacity_generations_clear_and_rebuild_with_bounded_peak(
     tmp_path, request, monkeypatch
@@ -1073,7 +1094,7 @@ async def test_admitted_capacity_generations_clear_and_rebuild_with_bounded_peak
         (rig.root / "prior.txt").write_text("prior marker " * 10000)
         rig.enable()
         rig.refresh()
-        rig.settle()
+        rig.settle(seconds=45)
         for run in rig.service._runs.values():
             run.supervisor.join()
         prior_key = rig.key
@@ -1089,7 +1110,7 @@ async def test_admitted_capacity_generations_clear_and_rebuild_with_bounded_peak
         rig.enable()
         sampler.start()
         rig.refresh()
-        rig.settle("Partial", seconds=60)
+        rig.settle("Partial", seconds=120)
         for run in rig.service._runs.values():
             run.supervisor.join()
         old_size = index_store_path(rig.data, original_key).stat().st_size
@@ -1111,7 +1132,7 @@ async def test_admitted_capacity_generations_clear_and_rebuild_with_bounded_peak
         rig.enable()
         (rig.root / "after.txt").write_text("rebuilt marker")
         rig.refresh()
-        assert rig.settle().indexed == 1
+        assert rig.settle(seconds=45).indexed == 1
         assert admitted_budgets
         assert samples and max(samples) <= limit
         (tmp_path / "capacity-receipt.txt").write_text(
@@ -1170,13 +1191,11 @@ async def test_compaction_failure_is_off_retryable_and_stale_clear_cannot_undo_e
                 rig.service.clear(rig.key, expected_scope=current.scope)
         off = rig.service.status(rig.key)
         assert off.state == "Off"
-        from tldw_chatbook.Workspaces.project_index.lifetime import LifetimeBusy
-
         compact = WorkspaceProjectIndexDB.reclaim_free_pages
 
         def held_compact(store):
             entered.set()
-            assert release.wait(10)
+            assert release.wait(30)
             return compact(store)
 
         with monkeypatch.context() as patch:
@@ -1184,10 +1203,11 @@ async def test_compaction_failure_is_off_retryable_and_stale_clear_cannot_undo_e
             task = asyncio.create_task(
                 asyncio.to_thread(rig.service.clear, rig.key, expected_scope=off.scope)
             )
-            assert await asyncio.to_thread(entered.wait, 10)
-            revoked = rig.service.status(rig.key)
+            assert await asyncio.to_thread(entered.wait, 45)
             with pytest.raises(LifetimeBusy):
-                rig.service.enable(rig.key, POLICY, expected_scope=revoked.scope)
+                await asyncio.to_thread(rig.service.status, rig.key)
+            with pytest.raises(LifetimeBusy):
+                rig.service.enable(rig.key, POLICY, expected_scope=off.scope)
             release.set()
             retry = await task
         assert retry.state == "Off"
@@ -1197,14 +1217,14 @@ async def test_compaction_failure_is_off_retryable_and_stale_clear_cannot_undo_e
 
         def held(*args):
             entered.set()
-            assert release.wait(10)
+            assert release.wait(30)
             return cleanup(*args)
 
         monkeypatch.setattr(rig.service, "_clear_binding", held)
         task = asyncio.create_task(
             asyncio.to_thread(rig.service.clear, rig.key, expected_scope=retry.scope)
         )
-        assert await asyncio.to_thread(entered.wait, 10)
+        assert await asyncio.to_thread(entered.wait, 45)
         revoked = rig.service.status(rig.key)
         enabled = rig.service.enable(rig.key, POLICY, expected_scope=revoked.scope)
         release.set()

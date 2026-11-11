@@ -417,6 +417,24 @@ async def test_stopping_scanner_while_gate_busy_retires_after_release(
         await rig.close()
 
 
+def test_writer_sql_completion_does_not_wait_for_dispatch_lock():
+    from concurrent.futures import ThreadPoolExecutor
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Workspaces.project_index.service import ProjectIndexService
+
+    service = ProjectIndexService(None, None, None, None)
+    key = SimpleNamespace(binding_namespace="binding")
+    run = SimpleNamespace(
+        stop=threading.Event(),
+        claim=SimpleNamespace(scope=SimpleNamespace(key=key)),
+    )
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with service._lock:
+            completed = executor.submit(service._retry_job_sql, run, lambda: True)
+            assert completed.result(timeout=5) is True
+
+
 @private_profile_test
 async def test_pending_read_handoff_precedes_writer_reacquisition(
     tmp_path, request, monkeypatch
