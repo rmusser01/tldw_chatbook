@@ -27,7 +27,10 @@ from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_environment_root_reads import _environment_entry
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
-from Tests.UI.test_console_session_admitted_roots import _original_consent_reads
+from Tests.UI.test_console_session_admitted_roots import (
+    _isolate_shadow_git_config,
+    _original_consent_reads,
+)
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -83,6 +86,7 @@ async def test_a_bound_workspace_lands_through_the_real_consent_service(
     request, monkeypatch, tmp_path: Path
 ):
     monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "1")
+    _isolate_shadow_git_config(monkeypatch)
     _canned_gatherers(monkeypatch)
     app = _build_test_app(user_data_dir=get_user_data_dir())
     _configure_native_ready_console(app)

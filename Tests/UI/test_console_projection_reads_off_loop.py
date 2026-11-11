@@ -1667,23 +1667,20 @@ async def test_a_full_sync_asked_for_during_a_pause_runs_once_after_resume(
             refusing, _warms, armed, _fulls, _during, _delays = _refused_warm_up(
                 monkeypatch, console
             )
-            launched = []
-            real_run = console._run_coalesced_control_bar_sync
-
-            def _run_coalesced_control_bar_sync():  # Named as the timer filter expects.
-                if console._console_control_bar_replay_whole_sync:
-                    launched.append(loop.time())
-                return real_run()
-
-            monkeypatch.setattr(
-                console, "_run_coalesced_control_bar_sync", _run_coalesced_control_bar_sync
-            )
             console.run_worker(
                 console._sync_native_console_chat_ui(),
                 exclusive=True,
                 group="console-sync",
             )
-            armed_at, delay, _timer = await _fresh_backoff(armed, 0.8)
+            armed_at, delay, timer = await _fresh_backoff(armed, 0.8)
+            backoff_deliveries = []
+            backoff_callback = timer._callback
+
+            def record_backoff():
+                backoff_deliveries.append(loop.time())
+                return backoff_callback()
+
+            monkeypatch.setattr(timer, "_callback", record_backoff)
             console._console_sync_maintenance_close_admission()
             console.run_worker(  # Asked for during the pause.
                 console._sync_native_console_chat_ui(),
@@ -1692,18 +1689,37 @@ async def test_a_full_sync_asked_for_during_a_pause_runs_once_after_resume(
             )
             await until(lambda: console._console_sync_requested, timeout=10)
             refusing[0] = False
-            replays, resumed = len(launched), loop.time()
-            console._console_sync_maintenance_resume()
-            await until(lambda: len(launched) > replays, timeout=30)
-            assert launched[replays] < armed_at + delay, (
-                f"the resume's sync waited {launched[replays] - resumed:.2f} s, "
+
+            # CORE can independently request another replay during this FULL.
+            # Follow the replacement scheduled by resume and the old timer.
+            launched = []
+            replay = console._run_coalesced_control_bar_sync
+            after_refresh = console.call_after_refresh
+
+            def record_resume():
+                if console._console_control_bar_replay_whole_sync:
+                    launched.append(loop.time())
+                return replay()
+
+            def observe_schedule(callback, *args, **kwargs):
+                if callback == replay:
+                    callback = record_resume
+                return after_refresh(callback, *args, **kwargs)
+
+            resumed = loop.time()
+            with monkeypatch.context() as observer:
+                observer.setattr(console, "call_after_refresh", observe_schedule)
+                console._console_sync_maintenance_resume()
+            await until(lambda: bool(launched), timeout=30)
+            assert launched[0] < armed_at + delay, (
+                f"the resume's sync waited {launched[0] - resumed:.2f} s, "
                 f"out to its pending {delay} s backoff"
             )
             await pilot.pause(max(0.0, armed_at + delay + 0.5 - loop.time()))
-            assert len(launched) == replays + 1, (
-                f"the paused request replayed {len(launched) - replays} times "
-                "after resume"
+            assert len(launched) == 1, (
+                f"the paused request replayed {len(launched)} times after resume"
             )
+            assert not backoff_deliveries, "the stopped backoff timer still delivered"
 
 
 def test_a_closing_console_arms_no_replay_and_counts_no_refusal():

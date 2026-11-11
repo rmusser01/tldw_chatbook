@@ -57,7 +57,12 @@ ZERO = "Library: 0 matches · sent without Library evidence"
             "timed_out",
             "Library: sent once without Library · search timed out",
         ),
-        ("bypassed", 0, "stopped", "Library: sent once without Library · search stopped"),
+        (
+            "bypassed",
+            0,
+            "stopped",
+            "Library: sent once without Library · search stopped",
+        ),
         ("bypassed", 0, "failed", "Library: sent once without Library · search failed"),
         # A record written before reasons were kept still says what happened.
         ("bypassed", 0, None, "Library: sent once without Library"),
@@ -247,6 +252,115 @@ async def test_the_line_follows_a_branch_switch(tmp_path):
             await harness.settle()
             assert harness.lines.lines_for(branch) == expected
     finally:
+        harness.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("read_fails", [False, True])
+async def test_a_reopened_session_waits_for_its_own_outcome_rows(tmp_path, read_fails):
+    harness = _Harness(tmp_path)
+    first, _ = harness.users
+    harness.record(first, _payload("zero_matches"), seq=50)
+    try:
+        harness.lines.lines_for(harness.messages)
+        await harness.settle()
+        assert harness.lines.lines_for(harness.messages) == {first.id: ZERO}
+
+        with harness.db.transaction() as cursor:
+            cursor.execute(
+                "DELETE FROM message_trajectory_metadata "
+                "WHERE conversation_id = ? AND event_kind = ?",
+                (harness.conversation_id, LIBRARY_PREPARATION_EVENT_KIND),
+            )
+        store, session = _resume_into_store(harness.db, harness.conversation_id)
+        assert session.id != harness.session_id
+        store.active_session_id = session.id
+        harness.store = store
+        messages = store.messages_for_session(session.id)
+
+        if read_fails:
+            from sqlite3 import OperationalError
+
+            def busy(_conversation_id):
+                raise OperationalError("database is locked")
+
+            harness.db.get_trajectory_rows = busy
+
+        # Same persisted turn ids, but the old session's lines are out of scope.
+        assert harness.lines.lines_for(messages) == {}
+        assert len(harness.tasks) == 1
+        await harness.settle()
+        assert harness.lines.lines_for(messages) == {}
+        assert not harness.tasks
+    finally:
+        await harness.settle()
+        harness.close()
+
+
+@pytest.mark.asyncio
+async def test_a_superseded_read_cannot_publish_on_return_to_its_path(
+    tmp_path,
+    monkeypatch,
+):
+    from tldw_chatbook.UI.Console_Modules import view_workers
+
+    harness = _Harness(tmp_path)
+    first, second = harness.users
+    branch_a = [m for m in harness.messages if m.id != second.id]
+    branch_b = [m for m in harness.messages if m.id != first.id]
+    read_held, release_first, release_later = (asyncio.Event() for _ in range(3))
+    original_read = view_workers.owned_display_read
+
+    async def hold_read(*args):
+        first_read = not read_held.is_set()
+        rows = await original_read(*args)
+        if first_read:
+            read_held.set()
+        await (release_first if first_read else release_later).wait()
+        return rows
+
+    monkeypatch.setattr(view_workers, "owned_display_read", hold_read)
+    try:
+        assert harness.lines.lines_for(branch_a) == {}
+        await asyncio.wait_for(read_held.wait(), timeout=10)
+        harness.record(first, _payload("evidence_sent", count=1), seq=50)
+        assert harness.lines.lines_for(branch_b) == {}
+        assert harness.lines.lines_for(branch_a) == {}
+
+        release_first.set()
+        await harness.tasks[0]
+        assert harness.repaints == 0
+        release_later.set()
+        await harness.settle()
+        assert harness.lines.lines_for(branch_a) == {first.id: "Library: 1 source sent"}
+        assert harness.repaints == 1
+    finally:
+        release_first.set()
+        release_later.set()
+        await harness.settle()
+        harness.close()
+
+
+@pytest.mark.asyncio
+async def test_returning_to_a_landed_path_retires_the_other_pending_read(tmp_path):
+    harness = _Harness(tmp_path)
+    first, second = harness.users
+    harness.record(first, _payload("zero_matches"), seq=50)
+    branch_a = [m for m in harness.messages if m.id != second.id]
+    branch_b = [m for m in harness.messages if m.id != first.id]
+    try:
+        assert harness.lines.lines_for(branch_a) == {}
+        await harness.settle()
+        assert harness.repaints == 1
+
+        assert harness.lines.lines_for(branch_b) == {}
+        assert harness.lines.lines_for(branch_a) == {first.id: ZERO}
+        await harness.settle()
+        assert harness.repaints == 1
+        assert harness.lines.lines_for(branch_a) == {first.id: ZERO}
+        assert not harness.tasks
+    finally:
+        await harness.settle()
         harness.close()
 
 

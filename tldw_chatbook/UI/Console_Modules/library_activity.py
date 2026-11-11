@@ -441,8 +441,8 @@ class ConsoleLibraryOutcomeLines:
         self.presentation_paused = presentation_paused or (lambda: False)
         self.torn_down = torn_down or (lambda: False)
         #: Key of the newest projection that landed, and its views by durable
-        #: USER id. A record never changes once written, so views for ids
-        #: still on the path stay right while a newer key is being read.
+        #: USER id. Views stay visible while another path in the same
+        #: session is read. Opening a session reads fresh records.
         self._landed_key: tuple | None = None
         self._views: dict[str, LibraryPreparationView] = {}
         self._requested: tuple | None = None
@@ -478,6 +478,7 @@ class ConsoleLibraryOutcomeLines:
         }
         source = self._source() if turns else None
         if source is None:
+            self._requested = None
             return {}
         database, session_id, conversation_id, off_loop = source
         # A record is written in the acceptance that gives its USER turn a
@@ -489,6 +490,10 @@ class ConsoleLibraryOutcomeLines:
                 self._request(key)
             else:
                 self._read_inline(key)
+        else:
+            self._requested = None
+        if not self._same_outcome_source(key):
+            return {}
         return {
             native_id: library_outcome_copy(self._views[durable_id])
             for durable_id, native_id in turns.items()
@@ -525,19 +530,24 @@ class ConsoleLibraryOutcomeLines:
         )
         return database, session_id, conversation_id, off_loop
 
+    def _same_outcome_source(self, key: tuple) -> bool:
+        landed = self._landed_key
+        return landed is not None and landed[:3] == key[:3]
+
     def _land(self, key: tuple, rows: Iterable[Any] | None) -> None:
         """Make ``key`` current, projecting ``rows`` onto its turns.
 
-        ``rows`` is None after a failed read. A record never changes once
-        written, so the views already landed stay right; only the key moves,
-        so the failure is not retried on every sync. Any read still in flight
-        is for an older key and is stale from here on.
+        ``rows`` is None after a failed read. Keep views already landed for
+        the same session and mark the key read to avoid retrying every sync.
+        An older read in flight can no longer publish.
         """
         if rows is not None:
             self._views = {
                 view.turn_id: view
                 for view in project_library_preparation(rows, key[-1])
             }
+        elif not self._same_outcome_source(key):
+            self._views = {}
         self._landed_key = key
         self._requested = None
 
@@ -569,8 +579,8 @@ class ConsoleLibraryOutcomeLines:
 
         Only the newest requested read lands, and none after teardown or after
         a newer key landed inline. A local storage pause lands nothing (the
-        next sync reads again); any other failure keeps the lines already
-        shown and repaints nothing (see ``_land``).
+        next sync reads again). Other failures keep any lines from the
+        same session and skip repaint (see ``_land``).
         """
         from .view_workers import owned_display_read
 
@@ -588,7 +598,8 @@ class ConsoleLibraryOutcomeLines:
             if not paused:
                 logger.warning("library_outcome_projection_read_failed")
         finally:
-            newest = self._requested == key
+            # Returning to a path can issue a new request with the same key.
+            newest = self._requested is key
             if newest:
                 self._requested = None
         if not newest or self.torn_down() or paused:

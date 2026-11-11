@@ -37,6 +37,7 @@ from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_session_admitted_roots import (
     _console,
     _original_consent_reads,
+    _prepare_full_snapshot_sources,
 )
 from tldw_chatbook.Chat.console_environment_state import (
     EnvSourceAvailability,
@@ -212,6 +213,7 @@ async def test_the_narrow_root_read_equals_the_full_snapshots_roots(
         active = chat_controller.store.active_session_id
         own_workspace = chat_controller.store.session_workspace_id(active)
         consent = chat_controller.app.change_review_consent_service
+        await _prepare_full_snapshot_sources(chat_controller.app)
         with _original_consent_reads(consent) as reads:
             full = chat_controller.resolve_turn_execution_context(
                 active

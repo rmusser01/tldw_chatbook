@@ -28,11 +28,23 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.config import get_user_data_dir
+from tldw_chatbook.Workspaces.change_tracking import ShadowRepo
 
 # Real bindings and consent writes belong to one privately selected profile.
 pytestmark = pytest.mark.ui
 
 _WORKSPACE = "ws-admitted-roots"
+
+
+def _isolate_shadow_git_config(monkeypatch) -> None:
+    # The private profile isolates user Git config. Keep host system filters
+    # (such as the runner's Git LFS install) out of these positive fixtures.
+    original_env = ShadowRepo._env
+    monkeypatch.setattr(
+        ShadowRepo,
+        "_env",
+        lambda repo: {**original_env(repo), "GIT_CONFIG_NOSYSTEM": "1"},
+    )
 
 
 @contextmanager
@@ -73,6 +85,7 @@ def _original_consent_reads(consent, observe_read=None):
 @asynccontextmanager
 async def _console(roots, monkeypatch):
     monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "1")
+    _isolate_shadow_git_config(monkeypatch)
     app = _build_test_app(user_data_dir=get_user_data_dir())
     _configure_native_ready_console(app)
     registry = app.workspace_registry_service
@@ -111,6 +124,11 @@ async def _console(roots, monkeypatch):
         yield pilot, screen, controller, session_id
 
 
+async def _prepare_full_snapshot_sources(app):
+    trust = await app.ensure_local_skill_trust_service()
+    assert app.local_skills_service.trust_service is trust
+
+
 def _three_readers(screen, controller, session_id) -> dict[str, tuple]:
     return {
         "snapshot builder": controller.resolve_turn_configuration_snapshot(
@@ -133,6 +151,7 @@ async def test_the_three_readers_return_the_same_string_roots(
     """Metadata and narrow admission report the same ready roots as strings."""
     roots = (tmp_path / "first", tmp_path / "second")
     async with _console(roots, monkeypatch) as (_pilot, screen, controller, session_id):
+        await _prepare_full_snapshot_sources(controller.app)
         readers = _three_readers(screen, controller, session_id)
         expected = tuple(
             binding.locator
@@ -157,6 +176,7 @@ async def test_the_three_readers_answer_from_one_helper(request, monkeypatch, tm
     ):
         own_workspace = controller.store.session_workspace_id(session_id)
         consent = controller.app.change_review_consent_service
+        await _prepare_full_snapshot_sources(controller.app)
         with _original_consent_reads(consent) as reads:
             readers = _three_readers(screen, controller, session_id)
         shared_reads = [read for read in reads if read[0] == "_admit"]

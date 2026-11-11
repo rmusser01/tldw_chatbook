@@ -51,7 +51,10 @@ async def main():
     module.project_instruction_ui.sync_project_instruction_status_for_screen = Mock()
     screen._sync_native_console_chat_ui = MethodType(ChatScreen._sync_native_console_chat_ui, screen)
     scheduled, replays = [], []
-    screen.run_worker = lambda coro, **kwargs: scheduled.append(coro)
+    def schedule_worker(worker, *, exclusive, group):
+        assert callable(worker) and exclusive and group == "console-sync"
+        scheduled.append(worker)
+    screen.run_worker = schedule_worker
     screen._request_console_control_bar_sync = lambda **kwargs: replays.append(kwargs)
     if scenario == 'closed_entry':
         screen._console_sync_maintenance_paused = True
@@ -109,8 +112,6 @@ async def main():
         ChatScreen._console_sync_maintenance_resume(screen)
         ChatScreen._console_sync_maintenance_resume(screen)
         assert len(scheduled) == (0 if scenario == 'torn_down' else 1)
-    for coro in scheduled:
-        coro.close()
 asyncio.run(main())
 print("retired and reopened")
 """

@@ -1762,3 +1762,32 @@ the Send receipt and ADR-355 covers the lint guards.
 The original admission-sensitive tests, layer and lookup guards, and
 startup limits were checked in targeted runs. GitHub required CI and the
 current-head review remain part of AC23.
+
+### CI follow-up on rebased PR #3480
+
+[Derived Artifacts run 43085804799](https://github.com/rmusser01/tldw_chatbook/actions/runs/43085804799)
+on `56f05ff8d3` exposed recovery-worker fixture drift, native Workspace
+test setup on a runner with system Git LFS filters, and UI projection
+races. All four project-chat receipts passed and the missing-README
+control was correctly rejected after `fs_read`.
+
+Recovery fixtures capture Textual's lazy worker callables and drive the
+original replay. The config test uses the actual finite preparation
+owner. The positive Workspace fixtures isolate host Git system config
+at the existing test command seam. Their full-snapshot readers await
+real skill trust publication. The production filter, consent, storage,
+and cleanup checks still run.
+
+Library outcome lines use only the current database, session and
+conversation. Returning to an already shown path retires obsolete
+publication. If a return requests the same key again, only that exact
+read can publish. Pending and failed reads still retain valid lines
+from the same session. ADR-079 covers the existing durable sidecar.
+The Watchlists poll waits for the recreated widget. The Console resume
+test observes the original stopped timer and exact resumed callback,
+including when independent CORE work needs its own retry under ADR-121.
+
+Targeted verification covered the affected tests, the original Git
+refusals and startup limits, and both directions of the new Library
+read-order regression. Exact PR-head required CI and Qodo review remain
+part of AC23.
