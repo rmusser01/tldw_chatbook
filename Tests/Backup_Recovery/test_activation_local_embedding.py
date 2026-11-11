@@ -10,7 +10,7 @@ from pathlib import Path
 from Tests.network_guard import install, blocked_attempts
 install()
 selector=Path(os.environ['TLDW_CONFIG_PATH']);base=selector.parent.parent;data=base/'data'
-selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="'+str(data)+'"\n[rag.service]\nfirst_run_import_done=true\n');selector.chmod(0o600)
+selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="'+data.as_posix()+'"\n[rag.service]\nfirst_run_import_done=true\n');selector.chmod(0o600)
 import torch
 from tokenizers import Tokenizer
 from tokenizers.models import WordLevel

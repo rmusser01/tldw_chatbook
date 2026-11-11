@@ -1,0 +1,14 @@
+diff --git a/Tests/RAG/test_embedding_cache_ownership_review.py b/Tests/RAG/test_embedding_cache_ownership_review.py
+index 5b361afe88..a329b1632c 100644
+--- a/Tests/RAG/test_embedding_cache_ownership_review.py
++++ b/Tests/RAG/test_embedding_cache_ownership_review.py
+@@ -32,7 +32,8 @@ def test_same_openai_model_at_different_endpoints_does_not_reuse_vectors(
+ ):
+     calls = []
+ 
+-    def respond(session, url, *, json, timeout):
++    def respond(session, url, *, json, timeout, allow_redirects):
++        assert allow_redirects is True
+         calls.append(url)
+         response = requests.Response()
+         response.status_code = 200

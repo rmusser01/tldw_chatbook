@@ -1,11 +1,11 @@
 ---
 id: TASK-36006
 title: Manage optional keyword indexes in Settings and qualify release
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-21 14:32'
-updated_date: '2026-10-22 07:54'
+updated_date: '2026-10-23 03:17'
 labels: []
 dependencies:
   - TASK-36005
@@ -110,14 +110,14 @@ Current dev-integration source19d38fd32ed9009d9fd7c9ffb04e38fd989d370d resolves 
 Current required-CI correction at e8c841d48ba35f99433842e5e7552f989867c01f removes introduced Settings/controller/interrupt module-size overruns through cohesive body-preserving helpers and lowered pins (35671/29043/6307). Lifecycle2338 is9lines below fetched-dev2347 but still fails inherited2134budget; no unrelated budget was raised. Focused Settings5+2, grounding/Library6, interrupt/review/citation10, shutdown/drain3passed; exact Console ratchet5passed1inheritedfailure, full initialratchet10failed61passed retained. Static/body/call/late-getter/native-owner checks and exact diagnostic2owner migration passed; inherited lint/format retained. Independent scoped review plus import-only followup: spec/qualityPASS,0Critical0Important0Minoropen. Successful grounding argv contains no -p; earlier report note corrected, preliminary profile-setup traceback/argv unretained. Backend/query/store/scanner/authority bytes unchanged; source19d measurements remain historical/source-qualified, no new benchmark claim. Exact raw/review/rulings in Docs/superpowers/qa/2026-10-22-workspace-keyword-dev-integration/ci-correction.md. Existing ADR241 applies, no newADR. AC15/16 checked from actual evidence; task remains InProgress pending hostedCI/threads/queue merge. Qodo waived explicitly by human forPR3204only.
 
 QA packaging found8original temporary Settings child logs/XML unavailable; outer5pass output and captured8entry hash/result/fullXML snapshot remain. This is an explicit raw-retention limit, not reconstructed evidence. Updated the existing TASK35869 lesson with this PR3204 incident. Current correction QA retains55raw/source artifacts and10additional rulings; original161manifested artifacts remain byte-identical.
+
+PR3204 merged into dev2026-10-22T08:34:17Z as6ac357de1f2df8ac4a6cf1987fc3e4cb5b44592f; required Derived artifacts checkSUCCESS. Guidance and optional folder-bound keyword indexing shipped with preserved Library choices and no embeddings requirement. Independent whole-source/scoped reviews close0Critical0Important0Minor; physical supervisor/failed-start ownership defects resolved. Current source extraction/import correction e8c841d + metadata5a0254 rebased by queue tofc380c9f. AC1-16checked. Exact current/historical QA, 28integrationrulings/costs, inheritedratchet/lint/format,3broaderadmittedlatencymisses, preliminary/child-retention gaps and source-qualified20k evidence remain explicit. Qodo requirement waived by human forPR3204only; all other merge gates passed. Optional semantic indexing is next on its own branch; no semantic code included here.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Implemented optional folder-bound keyword indexing with preserved Library choices. Independent final approval:0Critical0Important1acceptedMinor(M1 supervisor bookkeeping tail); canonical query target passes, expanded admitted common667/535ms remains accepted deviation. Exact source3b616994e6, all targeted/source/native/visual evidence and limitations retained in keyword QA execution-notes.md; branch/worktree preserved, no external integration.
-
-Reopened for newly requested dev integration and full M1 resolution; previous completion summary describes original local delivery.
+PR3204 merged into dev2026-10-22T08:34:17Z as6ac357de1f2df8ac4a6cf1987fc3e4cb5b44592f; required Derived artifacts checkSUCCESS. Guidance and optional folder-bound keyword indexing shipped with preserved Library choices and no embeddings requirement. Independent whole-source/scoped reviews close0Critical0Important0Minor; physical supervisor/failed-start ownership defects resolved. Current source extraction/import correction e8c841d + metadata5a0254 rebased by queue tofc380c9f. AC1-16checked. Exact current/historical QA, 28integrationrulings/costs, inheritedratchet/lint/format,3broaderadmittedlatencymisses, preliminary/child-retention gaps and source-qualified20k evidence remain explicit. Qodo requirement waived by human forPR3204only; all other merge gates passed. Optional semantic indexing is next on its own branch; no semantic code included here.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 Current governance: [ADR-241](../decisions/241-workspace-project-context-and-folder-bound-index.md). Renumbered from project ADR-240 during 2026-10-22 dev integration; historical rulings and delivery notes below retain their original source-era labels.

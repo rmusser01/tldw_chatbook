@@ -3317,7 +3317,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | sqlite:chat.launch_wake | tldw_chatbook/Chat/console_launch_wake | _READ_ONLY_URI | sqlite/unsupported |
 | sqlite:chat.trace_maintenance | tldw_chatbook/Chat/console_trace_maintenance | _PRIVATE_FILE | sqlite/unsupported |
 | sqlite:db.chunking_lab | tldw_chatbook/DB/Chunking_Lab_DB | _PRIVATE_FILE | sqlite/unsupported |
-| sqlite:db.workspace_project_index | tldw_chatbook/DB/Workspace_Project_Index_DB | _PRIVATE_FILE | sqlite/installed exclusion (`ProjectIndexCacheDeclaration`) |
+| sqlite:db.workspace_project_index | tldw_chatbook/DB/Workspace_Project_Index_DB | _PRIVATE_AND_READ_ONLY | sqlite/installed exclusion (`ProjectIndexCacheDeclaration`) |
 | sqlite:library.legacy_recovery | tldw_chatbook/Library/collections_legacy_recovery | _READ_ONLY_URI | sqlite/unsupported |
 | sqlite:personal_context.interview_drafts | tldw_chatbook/Personal_Context/interview_draft_repository | _PRIVATE_FILE | sqlite/installed exclusion (`_LocalSQLite`) |
 | sqlite:personal_context.repository | tldw_chatbook/Personal_Context/repository | _PRIVATE_AND_READ_ONLY | sqlite/explicit unsupported declaration (`_LocalSQLite`, `excluded=False`) |

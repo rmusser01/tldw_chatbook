@@ -800,6 +800,7 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # C95 validates the installed Guardian v1/v2 recovery catalogs.
         # C97 was the SQLiteStoreKernel contract-test owner (TASK-33132); the
         # test registers it itself since TASK-39053, so C97 is retired.
+        # C100 is the project index's existing-only read-only peer preflight.
         # Every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"

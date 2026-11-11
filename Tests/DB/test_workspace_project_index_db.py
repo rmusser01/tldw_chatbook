@@ -643,6 +643,29 @@ def test_scan_unit_atomic_receipts_replay_and_indexed_attempt_frontier(tmp_path)
         store.close_native()
 
 
+def test_semantic_publication_path_check_uses_covering_index_without_statistics(tmp_path):
+    store = open_index_store(tmp_path)
+    try:
+        with store.connection() as connection:
+            assert connection.execute(
+                "SELECT 1 FROM sqlite_schema WHERE name='sqlite_stat1'"
+            ).fetchone() is None
+            connection.create_function("index_path_allowed", 1, lambda path: 1)
+            plan = " ".join(
+                str(row[3])
+                for row in connection.execute(
+                    "EXPLAIN QUERY PLAN SELECT 1 FROM semantic_members "
+                    "WHERE generation_id=? AND index_path_allowed(relative_path)=0 LIMIT 1",
+                    ("generation",),
+                )
+            )
+            index_name = "semantic_members_path"
+            assert f"COVERING INDEX {index_name}" in plan
+            assert "TEMP B-TREE" not in plan
+    finally:
+        store.close_native()
+
+
 @pytest.mark.parametrize("text", ["bodyonly", "", " \n\t "])
 def test_filename_only_keyword_without_body_chunks(tmp_path, text):
     store, key, scope, claim = enabled_store(tmp_path)
@@ -674,6 +697,9 @@ def _legacy_v2_cache(tmp_path):
         authority_revision=1,
     )
     with store.transaction() as conn:
+        conn.execute("DROP TABLE semantic_members")
+        conn.execute("DROP TABLE semantic_generations")
+        conn.execute("DROP TABLE semantic_control")
         conn.execute("DROP TABLE chunk_fts")
         conn.execute("DELETE FROM chunks")
         conn.execute("CREATE VIRTUAL TABLE chunk_fts USING fts5(text)")
@@ -717,7 +743,7 @@ def test_v3_migration_preserves_state_backfills_paths_and_cleanup_skips_allocati
             search_authority(tmp_path, scope), "legacyfilename", limit=10
         )
         with migrated.connection() as conn:
-            assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 3
+            assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 4
     finally:
         migrated.close_native()
 

@@ -1,0 +1,75 @@
+{
+  "shape": "nested",
+  "outcome": "adverse_cleanup_or_source_unproved",
+  "platform": "Windows-10-10.0.19045-SP0",
+  "python": "3.12.10",
+  "logical_cpu_count": 12,
+  "initial_semantic_state": "Building",
+  "initial_semantic_revision": 1,
+  "keyword_manifest_revision": 329,
+  "bounds_seconds": {
+    "build": 3600,
+    "query": 300,
+    "native_join": 300,
+    "actual_encode_hold": 90
+  },
+  "last_completed_stage": "final_report_saved",
+  "current_phase": "cleanup",
+  "phase_peaks_sampled_5s_absolute": {
+    "consent": {
+      "parent_rss": 219299840,
+      "combined_rss": 219299840,
+      "whole_binding_bytes": 30482541
+    },
+    "build": {
+      "parent_rss": 901230592,
+      "combined_rss": 901230592,
+      "whole_binding_bytes": 74072173
+    }
+  },
+  "sampler_errors": [],
+  "owners": {
+    "build_native_retired": true,
+    "build_thread_alive": false,
+    "cancel_native_retired": null,
+    "cancel_thread_alive": null,
+    "pending_to_thread_tasks": [],
+    "sampler_thread_alive": false
+  },
+  "source_before": {
+    "files": 20000,
+    "bytes": 728900,
+    "path_stat_content_sha256": "f6efe371c180b0d84490799d34b4143ae746f4f7795650e5a91b6302ad6d1a8a"
+  },
+  "rss_baseline_before_model_bytes": 218562560,
+  "whole_binding_baseline_bytes": 30482541,
+  "prebuild_revoke": {
+    "from_state": "Building",
+    "from_revision": 1,
+    "returned_state": "Off",
+    "returned_revision": 2
+  },
+  "selected_model": {
+    "configured_alias": "minilm-local",
+    "selected_cached_model": "sentence-transformers/all-MiniLM-L6-v2",
+    "resolved_model_snapshot": "C:\\Users\\GDesktop-1\\.cache\\huggingface\\hub\\models--sentence-transformers--all-MiniLM-L6-v2\\snapshots\\c9745ed1d9f207416be6d2e6f8de32d1f16199bf",
+    "artifact_fingerprint": "sha256:v1:32015226dbbe9ec76875a585f70c800c792d8854a0b22791881657f81325ff74",
+    "config_fingerprint": "sha256:v1:1406b5ebada2a7ef8b8c2d0b3db928695a62619cb43ecb441328f3cd49a7e97a",
+    "destination_fingerprint": "sha256:v1:b8ca2c415e71071f5342c8f637dfa2f9912c646e25c4f307aa2addb494bd5bc3",
+    "provider_id": "huggingface"
+  },
+  "enabled_semantic_revision": 3,
+  "semantic_build_seconds": 1510.9839999999967,
+  "error_class": "AssertionError",
+  "error_location": "task4_semantic_scale_final.py:486:qualify_shape",
+  "sampler_retired": true,
+  "source_after": {
+    "files": 20000,
+    "bytes": 728900,
+    "path_stat_content_sha256": "f6efe371c180b0d84490799d34b4143ae746f4f7795650e5a91b6302ad6d1a8a"
+  },
+  "source_unchanged": true,
+  "whole_binding_bytes_final": 74072173,
+  "rss_final_bytes": 860573696,
+  "network_attempts": 0
+}

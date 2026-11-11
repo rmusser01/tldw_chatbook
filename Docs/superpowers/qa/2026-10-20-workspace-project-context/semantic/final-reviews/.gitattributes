@@ -1,0 +1,4 @@
+* -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+# Serialized Git context lines and original Markdown hard breaks are receipt data.
+*.diff -whitespace
+whole-branch-review.md whitespace=-blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

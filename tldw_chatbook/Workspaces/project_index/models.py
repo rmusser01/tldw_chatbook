@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 import os
+import re
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, ContextManager
 
@@ -183,6 +184,112 @@ class ProjectIndexStatus:
     def __post_init__(self):
         if self.state not in INDEX_STATES:
             raise ValueError("invalid_index_state")
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectSemanticSettings:
+    """Secret-free, restart-safe embedding destination selection."""
+
+    provider_id: str
+    model_id: str
+    destination_fingerprint: str
+    config_fingerprint: str
+    approved_destination_fingerprint: str | None
+    provider_ref: str
+    config_ref: str
+
+    def __post_init__(self):
+        provider = (
+            re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", self.provider_id)
+            if isinstance(self.provider_id, str)
+            else None
+        )
+        model = (
+            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", self.model_id)
+            if isinstance(self.model_id, str)
+            else None
+        )
+        digest = re.compile(r"sha256:v1:[0-9a-f]{64}\Z")
+        if not provider or not model:
+            raise ValueError("invalid_semantic_identifier")
+        if (
+            self.provider_ref != "provider:v1:" + self.provider_id
+            or self.config_ref != "model:v1:" + self.model_id
+        ):
+            raise ValueError("invalid_semantic_reference")
+        if not all(
+            isinstance(value, str) and digest.fullmatch(value)
+            for value in (self.destination_fingerprint, self.config_fingerprint)
+        ):
+            raise ValueError("invalid_semantic_fingerprint")
+        approved = self.approved_destination_fingerprint
+        if approved is not None and (
+            not isinstance(approved, str) or not digest.fullmatch(approved)
+        ):
+            raise ValueError("invalid_approved_destination")
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectSemanticState:
+    """Independent semantic consent, revision and safe readiness projection."""
+
+    scope: ProjectIndexScope
+    semantic_revision: int
+    enabled: bool
+    settings: ProjectSemanticSettings | None
+    state: str
+    reason: str | None = None
+    ready_generation_id: str | None = None
+    coverage: int | None = None
+    close_pending: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectSemanticGeneration:
+    """Immutable identity and durable build progress for one generation."""
+
+    generation_id: str
+    scope: ProjectIndexScope
+    semantic_revision: int
+    provider_id: str
+    model_id: str
+    destination_fingerprint: str
+    config_fingerprint: str
+    artifact_fingerprint: str
+    format_id: str
+    dimension: int
+    manifest_revision: int
+    claim_token: str | None
+    checkpoint_chunk_id: int | None
+    state: str
+    chunk_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectSemanticMember:
+    """Generation-owned live-validation metadata and float32 vector bytes."""
+
+    generation_id: str
+    ordinal: int
+    relative_path: str
+    identity: str
+    content_sha256: str
+    line_start: int
+    line_end: int
+    vector: bytes = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticSourceChunk:
+    """One immutable keyword-source revision prepared for embedding."""
+
+    chunk_id: int
+    relative_path: str
+    identity: str
+    content_sha256: str
+    line_start: int
+    line_end: int
+    text: str = field(repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -393,10 +500,13 @@ class ProjectSearchResult:
     hits: tuple[ProjectIndexHit, ...]
     coverage: ProjectIndexStatus | None
     refresh_required: bool
+    semantic_status: str = "unavailable"
 
     def __post_init__(self):
         if self.status not in {"ready", "partial", "unavailable"}:
             raise ValueError("invalid_search_status")
+        if self.semantic_status not in {"ready", "unavailable"}:
+            raise ValueError("invalid_semantic_search_status")
 
 
 @dataclass(frozen=True, slots=True)

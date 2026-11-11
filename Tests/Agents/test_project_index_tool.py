@@ -798,7 +798,7 @@ async def test_valid_then_stale_exact_serialized_boundary(
         rig.enable()
         rig.refresh()
         scope = rig.settle().scope
-        texts = {"a.txt": "a" * 12000, "b.txt": "b" * 4130}
+        texts = {"a.txt": "a" * 12000, "b.txt": "b" * 4098}
         captures = {
             path: FileCapture(
                 path,
@@ -1110,6 +1110,8 @@ async def test_filename_only_empty_and_whitespace_use_live_capture(tmp_path, req
 async def test_scan_to_public_search_casefolded_prefix(
     tmp_path, request, directory, prefix
 ):
+    import asyncio
+
     from tldw_chatbook.Workspaces.project_index.models import ProjectIndexPolicy
 
     rig = Rig(tmp_path)
@@ -1128,8 +1130,14 @@ async def test_scan_to_public_search_casefolded_prefix(
         rig.service.enable(
             rig.key, ProjectIndexPolicy((prefix,), (".txt",)), expected_scope=off.scope
         )
-        rig.refresh()
-        assert rig.settle().indexed == 1
+        job_id = rig.refresh()
+        run = rig.service._runs[job_id]
+        # The v4 allocation gate can be busy during scan publication. Observe
+        # the actual supervisor's retirement before making the search assertion.
+        await asyncio.to_thread(run.supervisor.join, 60)
+        assert not run.supervisor.is_alive() and run.native_retired
+        status = rig.service.status(rig.key)
+        assert status.state == "Ready" and status.indexed == 1
         result = invoke(
             provider(rig, exclusions=lambda: (rig.root / directory / "excluded.txt",)),
             {"query": "casefoldmarker"},

@@ -1,0 +1,46 @@
+{
+  "argv": [
+    "C:/Users/GDesktop-1/Working/Github/tldw_tui/.venv/Scripts/python.exe",
+    "-c",
+    "import os,json,sqlite3,importlib.util,sys; from tldw_chatbook.Workspaces.project_index.allocation import _SOURCE_ID; c=sqlite3.connect(\":memory:\"); source=c.execute(\"SELECT sqlite_source_id()\").fetchone()[0]; options={row[0] for row in c.execute(\"PRAGMA compile_options\")}; print(\"PYTHON\",sys.version,sys.executable,\"SQLite\",sqlite3.sqlite_version,source,sorted(options),\"sentence_transformers_present\",importlib.util.find_spec(\"sentence_transformers\") is not None,flush=True); assert sqlite3.sqlite_version==\"3.49.1\" and source==_SOURCE_ID and {\"TEMP_STORE=1\",\"MAX_PAGE_SIZE=65536\",\"THREADSAFE=1\"}<=options and importlib.util.find_spec(\"sentence_transformers\") is None; import pytest; raise SystemExit(pytest.main([*json.loads(os.environ[\"TLDW_TEST_SELECTORS_JSON\"]),\"-q\",\"--timeout=180\",\"--tb=short\",\"--durations=0\",\"--no-showlocals\",\"--junitxml=\"+os.environ[\"TLDW_PARENT_XML\"]]))"
+  ],
+  "hashes": [
+    {
+      "sha256": "28918A0B5BAE7EE5D98EC47D0DBBC1515A28D80A35F4041CD0EDF6AD4C27737D",
+      "path": ".github/workflows/derived-artifacts.yml"
+    },
+    {
+      "sha256": "05759553BB79E72FEEF748C8A0C7CAD5A8A694FEEAB6BE32FB660D3F822385CD",
+      "path": "Tests/Workspaces/test_project_index_service.py"
+    },
+    {
+      "sha256": "A135CC50C75459DE211D67983A02A48E54FEB963779EEAA23E58BB8F4FB8A661",
+      "path": "Tests/Workspaces/test_project_semantic_generations.py"
+    },
+    {
+      "sha256": "F9C62582B1B368D49EBEDD06F4F57F8582D3D56B25C8E9051BCD673E6DCF1580",
+      "path": "Tests/Workspaces/test_project_semantic_settings.py"
+    },
+    {
+      "sha256": "A58BCA1CA010102415178CA5F8FF17BBCDD169283734CBCC4B1C8B0CE5710983",
+      "path": "tldw_chatbook/Utils/private_paths.py"
+    },
+    {
+      "sha256": "33778A422021EE70E8364F5B67718DCBE71FCAAC6ACDA2D22CE2C522DFDEDF3C",
+      "path": "tldw_chatbook/Workspaces/project_index/runtime.py"
+    }
+  ],
+  "cwd": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui",
+  "model_selected": false,
+  "run": "task4-coverage-fixture-green-01",
+  "selectors": [
+    "Tests/Workspaces/test_project_semantic_generations.py::test_generation_pages_checkpoint_and_ready_survives_failed_rebuild",
+    "Tests/Workspaces/test_project_semantic_generations.py::test_failed_first_generation_has_no_ready_projection",
+    "Tests/Workspaces/test_project_semantic_generations.py::test_ready_zero_members_is_distinct_from_unavailable_semantics",
+    "Tests/Workspaces/test_project_semantic_settings.py::test_semantic_consent_cas_preserves_keyword_scope_and_state",
+    "Tests/Workspaces/test_project_semantic_settings.py::test_full_revoke_disables_semantics_but_keyword_reconfigure_does_not",
+    "Tests/Workspaces/test_project_semantic_settings.py::test_semantic_status_is_read_only_and_imports_no_embedding_backend",
+    "Tests/Workspaces/test_project_index_service.py::test_incremental_refresh_retires_deleted_and_renamed_membership",
+    "Tests/Workspaces/test_project_index_service.py::test_delayed_management_cannot_reverse_clear_or_new_enable"
+  ]
+}

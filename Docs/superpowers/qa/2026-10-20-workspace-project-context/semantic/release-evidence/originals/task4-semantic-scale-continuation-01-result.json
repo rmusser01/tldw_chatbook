@@ -1,0 +1,25 @@
+{
+  "wide": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-semantic-scale-continuation-01-wide-report.json",
+  "child_started_utc": "2026-10-24T02:43:11.3544710Z",
+  "origins": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-semantic-scale-continuation-01-origins.json",
+  "child_pid": 59032,
+  "nested": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-semantic-scale-continuation-01-nested-report.json",
+  "whole_process_timed_out": false,
+  "child_exit_code": 1,
+  "events": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-semantic-scale-continuation-01-events.jsonl",
+  "child_launch_identity": {
+    "executable_path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\qualification-venv\\Scripts\\python.exe",
+    "command_sha256": "847894EF595B7FEE447FF4DE912CA919D474779644D5D2EB93C892D9D9BFF833",
+    "created_utc": "2026-10-24T02:43:11.3544710Z",
+    "pid": 59032
+  },
+  "run": "task4-semantic-scale-continuation-01",
+  "timeout_tree_rechecked": [],
+  "source_and_harness_unchanged": true,
+  "timeout_tree_before": [],
+  "forced_exit": false,
+  "launcher_failure_class": null,
+  "stderr": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-semantic-scale-continuation-01-stderr.log",
+  "timeout_tree_survivors": [],
+  "stdout": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-semantic-scale-continuation-01-stdout.log"
+}
