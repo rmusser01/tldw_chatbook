@@ -234,6 +234,16 @@ def _navigate_via_screen(
     app.notify(success_message, severity="information")
 
 
+def _open_library_import(app: App) -> None:
+    """Open the import canvas even when Library is already on another view."""
+    _navigate_via_screen(
+        app,
+        TAB_LIBRARY,
+        "Opened Library to import content",
+        {LIBRARY_NAV_CONTEXT_INGEST: True},
+    )
+
+
 #: TASK-32887: spelled-out punctuation key names that appear in this
 #: repo's BINDINGS (left/right square brackets, comma -- see
 #: lab_frame.py, personas_screen.py, trajectory_timeline.py) rendered as
@@ -565,9 +575,7 @@ class QuickActionsProvider(Provider):
             elif action_id == "search_all":
                 _navigate_via_screen(self.app, TAB_SEARCH, "Opened Library Search/RAG")
             elif action_id == "import_media":
-                _navigate_via_screen(
-                    self.app, TAB_INGEST, "Opened Import/Export for media import"
-                )
+                _open_library_import(self.app)
             elif action_id == FOCUS_TOGGLE_PALETTE_ENTRY[1]:
                 self.app.action_toggle_focus_mode()
             elif action_id == "report_bug":
@@ -839,9 +847,7 @@ class MediaProvider(Provider):
                 # below already uses for its own Library-folded route.
                 _navigate_via_screen(self.app, TAB_MEDIA, "Opened Library Media")
             elif action_id == "import_new":
-                _navigate_via_screen(
-                    self.app, TAB_INGEST, "Opened Import/Export for media import"
-                )
+                _open_library_import(self.app)
             elif action_id == "search_transcripts":
                 _navigate_via_screen(
                     self.app,
@@ -906,12 +912,7 @@ class LibraryIngestProvider(Provider):
                 )
                 return
             if action_id == "open_library_ingest":
-                _navigate_via_screen(
-                    self.app,
-                    TAB_LIBRARY,
-                    "Opened Library to import content",
-                    {LIBRARY_NAV_CONTEXT_INGEST: True},
-                )
+                _open_library_import(self.app)
         except Exception as e:
             self.app.notify(f"Failed to open Library import: {e}", severity="error")
 

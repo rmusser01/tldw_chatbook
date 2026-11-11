@@ -19,7 +19,11 @@ from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
 import uuid
 
 from tldw_chatbook.Sync_Interop.sync_state import NOTES_ORGANIZATION_DOMAINS
-from tldw_chatbook.Sync_Interop.sync_state import SyncV2ProfileMode
+from tldw_chatbook.Sync_Interop.sync_state import (
+    SERVER_TRUSTED_SYNC_POLICY,
+    SyncV2EnrollmentError,
+    SyncV2ProfileMode,
+)
 from tldw_chatbook.Sync_Interop.validation import (
     validate_outgoing_envelope_scope,
     validate_pull_pagination_state,
@@ -535,6 +539,7 @@ class ServerSyncService:
         scope_type: str = "personal",
         encryption_policy: str = "client_private_v1",
         profile_mode: str = SyncV2ProfileMode.LOCAL_FIRST_SYNC.value,
+        enrollment_only: bool = False,
     ) -> dict[str, Any]:
         """Negotiate Sync v2 state without sending or applying content envelopes.
 
@@ -548,6 +553,7 @@ class ServerSyncService:
             scope_type: Dataset scope type requested from the server.
             encryption_policy: Sync v2 encryption policy requested for the dataset.
             profile_mode: Sync v2 profile mode to persist with the negotiated state.
+            enrollment_only: Prepare the approved M1 profile without probing push or pull.
 
         Returns:
             Dry-run summary with negotiated device, dataset, domain, cursor, and key setup state.
@@ -604,6 +610,88 @@ class ServerSyncService:
             else SyncV2CapabilitiesResponse.model_validate(capabilities)
         )
         capabilities_record = self._dump(capabilities_model)
+        if enrollment_only:
+            encryption = capabilities_model.encryption
+            if (
+                encryption_policy != SERVER_TRUSTED_SYNC_POLICY
+                or encryption_policy not in capabilities_model.encryption_policies
+                or encryption.get("policy") != encryption_policy
+                or encryption.get("ready") is not True
+            ):
+                raise SyncV2EnrollmentError(
+                    "Manual Sync is unavailable. The server does not advertise "
+                    "ready server-trusted encryption, which Chatbook requires for setup."
+                )
+            if existing_dataset_id:
+                metadata = profile.get("dry_run_metadata") or {}
+                summary = None
+                bootstrap_identity = metadata.get(
+                    "notes_organization_bootstrap_identity"
+                )
+                if (
+                    existing_device_id
+                    and metadata.get("encryption_policy") == encryption_policy
+                    and metadata.get("enrollment_only") is True
+                ):
+                    summary = dict(metadata)
+                elif (
+                    existing_device_id
+                    and bootstrap_identity
+                    and metadata.get("encryption_policy", encryption_policy)
+                    == encryption_policy
+                ):
+                    response = self._dump(
+                        await client.get_sync_v2_profile(device_id=existing_device_id)
+                    )
+                    dataset = response.get("dataset")
+                    if (
+                        isinstance(dataset, Mapping)
+                        and dataset.get("dataset_id") == existing_dataset_id
+                        and self._response_device_matches(
+                            response,
+                            device_id=existing_device_id,
+                            client_profile_id=bootstrap_identity,
+                        )
+                    ):
+                        try:
+                            self._validate_notes_organization_capability(response)
+                            self._validate_notes_organization_dataset(dataset)
+                        except ValueError as exc:
+                            raise SyncV2EnrollmentError(
+                                "Manual Sync setup cannot verify the existing Notes "
+                                "organization dataset."
+                            ) from exc
+                        summary = {"dataset_id": existing_dataset_id}
+                        capabilities_record = response["capabilities"]
+                if summary is None:
+                    raise SyncV2EnrollmentError(
+                        "Manual Sync setup cannot change the trust policy of an "
+                        "existing Sync v2 dataset."
+                    )
+                if not self.state_repository.refresh_sync_v2_profile_capabilities(
+                    server_profile_id=server_profile_id,
+                    authenticated_principal_id=authenticated_principal_id,
+                    workspace_scope=workspace_scope,
+                    device_id=existing_device_id,
+                    dataset_id=existing_dataset_id,
+                    capabilities=capabilities_record,
+                ):
+                    raise SyncV2EnrollmentError(
+                        "The existing Sync v2 dataset changed during setup. Try again."
+                    )
+                return summary
+            if authenticated_principal_id is not None or workspace_scope is not None:
+                legacy_profile = self.state_repository.get_sync_v2_profile_state(
+                    server_profile_id=server_profile_id,
+                    authenticated_principal_id=None,
+                    workspace_scope=None,
+                )
+                if legacy_profile and legacy_profile.get("dataset_id"):
+                    raise SyncV2EnrollmentError(
+                        "Manual Sync setup cannot establish the account or trust "
+                        "policy of the existing Sync v2 dataset."
+                    )
+
         # M1 schema: model_dump() produces "domains"; fall back to "supported_domains"
         # for raw-dict responses (e.g. from test stubs that pre-date M1).
         supported_domains = (
@@ -638,7 +726,7 @@ class ServerSyncService:
                 dataset_id=existing_dataset_id,
                 device_id=device_id,
                 scope_type=scope_type,
-                workspace_id=workspace_scope,
+                workspace_id=None if enrollment_only else workspace_scope,
                 domains=sync_domains,
                 encryption_policy=encryption_policy,
                 metadata={"dry_run": True},
@@ -646,6 +734,39 @@ class ServerSyncService:
         )
         dataset_record = self._dump(dataset)
         dataset_id = str(dataset_record["dataset_id"])
+
+        if enrollment_only:
+            if (
+                dataset_record.get("encryption_policy") != encryption_policy
+                or dataset_record.get("scope_type") != scope_type
+                or dataset_record.get("key_setup_required") is not False
+                or set(dataset_record.get("domains") or ()) != set(sync_domains)
+            ):
+                raise SyncV2EnrollmentError(
+                    "Manual Sync is unavailable. The server returned a dataset "
+                    "that does not match the approved enrollment."
+                )
+            result = {
+                "dry_run": True,
+                "enrollment_only": True,
+                "server_profile_id": server_profile_id,
+                "workspace_scope": workspace_scope,
+                "device_id": device_id,
+                "dataset_id": dataset_id,
+                "domains": sync_domains,
+                "encryption_policy": encryption_policy,
+            }
+            self.state_repository.set_sync_v2_profile_state(
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+                workspace_scope=workspace_scope,
+                profile_mode=profile_mode,
+                device_id=device_id,
+                dataset_id=dataset_id,
+                capabilities=capabilities_record,
+                dry_run_metadata=result,
+            )
+            return result
 
         pushed = await client.push_sync_v2_envelopes(
             SyncV2PushRequest(dataset_id=dataset_id, device_id=device_id, envelopes=[])

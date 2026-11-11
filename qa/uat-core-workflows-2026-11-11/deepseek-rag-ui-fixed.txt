@@ -1,0 +1,42 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs   More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌──────────────────────┐┌──────────────────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │ Na…    Collapse      ││   ☑ Notes (1)                                                                                    │ │
+│ │     Import…          ││                                                                                                  │ │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  ││                                                                                                  │ │
+│ │ ▊ What colored ▎▊x▎  ││   ☑ Media (1)                                                                                    │ │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  ││                                                                                                  │ │
+│ │                      ││                                                                                                  │ │
+│ │ ───────────────────  ││   ☑ Conversations (3)                                                                            │ │
+│ │ Browse          ▾    ││                                                                                                  │ │
+│ │    Media (1)         ││                                                                                                ▆ │ │
+│ │    Chats (3)         ││   ☐ Prompts (0)                                                                                  │ │
+│ │    Notes (1)         ││                                                                                                  │ │
+│ │    Prompts (0)       ││                                                                                                  │ │
+│ │    Skills (1)        ││                                                                                                  │ │
+│ │    Collections (0)   ││ Answer                                                                                           │ │
+│ │  ▸ Search / RAG      ││                                                                                                  │ │
+│ │ ───────────────────  ││  The rehearsal uses blue lanterns [S1], so the practice run used blue lights.                    │ │
+│ │ Artifacts       ▾    ││                                                                                                  │ │
+│ │    All artifacts     ││                                                                                                  │ │
+│ │    Chatbooks         ││  Citations resolve to staged evidence.                                                           │ │
+│ │    Reports           ││                                                                                                  │ │
+│ │    Dreams            ││ ───────────────────────────────────────────────────────────────────────────────────────────────  │ │
+│ │ ───────────────────  ││                                                                                                  │ │
+│ │ Create          ▾    ││  deepseek · 593 tok · pricing unknown                                                            │ │
+│ │    New note          ││                                                                                                  │ │
+│ │    New prompt        ││                                                                                                  │ │
+│ │    New skill         ││ Evidence · top 15                                                                                │ │
+│ │ ───────────────────  ││  1 result for 'What colored lights were used during the practice run?'.                        ▄ │ │
+│ │ Study           ▾    ││                                                                                                  │ │
+│ │    Study decks (0) ▂ ││  Semantic search found nothing from: Notes, Conversations.                                       │ │
+│ │    Cards due: 0      ││                                                                                                  │ │
+│ │    Quizzes (0)       ││ ┌─────────────────────────────────────────────────────────────────────────────────────────────┐  │ │
+│ │ ───────────────────  ││ │                                                                                             │  │ │
+│ │  ▾ scroll for        ││ │ 1. juniper-source | match: moderate                                                         │  │ │
+│ └──────────────────────┘└──────────────────────────────────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  u use Library context in Console | o open evidence | / focus search | F6 next pane | F1 · Ctrl+P · Ctrl+Q

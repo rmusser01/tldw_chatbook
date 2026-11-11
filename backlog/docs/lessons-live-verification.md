@@ -1,5 +1,11 @@
 # Lessons: verifying against the real thing
 
+## Verify that a reused RAG fixture still has searchable vectors (TASK-40127, 2026-11-11)
+
+**Incident.** The reopened UAT profile listed the Juniper media fixture after a Library source refresh. RAG Answer still reported an empty index. Backfill returned zero indexed and one skipped because the tracking DB already had the fixture's timestamp. Reindexing that one disposable media entry restored the paraphrase match, and the Library Run action produced a live DeepSeek answer with a validated citation. [Walkthrough evidence](../../qa/uat-core-workflows-2026-11-11/deepseek-rag-fixed.txt)
+
+**What to do.** For an answer walkthrough with a reused fixture, confirm a paraphrase query returns the source with a vector score. If Backfill skips a fixture whose vector is missing, rebuild the fixture's index before interpreting the provider result.
+
 ## On Windows, bind the interpreter rather than the venv launcher; separate startup from fixture work (TASK-34569, 2026-11-08)
 
 **Incident.** A private Console approval probe treated the PID returned by the venv launcher as the Python interpreter PID. The interpreter was an actual child of that launcher. A guarded bootstrap with a held, authenticated interpreter handle and a nonce/PID acknowledgment reached normal closure. In the first App attempt with that ownership, workspace binding began with about 16 seconds left on a shared startup deadline and was censored there. Under a separate fixture phase, a later binding completed in about 27 seconds and exposed a real config identity refusal. Another launch hit its original startup deadline before the mounted-context marker, even though it had logged "on_mount completed in". That log is emitted before the end of the App's mount body.
