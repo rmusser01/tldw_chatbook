@@ -1122,6 +1122,98 @@ async def test_settings_enrollment_preserves_existing_dataset_trust(
 
 
 @pytest.mark.asyncio
+async def test_settings_enrollment_retry_reuses_the_registered_device(tmp_path):
+    client = FakeSyncClient(
+        capabilities_response={
+            "domains": ["notes.note"],
+            "encryption": {"policy": "server_trusted_v1", "ready": True},
+            "encryption_policies": ["server_trusted_v1"],
+        }
+    )
+    enroll = client.enroll_sync_v2_dataset
+    client.enroll_sync_v2_dataset = AsyncMock(side_effect=OSError("temporary outage"))
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    scope = {
+        "server_profile_id": "server-a",
+        "authenticated_principal_id": "user-a",
+        "workspace_scope": "workspace-default",
+    }
+    options = {
+        **scope,
+        "display_name": "Laptop",
+        "encryption_policy": "server_trusted_v1",
+        "enrollment_only": True,
+    }
+    service = ServerSyncService(client=client, state_repository=repo)
+    with pytest.raises(OSError, match="temporary outage"):
+        await service.run_v2_dry_run(**options)
+
+    pending = repo.get_sync_v2_profile_state(**scope)
+    assert pending["device_id"]
+    assert pending["dataset_id"] is None
+    assert pending["dry_run_metadata"] == {}
+
+    client.enroll_sync_v2_dataset = enroll
+    result = await ServerSyncService(client=client, state_repository=repo).run_v2_dry_run(
+        **options
+    )
+    registered = [
+        call[1]["device_id"]
+        for call in client.calls
+        if call[0] == "register_sync_v2_device"
+    ]
+    assert registered == [pending["device_id"], pending["device_id"]]
+    assert result["device_id"] == pending["device_id"]
+    assert repo.get_sync_v2_profile_state(**scope)["dataset_id"] == result["dataset_id"]
+
+
+@pytest.mark.asyncio
+async def test_late_enrollment_response_preserves_completed_profile(tmp_path):
+    client = FakeSyncClient(
+        capabilities_response={
+            "domains": ["notes.note"],
+            "encryption": {"policy": "server_trusted_v1", "ready": True},
+            "encryption_policies": ["server_trusted_v1"],
+        }
+    )
+    repo = SyncStateRepository(tmp_path / "sync_state.db")
+    scope = {
+        "server_profile_id": "server-a",
+        "authenticated_principal_id": "user-a",
+        "workspace_scope": "workspace-default",
+    }
+    enroll = client.enroll_sync_v2_dataset
+
+    async def complete_elsewhere(request):
+        response = await enroll(request)
+        repo.set_sync_v2_profile_state(
+            **scope,
+            profile_mode="local_first_sync",
+            device_id=request.device_id,
+            dataset_id=response["dataset_id"],
+            dataset_cursors={"notes.note": "19"},
+            dry_run_metadata={
+                "enrollment_only": True,
+                "encryption_policy": "server_trusted_v1",
+                "notes_organization_bootstrap_identity": "started",
+            },
+        )
+        return response
+
+    client.enroll_sync_v2_dataset = complete_elsewhere
+    result = await ServerSyncService(client=client, state_repository=repo).run_v2_dry_run(
+        **scope,
+        display_name="Laptop",
+        encryption_policy="server_trusted_v1",
+        enrollment_only=True,
+    )
+    profile = repo.get_sync_v2_profile_state(**scope)
+    assert profile["dataset_id"] == result["dataset_id"]
+    assert profile["dataset_cursors"] == {"notes.note": "19"}
+    assert profile["dry_run_metadata"]["notes_organization_bootstrap_identity"] == "started"
+
+
+@pytest.mark.asyncio
 async def test_reactivating_approved_enrollment_refreshes_capabilities_without_reenrollment(
     tmp_path,
 ):
@@ -1214,7 +1306,13 @@ async def test_settings_enrollment_retains_verified_notes_organization_profile(t
     )
 
     assert result["dataset_id"] == "dataset-1"
-    assert repo.get_sync_v2_profile_state(**scope) == previous
+    assert repo.get_sync_v2_profile_state(**scope) == {
+        **previous,
+        "dry_run_metadata": {
+            **previous["dry_run_metadata"],
+            "encryption_policy": "server_trusted_v1",
+        },
+    }
     assert client.calls == [("get_sync_v2_capabilities",)]
     client.get_sync_v2_profile.assert_awaited_once_with(device_id="device-1")
 

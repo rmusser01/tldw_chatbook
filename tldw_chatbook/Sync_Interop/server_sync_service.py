@@ -513,6 +513,7 @@ class ServerSyncService:
         metadata = dict(existing.get("dry_run_metadata") or {}) if existing else {}
         if bootstrap_identity:
             metadata["notes_organization_bootstrap_identity"] = bootstrap_identity
+        metadata["encryption_policy"] = dataset["encryption_policy"]
         state_repository.set_sync_v2_profile_state(
             server_profile_id=server_profile_id,
             authenticated_principal_id=authenticated_principal_id,
@@ -625,6 +626,7 @@ class ServerSyncService:
             if existing_dataset_id:
                 metadata = profile.get("dry_run_metadata") or {}
                 summary = None
+                verified_encryption_policy = None
                 bootstrap_identity = metadata.get(
                     "notes_organization_bootstrap_identity"
                 )
@@ -663,6 +665,7 @@ class ServerSyncService:
                             ) from exc
                         summary = {"dataset_id": existing_dataset_id}
                         capabilities_record = response["capabilities"]
+                        verified_encryption_policy = encryption_policy
                 if summary is None:
                     raise SyncV2EnrollmentError(
                         "Manual Sync setup cannot change the trust policy of an "
@@ -675,6 +678,7 @@ class ServerSyncService:
                     device_id=existing_device_id,
                     dataset_id=existing_dataset_id,
                     capabilities=capabilities_record,
+                    verified_encryption_policy=verified_encryption_policy,
                 ):
                     raise SyncV2EnrollmentError(
                         "The existing Sync v2 dataset changed during setup. Try again."
@@ -705,6 +709,19 @@ class ServerSyncService:
         if not sync_domains:
             raise ValueError("Server does not advertise any requested Sync v2 domains.")
 
+        if enrollment_only:
+            existing_device_id = self.state_repository.reserve_sync_v2_enrollment_device(
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+                workspace_scope=workspace_scope,
+                profile_mode=profile_mode,
+                proposed_device_id=str(uuid.uuid4()),
+            )
+            if existing_device_id is None:
+                raise SyncV2EnrollmentError(
+                    "The Sync v2 dataset changed during setup. Try again."
+                )
+
         device = await client.register_sync_v2_device(
             SyncV2DeviceRegisterRequest(
                 device_id=existing_device_id,
@@ -720,6 +737,10 @@ class ServerSyncService:
         )
         device_record = self._dump(device)
         device_id = str(device_record["device_id"])
+        if enrollment_only and device_id != existing_device_id:
+            raise SyncV2EnrollmentError(
+                "Manual Sync is unavailable. The server registered a different device."
+            )
 
         dataset = await client.enroll_sync_v2_dataset(
             SyncV2DatasetEnrollRequest(
@@ -756,7 +777,7 @@ class ServerSyncService:
                 "domains": sync_domains,
                 "encryption_policy": encryption_policy,
             }
-            self.state_repository.set_sync_v2_profile_state(
+            if self.state_repository.finish_sync_v2_enrollment(
                 server_profile_id=server_profile_id,
                 authenticated_principal_id=authenticated_principal_id,
                 workspace_scope=workspace_scope,
@@ -765,8 +786,23 @@ class ServerSyncService:
                 dataset_id=dataset_id,
                 capabilities=capabilities_record,
                 dry_run_metadata=result,
+            ):
+                return result
+            current = self.state_repository.get_sync_v2_profile_state(
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+                workspace_scope=workspace_scope,
+            ) or {}
+            metadata = current.get("dry_run_metadata") or {}
+            if (
+                current.get("device_id") == device_id
+                and current.get("dataset_id") == dataset_id
+                and metadata.get("encryption_policy") == encryption_policy
+            ):
+                return result
+            raise SyncV2EnrollmentError(
+                "The Sync v2 dataset changed during setup. Try again."
             )
-            return result
 
         pushed = await client.push_sync_v2_envelopes(
             SyncV2PushRequest(dataset_id=dataset_id, device_id=device_id, envelopes=[])

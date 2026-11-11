@@ -26954,7 +26954,8 @@ class SettingsScreen(BaseAppScreen):
             self.app.notify(str(exc), severity="warning")
         except Exception as exc:
             logger.warning(
-                "Sync v2 profile preparation failed (exception_category=%s).",
+                "Sync v2 profile preparation failed "
+                "(mode=local_first_sync, exception_category=%s).",
                 type(exc).__name__,
             )
             message = "Server activated, but Sync v2 setup could not be completed."

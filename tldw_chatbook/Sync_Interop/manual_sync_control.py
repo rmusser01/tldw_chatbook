@@ -261,13 +261,7 @@ class ManualSyncControlService:
                     None,
                 )
             )
-            or not (
-                enrollment.get("encryption_policy") == SERVER_TRUSTED_SYNC_POLICY
-                or (
-                    "encryption_policy" not in enrollment
-                    and enrollment.get("notes_organization_bootstrap_identity")
-                )
-            )
+            or enrollment.get("encryption_policy") != SERVER_TRUSTED_SYNC_POLICY
         ):
             return False
         capabilities = profile.get("capabilities") or {}
@@ -339,10 +333,16 @@ class ManualSyncControlService:
                 domains=selected_domains,
             )
             profile = preview.profile or {}
-            if preview.status == "preview-only" or (
-                prepare_notes_organization_only
-                and not self._can_prepare_notes_organization(
-                    profile, profile.get("dry_run_metadata") or {}
+            metadata = profile.get("dry_run_metadata") or {}
+            if (
+                preview.status == "preview-only"
+                or (
+                    prepare_notes_organization_only
+                    and not self._can_prepare_notes_organization(profile, metadata)
+                )
+                or (
+                    metadata.get("enrollment_only") is True
+                    and not prepare_notes_organization_only
                 )
             ):
                 return ManualSyncRunResult(
