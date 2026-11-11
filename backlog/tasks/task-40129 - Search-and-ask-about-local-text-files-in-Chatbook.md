@@ -31,3 +31,10 @@ Give people a dedicated native Local Files view for finding and asking about tex
 - ADR required: yes
 - ADR paths: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md and backlog/decisions/024-rag-citation-provenance-and-source-resolution.md
 - Reason: a new user-facing search authority and file citation source.
+
+## Implementation Notes
+
+- The native command palette opens Local Files. The view searches one existing local binding and opens its exact folder settings. Search prioritizes exact file names and paths and checks source metadata after the last capture. Preview, Reveal, and Ask revalidate the original receipt. Refresh job revisions and binding changes invalidate earlier evidence.
+- Ask uses the shared evidence and citation pipeline with configured loopback llama.cpp, loopback Ollama with an installed local model, or HTTPS Moonshot. The mounted and provider tests use controlled transports. No local inference server was listening for a live answer smoke test.
+- Targeted keyword, provider, Library, Console permission, and mounted checks covered the implementation. The full suite remains subject to the repository's opt-in rule. An unrelated writer lifecycle subset also reproduced two cross-process publication failures on clean `dev`.
+- ADR-241 defines native binding authority and ADR-024 defines transient file citations. Semantic integration follows on its own branch.

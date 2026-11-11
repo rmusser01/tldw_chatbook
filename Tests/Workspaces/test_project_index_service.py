@@ -121,6 +121,34 @@ async def test_binding_search_rejects_evidence_after_binding_revision_changes(
 
 
 @private_profile_test
+async def test_binding_evidence_refuses_earlier_file_changed_during_later_capture(
+    tmp_path, request, monkeypatch
+):
+    rig = Rig(tmp_path)
+    try:
+        for name in ("a.txt", "b.txt"):
+            (rig.root / name).write_text("shared marker", encoding="utf-8")
+        rig.enable()
+        rig.refresh()
+        rig.settle(seconds=30)
+        found = rig.service.search_binding(rig.key, "marker")
+        first, second = found.result.hits
+        capture = rig.service._capture_binding_file
+
+        def edit_first_during_second(*args, **kwargs):
+            if args[1] == second.relative_path:
+                (rig.root / first.relative_path).write_text("updated", encoding="utf-8")
+            return capture(*args, **kwargs)
+
+        monkeypatch.setattr(
+            rig.service, "_capture_binding_file", edit_first_during_second
+        )
+        assert rig.service.validate_binding_hits(found, found.result.hits) is None
+    finally:
+        await rig.close()
+
+
+@private_profile_test
 async def test_binding_search_uses_the_real_registry_fence(tmp_path, request):
     from types import SimpleNamespace
 
@@ -134,7 +162,8 @@ async def test_binding_search_uses_the_real_registry_fence(tmp_path, request):
 
     root = tmp_path / "project"
     root.mkdir()
-    source = root / "booking.txt"
+    (root / "notes").mkdir()
+    source = root / "notes" / "booking.txt"
     source.write_text("room booking policy", encoding="utf-8")
     registry = LocalWorkspaceRegistryService(WorkspaceDB(tmp_path / "registry.db"))
     registry.create_workspace(workspace_id="local-files", name="Local Files")
@@ -157,6 +186,7 @@ async def test_binding_search_uses_the_real_registry_fence(tmp_path, request):
 
         search = service.search_binding(key, "booking")
         assert [hit.excerpt for hit in search.result.hits] == ["room booking policy"]
+        assert search.result.coverage.state == "Ready"
         assert service.validate_binding_hits(search, search.result.hits) == (source,)
     finally:
         await close_project_index_service(app)

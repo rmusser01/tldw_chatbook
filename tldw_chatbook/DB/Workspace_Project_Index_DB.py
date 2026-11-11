@@ -1019,7 +1019,8 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
 
     @_activated
     def lexical_candidates(
-        self, authority: ProjectIndexSearchAuthority, query: str, *, limit: int
+        self, authority: ProjectIndexSearchAuthority, query: str, *, limit: int,
+        prioritize_path: bool = False,
     ) -> tuple[IndexCandidate, ...]:
         """Return metadata only, filtering the run exclusion floor before top-k."""
         if (
@@ -1049,13 +1050,27 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 1,
                 allowed,
             )
+            order = ""
+            if prioritize_path:
+                exact = fold_path_part(query.strip().replace("\\", "/"))
+
+                def path_priority(path):
+                    folded = fold_path_part(path)
+                    if folded == exact:
+                        return 0
+                    return 1 if folded.rsplit("/", 1)[-1] == exact else 2
+
+                conn.create_function("index_path_priority", 1, path_priority)
+                order = "index_path_priority(f.path),"
             try:
                 rows = conn.execute(
-                    "SELECT f.path,f.identity,f.content_sha256,c.line_start,c.line_end FROM chunk_fts JOIN chunks c ON c.id=chunk_fts.rowid JOIN files f ON f.path=c.path WHERE chunk_fts MATCH ? AND index_path_allowed(f.path)=1 ORDER BY bm25(chunk_fts),f.path,c.id LIMIT ?",
+                    f"SELECT f.path,f.identity,f.content_sha256,c.line_start,c.line_end FROM chunk_fts JOIN chunks c ON c.id=chunk_fts.rowid JOIN files f ON f.path=c.path WHERE chunk_fts MATCH ? AND index_path_allowed(f.path)=1 ORDER BY {order}bm25(chunk_fts),f.path,c.id LIMIT ?",
                     (match, limit),
                 ).fetchall()
             finally:
                 conn.create_function("index_path_allowed", 1, None)
+                if prioritize_path:
+                    conn.create_function("index_path_priority", 1, None)
             return tuple(
                 IndexCandidate(*tuple(result), rank) for rank, result in enumerate(rows)
             )

@@ -425,6 +425,14 @@ class TabNavigationProvider(Provider):
         tab_commands = [
             self._tab_command(tab_id) for tab_id in self.command_palette_tab_ids()
         ]
+        if not self.app.is_web:
+            tab_commands.append(
+                (
+                    "Open Local Files",
+                    "local_files",
+                    "Search and ask about files in an indexed Workspace folder",
+                )
+            )
 
         for command_text, tab_id, help_text in tab_commands:
             destination = self._shell_destination_for_tab(tab_id)

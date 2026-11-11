@@ -87,6 +87,12 @@ _SCREEN_OWNED_ROUTE_CSS: dict[str, tuple[str, ...]] = {
 
 
 _SCREEN_ROUTES: dict[str, ScreenRoute] = {
+    "local_files": ScreenRoute(
+        "local_files",
+        "local_files",
+        "tldw_chatbook.UI.Screens.local_files_screen",
+        "LocalFilesScreen",
+    ),
     "plugins": ScreenRoute(
         "plugins",
         "plugins",

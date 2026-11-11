@@ -34,15 +34,15 @@ Use explicitly configured local Workspace bindings. Keep the cache separate from
 
 ## 2. Ground answers in the selected file evidence
 
-- [ ] Add tests for empty evidence, a valid file citation, changed source evidence, and exact provider approval. Assert on the dispatched request at the answer adapter boundary.
-- [ ] Refactor `Library/library_rag_answer_service.py` around its existing evidence-consuming answer function. Keep the Library entry point and its payload behavior. Add `Workspaces/project_index/file_answers.py` to build a private file evidence bundle and dispatch against the approved provider and evidence.
-- [ ] Run the new answer tests and the Library answer service and citation regressions. Update ADR-024 and commit.
+- [x] Add tests for empty evidence, a valid file citation, changed source evidence, and exact provider approval. Assert on the dispatched request at the answer adapter boundary.
+- [x] Refactor `Library/library_rag_answer_service.py` around its existing evidence-consuming answer function. Keep the Library entry point and its payload behavior. Add `Workspaces/project_index/file_answers.py` to build a private file evidence bundle and dispatch against the approved provider and evidence.
+- [x] Run the new answer tests and the Library answer service and citation regressions. Update ADR-024 and commit.
 
 ## 3. Mount the native view and command
 
-- [ ] Add a mounted test in `Tests/UI/test_local_files_screen.py` for folder choice, results, preview, and a held search superseded by a second query.
-- [ ] Add `UI/Screens/local_files_screen.py`, register its lazy route in `UI/Navigation/screen_registry.py`, and expose a native-only palette command in `app_command_providers.py`. Use existing Workspace selection and Settings navigation. Resolve selected result actions and citations through the same receipt validator.
-- [ ] Verify the mounted flow at 80×24 and a wider layout, existing project index Settings/Console coverage, and scoped static checks. Update `Docs/Architecture/project-indexing.md` and the user guide. Commit the view.
+- [x] Add a mounted test in `Tests/UI/test_local_files_screen.py` for folder choice, results, preview, and a held search superseded by a second query.
+- [x] Add `UI/Screens/local_files_screen.py`, register its lazy route in `UI/Navigation/screen_registry.py`, and expose a native-only palette command in `app_command_providers.py`. Use existing Workspace selection and Settings navigation. Resolve selected result actions and citations through the same receipt validator.
+- [x] Verify the mounted flow at 80×24 and a wider layout, existing project index Console coverage, and scoped static checks. Update `Docs/Architecture/project-indexing.md` and the user guide. Commit the view.
 
 ## Semantic follow-up
 

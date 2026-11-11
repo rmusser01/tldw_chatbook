@@ -14,6 +14,7 @@ from uuid import uuid4
 import httpx
 
 from tldw_chatbook.Chat.citation_evidence_models import (
+    EVIDENCE_SNIPPET_CHAR_LIMIT,
     EvidenceBundle,
     EvidenceReference,
 )
@@ -188,30 +189,43 @@ async def answer_files(
     is_current: Callable[[], bool],
 ) -> LibraryRagAnswer:
     """Answer from bounded excerpts while the request and file receipts are live."""
-    hits = tuple(hit for hit in search.result.hits if hit.excerpt.strip())
+    selected = tuple(
+        (index, hit)
+        for index, hit in enumerate(search.result.hits)
+        if hit.excerpt.strip()
+    )
+    hits = tuple(hit for _, hit in selected)
 
     def build_bundle() -> EvidenceBundle:
         bundle_id = uuid4().hex
+        references = []
+        for citation, (hit_index, hit) in enumerate(selected, 1):
+            text = hit.excerpt.strip()
+            offset = hit.excerpt[: len(hit.excerpt) - len(hit.excerpt.lstrip())].count("\n")
+            line_start = hit.line_start + offset
+            submitted = text[:EVIDENCE_SNIPPET_CHAR_LIMIT].rstrip()
+            line_end = min(hit.line_end, line_start + submitted.count("\n"))
+            references.append(
+                EvidenceReference(
+                    evidence_id=f"S{citation}",
+                    source_id=f"{bundle_id}-{citation}",
+                    source_type="workspace_file",
+                    title=f"{hit.relative_path} · lines {line_start}–{line_end}",
+                    snippet=text,
+                    authority_label="Selected folder",
+                    metadata={
+                        "relative_path": hit.relative_path,
+                        "line_start": line_start,
+                        "line_end": line_end,
+                        "hit_index": hit_index,
+                    },
+                )
+            )
         return EvidenceBundle(
             bundle_id=bundle_id,
             query=query,
             source="Local Files",
-            references=tuple(
-                EvidenceReference(
-                    evidence_id=f"S{index}",
-                    source_id=f"{bundle_id}-{index}",
-                    source_type="workspace_file",
-                    title=f"{hit.relative_path} · lines {hit.line_start}–{hit.line_end}",
-                    snippet=hit.excerpt,
-                    authority_label="Selected folder",
-                    metadata={
-                        "relative_path": hit.relative_path,
-                        "line_start": hit.line_start,
-                        "line_end": hit.line_end,
-                    },
-                )
-                for index, hit in enumerate(hits, 1)
-            ),
+            references=tuple(references),
         )
 
     async def check_evidence() -> None:

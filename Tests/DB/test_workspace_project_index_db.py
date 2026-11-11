@@ -664,6 +664,29 @@ def test_filename_only_keyword_without_body_chunks(tmp_path, text):
         store.close_native()
 
 
+def test_native_keyword_prioritizes_exact_basename_over_mentions(tmp_path):
+    store, _, scope, claim = enabled_store(tmp_path)
+    try:
+        for path, text in (
+            ("src/report.py", "actual report contents"),
+            *((f"src/notes-{index}.py", "report.py report.py report.py") for index in range(12)),
+        ):
+            assert store.commit_scan_page(
+                scope,
+                claim.job_id,
+                page(text, path),
+                expected_job_revision=claim.job_revision,
+                authority_revision=1,
+            )
+        authority = search_authority(tmp_path, scope)
+        hits = store.lexical_candidates(
+            authority, "report.py", limit=1, prioritize_path=True
+        )
+        assert [hit.relative_path for hit in hits] == ["src/report.py"]
+    finally:
+        store.close_native()
+
+
 def _legacy_v2_cache(tmp_path):
     store, key, scope, claim = enabled_store(tmp_path)
     assert store.commit_scan_page(

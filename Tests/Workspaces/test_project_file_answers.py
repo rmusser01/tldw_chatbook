@@ -113,7 +113,8 @@ async def test_local_answer_cites_submitted_relative_path_and_lines(wire):
     assert reference.metadata == {
         "relative_path": "notes/retention.md",
         "line_start": 4,
-        "line_end": 7,
+        "line_end": 4,
+        "hit_index": 1,
     }
     assert HIT.relative_path not in reference.source_id
     (request,) = wire.requests
@@ -123,6 +124,23 @@ async def test_local_answer_cites_submitted_relative_path_and_lines(wire):
     prompt = payload["messages"][1]["content"]
     assert QUERY in prompt and HIT.excerpt in prompt and reference.title in prompt
     assert NAME_ONLY.relative_path not in prompt
+
+
+@pytest.mark.asyncio
+async def test_file_citation_covers_only_the_submitted_lines(wire):
+    excerpt = "a" * 3998 + "\nnext line\nfinal line"
+    hit = ProjectIndexHit("notes/long.txt", 11, 13, excerpt)
+    answer = await _ask(
+        {"api_settings": {"llama_cpp": LOCAL}}, search=_search(NAME_ONLY, hit)
+    )
+
+    (reference,) = answer.evidence_bundle.references
+    assert reference.metadata["hit_index"] == 1
+    assert reference.metadata["line_start"] == 11
+    assert reference.metadata["line_end"] == 12
+    assert reference.snippet.endswith("\nn")
+    (request,) = wire.requests
+    assert "lines 11–12" in json.loads(request.content)["messages"][1]["content"]
 
 
 @pytest.mark.asyncio

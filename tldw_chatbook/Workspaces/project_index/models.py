@@ -407,6 +407,7 @@ class BindingSearchResult:
     authority: ProjectIndexAuthority | None = field(default=None, repr=False)
     scope: ProjectIndexScope | None = field(default=None, repr=False)
     manifest_revision: int = 0
+    job_revision: int = 0
     sources: tuple[IndexCandidate, ...] = field(default=(), repr=False)
 
 

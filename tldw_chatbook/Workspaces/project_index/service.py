@@ -19,6 +19,10 @@ from tldw_chatbook.DB.Workspace_Project_Index_DB import (
     WorkspaceProjectIndexDB,
     _path_allowed,
 )
+from tldw_chatbook.Utils.filesystem_identity import (
+    capture_directory_chain,
+    stat_identity_digest,
+)
 from .lifetime import BindingLifetime, LifetimeBusy
 from .models import (
     MAX_CACHE_BYTES,
@@ -379,13 +383,14 @@ class ProjectIndexService:
             return self._search_owned(authority, query, limit=limit).result
 
     def search_binding(
-        self, key: ProjectIndexKey, query: str, *, limit: int = 10
+        self, key: ProjectIndexKey, query: str, *, limit: int = 10,
+        stop: threading.Event | None = None,
     ) -> BindingSearchResult:
         """Search the exact folder selected by the user, with live file receipts."""
         if type(key) is not ProjectIndexKey:
             raise ValueError("invalid_binding_key")
         with self.registry_connection_scope():
-            return self._search_owned(key, query, limit=limit)
+            return self._search_owned(key, query, limit=limit, stop=stop)
 
     def validate_binding_hits(
         self, search: BindingSearchResult, hits: tuple[ProjectIndexHit, ...]
@@ -413,9 +418,11 @@ class ProjectIndexService:
                     return (
                         status.scope == search.scope
                         and status.manifest_revision == search.manifest_revision
+                        and status.job_revision == search.job_revision
                         and status.state in {"Ready", "Partial", "Building"}
                     )
 
+            stamps = {}
             for path in dict.fromkeys(paths):
                 if not current() or not _path_allowed(path, live.exclusions):
                     return None
@@ -428,14 +435,15 @@ class ProjectIndexService:
                     or capture.content_sha256 != source.content_sha256
                 ):
                     return None
-            if not current():
+                stamps[path] = (capture.identity, capture.mtime_ns, capture.size_bytes)
+            if not self._files_still_current(live, stamps) or not current():
                 return None
             return tuple(live.root.path / path for path in paths)
 
-    def _capture_binding_file(self, live, path):
+    def _capture_binding_file(self, live, path, *, stop=None):
         scanner = ProjectScanner()
         try:
-            return scanner.capture_file(live, path, stop=threading.Event())
+            return scanner.capture_file(live, path, stop=stop or threading.Event())
         finally:
             if not scanner.retired:
                 self._operation_local.operation.retained.append(scanner)
@@ -443,12 +451,39 @@ class ProjectIndexService:
                     "index_reader_retirement_unproven"
                 )
 
+    @staticmethod
+    def _files_still_current(live, stamps) -> bool:
+        # Capturing a later file can take time. Recheck metadata for the whole
+        # batch before publication without reopening any file contents.
+        root_count = len(live.chain.identities)
+        try:
+            for relative_path, expected in stamps.items():
+                path = live.root.path / relative_path
+                chain = capture_directory_chain(path.parent)
+                if (
+                    chain.canonical_root != path.parent
+                    or chain.identities[-root_count:] != live.chain.identities
+                ):
+                    return False
+                info = path.lstat()
+                if (
+                    not stat.S_ISREG(info.st_mode)
+                    or getattr(info, "st_file_attributes", 0) & 0x400
+                    or (stat_identity_digest(info), info.st_mtime_ns, info.st_size) != expected
+                    or capture_directory_chain(path.parent) != chain
+                ):
+                    return False
+        except (OSError, ValueError):
+            return False
+        return True
+
     def _search_owned(
         self,
         authority: ProjectIndexSearchAuthority | ProjectIndexKey,
         query: str,
         *,
         limit: int,
+        stop: threading.Event | None = None,
     ) -> BindingSearchResult:
         if not isinstance(query, str) or not query.strip() or len(query) > 2048:
             raise ValueError("invalid_query")
@@ -463,6 +498,8 @@ class ProjectIndexService:
         else:
             key = authority.scope.key
         user_search = authority is None
+        if stop is not None and stop.is_set():
+            return unavailable
         if authority is not None and not authority.guard():
             return unavailable
         with self._search_store(key, require_binding=user_search) as store:
@@ -483,10 +520,11 @@ class ProjectIndexService:
                         live.chain,
                         live.exclusions,
                         live.authority_revision,
-                        lambda: self._reader(key) == live,
+                        lambda: (stop is None or not stop.is_set())
+                        and self._reader(key) == live,
                         None,
                         lambda candidate: self._capture_binding_file(
-                            live, candidate.relative_path
+                            live, candidate.relative_path, stop=stop
                         ),
                     )
                 if (
@@ -511,14 +549,16 @@ class ProjectIndexService:
                     return unavailable
                 # The native view's witness is already held by this registry
                 # transaction. Its guard performs a fresh read outside it.
-                ranking_authority = (
-                    replace(admitted, guard=lambda: True) if user_search else admitted
-                )
-                candidates = store.lexical_candidates(
-                    ranking_authority, query, limit=100
-                )
+                if user_search:
+                    candidates = store.lexical_candidates(
+                        replace(admitted, guard=lambda: True),
+                        query, limit=100, prioritize_path=True,
+                    )
+                else:
+                    candidates = store.lexical_candidates(admitted, query, limit=100)
             hits = []
             sources = []
+            stamps = {}
             stale = False
             for candidate in candidates:
                 if not authority.guard():
@@ -532,6 +572,7 @@ class ProjectIndexService:
                         or current_status.scope != status.scope
                         or current_status.state not in {"Ready", "Partial", "Building"}
                         or current_status.manifest_revision != status.manifest_revision
+                        or (user_search and current_status.job_revision != status.job_revision)
                         or not _path_allowed(
                             candidate.relative_path, admitted.exclusions
                         )
@@ -581,16 +622,22 @@ class ProjectIndexService:
                 hits.append(hit)
                 if user_search:
                     sources.append(candidate)
+                    stamps[capture.relative_path] = (
+                        capture.identity, capture.mtime_ns, capture.size_bytes
+                    )
                 if len(hits) >= limit:
                     break
             if not authority.guard():
                 return unavailable
+            if user_search and not self._files_still_current(live, stamps):
+                return BindingSearchResult(ProjectSearchResult("partial", (), None, True))
             with self._fence(authority.scope.key) as current:
                 final = store.load_status(authority.scope.key)
                 if (
                     current != live
                     or final.scope != status.scope
                     or final.manifest_revision != status.manifest_revision
+                    or (user_search and final.job_revision != status.job_revision)
                     or final.state not in {"Ready", "Partial", "Building"}
                 ):
                     return unavailable
@@ -613,10 +660,11 @@ class ProjectIndexService:
                     result = replace(result, hits=result.hits[:-1])
                 if user_search:
                     return BindingSearchResult(
-                        result,
+                        replace(result, coverage=final),
                         live,
                         final.scope,
                         final.manifest_revision,
+                        final.job_revision,
                         tuple(sources[: len(result.hits)]),
                     )
                 return BindingSearchResult(result)
