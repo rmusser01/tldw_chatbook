@@ -132,6 +132,10 @@ from uuid import uuid4
 
 from loguru import logger
 
+from tldw_chatbook.console_app_services import (
+    read_console_runtime,
+    read_raw_cli_runtime,
+)
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL,
     ConsoleLifecycleRevisionChanged,
@@ -1353,7 +1357,7 @@ class ConsoleRuntime:
         from .console_raw_cli import NativeRawCliSource, RawCliRuntime
         from tldw_chatbook.Utils.platform_files import supports_native_process_groups
 
-        if type(getattr(self._app, "raw_cli_runtime", None)) is not RawCliRuntime:
+        if type(read_raw_cli_runtime(self._app)) is not RawCliRuntime:
             if self._raw_cli_source is not None:
                 return self._raw_cli_source
             return None
@@ -5251,7 +5255,7 @@ class ConsoleRuntime:
             if (
                 self._run_hooks_engine is not None
                 and self._legacy_hooks_source is None
-                and getattr(self._app, "console_runtime", None) is self
+                and read_console_runtime(self._app) is self
             ):
                 from tldw_chatbook.Agents.legacy_hook_ownership import (
                     NativeLegacyHookSource,

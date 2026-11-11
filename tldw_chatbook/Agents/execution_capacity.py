@@ -15,6 +15,11 @@ from threading import Lock
 from typing import Literal
 from uuid import uuid4
 
+from tldw_chatbook.state.execution_owner_context import (
+    _current_owner,
+    current_execution_owner as current_execution_owner,
+)
+
 from loguru import logger
 
 from .agent_models import WorkOrigin as WorkOrigin
@@ -235,16 +240,6 @@ class RuntimeCapacity:
                 sum(entry.stopping_model_lifelines for entry in entries),
                 entries,
             )
-
-
-_current_owner: ContextVar[ExecutionOwner | None] = ContextVar(
-    "agent_execution_owner", default=None
-)
-
-
-def current_execution_owner() -> ExecutionOwner | None:
-    """Return this run thread's owner (explicitly bound again in children)."""
-    return _current_owner.get()
 
 
 _current_ordinary_tree = ContextVar("ordinary_console_tree", default=None)

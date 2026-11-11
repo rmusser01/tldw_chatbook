@@ -12,6 +12,7 @@ from types import MethodType, SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
+from tldw_chatbook.console_app_services import read_raw_cli_runtime
 from .agent_models import RUN_DONE
 from .goal_iteration import capture_manifest, digest, verifier_digest
 from .goal_storage_lifetime import goal_storage_operation, owned_goal_storage
@@ -283,7 +284,7 @@ class _TaskEvidence:
         if (
             not is_native_raw_cli_runtime(provider._runtime)
             or provider._runtime
-            is not getattr(authorization.phase._controller.app, "raw_cli_runtime", None)
+            is not read_raw_cli_runtime(authorization.phase._controller.app)
         ):
             raise ValueError("native_verifier_runtime_required")
         spec = next(

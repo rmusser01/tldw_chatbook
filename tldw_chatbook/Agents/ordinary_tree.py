@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from inspect import getattr_static
 from threading import Lock
 
+from tldw_chatbook.console_app_services import read_mcp_service
 from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
 
 from .execution_capacity import CapacityRefused, WorkOrigin
@@ -130,7 +131,7 @@ class OrdinaryTurn:
         if (
             self.native_permission_publication is not None
             or self.permission is not None
-            or getattr(self.app, "unified_mcp_service", None) is not service
+            or read_mcp_service(self.app) is not service
             or service.local_service.store is not store
             or service._permission_store is not candidate
         ):

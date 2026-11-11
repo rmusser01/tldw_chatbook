@@ -8,6 +8,11 @@ import shutil
 from contextlib import ExitStack, asynccontextmanager, contextmanager, nullcontext
 from pathlib import Path
 
+from tldw_chatbook.console_app_services import (
+    read_app_config,
+    read_console_runtime,
+    read_workspace_registry,
+)
 from tldw_chatbook.Agents.activation import captured_sources, execution
 from tldw_chatbook.Agents.execution_capacity import CapacityRefused, WorkOrigin
 from tldw_chatbook.DB.base_db import operation_owned_connection
@@ -235,11 +240,11 @@ class _ReferenceRead:
         )
         self.runtime = getattr(controller, "_hooks_v2_runtime", None)
         self.app = getattr(controller, "app", None)
-        self.app_runtime = getattr(self.app, "console_runtime", None)
-        self.app_config = getattr(self.app, "app_config", None)
+        self.app_runtime = read_console_runtime(self.app)
+        self.app_config = read_app_config(self.app)
         self.persistence = getattr(self.store, "persistence", None)
         self.database = getattr(self.persistence, "db", None)
-        self.registry = getattr(self.app, "workspace_registry_service", None)
+        self.registry = read_workspace_registry(self.app)
         self.registry_db = getattr(self.registry, "db", None)
         self.identity = _session_identity(session)
         self.sources = captured_sources(None)
@@ -266,15 +271,15 @@ class _ReferenceRead:
             c.store is not self.store
             or getattr(c, "app", None) is not self.app
             or getattr(c, "_hooks_v2_runtime", None) is not r
-            or getattr(self.app, "console_runtime", None) is not self.app_runtime
+            or read_console_runtime(self.app) is not self.app_runtime
             or self.store._sessions.get(self.session.id) is not self.session
             or _session_identity(self.session) != self.identity
             or c._disposed
             or c._shutdown_requested.is_set()
-            or getattr(self.app, "app_config", None) is not self.app_config
+            or read_app_config(self.app) is not self.app_config
             or getattr(self.store, "persistence", None) is not self.persistence
             or getattr(self.persistence, "db", None) is not self.database
-            or getattr(self.app, "workspace_registry_service", None)
+            or read_workspace_registry(self.app)
             is not self.registry
             or getattr(self.registry, "db", None) is not self.registry_db
             or refs.reference_callbacks() != self.callbacks

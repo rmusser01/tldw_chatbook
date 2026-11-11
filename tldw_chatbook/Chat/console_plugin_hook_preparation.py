@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+from tldw_chatbook.console_app_services import read_mcp_service
 from tldw_chatbook.Agents.activation import captured_sources, execution
 from tldw_chatbook.Agents.execution_capacity import (
     CapacityRefused,
@@ -267,14 +268,14 @@ class _Preparation:
 
         configuration = self.configuration
         controller, session = self.source.controller, self.source.session
-        mcp = getattr(controller.app, "unified_mcp_service", None)
+        mcp = read_mcp_service(controller.app)
         permission = getattr(mcp, "_permission_store", None)
         def reservation_current():
             self.check(self.service)
             if (
                 not self.owner.is_admitted
                 or self.operation is None
-                or getattr(controller.app, "unified_mcp_service", None) is not mcp
+                or read_mcp_service(controller.app) is not mcp
             ):
                 raise PermissionError("Original compaction MCP reservation changed.")
 

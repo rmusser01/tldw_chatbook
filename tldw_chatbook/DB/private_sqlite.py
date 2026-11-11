@@ -134,7 +134,7 @@ _SQLITE_OWNER_POLICIES = {
         "Restricted disposable Chroma candidate metadata with copied WAL visibility; never a live root.",
     ),
     "recovery.validation_schema": SQLiteOwnerPolicy(
-        "tldw_chatbook/Backup_Recovery/sqlite_validation",
+        "tldw_chatbook/DB/recovery_workflow_schema",
         _MEMORY,
         "Installed SQL only, in-memory reference for exact physical schema metadata.",
     ),

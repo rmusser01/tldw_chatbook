@@ -6,6 +6,11 @@ import inspect
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
+from tldw_chatbook.console_app_services import (
+    read_app_config,
+    read_mcp_service,
+    read_workspace_registry,
+)
 from .activation import _sources, captured_sources, execution
 from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
@@ -54,11 +59,11 @@ class _AgentSources:
 
         self.controller, self.runtime, self.bridge = controller, runtime, bridge
         self.app, self.store, self.session = controller.app, controller.store, session
-        self.app_config = getattr(self.app, "app_config", None)
+        self.app_config = read_app_config(self.app)
         self.configuration = configuration
         self.config_identity = config.current_config_identity()
         self.persistence = self.store.persistence
-        self.registry = getattr(self.app, "workspace_registry_service", None)
+        self.registry = read_workspace_registry(self.app)
         self.databases = (
             bridge._db,
             getattr(self.persistence, "db", None),
@@ -67,7 +72,7 @@ class _AgentSources:
         self.database_paths = tuple(
             getattr(db, "db_path", None) for db in self.databases
         )
-        self.mcp = getattr(self.app, "unified_mcp_service", None)
+        self.mcp = read_mcp_service(self.app)
         self.permission = getattr(self.mcp, "_permission_store", None)
         self.permission_path = getattr(self.permission, "path", None)
         self.prospective_mcp_store = self.prospective_mcp_identity = None
@@ -146,13 +151,13 @@ class _AgentSources:
             or self.store.persistence is not self.persistence
             or self.bridge._db is not self.databases[0]
             or self.persistence.db is not self.databases[1]
-            or getattr(self.app, "workspace_registry_service", None)
+            or read_workspace_registry(self.app)
             is not self.registry
             or getattr(self.registry, "db", None) is not self.databases[2]
             or tuple(getattr(db, "db_path", None) for db in self.databases)
             != self.database_paths
-            or getattr(self.app, "app_config", None) is not self.app_config
-            or getattr(self.app, "unified_mcp_service", None) is not self.mcp
+            or read_app_config(self.app) is not self.app_config
+            or read_mcp_service(self.app) is not self.mcp
             or getattr(self.mcp, "_permission_store", None) is not self.permission
             or getattr(self.permission, "path", None) != self.permission_path
             or self.controller._scratch_spaces is not self.scratch_manager

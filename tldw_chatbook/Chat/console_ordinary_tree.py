@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from inspect import getattr_static
 
+from tldw_chatbook.console_app_services import read_mcp_service
 from tldw_chatbook.Agents.activation import (
     callable_source_current as _function_unchanged,  # noqa: F401 - original source check import
     capture_callable_source as _function_record,  # noqa: F401 - original source record import
@@ -278,7 +279,7 @@ async def admit_ordinary_turn(
                 if tree.source is not None
                 else bind_ordinary_tree(tree)
             ):
-                service = getattr(tree.app, "unified_mcp_service", None)
+                service = read_mcp_service(tree.app)
                 if not original_mcp_capture_matches(
                     controller, session, original_configuration, pending=True
                 ):
@@ -554,7 +555,7 @@ def _capture_maximum(tree, *, hook_read=None):
                 resolve_effective_state_by_key,
             )
 
-            mcp = getattr(tree.app, "unified_mcp_service", None)
+            mcp = read_mcp_service(tree.app)
             if mcp is not None and not configuration.mcp_capture_pending:
                 payload = _permission_payload(tree)
                 if payload is None or not payload.get("kill_switch", False):

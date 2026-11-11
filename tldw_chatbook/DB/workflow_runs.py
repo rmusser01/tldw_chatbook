@@ -646,7 +646,7 @@ class WorkflowRunsStore:
 
     def open_change_window(self, phase, reservation, roots):
         """Commit the original inert reservation before its first native job."""
-        from tldw_chatbook.Workspaces.change_review_finalization import (
+        from tldw_chatbook.Workspaces.change_review_models import (
             ChangeReviewReservation,
         )
 
@@ -695,7 +695,7 @@ class WorkflowRunsStore:
 
     def anchor_change_window(self, window_id, authorization, owner):
         """Associate only an already committed original native member."""
-        from tldw_chatbook.Agents.execution_capacity import current_execution_owner
+        from tldw_chatbook.state.execution_owner_context import current_execution_owner
 
         # bind_native runs before the model loop installs its run ContextVar.
         # Its committed original owner and actual joined rows are the anchor.

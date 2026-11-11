@@ -1748,10 +1748,9 @@ class AutomaticWorkLedger:
             ):
                 continue
             # Validate this phase's exact records, not a second global history sweep.
-            from tldw_chatbook.Agents.goal_iteration import digest
             from tldw_chatbook.Agents.workflow_models import WorkflowCheckpoint
 
-            from .workflow_runs import WorkflowRunsStore
+            from .workflow_runs import WorkflowRunsStore, _hash
 
             try:
                 for task in tasks:
@@ -1766,9 +1765,9 @@ class AutomaticWorkLedger:
                     ).fetchone()
                     checkpoint = WorkflowCheckpoint.model_validate_json(saved[1])
                     if (
-                        digest(saved[1]) != saved[0]
+                        _hash(saved[1]) != saved[0]
                         or checkpoint.run_id != result.run_id
-                        or checkpoint.result_digest != digest(result.canonical_json())
+                        or checkpoint.result_digest != _hash(result.canonical_json())
                     ):
                         raise ValueError("checkpoint_mismatch")
             except (ValueError, TypeError):

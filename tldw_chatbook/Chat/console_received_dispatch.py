@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from tldw_chatbook.console_app_services import read_app_config
 from tldw_chatbook import config
 from tldw_chatbook.config import first_send_persistence_source_current as _native_config_current
 from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
@@ -601,7 +602,7 @@ def accept_turn(
 
         first_send_source = (
             config.current_config_identity(),
-            getattr(self._app, "app_config", None),
+            read_app_config(self._app),
             self._chat_controller,
             self._chat_store,
         )

@@ -1,8 +1,31 @@
 """Frozen v26 workflow catalog and private staging validation (ADR-285)."""
 
 import sqlite3
+from contextlib import closing
 
-from tldw_chatbook.Backup_Recovery.sqlite_validation import _migrate_installed_catalog
+
+def open_installed_schema() -> sqlite3.Connection:
+    """Open the checked in-memory reference for installed schema DDL."""
+    from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+    return connect_private_sqlite("recovery.validation_schema", ":memory:")
+
+
+def _migrate_installed_catalog(catalog, migration):
+    """Replay fixed installed DDL to derive the exact SQLite catalog."""
+    with closing(open_installed_schema()) as connection:
+        for sql in sorted(catalog, key=lambda sql: not sql.startswith("CREATE TABLE")):
+            if not sql.startswith("CREATE TABLE sqlite_sequence"):
+                connection.execute(sql)
+        for sql in migration:
+            connection.execute(sql)
+        return tuple(
+            row[0]
+            for row in connection.execute(
+                "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type,name"
+            )
+        )
+
 
 WORKFLOW_OBJECTS = (
     "CREATE INDEX idx_workflow_conversation ON workflow_runs(conversation_id, created_at DESC, id)",

@@ -7,6 +7,12 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from threading import Event, Lock
 
+from tldw_chatbook.console_app_services import (
+    read_app_config,
+    read_chat_database,
+    read_console_runtime,
+    read_workspace_registry,
+)
 from tldw_chatbook.Agents.activation import (
     captured_sources,
     raw_cli_storage_execution,
@@ -45,10 +51,10 @@ class _UserRawCliCall:
         self.conversation_id = self.session.persisted_conversation_id
         self.persistence = self._store.persistence
         self.database = getattr(self.persistence, "db", None)
-        self.registry = getattr(self.app, "workspace_registry_service", None)
+        self.registry = read_workspace_registry(self.app)
         self.registry_db = getattr(self.registry, "db", None)
         self.registry_revision = getattr(self.registry, "_mutation_generation", None)
-        self.app_config = getattr(self.app, "app_config", None)
+        self.app_config = read_app_config(self.app)
         self.config_generation = config.get_runtime_config_generation()
         self._db = self.runtime._agent_runs_db
         self.receipts = self.runtime._activity_receipts
@@ -95,7 +101,7 @@ class _UserRawCliCall:
             self._cancelled
             or r._disposed
             or r._app is not self.app
-            or getattr(self.app, "console_runtime", None) is not r
+            or read_console_runtime(self.app) is not r
             or self.app.raw_cli_runtime is not self.raw
             or r._chat_store is not self._store
             or self._store._sessions.get(self.session.id) is not self.session
@@ -104,10 +110,10 @@ class _UserRawCliCall:
             or self.session.id in r._admission_fenced_sessions
             or self._store.persistence is not self.persistence
             or getattr(self.persistence, "db", None) is not self.database
-            or getattr(self.app, "chachanotes_db", None) is not self.database
-            or getattr(self.app, "app_config", None) is not self.app_config
+            or read_chat_database(self.app) is not self.database
+            or read_app_config(self.app) is not self.app_config
             or config.get_runtime_config_generation() != self.config_generation
-            or getattr(self.app, "workspace_registry_service", None)
+            or read_workspace_registry(self.app)
             is not self.registry
             or getattr(self.registry, "db", None) is not self.registry_db
             or getattr(self.registry, "_mutation_generation", None)

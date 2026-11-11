@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from tldw_chatbook.console_app_services import read_console_runtime
 from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
 from tldw_chatbook.Agents.workflow_phase import (
     WorkflowPhaseAuthorization as WorkflowPhaseAuthorization,
@@ -131,7 +132,7 @@ async def _accept_remaining_workflow_phase(
         raise ValueError("remaining_decision_required")
     if not native_workflow_qualified():
         raise AutomaticWorkRefused("workflow_platform_unqualified")
-    runtime = getattr(controller.app, "console_runtime", None)
+    runtime = read_console_runtime(controller.app)
     bridge, store = controller._agent_bridge, controller.store
     service = runtime.ensure_workflow_service()
     ledger, database = bridge.runs_db.automatic_work, bridge.runs_db
