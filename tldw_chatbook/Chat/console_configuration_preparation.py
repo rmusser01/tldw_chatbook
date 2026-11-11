@@ -1132,7 +1132,7 @@ def _skill_publisher_guard_current(source, guard):
 @contextmanager
 def native_skill_trust_publication(preparation):
     """Track only this original native producer invocation; never grant execution."""
-    from tldw_chatbook.app_skill_wiring import (
+    from tldw_chatbook.Skills_Interop.skill_trust_models import (
         _SkillTrustPublisher,
         _skill_publisher_identity,
         _skill_trust_publisher,
@@ -1171,7 +1171,7 @@ def native_skill_trust_publication(preparation):
 
 def finish_native_skill_trust_publication(marker, winner):
     """Publish a source-bound receipt after the original local getter returns."""
-    from tldw_chatbook.app_skill_wiring import (
+    from tldw_chatbook.Skills_Interop.skill_trust_models import (
         _SkillTrustPublisher,
         _skill_publisher_identity,
     )

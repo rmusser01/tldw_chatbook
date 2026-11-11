@@ -1,7 +1,3 @@
-import asyncio
-import threading
-from contextvars import ContextVar
-from dataclasses import dataclass, field
 from typing import (  # noqa: UP035 - preserve original public annotation objects
     Any,
     Callable,
@@ -10,25 +6,11 @@ from typing import (  # noqa: UP035 - preserve original public annotation object
 
 from . import app_service_wiring as _source_wiring
 
-_skill_trust_publisher = ContextVar("console_skill_trust_publisher", default=None)
-
-
-@dataclass(slots=True)
-class _SkillTrustPublisher:
-    preparation: Any = field(repr=False)
-    thread_id: int
-    task: Any = field(repr=False)
-    guard: Any = field(repr=False)
-    candidate: Any = field(default=None, repr=False)
-    active: bool = True
-
-
-def _skill_publisher_identity():
-    try:
-        task = asyncio.current_task()
-    except RuntimeError:
-        task = None
-    return threading.get_ident(), task
+from .Skills_Interop.skill_trust_models import (
+    _SkillTrustPublisher,
+    _skill_publisher_identity,
+    _skill_trust_publisher as _skill_trust_publisher,
+)
 
 
 def record_native_skill_trust_candidate(app, candidate):
