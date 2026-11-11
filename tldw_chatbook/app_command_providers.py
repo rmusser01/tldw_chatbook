@@ -235,7 +235,6 @@ def _navigate_via_screen(
 
 
 def _open_library_import(app: App) -> None:
-    """Open the import canvas even when Library is already on another view."""
     _navigate_via_screen(
         app,
         TAB_LIBRARY,
