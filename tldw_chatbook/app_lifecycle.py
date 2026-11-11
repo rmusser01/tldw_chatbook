@@ -404,14 +404,10 @@ class LifecycleMixin:
             )
 
     async def _close_main_databases(self) -> None:
-        """Retire the main stores' handles at quit (TASK-38955, TASK-39047).
-
-        ChaChaNotes, media, Dreams, Guardian, and (TASK-39117) the Workspace,
-        Library Collections and notifications stores each close their handles
-        on every thread only if none is in use, so a straggler worker's write is
-        never aborted; a busy store is left to close with the process. Each
-        idle store then closes this thread's handle with its checkpoint wait
-        bounded. In-memory stores keep their data. Failures never abort.
+        """Retire idle main-store handles across threads at quit (TASK-39117).
+        A busy store keeps its live transaction. Idle stores close this
+        thread's handle with a bounded checkpoint. In-memory data survives,
+        and close failures never abort shutdown.
         """
         for name, label in (
             ("chachanotes_db", "ChaChaNotes"),

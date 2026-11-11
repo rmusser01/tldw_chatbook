@@ -5369,44 +5369,22 @@ class TldwCli(
             return None
 
     def _schedule_initial_screen_preimport(self) -> None:
-        """Warm the initial screen's module while the splash is still up.
+        """Warm the initial screen's module on a worker while the splash is up.
 
-        task-21110. Boot with the splash enabled (the default) is strictly
-        serial: the splash owns the event loop for its full duration, and only
-        when it closes does ``_push_initial_screen`` synchronously
-        ``import_module`` the initial route's module on that same loop --
-        measured at 0.31s warm and 0.94s on a first boot after an upgrade,
-        for the 306 in-package modules chat_screen adds on top of the
-        636-module boot closure. The existing pre-importer cannot
-        help: it is armed by ``_schedule_deferred_startup_work`` at the tail of
-        ``_post_mount_setup``, which itself only runs *after* that push.
+        TASK-21110: boot otherwise pays the initial import synchronously after
+        the splash, before the whole-registry pass can start. The original
+        measurement was 0.31 s warm and 0.94 s cold for the Console route.
 
-        This moves a start time, not machinery: the work is the exact
-        ``_preimport_screens`` body the whole-registry pass already uses, with
-        its per-module-lock race semantics (a real navigation racing this
-        thread blocks on CPython's own import lock and then finds the finished
-        module in ``sys.modules``; a failed import is never cached, so the real
-        push fails identically to today). Worst case if the user skips the
-        splash mid-import, the push blocks on that same lock -- no worse than
-        the synchronous import it replaces.
+        Reuse _preimport_screens and CPython's import lock. Navigation racing
+        the worker waits for the same import, and failures are still retried
+        by the real push. Skipping the splash mid-import has the same worst
+        case as the original synchronous import.
 
-        Gated on ``_screen_preimport_enabled()`` so the pre-import feature has
-        exactly one on/off switch (``TLDW_SCREEN_PREIMPORT``, default off under
-        pytest), and re-checked against ``splash_screen_active`` because a
-        keypress can close the splash inside the scheduling delay -- past that
-        point the push either already happened or is imminent, and a second
-        thread would only contend with it.
-
-        Deliberately NOT gated on core count (TASK-21113). The two
-        pre-importers share ``_preimport_screens`` and one enable switch, but
-        the core-count question has opposite answers for them: the
-        whole-registry pass is speculative work for screens the user may
-        never open, so a slow machine should be throttled; this one is the
-        initial screen's own import, which the boot pays either way, and
-        moving it off the event loop is worth *more* on a slow machine
-        (task-21110 measured close-to-usable -46% on a cold first boot).
-        Throttling it would put a certain cost back on the loop to dodge a
-        speculative one. See ``_screen_preimport_pacing``.
+        Use the shared TLDW_SCREEN_PREIMPORT switch (off under pytest by
+        default). Recheck splash state because a keypress can close it during
+        the scheduling delay. Keep the initial route independent of the
+        whole-registry core-count throttle (TASK-21113): boot pays this
+        import on every machine, and moving it off-loop helps slower ones.
         """
         if not self._screen_preimport_enabled():
             return

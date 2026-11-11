@@ -1,5 +1,5 @@
 # tldw_chatbook.* modules resident after `import tldw_chatbook.app`.
-# 685 modules. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
+# 683 modules. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
 tldw_chatbook
 tldw_chatbook.ACP_Interop
 tldw_chatbook.ACP_Interop.runtime_process
@@ -67,7 +67,6 @@ tldw_chatbook.Character_Chat.character_persona_scope_service
 tldw_chatbook.Character_Chat.chat_dictionary_scope_service
 tldw_chatbook.Character_Chat.emote_directives
 tldw_chatbook.Character_Chat.local_character_persona_service
-tldw_chatbook.Character_Chat.local_chat_dictionary_service
 tldw_chatbook.Character_Chat.server_character_persona_service
 tldw_chatbook.Character_Chat.server_chat_dictionary_service
 tldw_chatbook.Character_Chat.visual_identity
@@ -167,7 +166,6 @@ tldw_chatbook.DB.keyword_store
 tldw_chatbook.DB.library_search_engine
 tldw_chatbook.DB.media_db_errors
 tldw_chatbook.DB.private_sqlite
-tldw_chatbook.DB.private_sqlite_files
 tldw_chatbook.DB.private_sqlite_process
 tldw_chatbook.DB.private_sqlite_protocol
 tldw_chatbook.DB.private_sqlite_values

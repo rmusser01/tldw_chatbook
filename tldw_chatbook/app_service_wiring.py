@@ -1076,53 +1076,28 @@ class ServiceWiringMixin(
                 return None
 
     def ensure_notes_sync_runtime_started(self) -> "asyncio.Task[None] | None":
-        """Schedule the owner's NON-forced ``start()`` when boot's gate skipped it.
+        """Schedule the Notes Sync owner's non-forced start if boot skipped it.
 
-        TASK-34000.71: on a profile with no lasting-sync root, ``on_mount``
-        neither constructs nor starts the runtime (TASK-21247), and the
-        Library screen later builds the owner lazily without starting it --
-        so it sits at its constructor status ``"starting"``, which the setup
-        gate refuses, while the one force-start that would move it
-        (``review_setup``) is reachable only through the option that gate
-        refuses. The Library side calls this once it holds the owner. A
-        non-forced start runs the same TASK-21112 evidence probe boot would
-        have: with no root it defers to ``"not_configured"`` WITHOUT opening
-        the state store (the status first-time setup is offered from), and
-        with a configured root it is the full start boot would have run.
+        TASK-34000.71: a profile without a lasting sync root never starts at
+        boot. Without this call, the lazy Library owner stays at "starting"
+        and cannot reach setup. The ordinary evidence probe settles an
+        unconfigured profile without opening the state store, or starts a
+        configured one normally.
 
-        Idempotent, and a no-op in every case where there is nothing to do:
-        a start task already recorded (boot's own, or an earlier call here)
-        is returned as-is, so a configured user's in-flight boot start is
-        never doubled or re-reported; a build failure (``safe reader``) and
-        an owner double without ``start`` schedule nothing. The task slot is
-        written under the owner-construction lock, so a racing first reader
-        cannot schedule two starts over one owner, and it carries the boot
-        path's task name and done-callback (``_observe_notes_sync_runtime_
-        start``), which is what makes a lazily started runtime stop at exit
-        exactly like a boot-started one. Must be called on the event-loop
-        thread: without a running loop nothing is scheduled.
+        The construction lock makes this idempotent. Return a recorded
+        in-flight or completed start, and preserve the boot task name and
+        observer so shutdown also retires a lazy start. Only the task this
+        method schedules gets the Library's bounded settle wait. The method
+        requires a running event loop, a constructed owner, and a callable
+        start. A synchronous double schedules nothing; a non-coroutine
+        awaitable is wrapped.
 
-        Fix round 1:
-
-        - M-1: a task THIS path scheduled is also recorded on
-          ``_notes_sync_runtime_lazy_start_task``; the Library's bounded
-          settle wait applies only to that one, never to boot's own.
-        - M-2: a recorded task that ended with an exception or was cancelled
-          (a ``RecoveryRequired`` refusal from a paused producer, say) while
-          the owner still reports ``"starting"`` is the original defect in
-          another coat -- setup would stay inert for the session -- so one
-          call re-arms exactly one new start. Bounded: a permanently failing
-          start retries once per call (one per user action), never in a
-          loop, and a task that failed after the owner settled elsewhere is
-          left as history.
-        - M-3: ``start()`` may be a synchronous double; a non-awaitable
-          result schedules nothing (the docstring's "doubles are a no-op" is
-          then true in code), and an awaitable that is not a coroutine is
-          awaited through a wrapper.
+        If a recorded start failed or was cancelled while the owner still
+        reports "starting", allow one new start on this call. A task that
+        failed after the owner settled elsewhere stays as history.
 
         Returns:
-            The start task (new or existing), or None when nothing was
-            scheduled.
+            The existing or newly scheduled task, or None if there is none.
         """
         existing = getattr(self, "_notes_sync_runtime_start_task", None)
         if existing is not None and not _task_ended_without_result(existing):

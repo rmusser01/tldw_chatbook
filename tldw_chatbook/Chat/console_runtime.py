@@ -6324,25 +6324,17 @@ class ConsoleRuntime:
         *,
         timeout_seconds: float = CONSOLE_RUNTIME_SHUTDOWN_GRACE_SECONDS,
     ) -> None:
-        """Destroy the runtime. The permanent, app-exit form.
+        """Permanently retire the app-owned runtime at app exit.
 
-        Keeps the pre-15860 `ChatScreen.on_unmount` order exactly:
-        `await controller.shutdown()` (which tombstones the queue, sets the
-        cancellation Event permanently, and cancels/awaits EVERY session's
-        stream task) and then `await gateway.aclose()`. Reached from
-        `TldwCli._shutdown_app_owned_lifecycles`.
+        Keep the original order (TASK-15860): shut down the controller, which
+        tombstones the queue, latches cancellation and awaits every stream,
+        then close the gateway.
 
-        **The built objects are NOT dropped, and `_disposed` latches.**
-        `_shutdown_app_owned_lifecycles` runs BEFORE Textual closes screen
-        state, so a Console screen -- and its timers -- can still be live
-        while this runs, and there are ~75 `_ensure_console_chat_*` call
-        sites reachable from those. Dropping the references would let one
-        of them BUILD A FRESH CONTROLLER during quit, which nothing would
-        ever shut down; returning `None` instead would crash a tick that
-        has never had to handle it. Keeping the torn-down objects is the
-        only option that does neither: a shut-down controller already
-        refuses work through its permanently-set cancellation Event, which
-        is exactly the right answer at exit.
+        App lifecycle shutdown runs before Textual closes the Console and
+        its timers. Keep the retired instances and latch _disposed so those
+        callbacks can only reach the closed controller. Clearing references
+        could rebuild a live controller during quit, while returning None
+        would break existing timer callers.
         """
         controller = self._chat_controller
         recovery_owner = None

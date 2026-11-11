@@ -1160,29 +1160,17 @@ class MediaDatabase:
     def _get_thread_connection(self) -> sqlite3.Connection:
         """Retrieve or create the current thread's SQLite connection.
 
-        task-22224 EXCEPTION -- this held connection keeps the legacy
-        default isolation level for now instead of the store template's
-        ``isolation_level = None`` (rule: ``Library_Ingest_Jobs_DB.py``
-        module docstring). ``transaction()`` here borrows via
-        ``in_transaction`` and write helpers still rely on implicit
-        transactions (``execute_query(commit=True)``/``execute_many``), so
-        flipping requires this file's own commit/rollback/write-site census
-        first, as done for ``ChaChaNotes_DB`` -- its own task. Do NOT copy
-        this pattern into new stores.
+        TASK-22224: keep this store's legacy isolation level. Its transaction
+        borrowing and implicit-commit writers need a separate migration
+        audit before adopting the new-store pattern.
 
-        task-261: the ``SELECT 1`` liveness ping is gated behind an idle
-        threshold (``_LIVENESS_PING_IDLE_SECONDS``) instead of running on
-        every call — connections are thread-local and long-lived, and
-        successful ``close_connection()`` clears the thread-local reference, so
-        a recently-used connection is known-good without a ping. A
-        connection idle past the threshold still gets the ping +
-        transparent-reopen treatment.
+        TASK-261: ping only after the idle threshold and transparently reopen
+        a dead connection. Closing clears the cached thread-local handle.
 
         Returns:
-            sqlite3.Connection: The thread-local database connection.
-
+            The thread-local SQLite connection.
         Raises:
-            DatabaseError: If connecting to the database fails.
+            DatabaseError: If connecting fails.
         """
         from tldw_chatbook.Backup_Recovery.participants import core_access
 

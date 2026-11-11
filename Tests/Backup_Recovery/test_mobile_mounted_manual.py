@@ -528,7 +528,9 @@ def run_standalone(result_path):
     repository = Path(__file__).resolve().parents[2]
     environment = os.environ.copy()
     environment.update(
-        PYTHONPATH=str(repository),
+        PYTHONPATH=os.pathsep.join(
+            (str(repository), str(repository / "packages/tldw_profile_core/src"))
+        ),
         PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
     )
     assert {key: environment.get(key) for key in entry} == entry

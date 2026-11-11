@@ -145,7 +145,7 @@ _BUDGETS: dict[str, int] = {
     # the TUI opens ChaChaNotes and Media through the shared openers (+8).
     # the TUI opens ChaChaNotes and Media through the shared openers (+8);
     # review fix: a failed notes service reuses the startup-opened DB (+9).
-    "tldw_chatbook/app.py": 5705,
+    "tldw_chatbook/app.py": 5687,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
@@ -182,7 +182,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
     # the local MCP control service gets a storage provider (+1), which
     # reports the DBs unavailable before the bundle is published (+1).
-    "tldw_chatbook/app_service_wiring.py": 3704,
+    "tldw_chatbook/app_service_wiring.py": 3693,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
@@ -359,7 +359,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-30 after the final fix wave (B2b rows).
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
     # every CCP helper call passes the services bundle's character DB (+6).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16835,
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16829,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
@@ -1153,7 +1153,7 @@ _BUDGETS: dict[str, int] = {
     # a legacy/imported chat's missing Library-policy row (the safe
     # Never/Blocked default its turn ran under) instead of refusing it.
     # 2026-11-08, TASK-39119 review (owner size waiver): +19, the pending reply row save without a mix-in attempt.
-    "tldw_chatbook/Chat/chat_persistence_service.py": 4258,
+    "tldw_chatbook/Chat/chat_persistence_service.py": 4239,
     "tldw_chatbook/UI/Screens/evals_screen.py": 4211,
     # 2026-11-02, TASK-37655 review (owner rule: a fix over a size ratchet
     # raises the row with a dated comment): dev 88af9f9379's 4,304 + 1 = 4,305. The

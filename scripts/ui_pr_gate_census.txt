@@ -2945,8 +2945,8 @@ Tests/UI/test_console_recovered_image_shutdown.py::test_control_loss_still_exits
 Tests/UI/test_console_row_menu_action_sweep.py::test_the_sweep_covers_every_declared_action_constant
 Tests/UI/test_console_row_menu_action_sweep.py::test_conversation_row_action_never_ends_the_app
 
-# Native config preparation must keep the post-attach screen message pump responsive.
-Tests/UI/test_console_full_config_preparation.py::test_post_attach_full_keeps_screen_messages_moving_during_native_read
+# PR #3345: retain the context-close lifetime regression.
+Tests/UI/test_console_context_close_lifetime.py
 
 # PR #3345: run all MCP workbench cases across the existing UI shards.
 Tests/UI/test_mcp_workbench.py::test_tools_mode_local_controls_round_trip_master_and_workspace
@@ -3229,6 +3229,5 @@ Tests/UI/test_mcp_workbench.py::test_hub_local_group_stays_visible_but_disabled_
 Tests/UI/test_mcp_workbench.py::test_advanced_external_servers_section_redacts_secret_args
 Tests/UI/test_mcp_workbench.py::test_open_add_server_form_local_source_shows_profile_form
 
-# PR #3345: retain both complete UI regression files.
+# PR #3345: retain the complete Python style inventory.
 Tests/UI/test_python_style_inventory.py
-Tests/UI/test_console_context_close_lifetime.py

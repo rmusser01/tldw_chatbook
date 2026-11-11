@@ -15,6 +15,9 @@ from pathlib import Path
 import pytest
 
 REPOSITORY = Path(__file__).resolve().parents[2]
+SOURCE_PATH = os.pathsep.join(
+    (str(REPOSITORY), str(REPOSITORY / "packages/tldw_profile_core/src"))
+)
 
 
 @pytest.mark.parametrize("section", ["paths", "Paths", None])
@@ -41,7 +44,7 @@ def test_server_storage_selection_keeps_selected_data_directory(tmp_path, sectio
         TLDW_TEST_MODE="1",
         TLDW_DISABLE_CONFIG_WATCH="1",
         PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
-        PYTHONPATH=str(REPOSITORY),
+        PYTHONPATH=SOURCE_PATH,
     )
     script = r"""
 from pathlib import Path
@@ -113,7 +116,7 @@ def _prepare_profile(tmp_path, *, mobile_surface=True, full_agent_tools=False):
         TLDW_TEST_MODE="1",
         TLDW_DISABLE_CONFIG_WATCH="1",
         PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
-        PYTHONPATH=str(REPOSITORY),
+        PYTHONPATH=SOURCE_PATH,
     )
     for name in (
         "TLDW_CONFIG_PATH",

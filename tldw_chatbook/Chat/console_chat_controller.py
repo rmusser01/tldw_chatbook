@@ -17383,6 +17383,7 @@ class ConsoleChatController:
         runtime = getattr(self, "_hooks_v2_runtime", None)
         library_search = self._library_search_tasks.get(session_id)  # TASK-33621.20
         searching = library_search is not None and not library_search.done()
+        review_stopped = self._interrupt_host.pending_round_count(session_id, kind="hook_review") > 0
         received_cancelled = bool(
             not searching  # its send is in custody: Stop pauses only the search
             and runtime is not None
@@ -17398,7 +17399,6 @@ class ConsoleChatController:
             for task in self._submit_tasks_for_session(session_id):
                 if task is not asyncio.current_task():
                     self._cancel_task_on_owner_loop(task)
-        review_stopped = self._interrupt_host.pending_round_count(session_id, kind="hook_review") > 0
         review_stopped = review_stopped or received_stopped or received_cancelled
         if review_stopped:
             self._signal_stop(session_id=session_id)
