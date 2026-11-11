@@ -60,5 +60,7 @@ Settings requires explicit consent to enroll a server-readable dataset. Enrollme
 
 The focused enrollment suite passed seven cases, including the capability refresh regression. Three readiness and Settings pilot cases passed, along with focused control, keyring, and compact layout coverage. The adjacent TLS configuration failure reproduced on the unchanged base.
 
+PR review tightened the Notes organization trust gate. A legacy retry identity carries no approval, and generic Run cannot dispatch setup for an enrollment-only profile. A failed enrollment keeps its reserved device ID for retry while leaving the profile unenrolled.
+
 In the loopback rerun, capabilities, device registration, and dataset enrollment all returned HTTP 200. Preview showed an enrolled profile with no pending outgoing changes. The walkthrough restored Local source afterward. [Settings walkthrough](../../qa/uat-core-workflows-2026-11-11/sync-enrollment-final.txt) · [Loopback HTTP trace](../../qa/uat-core-workflows-2026-11-11/sync-enrollment-final-http.txt)
 <!-- SECTION:NOTES:END -->

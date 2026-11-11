@@ -15123,12 +15123,8 @@ async def test_settings_invalid_input_keeps_error_tint_while_focused(request):
 async def test_settings_manual_sync_dialog_readable_fallback_when_counts_unloaded(
     request,
 ):
-    """task-1369: the confirm dialog must not interpolate 'Loading'/'unknown'
-    into its copy when the preview counts have not loaded."""
+    """Wait for preview readiness and keep confirmation copy readable."""
     app = _build_test_app()
-    # No manual_sync_control_service -> refresh produces blocked rows; force
-    # the rows back to their pre-preview loading state so the dialog must
-    # fall back to readable copy instead of interpolating "Loading".
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -15138,6 +15134,17 @@ async def test_settings_manual_sync_dialog_readable_fallback_when_counts_unloade
         await pilot.pause()
         assert dict(screen.manual_sync_rows)["Pending outgoing"] == "Loading"
 
+        assert screen.query_one("#settings-manual-sync-run", Button).disabled
+        await pilot.click("#settings-manual-sync-run")
+        await pilot.pause()
+        assert host.screen is screen
+
+        screen.manual_sync_rows = (
+            ("Manual sync status", "ready"),
+            ("Pending outgoing", "unknown"),
+        )
+        await pilot.pause()
+        assert not screen.query_one("#settings-manual-sync-run", Button).disabled
         await pilot.click("#settings-manual-sync-run")
         await pilot.pause()
 
