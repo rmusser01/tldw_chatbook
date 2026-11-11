@@ -203,7 +203,8 @@ async def test_enrolled_server_trusted_profile_can_preview_without_running(tmp_p
     assert sync_runner.calls == []
 
 
-async def test_approved_organization_setup_can_resume_without_generic_sync(tmp_path):
+@pytest.mark.parametrize("approved", [False, True])
+async def test_organization_setup_requires_approved_encryption(tmp_path, approved):
     repo = _repo_with_profile(tmp_path)
     scope = {
         "server_profile_id": "server-a",
@@ -220,11 +221,15 @@ async def test_approved_organization_setup_can_resume_without_generic_sync(tmp_p
             "domains": domains,
             "supported_adapter_versions": {domain: [1] for domain in domains},
         },
-        dry_run_metadata={
-            "enrollment_only": True,
-            "encryption_policy": "server_trusted_v1",
-            "domains": ["notes.note"],
-        },
+        dry_run_metadata=(
+            {
+                "enrollment_only": True,
+                "encryption_policy": "server_trusted_v1",
+                "domains": ["notes.note"],
+            }
+            if approved
+            else {"notes_organization_bootstrap_identity": "interrupted-bootstrap"}
+        ),
     )
     sync_runner = LocalFirstSyncWithoutStore()
     sync_runner.pull_notes_organization_history = AsyncMock()
@@ -246,8 +251,23 @@ async def test_approved_organization_setup_can_resume_without_generic_sync(tmp_p
     )
 
     preview = service.preview(**scope)
+    if not approved:
+        assert preview.status == "blocked"
+        result = await service.run_once(
+            **scope,
+            prepare_notes_organization_only=True,
+            require_approved_notes_organization=True,
+        )
+        assert result.status == "blocked"
+        organization.advance_enrollment.assert_not_awaited()
+        assert sync_runner.calls == []
+        return
     assert preview.status == "setup"
     assert preview.can_run is False
+
+    generic_run = await service.run_once(**scope)
+    assert generic_run.status == "blocked"
+    organization.advance_enrollment.assert_not_awaited()
 
     result = await service.run_once(**scope, prepare_notes_organization_only=True)
 

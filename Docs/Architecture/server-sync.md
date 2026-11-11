@@ -41,6 +41,12 @@ registering a device. It keeps any existing dataset's trust policy and records
 successful enrollment under the server, authenticated principal, and active
 workspace scope used by Settings.
 
+The client reserves a device ID before registration and reuses it if enrollment
+fails. The reservation carries no dataset or encryption approval. A legacy
+Notes organization retry identity can guide verification of an existing
+profile. Settings records its encryption policy only after the server confirms
+the same device and dataset.
+
 Enrollment registers only device and dataset metadata. **Preview manual sync**
 reads the local profile and pending outbox counts without contacting the
 server. **Run manual sync** remains unavailable for these enrollment-only
