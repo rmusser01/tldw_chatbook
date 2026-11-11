@@ -82,6 +82,8 @@ adapter/factory reporting does not disclose credential-bearing endpoints.
 
 ### Discovery does not widen file authority
 
+The native Local Files view may issue a finite search of one explicitly selected local binding on a user's action. This application operation uses the exact live registry witness, current index scope and manifest, and native Capture. It creates no agent grant. A result carries bounded display evidence and a private receipt for the source identity and content digest. Preview, reveal, and answer evidence require fresh validation of the same witness, manifest, identity, and digest. Bound and close those operations under the existing project-index owner. The native search keeps the Console tool's existing authority path and wire shape.
+
 An optional read-only `fs_search_index` spec uses the existing local provider,
 root aliases, permissions, review, budgets, and path-target preparation. It may
 query only a compatible project generation for the selected run-admitted root.
