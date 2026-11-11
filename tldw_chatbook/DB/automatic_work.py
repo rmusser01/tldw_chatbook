@@ -75,6 +75,7 @@ class AutomaticWorkLedger:
         self._temporary_progress_claims: dict[str, str] = {}
         self._review_authorities = {}
         self._review_attempts = {}
+        self._workflow_validator_lock = threading.Lock()
         self._workflow_phase_validators = None
         self._workflow_accounting_validators = None
 
@@ -94,7 +95,7 @@ class AutomaticWorkLedger:
 
     def _install_workflow_phase_validators(self, connection, dispatch):
         """Install the original native phase validators for this ledger."""
-        with self._progress_claim_lock:
+        with self._workflow_validator_lock:
             previous = self._workflow_phase_validators
             if previous is None:
                 self._workflow_phase_validators = (connection, dispatch)
@@ -103,7 +104,7 @@ class AutomaticWorkLedger:
 
     def _install_workflow_accounting_validators(self, receiving, evidence):
         """Install the original coordinator validators before its first accounting read."""
-        with self._progress_claim_lock:
+        with self._workflow_validator_lock:
             previous = self._workflow_accounting_validators
             if previous is None:
                 self._workflow_accounting_validators = (receiving, evidence)

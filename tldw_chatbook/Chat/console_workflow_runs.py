@@ -854,9 +854,6 @@ class ConsoleWorkflowCoordinator:
         self._metadata_tail = None
         self._metadata_floor = {}
         self._pending_planning = set()
-        service.db.automatic_work._install_workflow_accounting_validators(
-            _quiescence_receiving, _quiescence_evidence
-        )
 
     def subscribe(
         self, callback: Callable[[WorkflowRuntimeSnapshot], None]
@@ -1847,6 +1844,10 @@ class ConsoleWorkflowCoordinator:
         ):
             raise PermissionError("original accounting driver required")
         phase = run.phase
+        ledger = phase._ledger
+        ledger._install_workflow_accounting_validators(
+            _quiescence_receiving, _quiescence_evidence
+        )
         cell = phase._quiescence
         if mode == "quiesce":
             if cell is not None:
@@ -1876,7 +1877,6 @@ class ConsoleWorkflowCoordinator:
         except BaseException as error:
             cell.error = run.accounting_error = error
             raise
-        ledger = phase._ledger
 
         @worker_guard(self.controller._agent_bridge)
         def operation():

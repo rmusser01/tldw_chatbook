@@ -655,7 +655,8 @@ async def test_a_hidden_chat_whose_draft_was_replaced_draws_no_was_sent_notice(m
 
 
 @pytest.mark.asyncio
-async def test_an_escaped_bang_chat_send_leaves_the_composer():
+@pytest.mark.parametrize("send_mode", ("enter", "spoken"))
+async def test_an_escaped_bang_chat_send_leaves_the_composer(send_mode):
     """A "\\! " chat send goes out as "! …" and leaves the composer.
 
     The send dispatches the draft with its escape removed, and the commit
@@ -673,7 +674,11 @@ async def test_an_escaped_bang_chat_send_leaves_the_composer():
             store = console._ensure_console_chat_store()
             notices = _record_notices(host)
             gateway.validation_release.set()
-            press(host, "enter", "\r")
+            if send_mode == "spoken":
+                spoken = _speak_send(console, session_id)
+                await until(lambda: spoken.is_finished, timeout=ENTRY_SECONDS)
+            else:
+                press(host, "enter", "\r")
             await until(lambda: gateway.stream_calls == 1, timeout=ENTRY_SECONDS)
             await _idle(host, console, pilot, session_id)
             assert _sent_or_queued(console, session_id) == [ESCAPED[1:]]

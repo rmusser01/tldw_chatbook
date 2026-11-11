@@ -18278,7 +18278,7 @@ class ChatScreen(BaseAppScreen):
         from ..Console_Modules.hooks import in_worker_task
 
         spoken_capture = pending_send_token is None and in_worker_task()
-        if spoken_capture:
+        if spoken_capture and (stash is not None or not draft):
             received_inputs = _send_acknowledgement().capture_visible_send_inputs(
                 self, session_id, stash
             )
@@ -18388,6 +18388,7 @@ class ChatScreen(BaseAppScreen):
             return False
         if (
             spoken_capture
+            and received_inputs is not None
             and composer is not None
             and composer.captured_draft_spent(stash)
         ):
