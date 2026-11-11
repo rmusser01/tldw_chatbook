@@ -84,6 +84,124 @@ class Rig:
 
 
 @private_profile_test
+async def test_binding_search_resolves_live_file_and_rejects_replacement(
+    tmp_path, request
+):
+    rig = Rig(tmp_path)
+    try:
+        source = rig.root / "quartz.txt"
+        source.write_text("intro\nbooking policy\n", encoding="utf-8")
+        rig.enable()
+        rig.refresh()
+        rig.settle()
+
+        by_name = rig.service.search_binding(rig.key, "quartz.txt")
+        assert by_name.result.hits[0].relative_path == "quartz.txt"
+        found = rig.service.search_binding(rig.key, "booking policy")
+        hit = found.result.hits[0]
+        assert (hit.relative_path, hit.line_start, hit.line_end) == ("quartz.txt", 1, 2)
+        assert rig.service.validate_binding_hits(found, (hit,)) == (source,)
+
+        source.rename(rig.root / "old.txt")
+        source.write_text("intro\nbooking policy\n", encoding="utf-8")
+        assert rig.service.validate_binding_hits(found, (hit,)) is None
+    finally:
+        await rig.close()
+
+
+@private_profile_test
+async def test_binding_search_rejects_evidence_after_binding_revision_changes(
+    tmp_path, request
+):
+    rig = Rig(tmp_path)
+    try:
+        (rig.root / "notes.txt").write_text("visible keyword", encoding="utf-8")
+        rig.enable()
+        rig.refresh()
+        rig.settle()
+        found = rig.service.search_binding(rig.key, "keyword")
+        assert found.result.hits
+        with rig.lock:
+            rig.live = replace(rig.live, authority_revision=rig.live.authority_revision + 1)
+        assert rig.service.validate_binding_hits(found, found.result.hits) is None
+    finally:
+        await rig.close()
+
+
+@private_profile_test
+async def test_binding_evidence_refuses_earlier_file_changed_during_later_capture(
+    tmp_path, request, monkeypatch
+):
+    rig = Rig(tmp_path)
+    try:
+        for name in ("a.txt", "b.txt"):
+            (rig.root / name).write_text("shared marker", encoding="utf-8")
+        rig.enable()
+        rig.refresh()
+        rig.settle(seconds=30)
+        found = rig.service.search_binding(rig.key, "marker")
+        first, second = found.result.hits
+        capture = rig.service._capture_binding_file
+
+        def edit_first_during_second(*args, **kwargs):
+            if args[1] == second.relative_path:
+                (rig.root / first.relative_path).write_text("updated", encoding="utf-8")
+            return capture(*args, **kwargs)
+
+        monkeypatch.setattr(
+            rig.service, "_capture_binding_file", edit_first_during_second
+        )
+        assert rig.service.validate_binding_hits(found, found.result.hits) is None
+    finally:
+        await rig.close()
+
+
+@private_profile_test
+async def test_binding_search_uses_the_real_registry_fence(tmp_path, request):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Workspaces.project_index.runtime import (
+        close_project_index_service,
+        get_project_index_service,
+        project_index_key,
+    )
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "notes").mkdir()
+    source = root / "notes" / "booking.txt"
+    source.write_text("room booking policy", encoding="utf-8")
+    registry = LocalWorkspaceRegistryService(WorkspaceDB(tmp_path / "registry.db"))
+    registry.create_workspace(workspace_id="local-files", name="Local Files")
+    binding = registry.add_folder_binding("local-files", root)
+    app = SimpleNamespace(workspace_registry_service=registry)
+    service = get_project_index_service(app)
+    key = project_index_key(app, "local-files", binding.binding_id, root)
+    try:
+        enabled = service.enable(key, POLICY, expected_scope=service.status(key).scope)
+        service.refresh(
+            key,
+            expected_scope=enabled.scope,
+            expected_job_revision=enabled.job_revision,
+        )
+        for _ in range(300):
+            if service.status(key).state == "Ready":
+                break
+            await asyncio.sleep(0.1)
+        assert service.status(key).state == "Ready"
+
+        search = service.search_binding(key, "booking")
+        assert [hit.excerpt for hit in search.result.hits] == ["room booking policy"]
+        assert search.result.coverage.state == "Ready"
+        assert service.validate_binding_hits(search, search.result.hits) == (source,)
+    finally:
+        await close_project_index_service(app)
+        registry.db.close()
+
+
+@private_profile_test
 async def test_incremental_refresh_retires_deleted_and_renamed_membership(
     tmp_path, request
 ):

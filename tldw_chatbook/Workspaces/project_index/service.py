@@ -22,9 +22,14 @@ from tldw_chatbook.DB.Workspace_Project_Index_DB import (
     _path_allowed,
 )
 from .allocation import allocation_gate, register_owned_lifetime, verify_settlement
+from tldw_chatbook.Utils.filesystem_identity import (
+    capture_directory_chain,
+    stat_identity_digest,
+)
 from .lifetime import BindingLifetime, LifetimeBusy
 from .models import (
     MAX_CACHE_BYTES,
+    BindingSearchResult,
     IndexAuthorityFence,
     IndexAuthorityReader,
     ProjectIndexJobClaim,
@@ -37,6 +42,8 @@ from .models import (
     ProjectSearchResult,
     ProjectIndexRetirementUnproven,
 )
+
+from .scanner import ProjectScanner
 
 
 @dataclass
@@ -423,7 +430,7 @@ class ProjectIndexService:
                     if not pending:
                         with self._lock:
                             if self._closed:
-                                raise RuntimeError("project_index_closed")
+                                raise RuntimeError("project_index_closed") from None
                             self._pending_reads[group] = (
                                 self._pending_reads.get(group, 0) + 1
                             )
@@ -552,7 +559,7 @@ class ProjectIndexService:
         return self._retry_read(scope.key, read)
 
     @contextmanager
-    def _search_store(self, key):
+    def _search_store(self, key, *, require_binding=False):
         # Writer and Capture share two read slots; failed native retirement keeps its
         # operation admission and slot until the application is recovered.
         if not self._read_slots.acquire(blocking=False):
@@ -568,6 +575,9 @@ class ProjectIndexService:
         try:
             run.pin = self._retain(key)
             with self._bind(run.pin):
+                if require_binding and self._reader(key) is None:
+                    yield None
+                    return
                 opener = getattr(self._factory, "open_cleanup", self._factory)
                 store = opener(key)
                 run.store = store
@@ -619,18 +629,188 @@ class ProjectIndexService:
                 raise ValueError("invalid_query")
             if type(limit) is not int or not 1 <= limit <= 10:  # noqa: E721
                 raise ValueError("invalid_limit")
-            try:
-                semantic_query = self._semantic_query_vector(authority, query)
-            except ProjectIndexRetirementUnproven:
-                raise
-            except Exception:
-                semantic_query = None
+            semantic_query = self._optional_semantic_query(authority, query)
             with self.registry_connection_scope():
                 return self._search_owned(
                     authority, query, limit=limit, semantic_query=semantic_query
-                )
+                ).result
         except LifetimeBusy:
             return ProjectSearchResult("unavailable", (), None, False)
+
+    def _optional_semantic_query(self, authority, query):
+        try:
+            return self._semantic_query_vector(authority, query)
+        except ProjectIndexRetirementUnproven:
+            raise
+        except Exception:
+            return None
+
+    def search_binding(
+        self,
+        key: ProjectIndexKey,
+        query: str,
+        *,
+        limit: int = 10,
+        mode: str = "keyword",
+        keyword_query: str | None = None,
+        stop: threading.Event | None = None,
+    ) -> BindingSearchResult:
+        """Search the selected binding with the requested retrieval mode."""
+        if type(key) is not ProjectIndexKey:
+            raise ValueError("invalid_binding_key")
+        if mode not in {"keyword", "semantic", "hybrid"}:
+            raise ValueError("invalid_search_mode")
+        if not isinstance(query, str) or not query.strip() or len(query) > 2048:
+            raise ValueError("invalid_query")
+        if type(limit) is not int or not 1 <= limit <= 10:  # noqa: E721
+            raise ValueError("invalid_limit")
+        rank_query = query if keyword_query is None else keyword_query
+        if (
+            not isinstance(rank_query, str)
+            or not rank_query.strip()
+            or len(rank_query) > 2048
+        ):
+            raise ValueError("invalid_keyword_query")
+        try:
+            with self.registry_connection_scope():
+                if mode == "keyword":
+                    return self._search_owned(
+                        key, rank_query, limit=limit, mode=mode, stop=stop
+                    )
+                with self._store(key, cleanup_only=True) as store:
+                    with self._read_fenced(store, key) as live:
+                        if live is None:
+                            return BindingSearchResult(
+                                ProjectSearchResult("unavailable", (), None, False)
+                            )
+                        scope = store.load_status(key).scope
+                # The user's selected binding has just been admitted. The
+                # projection independently checks current scope, root, consent,
+                # and artifact before opening the model. No SQL unit is held.
+                authority = ProjectIndexSearchAuthority(
+                    scope,
+                    live.root,
+                    live.chain,
+                    live.exclusions,
+                    live.authority_revision,
+                    lambda: stop is None or not stop.is_set(),
+                    None,
+                    lambda candidate: self._capture_binding_file(
+                        live, candidate.relative_path, stop=stop
+                    ),
+                )
+                semantic_query = self._optional_semantic_query(authority, query)
+                return self._search_owned(
+                    key,
+                    rank_query,
+                    limit=limit,
+                    mode=mode,
+                    semantic_query=semantic_query,
+                    projected_binding=live,
+                    stop=stop,
+                )
+        except (FileNotFoundError, LifetimeBusy):
+            return BindingSearchResult(
+                ProjectSearchResult("unavailable", (), None, False)
+            )
+
+    def validate_binding_hits(
+        self, search: BindingSearchResult, hits: tuple[ProjectIndexHit, ...]
+    ) -> tuple[Path, ...] | None:
+        """Resolve earlier hits only while their indexed and live identity match."""
+        live = search.authority
+        if (
+            live is None
+            or not hits
+            or any(hit not in search.result.hits for hit in hits)
+        ):
+            return None
+        sources = {source.relative_path: source for source in search.sources}
+        paths = tuple(hit.relative_path for hit in hits)
+        if any(path not in sources for path in paths):
+            return None
+        key = live.key
+        with (
+            self.registry_connection_scope(),
+            self._search_store(key, require_binding=True) as store,
+        ):
+            if store is None:
+                return None
+
+            def current():
+                with self._read_fenced(store, key) as authority:
+                    if authority != live:
+                        return False
+                    status = store.load_status(key)
+                    if search.semantic is not None:
+                        state, artifact, generation = search.semantic
+                        if (
+                            store.semantic_ready_generation(
+                                search.scope, state, artifact
+                            )
+                            != generation
+                        ):
+                            return False
+                    return (
+                        status.scope == search.scope
+                        and status.manifest_revision == search.manifest_revision
+                        and status.job_revision == search.job_revision
+                        and status.state in {"Ready", "Partial", "Building"}
+                    )
+
+            stamps = {}
+            for path in dict.fromkeys(paths):
+                if not current() or not _path_allowed(path, live.exclusions):
+                    return None
+                capture = self._capture_binding_file(live, path)
+                source = sources[path]
+                if (
+                    capture is None
+                    or capture.relative_path != path
+                    or capture.identity != source.file_identity
+                    or capture.content_sha256 != source.content_sha256
+                ):
+                    return None
+                stamps[path] = (capture.identity, capture.mtime_ns, capture.size_bytes)
+            if not self._files_still_current(live, stamps) or not current():
+                return None
+            return tuple(live.root.path / path for path in paths)
+
+    def _capture_binding_file(self, live, path, *, stop=None):
+        scanner = ProjectScanner()
+        try:
+            return scanner.capture_file(live, path, stop=stop or threading.Event())
+        finally:
+            if not scanner.retired:
+                self._operation_local.operation.retained.append(scanner)
+                raise ProjectIndexRetirementUnproven("index_reader_retirement_unproven")
+
+    @staticmethod
+    def _files_still_current(live, stamps) -> bool:
+        # Capturing a later file can take time. Recheck metadata for the whole
+        # batch before publication without reopening any file contents.
+        root_count = len(live.chain.identities)
+        try:
+            for relative_path, expected in stamps.items():
+                path = live.root.path / relative_path
+                chain = capture_directory_chain(path.parent)
+                if (
+                    chain.canonical_root != path.parent
+                    or chain.identities[-root_count:] != live.chain.identities
+                ):
+                    return False
+                info = path.lstat()
+                if (
+                    not stat.S_ISREG(info.st_mode)
+                    or getattr(info, "st_file_attributes", 0) & 0x400
+                    or (stat_identity_digest(info), info.st_mtime_ns, info.st_size)
+                    != expected
+                    or capture_directory_chain(path.parent) != chain
+                ):
+                    return False
+        except (OSError, ValueError):
+            return False
+        return True
 
     def _semantic_query_vector(self, authority, query):
         """Project once on this finite tool worker, before acquiring a read slot."""
@@ -768,25 +948,63 @@ class ProjectIndexService:
                     self._semantic_query = None
             self._semantic_query_slot.release()
 
-    def _search_owned(self, authority, query, *, limit, semantic_query=None):
-        if type(authority) is not ProjectIndexSearchAuthority:
-            raise ValueError("invalid_search_authority")
+    def _search_owned(
+        self,
+        authority: ProjectIndexSearchAuthority | ProjectIndexKey,
+        query: str,
+        *,
+        limit: int,
+        semantic_query=None,
+        mode: str = "hybrid",
+        projected_binding=None,
+        stop: threading.Event | None = None,
+    ) -> BindingSearchResult:
         if not isinstance(query, str) or not query.strip() or len(query) > 2048:
             raise ValueError("invalid_query")
         if type(limit) is not int or not 1 <= limit <= 10:  # noqa: E721 - reject bool
             raise ValueError("invalid_limit")
-        unavailable = ProjectSearchResult("unavailable", (), None, False)
-        if not authority.guard():
+        unavailable = BindingSearchResult(
+            ProjectSearchResult("unavailable", (), None, False)
+        )
+        if isinstance(authority, ProjectIndexKey):
+            key = authority
+            authority = None
+        else:
+            key = authority.scope.key
+        user_search = authority is None
+        if stop is not None and stop.is_set():
             return unavailable
-        with self._search_store(authority.scope.key) as store:
-            with store.sql_unit(), self._fence(authority.scope.key) as live:
-                if (
-                    live is None
-                    or live.root != authority.root
-                    or live.chain != authority.chain
+        if authority is not None and not authority.guard():
+            return unavailable
+        if mode == "semantic" and semantic_query is None:
+            return unavailable
+        with self._search_store(key, require_binding=user_search) as store:
+            if store is None:
+                return unavailable
+            with self._read_fenced(store, key) as live:
+                if live is None or (
+                    projected_binding is not None and live != projected_binding
                 ):
                     return unavailable
-                status = store.load_status(authority.scope.key)
+                if authority is not None and (
+                    live.root != authority.root or live.chain != authority.chain
+                ):
+                    return unavailable
+                status = store.load_status(key)
+                if authority is None:
+                    authority = ProjectIndexSearchAuthority(
+                        status.scope,
+                        live.root,
+                        live.chain,
+                        live.exclusions,
+                        live.authority_revision,
+                        lambda: (stop is None or not stop.is_set())
+                        and self._reader(key) == live,
+                        None,
+                        lambda candidate: self._capture_binding_file(
+                            live, candidate.relative_path, stop=stop
+                        ),
+                    )
                 if (
                     status.scope != authority.scope
                     or status.state
@@ -807,7 +1025,17 @@ class ProjectIndexService:
                     admitted.scope, admitted.exclusions
                 ):
                     return unavailable
-                candidates = store.lexical_candidates(admitted, query, limit=100)
+                if mode == "semantic":
+                    candidates = ()
+                elif user_search:
+                    candidates = store.lexical_candidates(
+                        replace(admitted, guard=lambda: True),
+                        query,
+                        limit=100,
+                        prioritize_path=True,
+                    )
+                else:
+                    candidates = store.lexical_candidates(admitted, query, limit=100)
             semantic_status = "unavailable"
             semantic_generation = None
             if semantic_query is not None:
@@ -822,13 +1050,18 @@ class ProjectIndexService:
                         semantic._target(spec, destination).artifact_fingerprint
                         == artifact
                     ):
-                        with store.sql_unit(), self._fence(
-                            authority.scope.key
-                        ) as current:
+                        with (
+                            store.sql_unit(),
+                            self._fence(authority.scope.key) as current,
+                        ):
                             if current == live:
                                 ranked = semantic.rank_semantic(
-                                    store, admitted.scope, semantic_state, artifact,
-                                    vector, admitted.exclusions,
+                                    store,
+                                    admitted.scope,
+                                    semantic_state,
+                                    artifact,
+                                    vector,
+                                    admitted.exclusions,
                                 )
                                 if ranked is not None:
                                     semantic_generation = (
@@ -837,10 +1070,20 @@ class ProjectIndexService:
                                         )
                                     )
                                     semantic_status = "ready"
-                                    candidates = semantic.fuse_candidates(candidates, ranked)
+                                    candidates = (
+                                        ranked
+                                        if mode == "semantic"
+                                        else semantic.fuse_candidates(
+                                            candidates, ranked
+                                        )
+                                    )
                 except (ValueError, ImportError, OSError):
                     pass
+            if mode == "semantic" and semantic_status != "ready":
+                return unavailable
             hits = []
+            sources = []
+            stamps = {}
             stale = False
             for candidate in candidates:
                 if not authority.guard():
@@ -854,6 +1097,10 @@ class ProjectIndexService:
                         or current_status.scope != status.scope
                         or current_status.state not in {"Ready", "Partial", "Building"}
                         or current_status.manifest_revision != status.manifest_revision
+                        or (
+                            user_search
+                            and current_status.job_revision != status.job_revision
+                        )
                         or (
                             semantic_generation is not None
                             and store.semantic_ready_generation(
@@ -909,16 +1156,28 @@ class ProjectIndexService:
                 ):
                     break
                 hits.append(hit)
+                if user_search:
+                    sources.append(candidate)
+                    stamps[capture.relative_path] = (
+                        capture.identity,
+                        capture.mtime_ns,
+                        capture.size_bytes,
+                    )
                 if len(hits) >= limit:
                     break
             if not authority.guard():
                 return unavailable
+            if user_search and not self._files_still_current(live, stamps):
+                return BindingSearchResult(
+                    ProjectSearchResult("partial", (), None, True)
+                )
             with store.sql_unit(), self._fence(authority.scope.key) as current:
                 final = store.load_status(authority.scope.key)
                 if (
                     current != live
                     or final.scope != status.scope
                     or final.manifest_revision != status.manifest_revision
+                    or (user_search and final.job_revision != status.job_revision)
                     or final.state not in {"Ready", "Partial", "Building"}
                     or (
                         semantic_generation is not None
@@ -947,7 +1206,22 @@ class ProjectIndexService:
                     > 16384
                 ):
                     result = replace(result, hits=result.hits[:-1])
-                return result
+                if user_search:
+                    semantic_receipt = (
+                        (semantic_state, artifact, semantic_generation)
+                        if semantic_generation is not None
+                        else None
+                    )
+                    return BindingSearchResult(
+                        replace(result, coverage=final),
+                        live,
+                        final.scope,
+                        final.manifest_revision,
+                        final.job_revision,
+                        tuple(sources[: len(result.hits)]),
+                        semantic_receipt,
+                    )
+                return BindingSearchResult(result)
 
     def enable(
         self,
@@ -1174,7 +1448,7 @@ class ProjectIndexService:
                 128 if run.state.settings.provider_id == "huggingface" else 32
             )
             while True:
-                def read_page():
+                def read_page(after=after):
                     with self._admitted(store, run.scope.key) as live:
                         if live != run.authority or run.stop.is_set():
                             raise ValueError("stale_semantic_page")
@@ -1213,7 +1487,7 @@ class ProjectIndexService:
                         end += 1
                     if end == first:
                         raise ValueError("semantic_vector_page_limit")
-                    def append_page():
+                    def append_page(page=page, encoded=encoded, first=first, end=end):
                         with self._admitted(store, run.scope.key) as live:
                             return (
                                 live == run.authority

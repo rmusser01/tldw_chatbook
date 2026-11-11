@@ -125,6 +125,7 @@ async def test_service_search_fuses_synonym_hit_then_live_validates(
 ):
     from Tests.Workspaces.test_project_index_service import Rig
     from tldw_chatbook.RAG_Search.simplified import embeddings_wrapper
+    from tldw_chatbook.Utils.filesystem_identity import stat_identity_digest
     from tldw_chatbook.Workspaces.project_index import semantic
     from tldw_chatbook.Workspaces.project_index.models import (
         FileCapture,
@@ -134,6 +135,9 @@ async def test_service_search_fuses_synonym_hit_then_live_validates(
     rig = Rig(tmp_path)
     file = rig.root / "dog.py"
     file.write_text("canine companion", encoding="utf-8")
+    info = file.stat()
+    identity = stat_identity_digest(info)
+    projected_queries = []
 
     class Carrier:
         model_name = "deterministic"
@@ -150,6 +154,7 @@ async def test_service_search_fuses_synonym_hit_then_live_validates(
             pass
 
         def create_embedding(self, text):
+            projected_queries.append(text)
             return [1.0, 0.0]
 
         def close(self):
@@ -181,8 +186,8 @@ async def test_service_search_fuses_synonym_hit_then_live_validates(
                     "INSERT INTO files VALUES(?,?,?,?,?,?)",
                     (
                         "dog.py",
-                        "identity-1",
-                        123,
+                        identity,
+                        info.st_mtime_ns,
                         len(text),
                         sha256(text.encode()).hexdigest(),
                         text,
@@ -254,6 +259,33 @@ async def test_service_search_fuses_synonym_hit_then_live_validates(
         if mutation is None:
             result = rig.service.search(authority, "hound")
             assert [hit.relative_path for hit in result.hits] == ["dog.py"]
+            before = len(projected_queries)
+            keyword = rig.service.search_binding(rig.key, "hound")
+            assert keyword.result.hits == () and len(projected_queries) == before
+            by_meaning = rig.service.search_binding(rig.key, "hound", mode="semantic")
+            assert by_meaning.result.semantic_status == "ready"
+            assert [hit.relative_path for hit in by_meaning.result.hits] == ["dog.py"]
+            assert rig.service.validate_binding_hits(
+                by_meaning, by_meaning.result.hits
+            ) == (file,)
+            hybrid = rig.service.search_binding(
+                rig.key, "Which file mentions the canine?", mode="hybrid",
+                keyword_query="dog.py",
+            )
+            assert hybrid.result.semantic_status == "ready"
+            assert hybrid.result.hits[0].relative_path == "dog.py"
+            assert projected_queries[-1] == "Which file mentions the canine?"
+            rig.service.disable_semantic(
+                rig.key,
+                expected_epoch=scope.epoch,
+                expected_semantic_revision=state.semantic_revision,
+            )
+            assert rig.service.validate_binding_hits(by_meaning, by_meaning.result.hits) is None
+            unavailable = rig.service.search_binding(rig.key, "dog.py", mode="semantic")
+            assert unavailable.result.status == "unavailable" and unavailable.result.hits == ()
+            fallback = rig.service.search_binding(rig.key, "dog.py", mode="hybrid")
+            assert fallback.result.semantic_status == "unavailable"
+            assert fallback.result.hits[0].relative_path == "dog.py"
         else:
             task = asyncio.create_task(
                 asyncio.to_thread(rig.service.search, authority, "hound")

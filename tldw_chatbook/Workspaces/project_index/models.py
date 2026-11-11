@@ -510,6 +510,21 @@ class ProjectSearchResult:
 
 
 @dataclass(frozen=True, slots=True)
+class BindingSearchResult:
+    """Local Files result with view-local source receipts."""
+
+    result: ProjectSearchResult = field(repr=False)
+    authority: ProjectIndexAuthority | None = field(default=None, repr=False)
+    scope: ProjectIndexScope | None = field(default=None, repr=False)
+    manifest_revision: int = 0
+    job_revision: int = 0
+    sources: tuple[IndexCandidate, ...] = field(default=(), repr=False)
+    semantic: tuple[ProjectSemanticState, str, ProjectSemanticGeneration] | None = field(
+        default=None, repr=False
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class ScanRunResult:
     """Truthful scan outcome; only completed receipts certify enumeration."""
 

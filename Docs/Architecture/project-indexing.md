@@ -9,6 +9,8 @@ Optional keyword indexes belong to an explicit local workspace folder binding. T
 | `Workspaces/project_index/models.py` | Immutable key, scope, policy, status and evidence records |
 | `Workspaces/project_index/runtime.py` | Lazy admitted application service and exact selected-binding key capture |
 | `Workspaces/project_index/service.py` | Explicit management CAS, single writer supervision, live-validated search, native retirement |
+| `UI/Screens/local_files_screen.py` | Native folder choice, search, previews, and answer requests |
+| `Workspaces/project_index/file_answers.py` | Transient workspace-file evidence and destination-checked answer dispatch |
 | `DB/Workspace_Project_Index_DB.py` | Derived per-binding SQLite/FTS manifests, frontier, durable scope/job revisions and policy |
 | `Workspaces/project_index/scanner.py` | Bounded wire operations and actual worker-tree retirement |
 | `Tools/project_index_scan_worker.py` | Isolated directory enumeration and UTF-8 capture |
@@ -49,11 +51,15 @@ Registry connections created by writer, supervisor, complete index-tool invocati
 
 ## Bounds and evidence
 
+Local Files defaults to Keyword and can explicitly choose Semantic or Hybrid. The view passes the original question to the embedding projection and may remove question stopwords for the keyword leg of Ask. The application admits the selected binding before projection, and rechecks it before ranking or returning results. File receipts for semantic or hybrid hits include the generation used for ranking. Revoking or replacing that generation invalidates the receipt before preview, reveal, or answer use.
+
 Scan units span multiple directories but contain at most256 discovered entries,256 directory attempts,256 raw iterator inspections and256 pending paths. One native directory iterator survives only an explicit, freshly admitted continuation. At most2 simultaneous file reads and4 MiB of combined retained/source scratch text are allowed; wire frames stay within2 MiB. Eligible UTF-8 files are at most1 MiB. Binaries, archives, generated/dependency/VCS content, symlinks, junctions and reparse targets are skipped. Mandatory sensitive paths and exact binding exclusions apply before descent, reads, ranking and disclosure. Default processing exclusions include `node_modules`, `.venv`, `venv`, `__pycache__`, `dist`, `build`, `.git`.
 
 Each binding is limited to250,000 eligible discovered entries and1 GiB of cache-owned storage, including staging, sidecars, temporary data and future vectors. Exhaustion means Partial coverage. Search returns at most10 hits and16 KiB serialized output, with smaller run budgets taking precedence. Lexical candidates carry only locations/identity; live Capture rereads content and checks current identity, digest, authority and exclusion floor before any evidence is disclosed. Stale or deleted files request Refresh and never disclose cached text.
 
 Keyword search needs neither embeddings nor provider access. `fs_search_index` remains tool evidence with `workspace_file` origins and line locations; indexed text is never project instructions or an authority grant. Existing saved Library retrieval scopes and controls are independent.
+
+The native Local Files view uses `search_binding` with the exact key for the user's selected folder. Ranking runs inside the existing registry fence. The same bounded Capture and publication checks used for Console evidence validate the matches. The view receives a transient receipt tying each hit to the registry witness, index scope, manifest, and file identity and digest. Preview and reveal resolve the receipt again. Ask uses that validation immediately before provider dispatch and builds its own `workspace_file` evidence bundle with line locations. The view owns the query and answer in memory.
 
 Release receipts belong under `Docs/superpowers/qa/2026-10-20-workspace-project-context/keyword/`. `Tests/Performance/run_project_index_profile.py` distinguishes the historical scanner-only profile from the runtime/service/store/tool pipeline. Full qualification uses at least20,000 text files across20,000 nested/sibling folders and a separate20,000-file single directory, retaining sampled memory, whole-binding disk, throughput, candidate/live-read timing and physical retirement evidence. Windows native qualification does not imply POSIX or GUI approval coverage.
 
