@@ -26,7 +26,7 @@ Enable the approved Console response-rule behavior for plan task 9. Preserve exi
 - [x] #1 Integrated route tests cover learning, checking, cancellation, shared repair and inert reopen.
 - [x] #2 Provider behavior and native UI evidence are qualified separately from scripted tests.
 - [x] #3 Targeted regression and static checks pass and independent whole-branch review findings are addressed or recorded.
-- [x] #4 A bounded named critical selection covering helper-preparation custody, installed schema/recovery/voice and native/hook/currentness boundaries runs in actual required PR lanes with nonvacuous executable membership checks, preserved existing targets/order/limits and exact final-head hosted results.
+- [x] #4 A bounded named critical selection covering helper-preparation custody, installed schema/recovery/voice and native/hook/currentness boundaries runs in actual required PR lanes with nonvacuous executable membership checks and preserved existing targets, order and limits. Exact final-head hosted qualification was waived for the October 31 merge.
 - [x] #5 Concurrent trace GC between current durable semantic admission and provider-call reservation preserves ordinary and native-repair provenance; revoked/orphaned revisions remain reclaimable and stale graph epochs never sweep.
 <!-- AC:END -->
 
