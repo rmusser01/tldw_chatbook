@@ -1697,9 +1697,20 @@ async def test_a_full_sync_asked_for_during_a_pause_runs_once_after_resume(
             after_refresh = console.call_after_refresh
 
             def record_resume():
-                if console._console_control_bar_replay_whole_sync:
-                    launched.append(loop.time())
-                return replay()
+                run_worker = console.run_worker
+
+                def record_full(work, *args, **kwargs):
+                    started_at = loop.time()
+                    worker = run_worker(work, *args, **kwargs)
+                    if work is console._sync_native_console_chat_ui and (
+                        kwargs.get("group") == "console-sync"
+                    ):
+                        launched.append((started_at, worker))
+                    return worker
+
+                with monkeypatch.context() as observer:
+                    observer.setattr(console, "run_worker", record_full)
+                    return replay()
 
             def observe_schedule(callback, *args, **kwargs):
                 if callback == replay:
@@ -1711,10 +1722,13 @@ async def test_a_full_sync_asked_for_during_a_pause_runs_once_after_resume(
                 observer.setattr(console, "call_after_refresh", observe_schedule)
                 console._console_sync_maintenance_resume()
             await until(lambda: bool(launched), timeout=30)
-            assert launched[0] < armed_at + delay, (
-                f"the resume's sync waited {launched[0] - resumed:.2f} s, "
+            started_at, worker = launched[0]
+            assert started_at < armed_at + delay, (
+                f"the resume's sync waited {started_at - resumed:.2f} s, "
                 f"out to its pending {delay} s backoff"
             )
+            async with asyncio.timeout_at(resumed + 30):
+                assert await worker.wait() is True
             await pilot.pause(max(0.0, armed_at + delay + 0.5 - loop.time()))
             assert len(launched) == 1, (
                 f"the paused request replayed {len(launched)} times after resume"

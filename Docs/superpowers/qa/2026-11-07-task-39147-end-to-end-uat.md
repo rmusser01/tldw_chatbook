@@ -1789,5 +1789,8 @@ including when independent CORE work needs its own retry under ADR-121.
 
 Targeted verification covered the affected tests, the original Git
 refusals and startup limits, and both directions of the new Library
-read-order regression. Exact PR-head required CI and Qodo review remain
+read-order regression. The follow-up review verified that a paused
+inline read retires older Library publication and that the resumed
+callback issues a worker that completes the full sync. The user chose
+independent code review for this PR. Exact PR-head required CI remains
 part of AC23.

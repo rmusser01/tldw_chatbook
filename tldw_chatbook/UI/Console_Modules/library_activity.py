@@ -489,6 +489,7 @@ class ConsoleLibraryOutcomeLines:
             if off_loop:
                 self._request(key)
             else:
+                self._requested = None
                 self._read_inline(key)
         else:
             self._requested = None

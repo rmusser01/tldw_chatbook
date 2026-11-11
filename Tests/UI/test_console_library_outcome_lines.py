@@ -365,6 +365,62 @@ async def test_returning_to_a_landed_path_retires_the_other_pending_read(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_a_paused_inline_read_retires_the_other_pending_read(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.UI.Console_Modules import view_workers
+
+    harness = _Harness(tmp_path)
+    first, second = harness.users
+    harness.record(first, _payload("zero_matches"), seq=50)
+    harness.record(second, _payload("evidence_sent", count=1), seq=51)
+    branch_a = [m for m in harness.messages if m.id != second.id]
+    branch_b = [m for m in harness.messages if m.id != first.id]
+    read_held, release = asyncio.Event(), asyncio.Event()
+    original_read = view_workers.owned_display_read
+    original_rows = harness.db.get_trajectory_rows
+
+    async def hold_read(*args):
+        rows = await original_read(*args)
+        read_held.set()
+        await release.wait()
+        return rows
+
+    def paused(_conversation_id):
+        raise RecoveryRequired("storage_locally_paused")
+
+    try:
+        assert harness.lines.lines_for(branch_a) == {}
+        await harness.settle()
+        assert harness.lines.lines_for(branch_a) == {first.id: ZERO}
+        assert harness.repaints == 1
+
+        monkeypatch.setattr(view_workers, "owned_display_read", hold_read)
+        assert harness.lines.lines_for(branch_b) == {}
+        await asyncio.wait_for(read_held.wait(), timeout=10)
+
+        harness.live = True
+        harness.db.get_trajectory_rows = paused
+        assert harness.lines.lines_for(harness.messages) == {first.id: ZERO}
+        release.set()
+        await harness.settle()
+        assert harness.repaints == 1
+        assert harness.lines.lines_for(harness.messages) == {first.id: ZERO}
+
+        harness.db.get_trajectory_rows = original_rows
+        assert harness.lines.lines_for(harness.messages) == {
+            first.id: ZERO,
+            second.id: "Library: 1 source sent",
+        }
+    finally:
+        release.set()
+        await harness.settle()
+        harness.db.get_trajectory_rows = original_rows
+        harness.close()
+
+
+@pytest.mark.asyncio
 async def test_the_line_survives_a_restart(tmp_path):
     """A new store, connection and projection read the same record."""
     harness = _Harness(tmp_path)
