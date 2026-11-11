@@ -1119,7 +1119,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                         generation_id, row.chunk_id, row.relative_path, row.identity,
                         row.content_sha256, row.line_start, row.line_end, vector,
                     )
-                    for row, vector in zip(rows, vectors)
+                    for row, vector in zip(rows, vectors, strict=True)
                 ],
             )
             conn.execute(

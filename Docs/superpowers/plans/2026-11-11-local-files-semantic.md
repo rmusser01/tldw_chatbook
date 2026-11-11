@@ -32,7 +32,7 @@ Reuse PR #3237's native retirement, per-folder model and destination consent, ge
 - [x] Add test coverage for Keyword without model work, Semantic without keyword fallback, and Hybrid with existing fallback and fusion. Include revocation of a semantic receipt after selection.
 - [x] Add a `mode` argument to `ProjectIndexService.search_binding` for `keyword`, `semantic`, or `hybrid`. Snapshot the exact binding before projecting the query. Reuse the PR's existing model and vector phases and then recheck the captured binding before ranking or publishing. Retain the semantic generation identity in the file receipt when semantic candidates contributed.
 - [x] Add the three modes to `LocalFilesScreen`, defaulting to Keyword. Bind mode to the request and show semantic status independently. Use the selected mode for Ask and clear a stale request when mode changes.
-- [ ] Verify the existing semantic tests, new mode coverage, the mounted Local Files flow, and an offline model query where a qualified installed model is available. Record observed latency and any unavailable runtime.
+- [x] Verify the existing semantic tests, new mode coverage, the mounted Local Files flow, and an offline model query with the qualified installed model. The real-app offline MiniLM lifecycle passed in 280.03 seconds. Per-query latency remains unmeasured on the combined branch.
 
 - ADR required: yes
 - ADR path: `backlog/decisions/241-workspace-project-context-and-folder-bound-index.md`
