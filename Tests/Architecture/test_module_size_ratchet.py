@@ -187,7 +187,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-24, round-24 stack: TASK-34100.2's port, stacked on #3430, takes
     # a net 10 lines out of app.py; the row goes down to the measurement,
     # 5,739 -> 5,729.
-    "tldw_chatbook/app.py": 5729,
+    "tldw_chatbook/app.py": 5706,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
@@ -227,7 +227,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
     # the local MCP control service gets a storage provider (+1), which
     # reports the DBs unavailable before the bundle is published (+1).
-    "tldw_chatbook/app_service_wiring.py": 3704,
+    "tldw_chatbook/app_service_wiring.py": 3693,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved

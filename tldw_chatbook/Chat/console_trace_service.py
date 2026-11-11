@@ -2525,44 +2525,27 @@ class ConsoleTraceService:
         action_user_index: int | None = None,
         after_action: object | None = None,
     ) -> tuple[SurfaceDeltaAdmission, object]:
-        """Plan an append, no-op, or one-item bounded surface replacement.
+        """Plan an append, no-op, or bounded one-item surface replacement.
 
-        A verified completed tool turn may instead replace its bounded suffix
-        with the saved assistant revision and append the next saved user.
+        A verified completed tool turn can replace its bounded suffix with
+        the saved assistant revision and append the next saved user. Resolve
+        prior references in the caller's transaction without copying a
+        transcript into the admission or call row.
 
-        The comparison resolves prior references inside the caller transaction;
-        no transcript-sized value is copied into the admission or call row.
-
-        Args:
-            cursor: Cursor for the caller-owned transaction.
-            owner_id: Trace owner whose durable references may be resolved.
-            segment_id: Segment containing the current surface.
-            route_identity: Frozen route identity for the provider call.
-            preparation_identity: Identity of the prepared provider request.
-            provenance: Descriptors aligned with the complete provider surface.
-            values: Provider values aligned with message and continuation
-                descriptors.
-            completed_tool_turn: Optional witness for a bounded completed
-                project/tool turn replacement; all evidence is revalidated.
-            current_turn_id: Saved user message that owns the incoming call.
-            current_policy_id: Frozen disclosure policy for the incoming call.
-            reserved_call: Existing live reservation when rebuilding an owned
-                retry, or None for an initial preparation.
-            known_credentials: Transient runtime secrets used only to compare
-                original provider artifacts with their filtered durable values.
-                They are never stored in the admission or trace ledger.
-            action_user_index: For the call of Edit & resend, Regenerate or
-                Continue, its turn's user row: the call re-records its turn
-                from there (ADR-337 amendment 2026-11-26). None otherwise.
-            after_action: For the send after such a call's run, the run's
-                evidence (``AfterActionCall``); its rows may be replaced.
+        Provenance descriptors and provider values align across messages and
+        continuations. The prepared route/request identities bind the call.
+        Optional completed-tool and retry witnesses are revalidated. The
+        current saved user and disclosure policy bind the incoming call.
+        Transient credentials are used only for filtered comparison and
+        never stored in the admission or ledger.
+        Edit and resend, Regenerate and Continue recapture from their
+        user row. A following send may replace those rows only with its
+        own checked AfterActionCall evidence.
 
         Returns:
-            The admitted surface delta and its verification boundary.
-
+            The admitted delta and verification boundary.
         Raises:
-            ValueError: If provenance is misaligned or the surface change is
-                outside the supported append or bounded-replacement shapes.
+            ValueError: If provenance or the requested change is unsupported.
         """
 
         descriptors = tuple(provenance.messages_payload) + tuple(

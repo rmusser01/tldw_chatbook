@@ -115,15 +115,19 @@ def _captured_history_component(reads):
 
 
 @pytest.mark.parametrize("tokens", ["spaces", "fields"])
+@pytest.mark.parametrize("refusal", ["header-cap", "decode-budget"])
 def test_actual_native_header_expansion_is_admitted_before_decoder(
-    tmp_path, monkeypatch, tokens
+    tmp_path, monkeypatch, tokens, refusal
 ):
     from Tests.Backup_Recovery import mobile_consolidation_fixture
     from tldw_chatbook.Agents.run_log_format import RunLogRecord, encode_record
+    from tldw_chatbook.Agents.run_log_paging import MAX_HEADER_BYTES
     from tldw_chatbook.Backup_Recovery import mobile_runs_history
     from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadLimit
 
     seed = mobile_consolidation_fixture._seed
+    oversized = refusal == "header-cap"
+    expanded_sizes = []
 
     def native(db, legacy, ids):
         original = ids["artifact_file"]
@@ -135,11 +139,12 @@ def test_actual_native_header_expansion_is_admitted_before_decoder(
         )
         if legacy:
             header, body = raw.split(b"\n", 1)
-            extra = (
-                b" " * 500_000
-                if tokens == "spaces"
-                else b"".join(b" k" + str(n).encode() + b"=v" for n in range(50_000))
-            )
+            if tokens == "spaces":
+                extra = b" " * (500_000 if oversized else 5000)
+            else:
+                count = 50_000 if oversized else 1000
+                extra = b"".join(b" k" + str(n).encode() + b"=v" for n in range(count))
+            expanded_sizes.append(len(header) + len(extra))
             raw = header + extra + b"\n" + body
         (parent / "logs.0001.txt").write_bytes(raw)
 
@@ -151,17 +156,25 @@ def test_actual_native_header_expansion_is_admitted_before_decoder(
     decoder = mobile_runs_history.decode_record_header
     admit = mobile_runs_history._admit_header
     entered = []
+    attempted = []
     refused = []
 
     def admission(raw, start, end, budget):
+        size = end - start
+        if size != expanded_sizes[0]:
+            return admit(raw, start, end, budget)
+        attempted.append(size)
+        if not oversized:
+            # Keep a real shared allowance, partially consumed by earlier work.
+            budget.reserve(budget._remaining - 65_536)
         try:
             return admit(raw, start, end, budget)
         except _TraceReadLimit:
-            refused.append(end - start)
+            refused.append(size)
             raise
 
     def boundary(raw):
-        if len(raw) > 100_000:
+        if len(raw) == expanded_sizes[0]:
             entered.append(True)
             raise AssertionError(
                 "expanded native header reached decoder before admission"
@@ -171,12 +184,26 @@ def test_actual_native_header_expansion_is_admitted_before_decoder(
     with content_reads(
         tmp_path, monkeypatch, lambda c, p: None, native_seed=_version_default
     ) as reads:
+        [size] = expanded_sizes
         monkeypatch.setattr(mobile_runs_history, "decode_record_header", boundary)
         monkeypatch.setattr(mobile_runs_history, "_admit_header", admission)
-        with pytest.raises(_TraceReadLimit):
-            _captured_history_component(reads)
+        if oversized:
+            assert size > 100_000 and size + 1 > MAX_HEADER_BYTES
+            history, blockers, _ = _captured_history_component(reads)
+            blocked = {
+                b.original[0]
+                for b in blockers
+                if b.table == "agents.history" and b.reason == "native_history_partial"
+            }
+            assert len(blocked) == 1
+            assert all(proof.logical_id not in blocked for proof in history)
+            assert not attempted and not refused
+        else:
+            assert size + 1 <= MAX_HEADER_BYTES
+            with pytest.raises(_TraceReadLimit, match="^mobile_trace_input_limit$"):
+                _captured_history_component(reads)
+            assert attempted == refused == [size]
         assert not entered
-        assert refused and min(refused) > 100_000
     assert not reads.active and not reads.roots
 
 

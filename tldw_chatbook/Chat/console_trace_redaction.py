@@ -6,6 +6,7 @@ import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from functools import partial
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 from tldw_chatbook.Backup_Recovery.limits import _TraceReadLimit
@@ -513,7 +514,7 @@ def _widen_over_newer_keys(
     reserve_span = None
     if _read_budget is not None:
         _read_budget.container(2 * len(spans) + 3)
-        reserve_span = lambda: _read_budget.container(4)
+        reserve_span = partial(_read_budget.container, 4)
     keys = trace_credential_key_spans(text, reserve_span=reserve_span)
     widened = []
     for span in spans:
