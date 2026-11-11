@@ -568,6 +568,9 @@ def accept_workflow_phase(
         ):
             raise AutomaticWorkRefused("workflow_original_planning_preparation_required")
         runtime.worktree_activity.validate_opaque_claim(finite[1], owner=finite[0])
+    ledger._install_workflow_phase_validators(
+        workflow_fence_connection, workflow_dispatch_identity
+    )
     with execution(ledger):
         if not ledger.accept_workflow_phase(attempt_id, owner_id=owner_id):
             return None

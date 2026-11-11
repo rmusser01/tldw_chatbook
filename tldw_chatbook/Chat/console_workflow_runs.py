@@ -854,6 +854,9 @@ class ConsoleWorkflowCoordinator:
         self._metadata_tail = None
         self._metadata_floor = {}
         self._pending_planning = set()
+        service.db.automatic_work._install_workflow_accounting_validators(
+            _quiescence_receiving, _quiescence_evidence
+        )
 
     def subscribe(
         self, callback: Callable[[WorkflowRuntimeSnapshot], None]

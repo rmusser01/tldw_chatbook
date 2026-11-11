@@ -75,6 +75,8 @@ class AutomaticWorkLedger:
         self._temporary_progress_claims: dict[str, str] = {}
         self._review_authorities = {}
         self._review_attempts = {}
+        self._workflow_phase_validators = None
+        self._workflow_accounting_validators = None
 
         # Establish the existing canonical key before this ledger can authorize
         # work. Cleanup must never need a fresh filesystem observation.
@@ -89,6 +91,36 @@ class AutomaticWorkLedger:
                     identity = "memory:" + uuid4().hex
                     db._automatic_work_restriction_id = identity
                 self._restriction_database_id = identity
+
+    def _install_workflow_phase_validators(self, connection, dispatch):
+        """Install the original native phase validators for this ledger."""
+        with self._progress_claim_lock:
+            previous = self._workflow_phase_validators
+            if previous is None:
+                self._workflow_phase_validators = (connection, dispatch)
+            elif previous[0] is not connection or previous[1] is not dispatch:
+                raise AutomaticWorkRefused("workflow_authority_changed")
+
+    def _install_workflow_accounting_validators(self, receiving, evidence):
+        """Install the original coordinator validators before its first accounting read."""
+        with self._progress_claim_lock:
+            previous = self._workflow_accounting_validators
+            if previous is None:
+                self._workflow_accounting_validators = (receiving, evidence)
+            elif previous[0] is not receiving or previous[1] is not evidence:
+                raise AutomaticWorkRefused("workflow_authority_changed")
+
+    def _workflow_fence_connection(self, proof):
+        validators = self._workflow_phase_validators
+        if validators is None:
+            raise AutomaticWorkRefused("workflow_native_fence_changed")
+        return validators[0](proof, self)
+
+    def _receive_workflow_quiescence(self, proof, mode):
+        validators = self._workflow_accounting_validators
+        if validators is None:
+            raise PermissionError("original workflow accounting record required")
+        validators[0](proof, self, mode)
 
     def register_review_boundary_authority(
         self, owner_id, *, validate, transition, acceptance_scope
@@ -201,13 +233,10 @@ class AutomaticWorkLedger:
         Nested transactions are rejected before changing the connection. Catch
         BaseException too: cancellation must never leave a fence half-open.
         """
-        if _native is not None:
-            from tldw_chatbook.Agents.workflow_phase import workflow_fence_connection as _fence_connection
-
         with (
             self._db.connection()
             if _native is None
-            else nullcontext(_fence_connection(_native, self))
+            else nullcontext(self._workflow_fence_connection(_native))
         ) as conn:
             if conn.in_transaction:
                 raise RuntimeError("automatic work transaction cannot be nested")
@@ -218,7 +247,7 @@ class AutomaticWorkLedger:
                 try:
                     yield conn
                     if _native is not None:
-                        _fence_connection(_native, self)
+                        self._workflow_fence_connection(_native)
                     conn.commit()
                 except BaseException:
                     conn.rollback()
@@ -330,9 +359,7 @@ class AutomaticWorkLedger:
         _native=None,
     ) -> None:
         if _native is not None:
-            from tldw_chatbook.Agents.workflow_phase import workflow_fence_connection as _fence_connection
-
-            _fence_connection(_native, self)
+            self._workflow_fence_connection(_native)
         self._check_unconfirmed_starts(conn, chain_id)
         snapshot = self._snapshot(conn, chain_id, _dispatch=_dispatch, _native=_native)
         if snapshot.status == "review_required":
@@ -809,13 +836,10 @@ class AutomaticWorkLedger:
         _native=None,
     ) -> bool:
         """Consume a reservation once; True alone authorizes its first dispatch."""
-        if _native is not None:
-            from tldw_chatbook.Agents.workflow_phase import workflow_fence_connection as _fence_connection
-
         with (
             self._db.connection()
             if _native is None
-            else nullcontext(_fence_connection(_native, self))
+            else nullcontext(self._workflow_fence_connection(_native))
         ) as conn:
             chain_id = self._reservation(conn, reservation_id, owner_id)["chain_id"]
         with self._admission_transaction(chain_id, _native=_native) as conn:
@@ -2244,9 +2268,7 @@ class AutomaticWorkLedger:
         from tldw_chatbook.config import coerce_bool_setting
 
         if _native is not None:
-            from tldw_chatbook.Agents.workflow_phase import workflow_fence_connection as _fence_connection
-
-            _fence_connection(_native, self)
+            self._workflow_fence_connection(_native)
             return
         if not coerce_bool_setting(_setting("workflow_runs_enabled", False), False):
             raise AutomaticWorkRefused("workflow_runs_disabled")
@@ -2262,9 +2284,7 @@ class AutomaticWorkLedger:
         _native=None,
     ):
         if _native is not None:
-            from tldw_chatbook.Agents.workflow_phase import workflow_fence_connection as _fence_connection
-
-            _fence_connection(_native, self)
+            self._workflow_fence_connection(_native)
         self._check_runtime_owner(conn, owner_id)
         if (
             conn.execute(
@@ -2299,9 +2319,10 @@ class AutomaticWorkLedger:
         return native, phase
 
     def _validate_workflow_dispatch(self, conn, proof, native, phase):
-        from tldw_chatbook.Agents.workflow_phase import workflow_dispatch_identity as _dispatch_identity
-
-        proof = _dispatch_identity(proof, self)
+        validators = self._workflow_phase_validators
+        if validators is None:
+            raise AutomaticWorkRefused("workflow_authority_changed")
+        proof = validators[1](proof, self)
         task = proof.task.claim
         row = conn.execute(
             "SELECT t.status,t.run_id,c.launch_run_id,a.state,a.chain_id,a.owner_id "
@@ -2707,11 +2728,13 @@ class AutomaticWorkLedger:
         # A recovered unknown needs no live Console witness inside this DB read.
         if all(row["native_state"] == "review_required" for row in rows):
             return True
-        from tldw_chatbook.Chat.console_workflow_runs import _quiescence_evidence
+        validators = self._workflow_accounting_validators
+        if validators is None:
+            return True
 
         return any(
             row["native_state"] == "review_required"
-            or not _quiescence_evidence(
+            or not validators[1](
                 self, conn, row, context=_accounting, dispatch=_dispatch, native=_native
             )
             for row in rows
@@ -2782,9 +2805,7 @@ class AutomaticWorkLedger:
     ) -> bool:
         """Reopen workflow time inside the same transaction as native dispatch."""
         if _native is not None:
-            from tldw_chatbook.Agents.workflow_phase import workflow_fence_connection as _fence_connection
-
-            _fence_connection(_native, self)
+            self._workflow_fence_connection(_native)
         root = self._allowance_chain(conn, chain_id)["id"]
         workflow = conn.execute(
             "SELECT id FROM workflow_runs WHERE chain_id=?", (root,)
@@ -2833,15 +2854,13 @@ class AutomaticWorkLedger:
         """
         attempt = self.read_workflow_attempt(attempt_id, owner_id=owner_id)
         if _quiescence is not None or _cleanup:
-            from tldw_chatbook.Chat.console_workflow_runs import _quiescence_receiving
-
             mode = "cleanup" if _cleanup else "resume"
-            _quiescence_receiving(_quiescence, self, mode)
+            self._receive_workflow_quiescence(_quiescence, mode)
             if _quiescence.phase.attempt != attempt:
                 raise PermissionError("original workflow accounting attempt changed")
         if _cleanup:
             with self.transaction() as conn:
-                _quiescence_receiving(_quiescence, self, "cleanup")
+                self._receive_workflow_quiescence(_quiescence, "cleanup")
                 self._check_runtime_owner(conn, owner_id)
                 native = self._attempt(conn, attempt_id, owner_id, "workflow_phase")
                 phase = conn.execute(
@@ -2939,9 +2958,7 @@ class AutomaticWorkLedger:
             raise ValueError("invalid drain observation")
         attempt = self.read_workflow_attempt(attempt_id, owner_id=owner_id)
         if _quiescence is not None:
-            from tldw_chatbook.Chat.console_workflow_runs import _quiescence_receiving
-
-            _quiescence_receiving(_quiescence, self, "quiesce")
+            self._receive_workflow_quiescence(_quiescence, "quiesce")
             if _quiescence.phase.attempt != attempt:
                 raise PermissionError("original workflow accounting attempt changed")
         with self.transaction() as conn:
@@ -2956,7 +2973,7 @@ class AutomaticWorkLedger:
             if self._workflow_unsettled(conn, phase, attempt.chain_id, quiescing=True):
                 raise AutomaticWorkRefused("workflow_not_settled")
             if _quiescence is not None:
-                _quiescence_receiving(_quiescence, self, "quiesce")
+                self._receive_workflow_quiescence(_quiescence, "quiesce")
                 self._workflow_current(conn, attempt_id, owner_id, accepted=True)
                 interval = conn.execute(
                     "SELECT id FROM workflow_active_intervals WHERE workflow_id=? AND ended_at IS NULL",
