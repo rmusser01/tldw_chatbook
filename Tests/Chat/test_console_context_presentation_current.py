@@ -97,6 +97,7 @@ async def test_context_display_retains_exact_native_handle_through_cancel(tmp_pa
 async def test_session_close_drains_context_display_and_refuses_a_new_read(
     tmp_path, monkeypatch
 ):
+    from tldw_chatbook.Chat import console_preparation_reads
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 
     database, store, controller, _screen_owner, tasks = _screen(tmp_path)
@@ -106,23 +107,25 @@ async def test_session_close_drains_context_display_and_refuses_a_new_read(
     runtime.set_chat_controller(controller)
     session_id = "session-1"
     code = store.persistence.get_message_versions.__func__.__code__
-    entered, grace_elapsed = asyncio.Event(), asyncio.Event()
+    entered, drain_entered = asyncio.Event(), asyncio.Event()
     release = threading.Event()
     loop = asyncio.get_running_loop()
     previous, previous_thread = sys.getprofile(), threading.getprofile()
-    original_wait = runtime._bounded_wait
+    original_drain = console_preparation_reads.drain_preparation_reads
 
-    async def observe_wait(*args, **kwargs):
-        pending = await original_wait(*args, **kwargs)
-        grace_elapsed.set()
-        return pending
+    async def observe_drain(reads, selected_session=None):
+        if reads is runtime._preparation_reads and selected_session == session_id:
+            drain_entered.set()
+        return await original_drain(reads, selected_session)
 
     def hold_read(frame, event, _argument):
         if frame.f_code is code and event == "return":
             loop.call_soon_threadsafe(entered.set)
             assert release.wait(20)
 
-    monkeypatch.setattr(runtime, "_bounded_wait", observe_wait)
+    monkeypatch.setattr(
+        console_preparation_reads, "drain_preparation_reads", observe_drain
+    )
     threading.setprofile_all_threads(hold_read)
     presentation = asyncio.create_task(
         controller.context_control_presentation_inputs(session_id)
@@ -142,7 +145,7 @@ async def test_session_close_drains_context_display_and_refuses_a_new_read(
                     timeout_seconds=0.01,
                 )
             )
-            await grace_elapsed.wait()
+            await drain_entered.wait()
             assert not close.done() and not read.retired.done()
             assert any(session.id == session_id for session in store.sessions())
             with pytest.raises(
@@ -168,7 +171,9 @@ async def test_session_close_drains_context_display_and_refuses_a_new_read(
 
 
 @pytest.mark.asyncio
-async def test_custom_context_reader_keeps_issuing_thread_and_live_result(tmp_path, monkeypatch):
+async def test_custom_context_reader_keeps_issuing_thread_and_live_result(
+    tmp_path, monkeypatch
+):
     database, _store, controller, _screen_owner, tasks = _screen(tmp_path)
     calls = []
     result = object()

@@ -42,7 +42,6 @@ def _run_text(console) -> str:
     ).segment_text("run")
 
 
-
 @pytest.mark.parametrize(
     "name,handler",
     [("omfg", "learn-response-rule"), ("rules", "manage-response-rules")],
@@ -130,10 +129,25 @@ async def _wait_for_visible_stop(case):
 
 @pytest.mark.asyncio
 async def test_actual_stop_after_generation_cancels_rule_check(tmp_path):
+    from Tests.Chat.response_rules_fixtures import source
+    from Tests.Chat.response_rules_store_fixtures import activate
+    from Tests.UI.test_response_rules_end_to_end import wait_for
+
     async with mounted_rules_console(tmp_path) as case:
-        seed_answer(case)
-        learned = await case.rules.learn(case.session_id, "The answer omitted evidence")
-        assert learned.state == "active", (learned.reason, case.failures)
+        answer = seed_answer(case)
+        session = next(s for s in case.chats.sessions() if s.id == case.session_id)
+        origin = source(
+            profile_id=case.rules.profile_id,
+            session_id=session.id,
+            conversation_id=session.persisted_conversation_id,
+            message_id=answer.persisted_message_id,
+            branch_id=answer.id,
+            message_version=case.chats.response_rule_source_version(answer.id),
+        )
+        await case.rules.run_db_call(
+            activate, case.rules.store, origin, case.rules.scopes(session.id)[0]
+        )
+        assert len(case.rules.effective_rules(session.id)) == 1
         entered, release = asyncio.Event(), asyncio.Event()
         assess = case.rules.evaluator.assess
 
@@ -143,19 +157,23 @@ async def test_actual_stop_after_generation_cancels_rule_check(tmp_path):
             return await assess(*args, **kwargs)
 
         case.rules.evaluator.assess = held
+        case.reply = "A result without supporting details."
         case.composer.load_draft("Explain another result")
-        case.console.query_one("#console-send-message", Button).press()
         try:
+            send = case.console.query_one("#console-send-message", Button)
+            await wait_for(
+                case, lambda: not send.disabled and not send.has_class("-active")
+            )
+            assert await case.pilot.click("#console-send-message")
             for _ in range(60):
                 await case.pilot.pause()
                 if entered.is_set():
                     break
             assert entered.is_set(), case.controller.run_state
             before = len(case.requests)
-            assert (
-                case.chats.get_message(case.chats.active_leaf(case.session_id)).status
-                == "complete"
-            )
+            completed = case.chats.get_message(case.chats.active_leaf(case.session_id))
+            assert completed.status == "complete" and completed.content == case.reply
+            assert before == 1
             await _wait_for_visible_stop(case)
             assert await case.pilot.click("#console-stop-generation")
             for _ in range(10):
