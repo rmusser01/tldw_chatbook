@@ -191,6 +191,32 @@ async def test_actual_composer_refusal_preserves_draft_and_rules_is_native(tmp_p
         )
 
 
+async def _wait_for_visible_stop(case):
+    stop = case.console.query_one("#console-stop-generation", Button)
+    # Rule copy publishes immediately; checked controls may replay later.
+    # Pilot caches the click origin before its own layout pause.
+    async with asyncio.timeout(5):
+        while True:
+            region = stop.region
+            if (
+                stop.is_mounted
+                and stop.display
+                and stop.visible
+                and not stop.disabled
+                and region.width > 0
+                and region.height > 0
+            ):
+                try:
+                    hit, _ = case.host.screen.get_widget_at(region.x, region.y)
+                except NoWidget:
+                    pass
+                else:
+                    if hit is stop:
+                        break
+            await asyncio.sleep(0.01)
+    assert stop.display and not stop.disabled
+
+
 @pytest.mark.asyncio
 async def test_actual_stop_after_generation_cancels_rule_check(tmp_path):
     async with mounted_rules_console(tmp_path) as case:
@@ -208,43 +234,46 @@ async def test_actual_stop_after_generation_cancels_rule_check(tmp_path):
         case.rules.evaluator.assess = held
         case.composer.load_draft("Explain another result")
         case.console.query_one("#console-send-message", Button).press()
-        # TASK-39166: bounded waits on each step's own state, not 60 and 10
-        # pilot turns.
-        await _until_set(entered, "the held rule check's assessment")
-        before = len(case.requests)
-        assert (
-            case.chats.get_message(case.chats.active_leaf(case.session_id)).status
-            == "complete"
-        )
-        stop = case.console.query_one("#console-stop-generation", Button)
+        try:
+            # TASK-39166: bounded waits on each step's own state, not 60 and 10
+            # pilot turns.
+            await _until_set(entered, "the held rule check's assessment")
+            before = len(case.requests)
+            assert (
+                case.chats.get_message(case.chats.active_leaf(case.session_id)).status
+                == "complete"
+            )
+            stop = case.console.query_one("#console-stop-generation", Button)
 
-        def stop_under_pointer():
-            # pilot.click aims at the region's origin and reports whether the
-            # button was the widget there; a Stop not laid out yet misses.
-            if not (stop.display and not stop.disabled and stop.region.area):
-                return False
-            try:
-                return case.host.get_widget_at(*stop.region.offset)[0] is stop
-            except NoWidget:
-                return False
+            def stop_under_pointer():
+                # pilot.click aims at the region's origin and reports whether the
+                # button was the widget there; a Stop not laid out yet misses.
+                if not (stop.display and not stop.disabled and stop.region.area):
+                    return False
+                try:
+                    return case.host.get_widget_at(*stop.region.offset)[0] is stop
+                except NoWidget:
+                    return False
 
-        await _until(
-            stop_under_pointer,
-            "the Stop button laid out under the pointer",
-            lambda: case.pilot.pause(0.01),
-        )
-        assert await case.pilot.click("#console-stop-generation")
-        await _until(
-            lambda: case.rules.state(case.session_id).phase == "idle",
-            "Stop cancelling the held rule check (phase idle)",
-        )
-        release.set()
-        assert case.rules.state(case.session_id).phase == "idle"
-        assert len(case.requests) == before
-        await _until(
-            lambda: case.host.focused is case.composer,
-            "focus returning to the composer after Stop",
-        )
+            await _until(
+                stop_under_pointer,
+                "the Stop button laid out under the pointer",
+                lambda: case.pilot.pause(0.01),
+            )
+            assert await case.pilot.click("#console-stop-generation")
+            await _until(
+                lambda: case.rules.state(case.session_id).phase == "idle",
+                "Stop cancelling the held rule check (phase idle)",
+            )
+            release.set()
+            assert case.rules.state(case.session_id).phase == "idle"
+            assert len(case.requests) == before
+            await _until(
+                lambda: case.host.focused is case.composer,
+                "focus returning to the composer after Stop",
+            )
+        finally:
+            release.set()
 
 
 @pytest.mark.asyncio
@@ -523,29 +552,7 @@ async def test_mapped_learning_phase_and_stop_follow_live_helper(tmp_path, size)
             assert not case.console._console_transcript_poll_needed()
             assert _run_visible(case.console)
             assert "Drafting rule" in _run_text(case.console)
-            stop = case.console.query_one("#console-stop-generation", Button)
-            # Rule copy publishes immediately; checked controls may replay later.
-            # Pilot caches the click origin before its own layout pause.
-            async with asyncio.timeout(5):
-                while True:
-                    region = stop.region
-                    if (
-                        stop.is_mounted
-                        and stop.display
-                        and stop.visible
-                        and not stop.disabled
-                        and region.width > 0
-                        and region.height > 0
-                    ):
-                        try:
-                            hit, _ = case.host.screen.get_widget_at(region.x, region.y)
-                        except NoWidget:
-                            pass
-                        else:
-                            if hit is stop:
-                                break
-                    await asyncio.sleep(0.01)
-            assert stop.display and not stop.disabled
+            await _wait_for_visible_stop(case)
             assert await case.pilot.click("#console-stop-generation")
             await case.pilot.pause()
             assert case.composer.draft_text() == complaint
