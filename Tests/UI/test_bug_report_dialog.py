@@ -11,7 +11,7 @@ from textual.binding import Binding
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from tldw_chatbook.UI.Navigation.screen_state_store import RuntimeIdentity
 from tldw_chatbook.Utils.bug_report import BugReportEvidence, BugReportItem
-from tldw_chatbook.Utils.bug_report_capture import (
+from tldw_chatbook.UI.bug_report_capture import (
     BugReportCapture,
     capture_bug_report_context,
 )
@@ -21,11 +21,12 @@ from tldw_chatbook.Widgets.confirmation_dialog import (
     confirm_quit_screens,
     quit_confirmation_screens,
 )
+from tldw_chatbook.app_bug_report import BugReportActions
 
 pytestmark = pytest.mark.bootstrap_profile
 
 
-class ReportHarness(ConsolidatedCSSApp):
+class ReportHarness(BugReportActions, ConsolidatedCSSApp):
     CSS_PATH = BUNDLED_STYLESHEET
     BINDINGS = [Binding("ctrl+q", "quit_walk", "Quit", priority=True)]
 

@@ -264,7 +264,7 @@ def test_metadata_readers_exclude_message_bodies_and_agent_results(database):
             "INSERT INTO message_trajectory_metadata(message_id, conversation_id, turn_id, seq, event_kind, payload_json) SELECT id, conversation_id, id, 0, 'tool_result', ? FROM messages WHERE conversation_id = ?",
             ('{"result":"PRIVATE_BODY"}', cid),
         )
-    facts = database.get_report_trajectory_tail(cid)
+        facts = ConsoleTraceRepository().read_report_trajectory_tail(cursor, cid)
     assert len(facts) == 1
     assert "PRIVATE_BODY" not in str(facts) and "PRIVATE_MESSAGE" not in str(facts)
     runs = AgentRunsDB(":memory:", "bug-report-agent-tests", reconcile_on_init=False)
@@ -369,7 +369,7 @@ def test_tool_reader_validates_revision_owner_in_selected_lineage(database, fore
 
 def test_agent_report_preserves_failed_step_when_run_recovers():
     from Tests.Utils.test_bug_report_capture import _app
-    from tldw_chatbook.Utils.bug_report_capture import (
+    from tldw_chatbook.UI.bug_report_capture import (
         BugReportCollector,
         capture_bug_report_context,
     )
@@ -425,7 +425,7 @@ def test_agent_report_tail_uses_sequence_when_clock_moves_backwards():
 
 def test_agent_report_tail_uses_observation_order_and_diagnostic_errors():
     from Tests.Utils.test_bug_report_capture import _app
-    from tldw_chatbook.Utils.bug_report_capture import (
+    from tldw_chatbook.UI.bug_report_capture import (
         BugReportCollector,
         capture_bug_report_context,
     )

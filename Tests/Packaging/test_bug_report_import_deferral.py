@@ -14,12 +14,13 @@ import sys
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.Logs_Window import LogsWindow
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
-for name in ("tldw_chatbook.Utils.bug_report_capture", "tldw_chatbook.Widgets.bug_report_dialog"):
+for name in ("tldw_chatbook.UI.bug_report_capture", "tldw_chatbook.Widgets.bug_report_dialog"):
     assert name not in sys.modules, name
 before = set(sys.modules)
 from textual.app import App
 from tldw_chatbook.UI.Navigation.screen_state_store import RuntimeIdentity
-class Host(App):
+from tldw_chatbook.app_bug_report import BugReportActions
+class Host(BugReportActions, App):
     action_report_bug = TldwCli.action_report_bug
     console_runtime = None
     current_tab = "logs"

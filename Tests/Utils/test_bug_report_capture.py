@@ -11,7 +11,7 @@ import pytest
 from tldw_chatbook.Logging_Config import LogsBufferHandler
 from tldw_chatbook.UI.Navigation.screen_state_store import RuntimeIdentity
 from tldw_chatbook.Utils.bug_report import BugReportEvidence, BugReportItem
-from tldw_chatbook.Utils.bug_report_capture import (
+from tldw_chatbook.UI.bug_report_capture import (
     BugReportCollector,
     capture_bug_report_context,
 )
@@ -37,9 +37,11 @@ def _app(with_session=False):
         _current_runtime_identity=lambda: RuntimeIdentity("local"),
         _log_buffer=deque(maxlen=10000),
         _log_records=deque(maxlen=10000),
+        _bug_report_collectors=None,
         _current_logs_window=None,
         _current_log_widget=None,
         current_tab="logs",
+        screen=None,
         is_web=False,
     )
     app._persistent_log_handler = LogsBufferHandler(app)
@@ -289,7 +291,7 @@ async def test_default_capture_reads_existing_file_database_metadata_only(
 
 
 async def test_populated_log_alias_projection_does_not_run_on_ui_loop(monkeypatch):
-    import tldw_chatbook.Utils.bug_report_capture as capture_module
+    import tldw_chatbook.UI.bug_report_capture as capture_module
 
     app = _app()
     collector = BugReportCollector(app, capture_bug_report_context(app))

@@ -148,4 +148,21 @@ The Windows report, capture, trace, and dialog suites passed all 56 tests after
 the fixes. All four entry-point tests passed after bounding the Logs window
 in its harness and waiting for the deferred dialog open. The Textual worker
 and timestamp guards also passed.
+
+## Required CI follow-up
+
+The first required run reported app lookup, layer direction, module size, and
+modal wide-tier failures. The evidence collector now lives in the presentation
+layer and reads declared app-owned sources. The app opens the dialog through a
+small action mixin, Settings uses the app action, and the trace repository owns
+the bounded trajectory query. The report dialog uses the existing 170-column
+wide tier. The app lookup and module size pins track the measured reductions.
+
+The same run reached 99% of PR Fast Lane before its 35-minute limit. Four AST
+scans now run in the existing architecture-review job, which took 2m28s on
+that attempt. The workflow contract confirms each scan still runs once under
+the required verdict. The architecture guards, workflow contract, buffered
+logging tests, pinned Ruff checks, and CSS reproduction passed locally. All 181
+tests covering the modal registry, report entry points, collection, trace
+projection, and import deferral passed on Windows.
 [ordered rulings](2026-10-28-report-a-bug-rulings.md).

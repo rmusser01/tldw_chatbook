@@ -22693,11 +22693,6 @@ class SettingsScreen(BaseAppScreen):
             return
         panel.apply_profile_choices(choices, unavailable=failed)
 
-    @on(Button.Pressed, "#settings-about-report-bug")
-    def _report_bug(self, event: Button.Pressed) -> None:
-        event.stop()
-        self.app_instance.action_report_bug()
-
     @on(Markdown.LinkClicked, "#settings-about-markdown")
     def _handle_about_link(self, event: Markdown.LinkClicked) -> None:
         """About links: http(s) opens the system browser with a notify (TASK-2775).
@@ -23575,7 +23570,7 @@ class SettingsScreen(BaseAppScreen):
             with Vertical(id="settings-about-card", classes="settings-focus-card"):
                 yield self._detail_row("Version", get_app_version())
                 yield self._detail_row("License", "AGPLv3+")
-                yield Button("Report a bug…", id="settings-about-report-bug")
+                yield Button("Report a bug…", id="settings-about-report-bug", action="app.report_bug")
                 # open_links=False: clicks go through _handle_about_link so
                 # the policy (browser + notify) is explicit and testable.
                 yield Markdown(

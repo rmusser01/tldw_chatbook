@@ -44,7 +44,7 @@ class BugReportCapture:
 def capture_bug_report_context(app: TldwCli) -> BugReportContext:
     """Freeze already-existing selection without initializing any Console state."""
     identity = app._current_runtime_identity()
-    runtime = getattr(app, "console_runtime", None)
+    runtime = app.console_runtime
     store = getattr(runtime, "chat_store", None)
     active = getattr(store, "active_session_id", None)
     session = (
@@ -61,7 +61,7 @@ def capture_bug_report_context(app: TldwCli) -> BugReportContext:
         identity.active_source == "local"
         and session is not None
         and getattr(session, "workspace_id", None) == workspace
-        and not getattr(getattr(app, "screen", None), "_shared_trace", False)
+        and not getattr(app.screen, "_shared_trace", False)
     )
     return BugReportContext(
         identity,
@@ -69,7 +69,7 @@ def capture_bug_report_context(app: TldwCli) -> BugReportContext:
         active,
         store.active_session_epoch() if store else None,
         getattr(session, "persisted_conversation_id", None) if eligible else None,
-        str(getattr(app, "current_tab", "unknown")),
+        str(app.current_tab),
         utc_now_iso(),
         str(getattr(session, "title", "Untitled conversation")) if eligible else None,
     )
@@ -83,16 +83,14 @@ class BugReportCollector:
     def __init__(self, app: TldwCli, context: BugReportContext) -> None:
         self.app = app
         self.context = context
-        runtime = getattr(app, "console_runtime", None)
+        runtime = app.console_runtime
         store = getattr(runtime, "chat_store", None)
         self.chat_db = getattr(getattr(store, "persistence", None), "db", None)
-        self.agent_db = getattr(app, "agent_runs_db", None)
-        if self.agent_db is None:
-            bridge = getattr(runtime, "agent_bridge", None)
-            self.agent_db = getattr(bridge, "runs_db", None) or getattr(
-                runtime, "_agent_runs_db", None
-            )
-        self.log_handler = getattr(app, "_persistent_log_handler", None)
+        bridge = getattr(runtime, "agent_bridge", None)
+        self.agent_db = getattr(bridge, "runs_db", None) or getattr(
+            runtime, "_agent_runs_db", None
+        )
+        self.log_handler = app._persistent_log_handler
         self._cancelled = threading.Event()
         self._pending: dict[str, asyncio.Task] = {}
         self._aliases: dict[str, str] = {}
@@ -126,7 +124,7 @@ class BugReportCollector:
         )
 
     async def _source(self, name: str, read, *args):
-        owners = getattr(self.app, "_bug_report_collectors", None)
+        owners = self.app._bug_report_collectors
         if owners is None:
             owners = set()
             self.app._bug_report_collectors = owners
@@ -181,7 +179,7 @@ class BugReportCollector:
             (
                 "Mode",
                 "served (server environment)"
-                if getattr(self.app, "is_web", False)
+                if self.app.is_web
                 else "terminal",
             ),
             ("Origin route", self.context.origin_route),
@@ -341,9 +339,10 @@ class BugReportCollector:
                     notes.append(
                         f"Console native excerpt: {len(events)} events; older={tail.has_older}; lineage coverage limited={tail.lineage_truncated}."
                     )
-                rows = self.chat_db.get_report_trajectory_tail(
-                    self.context.conversation_id
-                )
+                with self.chat_db.transaction() as cursor:
+                    rows = repo.read_report_trajectory_tail(
+                        cursor, self.context.conversation_id
+                    )
                 streams.append(
                     [
                         self._fact(

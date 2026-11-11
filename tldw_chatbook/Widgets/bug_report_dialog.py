@@ -22,7 +22,7 @@ from tldw_chatbook.Utils.bug_report import (
     prepare_bug_report_copy,
     render_bug_report,
 )
-from tldw_chatbook.Utils.bug_report_capture import BugReportCollector
+from tldw_chatbook.UI.bug_report_capture import BugReportCollector
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Utils.timestamps import utc_now_iso
 from tldw_chatbook.Widgets.confirmation_dialog import (
@@ -33,7 +33,7 @@ from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
-    from tldw_chatbook.Utils.bug_report_capture import BugReportContext
+    from tldw_chatbook.UI.bug_report_capture import BugReportContext
 
 
 class _ReportForm(BaseModel):

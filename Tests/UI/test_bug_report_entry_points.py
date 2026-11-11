@@ -10,7 +10,7 @@ from Tests.UI.test_bug_report_dialog import ReportHarness, answer
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.app_command_providers import QuickActionsProvider
 from tldw_chatbook.UI.Logs_Window import LogsWindow
-from tldw_chatbook.Utils.bug_report_capture import capture_bug_report_context
+from tldw_chatbook.UI.bug_report_capture import capture_bug_report_context
 from tldw_chatbook.Widgets.bug_report_dialog import BugReportDialog
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -95,7 +95,11 @@ async def test_about_action_is_on_canonical_settings_surface():
     calls = []
     owner = _build_test_app()
     owner.action_report_bug = lambda: calls.append("report")
-    app = DestinationHarness(owner, "settings")
+    class AboutHarness(DestinationHarness):
+        def action_report_bug(self):
+            owner.action_report_bug()
+
+    app = AboutHarness(owner, "settings")
     async with app.run_test(size=(120, 40)) as pilot:
         screen = app.screen
         await app.workers.wait_for_complete()
