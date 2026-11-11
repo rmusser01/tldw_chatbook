@@ -13,12 +13,17 @@ from tldw_chatbook.Sync_Interop.conflict_review import (
     SyncV2ConflictReviewItem,
     SyncV2ConflictReviewService,
 )
-from tldw_chatbook.Sync_Interop.sync_state import NOTES_ORGANIZATION_DOMAINS
-from tldw_chatbook.Sync_Interop.sync_state import is_local_first_sync_profile_mode
+from tldw_chatbook.Sync_Interop.sync_state import (
+    NOTES_ORGANIZATION_DOMAINS,
+    SERVER_TRUSTED_SYNC_POLICY,
+    is_local_first_sync_profile_mode,
+)
 
 ManualSyncStatus = Literal[
     "ready",
     "empty",
+    "preview-only",
+    "setup",
     "blocked",
     "success",
     "partial-failure",
@@ -145,19 +150,31 @@ class ManualSyncControlService:
             return self._blocked(
                 "Manual Sync v2 requires dataset and device identity.", profile
             )
-        if dataset_id not in self.dataset_keys:
-            return self._blocked(
-                "Manual Sync v2 is blocked because the dataset key is unavailable.",
-                profile,
-            )
-        if (
-            self.local_first_sync_service is None
-            or getattr(self.local_first_sync_service, "local_store", None) is None
-        ):
-            return self._blocked(
-                "Manual Sync v2 is blocked because the local apply store is unavailable.",
-                profile,
-            )
+        enrollment = profile.get("dry_run_metadata") or {}
+        preview_only = (
+            enrollment.get("enrollment_only") is True
+            and enrollment.get("encryption_policy") == SERVER_TRUSTED_SYNC_POLICY
+        )
+        organization_supported = self._can_prepare_notes_organization(
+            profile, enrollment
+        )
+        can_run = False
+        if preview_only:
+            selected_domains = tuple(enrollment.get("domains") or ())
+        elif dataset_id not in self.dataset_keys:
+            if not organization_supported:
+                return self._blocked(
+                    "Manual Sync v2 is blocked because the dataset key is unavailable.",
+                    profile,
+                )
+        elif getattr(self.local_first_sync_service, "local_store", None) is None:
+            if not organization_supported:
+                return self._blocked(
+                    "Manual Sync v2 is blocked because the local apply store is unavailable.",
+                    profile,
+                )
+        else:
+            can_run = True
 
         entries = self.state_repository.list_pending_sync_v2_outbox_envelopes(
             server_profile_id=server_profile_id,
@@ -175,6 +192,34 @@ class ManualSyncControlService:
             domain: count for domain, count in pending_by_domain.items() if count > 0
         }
         pending_total = sum(pending_by_domain.values())
+        if not can_run:
+            organization_ready = (
+                organization_supported
+                and self.notes_organization_sync_service.notes_organization_ready(
+                    server_profile_id=server_profile_id, dataset_id=dataset_id
+                )
+            )
+            can_prepare = organization_supported and not organization_ready
+            readiness_copy = "Running sync is unavailable for this profile."
+            if can_prepare:
+                readiness_copy = "Notes organization setup is available."
+            elif organization_ready:
+                readiness_copy = "Notes organization is ready. Running Notes and Chat sync is unavailable."
+            pending_copy = (
+                f"{pending_total} pending outgoing changes"
+                if pending_total
+                else "no pending outgoing changes"
+            )
+            return ManualSyncPreview(
+                status="setup" if can_prepare else "preview-only",
+                can_run=False,
+                pending_total=pending_total,
+                pending_by_domain=pending_by_domain,
+                user_message=(
+                    f"Manual Sync is enrolled with {pending_copy}. {readiness_copy}"
+                ),
+                profile=profile,
+            )
         if pending_total == 0:
             return ManualSyncPreview(
                 status="empty",
@@ -196,6 +241,42 @@ class ManualSyncControlService:
             profile=profile,
         )
 
+    def _can_prepare_notes_organization(
+        self, profile: Mapping[str, Any], enrollment: Mapping[str, Any]
+    ) -> bool:
+        if (
+            self.notes_organization_sync_service is None
+            or not profile.get("authenticated_principal_id")
+            or not callable(
+                getattr(
+                    self.local_first_sync_service,
+                    "pull_notes_organization_history",
+                    None,
+                )
+            )
+            or not callable(
+                getattr(
+                    getattr(self.local_first_sync_service, "server_service", None),
+                    "bootstrap_notes_organization_profile",
+                    None,
+                )
+            )
+            or not (
+                enrollment.get("encryption_policy") == SERVER_TRUSTED_SYNC_POLICY
+                or (
+                    "encryption_policy" not in enrollment
+                    and enrollment.get("notes_organization_bootstrap_identity")
+                )
+            )
+        ):
+            return False
+        capabilities = profile.get("capabilities") or {}
+        domains = {"notes.note", "chat.conversation", *NOTES_ORGANIZATION_DOMAINS}
+        versions = capabilities.get("supported_adapter_versions") or {}
+        return domains.issubset(capabilities.get("domains") or ()) and all(
+            1 in versions.get(domain, ()) for domain in domains
+        )
+
     @producer_call
     async def run_once(
         self,
@@ -207,6 +288,8 @@ class ManualSyncControlService:
         display_name: str = "Chatbook",
         enrolled_note_ids: set[str] | None = None,
         enrolled_conversation_ids: set[str] | None = None,
+        prepare_notes_organization_only: bool = False,
+        require_approved_notes_organization: bool = False,
     ) -> ManualSyncRunResult:
         """Execute one manual Sync v2 cycle after preflight allows it.
 
@@ -215,6 +298,9 @@ class ManualSyncControlService:
             authenticated_principal_id: Optional authenticated user or account scope.
             workspace_scope: Optional workspace scope for workspace-specific datasets.
             domains: Optional sync domains to run. Defaults to Notes and Chat.
+            prepare_notes_organization_only: Run bootstrap and adoption without general sync.
+            require_approved_notes_organization: Restrict organization setup and domains
+                to approved profiles that support the complete group.
 
         Returns:
             Manual sync outcome, summary, and a post-run preview reflecting current
@@ -226,11 +312,47 @@ class ManualSyncControlService:
         """
 
         selected_domains = self._domains(domains)
-        if self.notes_organization_sync_service is not None:
-            durable_note_ids, durable_conversation_ids = self._durable_dependency_ids()
-            organization = self.notes_organization_sync_service.for_server_profile(
-                server_profile_id
+        organization_service = self.notes_organization_sync_service
+        if organization_service is not None and require_approved_notes_organization:
+            profile = (
+                self.state_repository.get_sync_v2_profile_state(
+                    server_profile_id=server_profile_id,
+                    authenticated_principal_id=authenticated_principal_id,
+                    workspace_scope=workspace_scope,
+                )
+                or {}
             )
+            if not self._can_prepare_notes_organization(
+                profile, profile.get("dry_run_metadata") or {}
+            ):
+                organization_service = None
+                selected_domains = tuple(
+                    domain
+                    for domain in selected_domains
+                    if domain not in NOTES_ORGANIZATION_DOMAINS
+                )
+        if organization_service is not None:
+            preview = self.preview(
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+                workspace_scope=workspace_scope,
+                domains=selected_domains,
+            )
+            profile = preview.profile or {}
+            if preview.status == "preview-only" or (
+                prepare_notes_organization_only
+                and not self._can_prepare_notes_organization(
+                    profile, profile.get("dry_run_metadata") or {}
+                )
+            ):
+                return ManualSyncRunResult(
+                    status="blocked",
+                    user_message=preview.user_message,
+                    summary={},
+                    preview=preview,
+                )
+            durable_note_ids, durable_conversation_ids = self._durable_dependency_ids()
+            organization = organization_service.for_server_profile(server_profile_id)
             enrollment = await organization.advance_enrollment(
                 server_service=self.local_first_sync_service.server_service,
                 local_first_service=self.local_first_sync_service,
@@ -268,13 +390,24 @@ class ManualSyncControlService:
                     preview=preview,
                     conflict_reviews=reviews,
                 )
+            if prepare_notes_organization_only:
+                return ManualSyncRunResult(
+                    status="success",
+                    user_message="Notes organization setup is ready.",
+                    summary={"notes_organization_enrollment": dict(enrollment)},
+                    preview=self.preview(
+                        server_profile_id=server_profile_id,
+                        authenticated_principal_id=authenticated_principal_id,
+                        workspace_scope=workspace_scope,
+                    ),
+                )
         preview = self.preview(
             server_profile_id=server_profile_id,
             authenticated_principal_id=authenticated_principal_id,
             workspace_scope=workspace_scope,
             domains=selected_domains,
         )
-        if not preview.can_run:
+        if not preview.can_run or prepare_notes_organization_only:
             return ManualSyncRunResult(
                 status="blocked",
                 user_message=preview.user_message,

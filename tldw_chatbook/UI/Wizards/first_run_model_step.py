@@ -187,6 +187,13 @@ class ModelStep(SetupStep):
         with Vertical(classes="setup-model"):
             yield Static("Pick a default model", classes="setup-title")
             yield Static("", id="setup-model-provider-line", classes="setup-subtitle")
+            selection_hint = Static(
+                "Next without a model leaves this setup unsaved.",
+                id="setup-model-selection-hint",
+                classes="setup-subtitle",
+            )
+            selection_hint.display = False
+            yield selection_hint
             with SetupRadioSet(
                 id="setup-model-choice", classes="setup-choice-list -status"
             ):
@@ -543,6 +550,7 @@ class ModelStep(SetupStep):
             self, discovery_state, failure_category
         )
         model_discovery.show_provider_line(self, models, discovery_state)
+        self.query_one("#setup-model-selection-hint", Static).display = bool(models)
         radio_set.set_class(not models, "-status")  # the box hugs a status line
         # A status is no Tab stop (06a drew it focused); loading keeps the stop.
         radio_set.can_focus = bool(models) or discovery_state == "loading"

@@ -16,10 +16,17 @@ and no key is ever real.
 
 from __future__ import annotations
 
+import json
+from unittest.mock import Mock, patch
+
 import pytest
+from loguru import logger
+from requests import Response
 
 from tldw_chatbook import config as app_config
 from tldw_chatbook.Library.library_rag_answer_service import (
+    ANSWER_STATUS_FAILED,
+    ANSWER_STATUS_READY,
     generate_library_rag_answer,
     library_rag_answer_provider_gate,
     resolve_library_rag_answer_provider,
@@ -291,6 +298,109 @@ def _citable_row() -> dict:
         "runtime_backend": "local-fts",
         "score": 0.93,
     }
+
+
+@pytest.fixture
+def deepseek_environment_settings(persisted):
+    settings = _settings(provider="DeepSeek", model="deepseek-v4-flash")
+    settings["api_settings"]["deepseek"] = {
+        "api_key_env_var": "DEEPSEEK_API_KEY",
+        "credential_source": "environment",
+    }
+    return persisted(settings)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("http_status", [200, 401])
+async def test_rag_answer_sends_the_deepseek_environment_key(
+    monkeypatch, deepseek_environment_settings, http_status
+):
+    from tldw_chatbook.LLM_Calls import deepseek
+
+    key = "synthetic-deepseek-rag-key"
+    monkeypatch.setenv("DEEPSEEK_API_KEY", key)
+    monkeypatch.setattr(
+        deepseek,
+        "get_runtime_config_snapshot",
+        lambda: app_config.RuntimeConfigSnapshot(0, deepseek_environment_settings),
+    )
+    gate = library_rag_answer_provider_gate()
+    assert (gate.provider, gate.model) == ("deepseek", "deepseek-v4-flash")
+
+    response = Response()
+    response.status_code = http_status
+    response._content = json.dumps(
+        {
+            "id": "fixture-answer",
+            "object": "chat.completion",
+            "created": 1,
+            "model": "deepseek-v4-flash",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "An expired credential caused the incident [S1].",
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+        if http_status == 200
+        else {"error": {"message": f"Invalid credential: {key}"}}
+    ).encode()
+    records = []
+    sink_id = logger.add(records.append, level="DEBUG", format="{message}")
+    try:
+        with patch("requests.Session.post", return_value=response) as post:
+            answer = await generate_library_rag_answer(
+                query="Why did the incident happen?",
+                results=[_citable_row()],
+                coverage_note="",
+                provider=gate.provider,
+                model=gate.model,
+            )
+    finally:
+        logger.remove(sink_id)
+
+    if http_status == 200:
+        assert answer.status == ANSWER_STATUS_READY, answer.error
+        assert answer.citation_status == "validated"
+        assert "expired credential" in answer.text
+    else:
+        assert answer.status == ANSWER_STATUS_FAILED
+        assert "authentication failed" in answer.error
+    post.assert_called_once()
+    assert post.call_args.kwargs["headers"]["Authorization"] == f"Bearer {key}"
+    assert key not in repr(post.call_args.kwargs["json"])
+    assert key not in repr(deepseek_environment_settings)
+    assert key not in repr((gate, answer))
+    assert key not in "".join(records)
+
+
+async def test_rag_answer_blocks_deepseek_when_the_environment_key_is_absent(
+    monkeypatch, deepseek_environment_settings
+):
+    from tldw_chatbook.Library import library_rag_answer_service
+
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    chat = Mock()
+    monkeypatch.setattr(library_rag_answer_service, "chat_api_call", chat)
+    gate = library_rag_answer_provider_gate()
+    assert gate.provider is None
+    assert "DEEPSEEK_API_KEY" in gate.credential_recovery
+
+    # Also guard the actual dispatch if the credential disappears after Run.
+    answer = await generate_library_rag_answer(
+        query="Why did the incident happen?",
+        results=[_citable_row()],
+        coverage_note="",
+        provider="deepseek",
+        model=gate.model,
+    )
+    chat.assert_not_called()
+    assert answer.status == ANSWER_STATUS_FAILED
+    assert gate.credential_recovery in answer.error
 
 
 @pytest.mark.parametrize(("provider", "handler_key"), _READINESS_ONLY_PROVIDERS)

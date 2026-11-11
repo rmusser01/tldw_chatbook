@@ -2033,6 +2033,41 @@ class SyncStateRepository(BaseDB):
             raise RuntimeError("failed to persist Sync v2 profile state")
         return state
 
+    def refresh_sync_v2_profile_capabilities(
+        self,
+        *,
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        device_id: str,
+        dataset_id: str,
+        capabilities: Mapping[str, Any],
+    ) -> bool:
+        """Refresh the verified profile's capabilities without overwriting other state."""
+        with self.transaction() as conn:
+            updated = conn.execute(
+                """
+                UPDATE sync_profile_state
+                SET capabilities = ?
+                WHERE source_authority = 'server'
+                  AND server_profile_id = ?
+                  AND authenticated_principal_id = ?
+                  AND workspace_scope = ?
+                  AND device_id = ?
+                  AND dataset_id = ?
+                """,
+                (
+                    _json_dumps(dict(capabilities)),
+                    _scope_value(server_profile_id),
+                    _scope_value(authenticated_principal_id),
+                    _scope_value(workspace_scope),
+                    device_id,
+                    dataset_id,
+                ),
+            ).rowcount
+            conn.commit()
+        return updated == 1
+
     def get_sync_v2_profile_state(
         self,
         *,

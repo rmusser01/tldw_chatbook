@@ -29,6 +29,9 @@ content (see [Media & Conversations](media-and-conversations.md)).
 In server mode the **Export** rail row is disabled, with the tooltip
 "Export packages local content only."
 
+From another screen, press **Ctrl+P** and choose **Library: Import…** or
+**Media & Content: Import New Media** to open the same form.
+
 ## Layout tour
 
 ![Import media](../images/library/import-media.svg)

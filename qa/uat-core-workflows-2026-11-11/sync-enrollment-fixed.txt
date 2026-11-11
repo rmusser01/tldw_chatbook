@@ -1,0 +1,6 @@
+Switch Source / Server selected
+Server-readable Sync v2 consent initially unchecked, then selected
+Runtime source: server
+Manual sync status: empty
+Manual sync preview: Manual Sync is enrolled with no pending outgoing changes. Running sync is unavailable for this profile.
+Pending outgoing: none

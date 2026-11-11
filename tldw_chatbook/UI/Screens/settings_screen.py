@@ -176,6 +176,7 @@ from ...Sync_Interop.sync_readiness import (
     build_sync_readiness_report,
 )
 from ...Sync_Interop.manual_sync_control import ManualSyncPreview, ManualSyncRunResult
+from ...Sync_Interop.sync_state import SERVER_TRUSTED_SYNC_POLICY, SyncV2EnrollmentError
 
 # NOTE (boot budget, ADR-097): `Workspaces.assistant_defaults` is imported
 # lazily at its render/use sites (settings interaction only) so it stays out
@@ -3843,6 +3844,7 @@ class SettingsScreen(BaseAppScreen):
     category_search_query = reactive("")
     server_sync_workspace_handoff_rows = reactive((), repaint=False, layout=False)
     manual_sync_rows = reactive((), repaint=False, layout=False)
+    _manual_sync_setup_issue: tuple[dict[str, str | None], str] | None = None
 
     #: task-15475: one-shot "the mount already queued this visit's sync-rows
     #: refresh" token, set in `on_mount` and consumed by the mount's own
@@ -12431,6 +12433,13 @@ class SettingsScreen(BaseAppScreen):
                 ),
                 ("Pending outgoing", "none"),
             )
+        issue = self._manual_sync_setup_issue
+        if issue is not None and issue[0] == sync_scope:
+            return (
+                ("Manual sync status", "blocked"),
+                ("Manual sync preview", issue[1]),
+                ("Pending outgoing", "unknown"),
+            )
         try:
             preview = control.preview(
                 server_profile_id=server_profile_id,
@@ -12627,9 +12636,14 @@ class SettingsScreen(BaseAppScreen):
             self.app.call_from_thread(self._apply_manual_sync_rows, rows)
 
     @work(exclusive=True, group="settings-manual-sync-run")
-    async def _manual_sync_run_worker(self, run_token: int) -> None:
+    async def _manual_sync_run_worker(
+        self, run_token: int, *, prepare_notes_organization_only: bool = False
+    ) -> None:
         try:
-            await self._run_manual_sync_once()
+            if prepare_notes_organization_only:
+                await self._run_manual_sync_once(prepare_notes_organization_only=True)
+            else:
+                await self._run_manual_sync_once()
         finally:
             # task-1369: clear the in-flight guard (set by the confirm
             # callback) so later screen resumes refresh the rows again.
@@ -12639,7 +12653,9 @@ class SettingsScreen(BaseAppScreen):
             if run_token == self._manual_sync_run_token:
                 self._manual_sync_run_in_flight = False
 
-    async def _run_manual_sync_once(self) -> None:
+    async def _run_manual_sync_once(
+        self, *, prepare_notes_organization_only: bool = False
+    ) -> None:
         control = getattr(self.app_instance, "manual_sync_control_service", None)
         if control is None:
             self._apply_manual_sync_rows(
@@ -12668,11 +12684,32 @@ class SettingsScreen(BaseAppScreen):
             )
             return
         try:
-            result = await control.run_once(
-                server_profile_id=server_profile_id,
-                authenticated_principal_id=sync_scope["authenticated_principal_id"],
-                workspace_scope=sync_scope["workspace_scope"],
+            issue = self._manual_sync_setup_issue
+            if issue is not None and issue[0] == sync_scope:
+                self._apply_manual_sync_rows(
+                    (
+                        ("Manual sync status", "blocked"),
+                        ("Manual sync result", issue[1]),
+                        ("Pending outgoing", "unknown"),
+                    )
+                )
+                return
+            preview = await asyncio.to_thread(control.preview, **sync_scope)
+            if not preview.can_run and not (
+                prepare_notes_organization_only and preview.status == "setup"
+            ):
+                self._apply_manual_sync_rows(
+                    self._manual_sync_rows_from_preview(preview)
+                )
+                return
+            options = (
+                {"prepare_notes_organization_only": True}
+                if prepare_notes_organization_only
+                else {}
             )
+            if getattr(control, "notes_organization_sync_service", None) is not None:
+                options["require_approved_notes_organization"] = True
+            result = await control.run_once(**sync_scope, **options)
         except Exception as exc:
             logger.warning("Settings manual sync run failed.", exc_info=True)
             self._apply_manual_sync_rows(
@@ -18868,6 +18905,12 @@ class SettingsScreen(BaseAppScreen):
         pending = rows.get("Pending outgoing", "unknown")
         return f"{status}; pending outgoing: {pending}"
 
+    def _manual_sync_action(self) -> tuple[str, bool]:
+        status = dict(self.manual_sync_rows).get("Manual sync status")
+        if status == "setup":
+            return "Prepare Notes organization", True
+        return "Run manual sync", status in ("ready", "empty")
+
     def _compose_manual_sync_rows(self) -> ComposeResult:
         """Yield the manual-sync detail rows (task-15475's own region)."""
         for label, value in self.manual_sync_rows:
@@ -18938,6 +18981,20 @@ class SettingsScreen(BaseAppScreen):
             "#settings-overview-sync",
             f"Sync: {_fold_long_tokens(self._overview_sync_summary())}",
         )
+        label, available = self._manual_sync_action()
+        try:
+            action_button = self.query_one("#settings-manual-sync-run", Button)
+        except QueryError:
+            pass
+        else:
+            action_button.label = label
+            action_button.disabled = not available
+            rows = dict(self.manual_sync_rows)
+            action_button.tooltip = (
+                None
+                if available
+                else rows.get("Manual sync preview", rows.get("Manual sync result"))
+            )
         presentation = self._settings_overview_presentation()
         for row in presentation.advanced_rows:
             self._set_static_text(
@@ -18958,7 +19015,7 @@ class SettingsScreen(BaseAppScreen):
     def _overview_user_language(value: object) -> str:
         return re.sub(r"handoff", "transfer", str(value), flags=re.IGNORECASE)
 
-    def _settings_overview_presentation(self) -> 'SettingsOverviewPresentation':
+    def _settings_overview_presentation(self) -> "SettingsOverviewPresentation":
         from ..Settings_Modules.readiness_lines import overview_configuration
 
         # Plain: every Overview row is a ``_detail_row`` (``markup=False``).
@@ -19050,13 +19107,11 @@ class SettingsScreen(BaseAppScreen):
                                     "mutating the server."
                                 ),
                             )
+                            label, available = self._manual_sync_action()
                             yield Button(
-                                "Run manual sync",
+                                label,
                                 id="settings-manual-sync-run",
-                                tooltip=(
-                                    "Apply the previewed Notes/Chat changes to "
-                                    "the server."
-                                ),
+                                disabled=not available,
                             )
             with Collapsible(
                 title="Advanced / Diagnostics",
@@ -26857,38 +26912,57 @@ class SettingsScreen(BaseAppScreen):
                         severity="warning",
                     )
 
+        if result.get("approve_server_trusted_sync") is not True:
+            self.app.notify(
+                "Server activated. To set up Manual Sync, opt in under Switch Source / Server.",
+                severity="information",
+            )
+            self._refresh_manual_sync_rows()
+            return
+
+        sync_scope = await asyncio.to_thread(self._active_sync_scope)
         sync_scope_service = getattr(app, "sync_scope_service", None)
         prepare = getattr(sync_scope_service, "prepare_sync_v2_profile_mode", None)
-        if callable(prepare):
+        try:
+            if (
+                sync_scope["server_profile_id"] != server_id
+                or not sync_scope["authenticated_principal_id"]
+            ):
+                raise SyncV2EnrollmentError(
+                    "Manual Sync setup requires an authenticated server account."
+                )
+            if sync_scope["workspace_scope"] not in (None, DEFAULT_WORKSPACE_ID):
+                raise SyncV2EnrollmentError(
+                    "Switch to the Default workspace to set up personal Manual Sync."
+                )
+            if not callable(prepare):
+                raise SyncV2EnrollmentError(
+                    "Manual Sync setup is unavailable in this runtime."
+                )
             import platform
 
-            try:
-                summary = await prepare(
-                    profile_mode="local_first_sync",
-                    server_profile_id=server_id,
-                    display_name=platform.node() or "tldw_chatbook",
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Sync v2 profile preparation failed "
-                    "(mode=local_first_sync, exception_category=%s).",
-                    type(exc).__name__,
-                )
-                self.app.notify(
-                    "Server activated, but Sync v2 setup could not be completed.",
-                    severity="warning",
-                )
-            else:
-                dataset = str(summary.get("dataset_id") or "unknown")
-                self.app.notify(
-                    f"Server activated; Sync v2 prepared (dataset {dataset}).",
-                    severity="information",
-                )
-        else:
-            self.app.notify(
-                "Server activated. Sync v2 service is unavailable in this runtime.",
-                severity="warning",
+            await prepare(
+                **sync_scope,
+                profile_mode="local_first_sync",
+                display_name=platform.node() or "tldw_chatbook",
+                domains=["notes.note", "chat.conversation", "chat.message"],
+                encryption_policy=SERVER_TRUSTED_SYNC_POLICY,
+                enrollment_only=True,
             )
+        except SyncV2EnrollmentError as exc:
+            self._manual_sync_setup_issue = (sync_scope, str(exc))
+            self.app.notify(str(exc), severity="warning")
+        except Exception as exc:
+            logger.warning(
+                "Sync v2 profile preparation failed (exception_category=%s).",
+                type(exc).__name__,
+            )
+            message = "Server activated, but Sync v2 setup could not be completed."
+            self._manual_sync_setup_issue = (sync_scope, message)
+            self.app.notify(message, severity="warning")
+        else:
+            self._manual_sync_setup_issue = None
+            self.app.notify("Server activated. Manual Sync preview is available.")
         self._refresh_manual_sync_rows()
 
     @on(Button.Pressed, "#settings-manual-sync-preview")
@@ -26904,6 +26978,10 @@ class SettingsScreen(BaseAppScreen):
     @on(Button.Pressed, "#settings-manual-sync-run")
     def handle_manual_sync_run(self, event: Button.Pressed) -> None:
         event.stop()
+        label, available = self._manual_sync_action()
+        if not available:
+            return
+        prepare_only = label == "Prepare Notes organization"
         # task-1367: this pushes pending Notes/Chat changes to a server, so
         # confirm first -- seeded with the pending counts the preview rows
         # already loaded; only the confirm path runs the sync.
@@ -26935,7 +27013,12 @@ class SettingsScreen(BaseAppScreen):
                 ("Pending outgoing", "Refreshing"),
             )
             try:
-                self._manual_sync_run_worker(run_token)
+                if prepare_only:
+                    self._manual_sync_run_worker(
+                        run_token, prepare_notes_organization_only=True
+                    )
+                else:
+                    self._manual_sync_run_worker(run_token)
             except Exception:
                 # task-1369 (review): a synchronous raise at the call site
                 # (before the worker exists) must not strand the flag.
@@ -26957,12 +27040,13 @@ class SettingsScreen(BaseAppScreen):
 
         self.app.push_screen(
             ConfirmationDialog(
-                title="Run manual sync",
+                title=label,
                 message=(
-                    "Push pending Notes/Chat changes to the server now?\n\n"
-                    f"{pending_line}"
+                    "Set up Notes organization with this server and check for adoption conflicts?"
+                    if prepare_only
+                    else f"Push pending Notes/Chat changes to the server now?\n\n{pending_line}"
                 ),
-                confirm_label="Push to server",
+                confirm_label="Prepare" if prepare_only else "Push to server",
                 cancel_label="Cancel",
                 confirm_callback=_confirmed_run,
             )
@@ -27068,7 +27152,7 @@ class SettingsScreen(BaseAppScreen):
             ("Pending outgoing", "Refreshing"),
         )
         try:
-            self._manual_sync_run_worker(run_token)
+            self._manual_sync_run_worker(run_token, prepare_notes_organization_only=True)
         except Exception:
             self._manual_sync_run_in_flight = False
             logger.warning(

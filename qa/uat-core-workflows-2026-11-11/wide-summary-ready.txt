@@ -1,0 +1,42 @@
+    ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │                                                 Set up tldw chatbook                                                 │
+    │                                                                                                                      │
+    │▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄│
+    │ ┌──┐               ┌──┐               ┌──┐                ┌──┐               ╭──╮                     ┌──┐           │
+    │ │✓ │               │✓ │               │✓ │                │✓ │               │– │                     │6 │           │
+    │ └──┘               └──┘               └──┘                └──┘               ╰──╯                     └──┘           │
+    │ Welcome            Provider           Model               Voice              Protect                  Summary        │
+    │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
+    │                                                                                                                      │
+    │                                                   Setup summary                                                      │
+    │                                                                                                                      │
+    │  Left at recommended defaults: light tools only (date and time, calculator and ask you a question), RAG off,         │
+    │  default theme, notes sync off — each lives in Settings when you want it.                                            │
+    │                                                                                                                      │
+    │  ✓ Provider — llama_cpp                                                                                              │
+    │  ✓ Default model — uat-local                                                                                         │
+    │  – RAG — optional — embeddings deps not installed                                                                    │
+    │  – Speech transcription — not set up (optional)                                                                      │
+    │  – Voice — not set up (optional)                                                                                     │
+    │  – Tools — on: date and time, calculator and ask you a question, plus tools from MCP servers you add and Library     │
+    │  tools in chats you allow. Sub-agents, skills, web, Watchlists, workspace tools and characters stay off until you    │
+    │  turn on Full agent tools under Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates. A model with a         │
+    │  small or not-yet-known context window gets no tools.                                                                │
+    │  – Notes folder sync — set up later in Library                                                                       │
+    │  – Theme — textual-dark                                                                                              │
+    │  – Key encryption — off                                                                                              │
+    │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                                │
+    │  ▊ ▐ ▌ Keep model lists fresh — checks your configured providers online at startup  ▎                                │
+    │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                │
+    │          Start chatting        Add your first document                                                               │
+    │                                                                                                                  ▃▃  │
+    │       Write your first note     Explore Home     Review settings                                                     │
+    │                                                                                                                      │
+    │                                                                                                                      │
+    │                                                                                                                      │
+    │▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀│
+    │                                                                                                                      │
+    │    Step 6 of 6                                                                                         ← Back        │
+    │                                                                                                                      │
+    └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                         Ctrl+B back · choose an action below to finish

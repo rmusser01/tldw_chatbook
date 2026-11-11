@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 import pytest
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -164,6 +167,99 @@ def _enqueue_note_and_chat(repo: SyncStateRepository, dataset_key: bytes) -> Non
             content="Local chat message",
         ),
     )
+
+
+async def test_enrolled_server_trusted_profile_can_preview_without_running(tmp_path):
+    repo = _repo_with_profile(tmp_path)
+    scope = {
+        "server_profile_id": "server-a",
+        "authenticated_principal_id": "user-a",
+        "workspace_scope": "workspace-a",
+    }
+    repo.set_sync_v2_profile_state(
+        **scope,
+        profile_mode="local_first_sync",
+        device_id="device-a",
+        dataset_id="dataset-1",
+        dry_run_metadata={
+            "enrollment_only": True,
+            "encryption_policy": "server_trusted_v1",
+            "domains": ["notes.note"],
+        },
+    )
+    sync_runner = LocalFirstSyncWithoutStore()
+    service = ManualSyncControlService(
+        state_repository=repo,
+        local_first_sync_service=sync_runner,
+        notes_organization_sync_service=object(),
+    )
+
+    preview = service.preview(**scope)
+    assert preview.status == "preview-only"
+    assert "enrolled" in preview.user_message
+    assert preview.can_run is False
+    result = await service.run_once(**scope)
+    assert result.status == "blocked"
+    assert sync_runner.calls == []
+
+
+async def test_approved_organization_setup_can_resume_without_generic_sync(tmp_path):
+    repo = _repo_with_profile(tmp_path)
+    scope = {
+        "server_profile_id": "server-a",
+        "authenticated_principal_id": "user-a",
+        "workspace_scope": "workspace-a",
+    }
+    domains = ["notes.note", "chat.conversation", *NOTES_ORGANIZATION_DOMAINS]
+    repo.set_sync_v2_profile_state(
+        **scope,
+        profile_mode="local_first_sync",
+        device_id="device-a",
+        dataset_id="dataset-1",
+        capabilities={
+            "domains": domains,
+            "supported_adapter_versions": {domain: [1] for domain in domains},
+        },
+        dry_run_metadata={
+            "enrollment_only": True,
+            "encryption_policy": "server_trusted_v1",
+            "domains": ["notes.note"],
+        },
+    )
+    sync_runner = LocalFirstSyncWithoutStore()
+    sync_runner.pull_notes_organization_history = AsyncMock()
+    sync_runner.server_service = SimpleNamespace(
+        bootstrap_notes_organization_profile=AsyncMock()
+    )
+    organization = SimpleNamespace(
+        advance_enrollment=AsyncMock(return_value={"status": "ready"})
+    )
+    service = ManualSyncControlService(
+        state_repository=repo,
+        local_first_sync_service=sync_runner,
+        notes_organization_sync_service=SimpleNamespace(
+            for_server_profile=lambda _: organization,
+            notes_organization_ready=lambda **_: bool(
+                organization.advance_enrollment.await_count
+            ),
+        ),
+    )
+
+    preview = service.preview(**scope)
+    assert preview.status == "setup"
+    assert preview.can_run is False
+
+    result = await service.run_once(**scope, prepare_notes_organization_only=True)
+
+    assert result.status == "success"
+    assert result.preview.status == "preview-only"
+    assert result.preview.can_run is False
+    assert "Notes organization is ready" in result.preview.user_message
+
+    duplicate = await service.run_once(**scope, prepare_notes_organization_only=True)
+    assert duplicate.status == "blocked"
+    organization.advance_enrollment.assert_awaited_once()
+    assert sync_runner.calls == []
 
 
 async def test_manual_sync_preview_counts_notes_and_chat_without_dispatch(tmp_path):

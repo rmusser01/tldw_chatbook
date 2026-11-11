@@ -1,0 +1,42 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs   More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and contr… Speak replies: Off  Hands-free: Off    Compaction forecast unavailable
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Reply with exactly DEEPSEEK...                                         │
+                  Context ◂  │         Chat 1         ✕  What is the launch…  ✕  Reply with exactly…  ✕    New tab ▸ │
+   Terminal                  │                                                                                       │
+ ──────────────────────────  │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console    ✕  │
+ Workspaces             ▸    │                                                                                       │
+ ──────────────────────────  │                                                                                       │
+ Conversations          ▾    │                                                                                       │
+     Archive this chat       │                                                                                       │
+      Archived chats         │                                                                                       │
+     Search all chats…       │                                                                                       │
+   Reply with exactly        │                                                                                       │
+   DEEPSEEK...               │                                                                                       │
+                             │                                                                                       │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                                                       │
+  ▊  Filter      ▎           │                                                                                       │◂ Inspect
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                                       │
+                             │                                                                                       │
+   New conversation          │                                                                                       │
+  Chats                 ▾    │                                                                                       │
+    Today                    │                                                                                       │
+   Reply with exactl…  ✓     │  ───────────────────────────────────────────────────────────────────────────────────  │
+   Chat 1              💬    │   User                                                                                │
+   What is the launc…  💬    │   Reply with exactly DEEPSEEK-UAT-OK.                                                 │
+                             │  ───────────────────────────────────────────────────────────────────────────────────  │
+ ──────────────────────────  │  ▊ Assistant                                                                          │
+ Character · Default As ▾    │  ▊                                                                                    │
+  No current character · …   │  ▊  DEEPSEEK-UAT-OK                                                                   │
+  ┌──────────────────────┐   │  ▊                                                                                    │
+ ▼ Model · Agent · Details   │  ▊                                                                                    │
+                             │  ───────────────────────────────────────────────────────────────────────────────────  │  tools
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Provider: DeepSeek · Model: deepseek-v4-flash · System Prompt: off · Assistant: General · Sources: 0 · Tools: 3 offered · ◀ ▶
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...           Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+P · Ctrl+Q

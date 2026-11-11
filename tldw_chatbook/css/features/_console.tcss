@@ -2372,6 +2372,8 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     width: $ds-size-66;
     max-width: $ds-percent-90;
     height: auto;
+    max-height: $ds-height-full;
+    overflow-y: auto;
     padding: $ds-space-1 $ds-space-2;
     layout: vertical;
     border: solid $ds-console-frame;
@@ -2414,8 +2416,8 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
 
 /* task-32555 AC#1: the card's actions are buttons, not text lines -- a
    round edge at rest, and focus changes the SHAPE (heavy side rails), not
-   just the text style. The card's own height:auto absorbs the two border
-   rows each button gained when it stopped being compact. */
+   just the text style. The card can scroll to reveal the focused button
+   when the full-height actions overflow the workbench. */
 .console-setup-modal-action {
     width: auto;
     min-width: $ds-size-12;

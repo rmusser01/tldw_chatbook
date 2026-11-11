@@ -1,0 +1,25 @@
+ 1:          ╭──────────────╮
+ 2:  ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+ 3: ────────────────────────────────────────────────────────────────────────────────
+ 4:        ┌────────────────────────────────────────────────────────────────┐
+ 5:        │                                                                │
+ 6:        │  Get started                                                   │
+ 7:        │                                                                │
+ 8:        │  A provider is the AI service that answers your messages —     │
+ 9:        │  for example OpenAI, Anthropic, or a server running on this    │
+10:        │  computer.                                                     │
+11:        │  Cloud setup opens Settings and comes back here, except for    │
+12:        │  custom endpoints. Press Enter to use the highlighted action.  │
+13:        │                                                                │
+14:        │  1. ● Connect a provider (API key or local server)             │
+15:        │       OpenAI: Not ready · no key                               │
+16:        │  2. ○ Pick a model                                             │
+17:        │  3. ○ Send your first message  Composer unlocks after setup    │
+18:        │                                                                │
+19:        │  ┃───────────────────┃                                         │
+20:        │  ┃  Set up provider  ┃                                         │
+21:        │  ┃───────────────────┃                                         │
+22:        │                                                                │
+23:        │  ╭───────────────────────────╮                                 │
+24:   Ctrl+Shift+F focus | Enter continue setup | F1 help | Ctrl+P · Ctrl+Q
+25:

@@ -1,0 +1,7 @@
+Fixture uses companion server Sync v2 routes and an isolated SQLite store.
+Settings → Overview → Advanced / Diagnostics → Switch Source / Server → Activate Server
+Chatbook switched to Server. Capability and device registration calls returned 200.
+Dataset enrollment returned 500. Preview manual sync remained blocked with no profile.
+client_private_v1 -> HTTP 500
+{"detail":{"error_code":"sync_store_error","message":"Internal sync storage error while processing request."}}
+server_trusted_v1 -> HTTP 200

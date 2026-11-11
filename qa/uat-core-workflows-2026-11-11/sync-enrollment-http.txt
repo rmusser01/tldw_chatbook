@@ -1,0 +1,2 @@
+INFO:     127.0.0.1:3415 - "POST /api/v1/sync/devices/register HTTP/1.1" 200 OK
+INFO:     127.0.0.1:3415 - "POST /api/v1/sync/datasets/enroll HTTP/1.1" 200 OK
