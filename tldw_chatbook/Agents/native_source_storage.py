@@ -6,7 +6,7 @@ import inspect
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
-from tldw_chatbook.console_app_services import (
+from tldw_chatbook.app_services import (
     read_app_config,
     read_mcp_service,
     read_workspace_registry,

@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from tldw_chatbook.console_app_services import read_console_runtime
+from tldw_chatbook.app_services import read_console_runtime
 from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
 from tldw_chatbook.Agents.workflow_phase import (
     WorkflowPhaseAuthorization as WorkflowPhaseAuthorization,
@@ -1845,9 +1845,6 @@ class ConsoleWorkflowCoordinator:
             raise PermissionError("original accounting driver required")
         phase = run.phase
         ledger = phase._ledger
-        ledger._install_workflow_accounting_validators(
-            _quiescence_receiving, _quiescence_evidence
-        )
         cell = phase._quiescence
         if mode == "quiesce":
             if cell is not None:
@@ -1855,6 +1852,9 @@ class ConsoleWorkflowCoordinator:
                     raise RuntimeError("original workflow accounting unresolved")
                 _quiescence_source(cell)
                 return
+            ledger._install_workflow_accounting_validators(
+                _quiescence_receiving, _quiescence_evidence
+            )
             cell = _WorkflowQuiescence(
                 self,
                 run,

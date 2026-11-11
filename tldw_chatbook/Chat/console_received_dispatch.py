@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from tldw_chatbook.console_app_services import read_app_config
+from tldw_chatbook.app_services import read_app_config
 from tldw_chatbook import config
 from tldw_chatbook.config import first_send_persistence_source_current as _native_config_current
 from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired

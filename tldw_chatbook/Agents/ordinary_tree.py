@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from inspect import getattr_static
 from threading import Lock
 
-from tldw_chatbook.console_app_services import read_mcp_service
+from tldw_chatbook.app_services import read_mcp_service
 from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
 
 from .execution_capacity import CapacityRefused, WorkOrigin

@@ -132,7 +132,7 @@ from uuid import uuid4
 
 from loguru import logger
 
-from tldw_chatbook.console_app_services import (
+from tldw_chatbook.app_services import (
     read_console_runtime,
     read_raw_cli_runtime,
 )

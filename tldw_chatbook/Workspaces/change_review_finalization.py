@@ -13,7 +13,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Sequence
 
-from tldw_chatbook.Workspaces.change_review_models import (
+from tldw_chatbook.Workspaces.models import (
     ChangeReviewCompletion as ChangeReviewCompletion,
     ChangeReviewReservation as ChangeReviewReservation,
 )

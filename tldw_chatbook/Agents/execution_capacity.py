@@ -15,7 +15,7 @@ from threading import Lock
 from typing import Literal
 from uuid import uuid4
 
-from tldw_chatbook.state.execution_owner_context import (
+from tldw_chatbook.state import (
     _current_owner,
     current_execution_owner as current_execution_owner,
 )

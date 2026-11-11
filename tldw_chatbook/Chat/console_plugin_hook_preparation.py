@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from tldw_chatbook.console_app_services import read_mcp_service
+from tldw_chatbook.app_services import read_mcp_service
 from tldw_chatbook.Agents.activation import captured_sources, execution
 from tldw_chatbook.Agents.execution_capacity import (
     CapacityRefused,

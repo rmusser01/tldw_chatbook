@@ -10,7 +10,7 @@ from contextvars import ContextVar, copy_context
 from pathlib import Path
 from threading import Event, Lock, get_ident
 
-from tldw_chatbook.console_app_services import read_console_runtime
+from tldw_chatbook.app_services import read_console_runtime
 from tldw_chatbook.Agents.activation import _guard, execution
 from tldw_chatbook.Agents.execution_capacity import CapacityRefused, WorkOrigin
 from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage

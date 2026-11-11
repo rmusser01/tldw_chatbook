@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from inspect import getattr_static
 
-from tldw_chatbook.console_app_services import read_mcp_service
+from tldw_chatbook.app_services import read_mcp_service
 from tldw_chatbook.Agents.activation import (
     callable_source_current as _function_unchanged,  # noqa: F401 - original source check import
     capture_callable_source as _function_record,  # noqa: F401 - original source record import

@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 
 from loguru import logger
 
-from tldw_chatbook.console_app_services import read_mcp_service
+from tldw_chatbook.app_services import read_mcp_service
 from tldw_chatbook.Agents.activation import guarded as agent_execution_guard
 from tldw_chatbook.Agents.activation import (
     async_worker_guard as agent_async_worker_guard,  # noqa: F401 - lazy request helper compatibility seam

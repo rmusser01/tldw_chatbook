@@ -8,7 +8,7 @@ import shutil
 from contextlib import ExitStack, asynccontextmanager, contextmanager, nullcontext
 from pathlib import Path
 
-from tldw_chatbook.console_app_services import (
+from tldw_chatbook.app_services import (
     read_app_config,
     read_console_runtime,
     read_workspace_registry,

@@ -7,7 +7,7 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from threading import Event, Lock
 
-from tldw_chatbook.console_app_services import (
+from tldw_chatbook.app_services import (
     read_app_config,
     read_chat_database,
     read_console_runtime,

@@ -1,6 +1,7 @@
 """Legacy caller-owned serialization compatibility containers.
 
 The application keeps live state with its narrow runtime and screen owners.
+The runtime and ledger share the current execution owner binding here.
 TASK-38613 (2026-11-02 audit): the four consumer-less compatibility
 containers (``app_state``, ``chat_state``, ``navigation_state``,
 ``notes_state`` -- including ``AppState``'s stray plaintext
@@ -12,7 +13,14 @@ Exports still resolve lazily (PEP 562), as in
 modules onto the boot path (ADR-097 boot budget; tier-2 review S17 P3).
 """
 
+from __future__ import annotations
+
+from contextvars import ContextVar
 from importlib import import_module
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Agents.execution_capacity import ExecutionOwner
 
 _EXPORTS = {
     "UIState": (".ui_state", "UIState"),
@@ -30,3 +38,13 @@ def __getattr__(name):
     value = getattr(import_module(module, __name__), symbol)
     globals()[name] = value
     return value
+
+
+_current_owner: ContextVar[ExecutionOwner | None] = ContextVar(
+    "agent_execution_owner", default=None
+)
+
+
+def current_execution_owner() -> ExecutionOwner | None:
+    """Return this run thread's owner (explicitly bound again in children)."""
+    return _current_owner.get()
