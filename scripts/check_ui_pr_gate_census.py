@@ -1010,6 +1010,8 @@ MINIMUM_FILES = 2200
 MINIMUM_FILES = 2100
 # Retain the seven incoming dev entries after the exact 2,100-entry prefix.
 MINIMUM_FILES = 2107
+# Current dev rebase: the whole preparation file owns the redundant node.
+MINIMUM_FILES = 2199
 
 
 def read_census(path: Path) -> list[str]:

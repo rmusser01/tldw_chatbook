@@ -23519,32 +23519,13 @@ class ChatScreen(BaseAppScreen):
         )
 
     def _park_console_approval(self, session_id: str) -> None:
-        """PA-T9 (parked background approvals): badge a NON-viewed session's
-        pending approval round without mounting the (singleton) approval
-        card, and fire the one-per-round toast.
+        """Badge a parked background approval and toast once per round (PA-T9).
 
-        UI-thread bridge target for ``ConsoleChatController.
-        request_mcp_approvals``' park branch (invoked via ``app_instance.
-        call_from_thread`` exactly once per parked round -- the round's
-        session differs from the store's active session at round-start).
-
-        TASK-910: also the shared UI-thread bridge target for
-        ``request_skill_install_confirm``'s and ``request_skill_script_
-        confirm``'s OWN park branches -- one badge/toast seam for all three
-        approval-like bridges, per the train's "same marker/toast
-        machinery" convention, rather than a bespoke copy per bridge.
-        Deliberately does NOT touch ``task_resume_state``/``set_task_
-        resume_state`` -- that slot is reserved for whichever session is
-        actually being viewed (``_set_console_pending_approval`` and the
-        `ConsoleSkillController` pending-state setters); parking must never
-        steal the mounted card
-        out from under the session the user is currently looking at. The
-        controller's own ``_parked_approval_payloads``/``_parked_skill_
-        install_payloads``/``_parked_skill_script_payloads`` maps
-        (populated by each bridge before this fires) are what
-        ``ConsoleChatController.switch_session``/``new_session``/
-        ``close_session`` later read to mount the SAME payload once the
-        user actually visits ``session_id``.
+        The approval, skill-install and skill-script bridges call this once
+        on the UI thread when their round starts offscreen (TASK-910).
+        Leave the active view's mounted card and resume state alone. The
+        controller keeps the parked payload and mounts it when the user
+        visits the owning session.
 
         Also usable directly as a test seam to drive the park path without
         a live worker thread/round -- setting the badge itself here (via

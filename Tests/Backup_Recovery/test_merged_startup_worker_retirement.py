@@ -194,6 +194,7 @@ def test_fts_backfill_uses_only_the_app_selected_database(
 
     from tldw_chatbook import app_feature_glue
     from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.app_services import ProfileStorage
     from tldw_chatbook.DB import chachanotes_fts_backfill
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
@@ -224,7 +225,9 @@ def test_fts_backfill_uses_only_the_app_selected_database(
     )
     try:
         TldwCli._backfill_chachanotes_messages_fts(
-            SimpleNamespace(chachanotes_db=selected)
+            SimpleNamespace(
+                services=SimpleNamespace(storage=ProfileStorage(chachanotes=selected))
+            )
         )
         # The worker logs exceptions, so assert observations after it returns.
         assert global_reads == []

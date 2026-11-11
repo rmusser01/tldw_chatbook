@@ -4159,30 +4159,16 @@ class ChatPersistenceService:
         display_name: str = "",
         generation_metadata: Optional[Mapping[str, Any]] = None,
     ) -> int:
-        """Append one new image variant to a message, in place.
+        """Append an image variant without rewriting existing attachments.
 
-        Thin passthrough to
-        ``CharactersRAGDB.append_message_attachment_with_metadata`` -- the
-        narrow, additive counterpart to the full-list
-        ``update_message_content(attachments=...)`` rewrite. Use this when a
-        new variant (e.g. a regenerated image) should be added without
-        risking any existing attachment's bytes.
-
-        Args:
-            message_id: Target message id; must already have a position-0
-                image.
-            data: The new variant's image bytes.
-            mime_type: The new variant's MIME type.
-            display_name: Optional label for the new variant.
-            generation_metadata: Optional generation-metadata fields for the
-                new position.
+        Use for a message that already has its canonical image at position
+        zero. The DB preserves existing bytes and records optional variant
+        metadata supplied by the caller.
 
         Returns:
-            The position assigned to the new variant (>= 1).
-
+            The new attachment position, starting at one.
         Raises:
-            ValueError: If the message does not exist or has no position-0
-                image.
+            ValueError: If the message or its canonical image is missing.
         """
         return self.db.append_message_attachment_with_metadata(
             message_id,

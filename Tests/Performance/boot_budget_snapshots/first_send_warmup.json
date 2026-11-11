@@ -1,7 +1,7 @@
 {
   "_comment": "First-send warm-up payload census (the pre-import pass's last step, after the screen routes), counted from app + chat: an upper bound on what the warm-up adds. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
   "warmup_added_modules": 94,
-  "warmup_added_loc": 59823,
+  "warmup_added_loc": 60276,
   "listed": [
     "tldw_chatbook.UI.Console_Modules.send_acknowledgement",
     "tldw_chatbook.UI.Console_Modules.sent_draft",
@@ -128,7 +128,7 @@
       ]
     },
     "tldw_chatbook.MCP.console_snapshot": {
-      "loc": 910,
+      "loc": 1044,
       "modules": [
         "tldw_chatbook.MCP.console_snapshot"
       ]
@@ -202,13 +202,13 @@
       ]
     },
     "tldw_chatbook.Chat.console_references": {
-      "loc": 403,
+      "loc": 419,
       "modules": [
         "tldw_chatbook.Chat.console_references"
       ]
     },
     "tldw_chatbook.Agents.hooks_v2.lifecycle": {
-      "loc": 3799,
+      "loc": 3822,
       "modules": [
         "tldw_chatbook.Agents.hooks_v2",
         "tldw_chatbook.Agents.hooks_v2.budgets",
@@ -254,7 +254,7 @@
       ]
     },
     "tldw_chatbook.Chat.console_prompt_mixin_service": {
-      "loc": 777,
+      "loc": 836,
       "modules": [
         "tldw_chatbook.Chat.console_prompt_mixin_service"
       ]
@@ -266,7 +266,7 @@
       ]
     },
     "tldw_chatbook.Chat.console_pre_provider_stop": {
-      "loc": 523,
+      "loc": 539,
       "modules": [
         "tldw_chatbook.Chat.console_pre_provider_stop"
       ]
@@ -324,7 +324,7 @@
       ]
     },
     "tldw_chatbook.Agents.local_tool_provider": {
-      "loc": 11064,
+      "loc": 11111,
       "modules": [
         "tldw_chatbook.Agents.local_tool_provider",
         "tldw_chatbook.Tools.local_tool_impls",
@@ -337,7 +337,7 @@
       ]
     },
     "tldw_chatbook.Chat.console_run_start_tools": {
-      "loc": 420,
+      "loc": 580,
       "modules": [
         "tldw_chatbook.Chat.console_run_start_tools"
       ]
@@ -355,7 +355,7 @@
       ]
     },
     "tldw_chatbook.Agents.persona_policy": {
-      "loc": 162,
+      "loc": 160,
       "modules": [
         "tldw_chatbook.Agents.persona_policy"
       ]

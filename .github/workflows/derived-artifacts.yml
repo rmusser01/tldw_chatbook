@@ -961,7 +961,7 @@ jobs:
     # 2026-11-04 (TASK-36769): job126501087681 exhausted this unchanged
     # 20-minute cap at 98% after 7m16 sandboxed + 12m04 admission. Its
     # 21 conversation-row sweep cases (145.26 s) now run exactly once in
-    # existing UI shards 31/32, under their stricter 180 s per-case ceiling.
+    # existing UI census, under its stricter 180 s per-case ceiling.
     # TASK-40724: run 43487945840 exhausted 20min in the first invocation.
     # Separate the existing profiles; each retains its own test deadlines.
     name: Console P0 regression gate (${{ matrix.profile }})
