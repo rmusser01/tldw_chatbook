@@ -8,9 +8,13 @@ timeout or outcome for both steps.
 from __future__ import annotations
 
 import re
-from typing import Any, Mapping
+from collections.abc import Iterator
+from typing import TYPE_CHECKING, Any, Mapping
 
 from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+
+if TYPE_CHECKING:
+    from textual.widgets import Static
 
 
 def _model_ids_from_discovery_result(result: object) -> tuple[str, ...]:
@@ -288,6 +292,20 @@ def classify_render(step: Any, state: str, category: str) -> tuple[str, str]:
     )
 
 
+def model_subtitles() -> Iterator[Static]:
+    """Yield the provider description and the optional model-selection hint."""
+    from textual.widgets import Static
+
+    yield Static("", id="setup-model-provider-line", classes="setup-subtitle")
+    hint = Static(
+        "Next without a model leaves this setup unsaved.",
+        id="setup-model-selection-hint",
+        classes="setup-subtitle",
+    )
+    hint.display = False
+    yield hint
+
+
 def show_provider_line(step: Any, models: object = (), state: str = "") -> None:
     """Paint the Model step's subtitle: whose models these are and, while the
     rows came from a server's listing, that a pick is not added to the saved
@@ -311,6 +329,7 @@ def show_provider_line(step: Any, models: object = (), state: str = "") -> None:
         if models and state != "saved":
             line = f"{line} {listed_pick_note()}"
         step.query_one("#setup-model-provider-line", Static).update(line)
+        step.query_one("#setup-model-selection-hint", Static).display = bool(models)
     except Exception:
         pass
 
