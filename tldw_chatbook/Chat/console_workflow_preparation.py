@@ -1849,8 +1849,8 @@ class _PreparedWorkflowReply:
                         self._planning_attempt is not None
                         and self._planning_attempt.state == "prepared"
                     ):
-                        self.service.db.automatic_work.abort_workflow_planning(
-                            self._planning_attempt, _prepared=self
+                        _abort_workflow_planning(
+                            self.service.db.automatic_work, self._planning_attempt, _prepared=self
                         )
 
                 cancellation = None
@@ -3386,3 +3386,92 @@ from tldw_chatbook.Agents.workflow_task_scope import (
 )
 
 _STORAGE_PATH_CLASS = type(_StoragePath())
+
+
+def _abort_workflow_planning(ledger, original, *, _prepared) -> bool:
+    """Abort only the original returned, unaccepted planning invocation."""
+    from tldw_chatbook.Agents.workflow_models import WorkflowPhaseAttempt
+    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+
+    if (
+        type(original) is not WorkflowPhaseAttempt
+        or type(_prepared) is not _PreparedWorkflowReply
+    ):
+        raise PermissionError("original prepared planning abort required")
+    _prepared._planning_abort_source(ledger, original)
+    with ledger.transaction() as conn:
+        _prepared._planning_abort_source(ledger, original)
+        ledger._check_runtime_owner(conn, original.owner_id)
+        native = ledger._attempt(
+            conn, original.id, original.owner_id, "workflow_phase"
+        )
+        phase = conn.execute(
+            "SELECT * FROM workflow_phase_attempts WHERE native_attempt_id=?",
+            (original.id,),
+        ).fetchone()
+        workflow = ledger._db.workflow_runs._row(conn, original.workflow_id)
+        current = ledger.read_workflow_attempt(
+            original.id, owner_id=original.owner_id
+        )
+        if (
+            current != original
+            or original.state != "prepared"
+            or original.purpose != "planning"
+            or original.phase_id is not None
+            or phase["status"] != "prepared"
+            or phase["retirement"] != "pending"
+            or workflow["control_revision"] != original.control_revision
+            or conn.execute(
+                "SELECT MAX(revision) FROM workflow_plan_revisions WHERE workflow_id=?",
+                (original.workflow_id,),
+            ).fetchone()[0]
+            != original.revision_id
+            or conn.execute(
+                "SELECT 1 FROM workflow_task_claims WHERE phase_attempt_id=? "
+                "UNION ALL SELECT 1 FROM workflow_change_windows WHERE phase_attempt_id=? "
+                "UNION ALL SELECT 1 FROM workflow_active_intervals WHERE workflow_id=? AND ended_at IS NULL "
+                "UNION ALL SELECT 1 FROM workflow_task_attempts WHERE native_attempt_id=? LIMIT 1",
+                (phase["id"], phase["id"], original.workflow_id, original.id),
+            ).fetchone()
+            or conn.execute(
+                "SELECT 1 FROM automatic_work_reservations WHERE chain_id=? AND created_at>=? "
+                "AND kind IN ('model_call','tokens') AND state NOT IN ('released','reserved') LIMIT 1",
+                (original.chain_id, native["created_at"]),
+            ).fetchone()
+        ):
+            raise AutomaticWorkRefused("workflow_planning_abort_unproven")
+        now = ledger._wall_clock()
+        if (
+            conn.execute(
+                "UPDATE automatic_work_reservations SET state='released',updated_at=? "
+                "WHERE id=? AND chain_id=? AND owner_id=? AND kind='generation' AND amount=1 AND state='reserved'",
+                (
+                    now,
+                    native["generation_reservation_id"],
+                    original.chain_id,
+                    original.owner_id,
+                ),
+            ).rowcount
+            != 1
+        ):
+            raise AutomaticWorkRefused("workflow_planning_abort_unproven")
+        if (
+            conn.execute(
+                "UPDATE automatic_wake_attempts SET state='aborted',completed_at=? "
+                "WHERE id=? AND owner_id=? AND attempt_kind='workflow_phase' AND state='prepared'",
+                (now, original.id, original.owner_id),
+            ).rowcount
+            != 1
+        ):
+            raise AutomaticWorkRefused("workflow_planning_abort_unproven")
+        if (
+            conn.execute(
+                "UPDATE workflow_phase_attempts SET status='closed',retirement='drained',result_bytes=0 "
+                "WHERE id=? AND native_attempt_id=? AND purpose='planning' AND phase_id IS NULL "
+                "AND status='prepared' AND retirement='pending'",
+                (phase["id"], original.id),
+            ).rowcount
+            != 1
+        ):
+            raise AutomaticWorkRefused("workflow_planning_abort_unproven")
+    return True
