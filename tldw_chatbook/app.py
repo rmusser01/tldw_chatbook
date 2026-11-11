@@ -5281,9 +5281,8 @@ class TldwCli(
                 route.load_screen_class()
             except Exception as exc:
                 self.loguru_logger.debug(
-                    "Screen pre-import failed (route={}, error_type={})",
-                    route.screen_name,
-                    type(exc).__name__,
+                    f"Screen pre-import failed (route={route.screen_name}, "
+                    f"error_type={type(exc).__name__})"
                 )
             previous_cost = time.monotonic() - started
         freeze_long_lived_heap("screen_preimport")  # ADR-198: imported screens are long-lived
@@ -5398,8 +5397,8 @@ class TldwCli(
             return resolve_screen_route(self._resolve_initial_shell_route())
         except Exception as exc:
             self.loguru_logger.debug(
-                "Initial-screen pre-import route resolution failed (error_type={})",
-                type(exc).__name__,
+                "Initial-screen pre-import route resolution failed "
+                f"(error_type={type(exc).__name__})"
             )
             return None
 

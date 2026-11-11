@@ -464,9 +464,12 @@ def _skill_catalog_sources_current(preparation):
 
 def _same_configuration_references(left, right):
     return (
-        all(now is before for now, before in zip(left[:-1], right[:-1]))
+        all(now is before for now, before in zip(left[:-1], right[:-1], strict=False))
         and len(left.callbacks) == len(right.callbacks)
-        and all(now is before for now, before in zip(left.callbacks, right.callbacks))
+        and all(
+            now is before
+            for now, before in zip(left.callbacks, right.callbacks, strict=False)
+        )
     )
 
 
@@ -695,7 +698,10 @@ async def finish_console_skill_catalog_owned(
         type(catalog) is not ConsoleSkillCatalogRead
         or reads is not catalog.reads
         or len(observers) != len(catalog.observers)
-        or any(now is not before for now, before in zip(observers, catalog.observers))
+        or any(
+            now is not before
+            for now, before in zip(observers, catalog.observers, strict=False)
+        )
     ):
         raise RecoveryRequired("console_snapshot_owner_changed")
     _require_skill_catalog_current(catalog)
@@ -996,8 +1002,11 @@ async def capture_console_turn_configuration_owned(
         fresh = _source_references(
             app, store, creator, session, _unused_trust=unused_trust
         )
-        if any(now is not before for now, before in zip(fresh[:-1], refs[:-1])) or any(
-            now is not before for now, before in zip(fresh.callbacks, refs.callbacks)
+        if any(
+            now is not before for now, before in zip(fresh[:-1], refs[:-1], strict=False)
+        ) or any(
+            now is not before
+            for now, before in zip(fresh.callbacks, refs.callbacks, strict=False)
         ):
             raise RecoveryRequired("console_snapshot_owner_changed")
 
