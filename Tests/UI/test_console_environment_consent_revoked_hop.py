@@ -28,6 +28,7 @@ from Tests.UI.test_console_environment_bound_registry import (
 )
 from Tests.UI.test_console_environment_root_reads import _environment_entry
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.test_console_session_admitted_roots import _original_consent_reads
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -36,6 +37,7 @@ from tldw_chatbook.Chat.console_environment_state import (
     EnvSourceAvailability,
     PrEnvState,
 )
+from tldw_chatbook.config import get_user_data_dir
 
 # Writes a named workspace, a folder binding and consent into the registry:
 # a private profile keeps them out of every other test's database.
@@ -63,7 +65,7 @@ async def test_consent_revoked_after_a_worker_re_check_drops_the_landing(
         return PrEnvState(availability=EnvSourceAvailability.NOT_APPLICABLE)
 
     monkeypatch.setattr(env_mod, "gather_pr_env", gather_pr)
-    app = _build_test_app()
+    app = _build_test_app(user_data_dir=get_user_data_dir())
     _configure_native_ready_console(app)
     registry = app.workspace_registry_service
     consent = app.change_review_consent_service
@@ -78,13 +80,10 @@ async def test_consent_revoked_after_a_worker_re_check_drops_the_landing(
     ui_reads: list[str | None] = []
     admit_turn = consent.admit_turn
 
-    def recording_admit_turn(workspace_id):
+    def recording_admit_turn(name, workspace_id, admission, worker):
         entry = _environment_entry()
-        if entry is not None and threading.get_ident() == main:
+        if name == "admit_turn" and entry is not None and worker.ident == main:
             ui_reads.append(entry)
-        return admit_turn(workspace_id)
-
-    monkeypatch.setattr(consent, "admit_turn", recording_admit_turn)
 
     host = ConsoleHarness(app)
     async with host.run_test(size=(160, 45)) as pilot:
@@ -118,25 +117,28 @@ async def test_consent_revoked_after_a_worker_re_check_drops_the_landing(
 
         controller._marshal_to_ui = hold_the_landing
 
-        await screen.action_toggle_console_inspector_rail()
-        await _until(pilot, in_hop.is_set, "the folder's landing to reach the hop")
-        consent.toggle(
-            _WORKSPACE,
-            expected=registry.read_change_review_consent(_WORKSPACE),
-            enabled=False,
-        )
-        revoked.set()
-        await _until(pilot, lambda: str(root) in landings, "the folder's landing")
-        await pilot.pause()
+        with _original_consent_reads(consent, recording_admit_turn):
+            await screen.action_toggle_console_inspector_rail()
+            await _until(pilot, in_hop.is_set, "the folder's landing to reach the hop")
+            consent.toggle(
+                _WORKSPACE,
+                expected=registry.read_change_review_consent(_WORKSPACE),
+                enabled=False,
+            )
+            revoked.set()
+            await _until(pilot, lambda: str(root) in landings, "the folder's landing")
+            await pilot.pause()
 
-        assert controller._has_landed is False
-        assert gh_roots == [], "no gh fetch for a folder consent no longer admits"
+            assert controller._has_landed is False
+            assert gh_roots == [], "no gh fetch for a folder consent no longer admits"
 
-        screen._poll_console_environment()
-        await _until(
-            pilot,
-            lambda: controller.snapshot.git.availability
-            is EnvSourceAvailability.UNBOUND,
-            "the UNBOUND landing after consent was revoked",
-        )
+            screen._poll_console_environment()
+            await _until(
+                pilot,
+                lambda: (
+                    controller.snapshot.git.availability
+                    is EnvSourceAvailability.UNBOUND
+                ),
+                "the UNBOUND landing after consent was revoked",
+            )
         assert ui_reads == [], ui_reads

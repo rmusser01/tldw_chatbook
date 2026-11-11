@@ -26,17 +26,17 @@ from __future__ import annotations
 import sys
 import threading
 from contextlib import asynccontextmanager
-from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
 import tldw_chatbook.Chat.console_chat_controller as controller_module
 import tldw_chatbook.Chat.console_configuration_capture as capture_module
 import tldw_chatbook.Workspaces.environment_status as env_mod
-from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
-from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
-from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
-    ConsoleHarness,
+from Tests.private_profile import private_profile_test
+from Tests.UI.test_console_session_admitted_roots import (
+    _console,
+    _original_consent_reads,
 )
 from tldw_chatbook.Chat.console_environment_state import (
     EnvSourceAvailability,
@@ -45,36 +45,17 @@ from tldw_chatbook.Chat.console_environment_state import (
     TasksEnvState,
 )
 
-# Drives the real ChatScreen, controller, store and app: keep the
-# collection-time profile (the per-test redirect fails config admission).
-pytestmark = pytest.mark.bootstrap_profile
+pytestmark = pytest.mark.ui
 
 _ENVIRONMENT_MODULE = "Console_Modules/environment.py"
 
 
-def _admitting(root: str) -> SimpleNamespace:
-    """A Change Review consent service that admits exactly ``root``."""
-    return SimpleNamespace(
-        admit_turn=lambda _workspace_id: SimpleNamespace(
-            ready_roots=(root,),
-            ready_aliases=("alias-one",),
-            skipped_roots=(),
-        )
-    )
-
-
 @asynccontextmanager
-async def _console_with_admitted_root(root: str):
-    """Mount the send-ready Console with ``root`` consent-admitted."""
-    app = _build_test_app()
-    _configure_native_ready_console(app)
-    app.change_review_consent_service = _admitting(root)
-    host = ConsoleHarness(app)
-    async with host.run_test(size=(160, 45)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
-        await pilot.pause(0.2)
-        yield pilot, console
+async def _console_with_admitted_root(root: str, monkeypatch, *, second=False):
+    """Mount real original consent after its root preparation finishes."""
+    roots = (Path(root), Path(root).parent / "second") if second else (Path(root),)
+    async with _console(roots, monkeypatch) as (pilot, screen, _controller, _session):
+        yield pilot, screen
 
 
 def _canned_gatherers(monkeypatch, root: str) -> None:
@@ -173,8 +154,9 @@ async def _wait_for_landing(pilot, screen, root: str) -> None:
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_rail_open_completion_and_poll_never_build_a_turn_configuration(
-    monkeypatch, tmp_path
+    request, monkeypatch, tmp_path
 ):
     """AC#3: the slow part of an Environment refresh is gone from the UI loop.
 
@@ -183,9 +165,9 @@ async def test_rail_open_completion_and_poll_never_build_a_turn_configuration(
     (``request_refresh`` asks the root, and so does the landing), the
     completion nudge does it again, and the poll tick three times.
     """
-    root = str(tmp_path)
+    root = str(tmp_path.resolve())
     _canned_gatherers(monkeypatch, root)
-    async with _console_with_admitted_root(root) as (pilot, screen):
+    async with _console_with_admitted_root(root, monkeypatch) as (pilot, screen):
         chat_controller = screen._ensure_console_chat_controller()
         assert chat_controller.store.active_session_id, (
             "harness precondition: the Console has an active session, so the "
@@ -215,43 +197,38 @@ async def test_rail_open_completion_and_poll_never_build_a_turn_configuration(
         assert screen._console_environment.snapshot.git.root == root
 
 
-def _admitting_per_workspace(root: str, asked: list) -> SimpleNamespace:
-    """Consent whose answer names the workspace it was asked about."""
-
-    def admit_turn(workspace_id):
-        asked.append(workspace_id)
-        return SimpleNamespace(
-            ready_roots=(root, f"{root}/admitted-for-{workspace_id}"),
-            ready_aliases=("alias-one", "alias-two"),
-            skipped_roots=(),
-        )
-
-    return SimpleNamespace(admit_turn=admit_turn)
-
-
 @pytest.mark.asyncio
-async def test_the_narrow_root_read_equals_the_full_snapshots_roots(tmp_path):
-    """Displayed content is unchanged: same roots as the full turn snapshot.
-
-    The consent answer embeds the workspace it was asked about, so the two
-    reads agree only when both ask about the session's own workspace.
-    """
-    root = str(tmp_path)
-    async with _console_with_admitted_root(root) as (pilot, screen):
+@private_profile_test
+async def test_the_narrow_root_read_equals_the_full_snapshots_roots(
+    request, monkeypatch, tmp_path
+):
+    """Both original readers use the session workspace and ready roots."""
+    root = str((tmp_path / "repo").resolve())
+    async with _console_with_admitted_root(root, monkeypatch, second=True) as (
+        _pilot,
+        screen,
+    ):
         chat_controller = screen._ensure_console_chat_controller()
         active = chat_controller.store.active_session_id
         own_workspace = chat_controller.store.session_workspace_id(active)
-        asked: list = []
-        chat_controller.app.change_review_consent_service = _admitting_per_workspace(
-            root, asked
+        consent = chat_controller.app.change_review_consent_service
+        with _original_consent_reads(consent) as reads:
+            full = chat_controller.resolve_turn_execution_context(
+                active
+            ).workspace_roots
+            narrow = screen._review_selection._console_change_review_workspace_roots()
+        assert set(full) == {root, str(Path(root).parent / "second")}
+        assert full == tuple(
+            binding.locator
+            for binding in chat_controller.app.workspace_registry_service.list_folder_bindings(
+                own_workspace
+            )
         )
-
-        full = chat_controller.resolve_turn_execution_context(active).workspace_roots
-        asked_by_full = list(asked)
-        asked.clear()
-        narrow = screen._review_selection._console_change_review_workspace_roots()
-
-        assert full == (root, f"{root}/admitted-for-{own_workspace}")
         assert narrow == full
-        assert asked == asked_by_full == [own_workspace]
-        assert screen._console_environment_root() == root
+        assert [
+            (name, workspace) for name, workspace, *_ in reads if name != "_admit"
+        ] == [
+            ("capture_turn", own_workspace),
+            ("admit_turn", own_workspace),
+        ]
+        assert screen._console_environment_root() == full[0]

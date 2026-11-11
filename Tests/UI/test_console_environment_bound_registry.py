@@ -23,21 +23,23 @@ from pathlib import Path
 import pytest
 
 import tldw_chatbook.Workspaces.environment_status as env_mod
-from tldw_chatbook.Backup_Recovery import storage_admission as storage
-from Tests.UI.test_console_environment_root_reads import _environment_entry
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_console_environment_root_reads import _environment_entry
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.test_console_session_admitted_roots import _original_consent_reads
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Backup_Recovery import storage_admission as storage
 from tldw_chatbook.Chat.console_environment_state import (
     EnvSourceAvailability,
     GitEnvState,
     PrEnvState,
     TasksEnvState,
 )
+from tldw_chatbook.config import get_user_data_dir
 
 # Writes a named workspace, a folder binding and consent into the registry:
 # a private profile keeps them out of every other test's database.
@@ -82,7 +84,7 @@ async def test_a_bound_workspace_lands_through_the_real_consent_service(
 ):
     monkeypatch.setenv("TLDW_CHANGE_REVIEW_ENABLED", "1")
     _canned_gatherers(monkeypatch)
-    app = _build_test_app()
+    app = _build_test_app(user_data_dir=get_user_data_dir())
     _configure_native_ready_console(app)
     registry = app.workspace_registry_service
     consent = app.change_review_consent_service
@@ -96,19 +98,13 @@ async def test_a_bound_workspace_lands_through_the_real_consent_service(
     main = threading.main_thread().ident
     reads: list[tuple[str, tuple]] = []
     worker_threads: list[threading.Thread] = []
-    admit_turn = consent.admit_turn
 
-    def recording_admit_turn(workspace_id):
-        entry = _environment_entry()
-        admission = admit_turn(workspace_id)
-        if entry is not None:  # asked on account of the Environment panel
-            thread = "ui" if threading.get_ident() == main else "worker"
+    def recording_admit_turn(name, workspace_id, admission, worker):
+        if name == "admit_turn" and _environment_entry() is not None:
+            thread = "ui" if worker.ident == main else "worker"
             reads.append((thread, tuple(admission.ready_roots)))
             if thread == "worker":
-                worker_threads.append(threading.current_thread())
-        return admission
-
-    monkeypatch.setattr(consent, "admit_turn", recording_admit_turn)
+                worker_threads.append(worker)
 
     host = ConsoleHarness(app)
     async with host.run_test(size=(160, 45)) as pilot:
@@ -129,16 +125,17 @@ async def test_a_bound_workspace_lands_through_the_real_consent_service(
         controller = screen._console_environment
         reads.clear()
 
-        await screen.action_toggle_console_inspector_rail()
-        await _until(
-            pilot,
-            lambda: (
-                controller._landed_root == str(root)
-                and controller.snapshot.pr.availability
-                is EnvSourceAvailability.NOT_APPLICABLE
-            ),
-            "the bound folder's local and net landings",
-        )
+        with _original_consent_reads(consent, recording_admit_turn):
+            await screen.action_toggle_console_inspector_rail()
+            await _until(
+                pilot,
+                lambda: (
+                    controller._landed_root == str(root)
+                    and controller.snapshot.pr.availability
+                    is EnvSourceAvailability.NOT_APPLICABLE
+                ),
+                "the bound folder's local and net landings",
+            )
 
         # No UI-loop read: the rail open's root read and the guard's
         # re-checks of the local and net landings all ran on workers, through

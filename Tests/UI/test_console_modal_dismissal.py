@@ -215,6 +215,11 @@ from tldw_chatbook.Widgets.Console.console_workspace_switcher_modal import (
     ConsoleWorkspaceSwitcherModal,
     WorkspaceArchiveReceiptModal,
 )
+from tldw_chatbook.Widgets.Console.console_workflow_setup import ConsoleWorkflowSetup
+from tldw_chatbook.Widgets.Console.console_workflow_status import (
+    ConsoleWorkflowHistory,
+    ConsoleWorkflowStatus,
+)
 from tldw_chatbook.Widgets.Console.prompt_variables_dialog import (
     PromptVariablesDialog,
     PromptVariablesDialogRequest,
@@ -1167,6 +1172,9 @@ _ROOT_INVENTORY_ONLY_MODAL_TYPES = (
     ConsoleTerminalSessionModal,
     ResponseRulesModal,
     WorkspaceArchiveReceiptModal,
+    ConsoleWorkflowSetup,
+    ConsoleWorkflowStatus,
+    ConsoleWorkflowHistory,
 )
 # TASK-33003.19 (re-measured after the rebase onto Phase 8's final head): the
 # Goals modals the root opens are plain ModalScreens (Esc -> close/cancel)
@@ -1198,6 +1206,11 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
             WorktreeRecoveryDialog,
         ),
         _CONSOLE_ROOT_SOURCE_PATHS,
+    ),
+    _ModalLaunchEdge(
+        ConsoleWorkflowStatus,
+        (ConfirmationDialog,),
+        ("tldw_chatbook/Widgets/Console/console_workflow_status.py",),
     ),
     _ModalLaunchEdge(
         ConsoleCodeReviewModal,
@@ -1662,7 +1675,8 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     # two named below, less ConsoleRagSettingsModal, whose
     # ConsoleLibrarySearchModal subclass is what the root opens.
     # TASK-35582 adds the safe-dismissal code-review report reader.
-    assert len(reachable_modal_types) == 77
+    # TASK-39147 adds the three safe-dismissal workflow dialogs.
+    assert len(reachable_modal_types) == 80
     all_contract_types = (
         console_contract_types
         | {contract.modal_type for contract in TASK4_MODAL_CONTRACTS}
@@ -1934,14 +1948,15 @@ def test_task4_transitive_modal_contract_table_is_complete_and_adopted() -> None
         assert contract.guard
         assert contract.focus_postcondition == _RESTORE_OPENER
 
-    # Revert preflight now runs off the UI thread; inspect the async launch
-    # sites rather than their thin action/worker dispatchers.
-    assert "ChangeRevertConfirmModal(" in inspect.getsource(
-        ChangeReviewScreen._prepare_confirm_and_revert
-    )
-    assert "ChangeRevertConfirmModal(" in inspect.getsource(
-        ChangeReviewScreen._prepare_undo_all
-    )
+    # Both revert actions delegate to one async preflight and confirmation.
+    shared_revert = inspect.getsource(ChangeReviewScreen._prepare_revert_selection)
+    assert "ChangeRevertConfirmModal(" in shared_revert
+    assert "if not confirmed or not self.is_mounted:" in shared_revert
+    for opener in (
+        ChangeReviewScreen._prepare_confirm_and_revert,
+        ChangeReviewScreen._prepare_undo_all,
+    ):
+        assert "await self._prepare_revert_selection(" in inspect.getsource(opener)
 
     # TASK-16801 arc B: the two git modals are launched from ONE method
     # each -- pinning the launch SITE (not just the class's existence) is

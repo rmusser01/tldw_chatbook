@@ -221,11 +221,13 @@ def test_runtime_owned_custody_tracks_only_lifetime_handles():
         "_pressed_inputs",
         "_pressed_stash",
         "_pressed_attachment_generation",
+        "_recovery_user_origin",
     }
     private_witnesses = {
         "_pressed_inputs",
         "_pressed_stash",
         "_pressed_attachment_generation",
+        "_recovery_user_origin",
     }
     for request_field in fields(ConsoleTurnCustodyRequest):
         if request_field.name in private_witnesses:
