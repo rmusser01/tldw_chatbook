@@ -810,7 +810,7 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # C99/B41 read and copy the plugin registry for backup (TASK-40132).
         # C08/C09 were the legacy settings window's VACUUM and integrity
         # workers; they left with the window (TASK-33244).
-        for number in range(1, 100) if number not in {8, 9, 10, 75, 97}
+        for number in range(1, 101) if number not in {8, 9, 10, 75, 97}
     ]
     assert [row["id"] for row in backup_rows] == [
         # B04-B09 were that window's six-owner bulk backup loop (TASK-33244).

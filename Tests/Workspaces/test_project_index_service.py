@@ -127,6 +127,53 @@ async def test_binding_search_resolves_live_file_and_rejects_replacement(
 
 
 @private_profile_test
+async def test_read_only_status_projects_each_authority_change_for_management(
+    tmp_path, request
+):
+    rig = Rig(tmp_path)
+    try:
+        (rig.root / "note.txt").write_text("new authority marker", encoding="utf-8")
+        enabled = rig.enable()
+
+        rig.live = replace(rig.live, authority_revision=rig.live.authority_revision + 1)
+        earlier = rig.service.status(rig.key)
+        assert earlier.scope.epoch == enabled.scope.epoch + 1
+        assert earlier.job_revision == enabled.job_revision + 1
+
+        rig.live = replace(rig.live, authority_revision=rig.live.authority_revision + 2)
+        latest, policy, upgrade = rig.service.management_snapshot(rig.key)
+        assert latest.scope.epoch == enabled.scope.epoch + 3
+        assert latest.job_revision == enabled.job_revision + 3
+        assert latest.state == "Paused" and latest.job_id is None
+        assert policy == rig.service.policy(latest.scope) == POLICY and not upgrade
+        assert rig.service.semantic_state(rig.key).scope == latest.scope
+
+        store = rig.store(rig.key)
+        try:
+            durable = store.load_status(rig.key)
+            assert durable.scope == enabled.scope
+            assert durable.job_revision == enabled.job_revision
+        finally:
+            store.close()
+
+        with pytest.raises(ValueError, match="stale_scope"):
+            rig.service.refresh(
+                rig.key,
+                expected_scope=earlier.scope,
+                expected_job_revision=earlier.job_revision,
+            )
+        assert not rig.service._runs
+        rig.service.refresh(
+            rig.key,
+            expected_scope=latest.scope,
+            expected_job_revision=latest.job_revision,
+        )
+        assert rig.settle(seconds=60).indexed == 1
+    finally:
+        await rig.close()
+
+
+@private_profile_test
 async def test_binding_search_rejects_evidence_after_binding_revision_changes(
     tmp_path, request
 ):
@@ -293,7 +340,7 @@ async def test_late_publication_rechecks_authority_and_never_returns_ready(
     try:
         (rig.root / "a.txt").write_text("held marker")
         rig.enable()
-        rig.refresh()
+        job_id = rig.refresh()
         assert scanner.before_publish.wait(10)
         with rig.lock:
             rig.live = (
@@ -302,7 +349,12 @@ async def test_late_publication_rechecks_authority_and_never_returns_ready(
                 else replace(rig.live, authority_revision=2)
             )
         scanner.release.set()
-        rig.settle("Off" if mutation == "detach" else "Paused")
+        run = rig.service._runs[job_id]
+        await asyncio.to_thread(run.supervisor.join, 60)
+        assert run.native_retired
+        assert rig.service.status(rig.key).state == (
+            "Off" if mutation == "detach" else "Paused"
+        )
         assert scanner.published is False
         assert rig.service.status(rig.key).indexed == 0
     finally:

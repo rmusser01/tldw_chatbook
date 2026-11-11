@@ -30,6 +30,7 @@ Let a person find files by meaning or use keyword and semantic retrieval togethe
 2. Add explicit retrieval mode and semantic evidence receipts to the Local Files entry point.
 3. Wire the mode selector for Search and Ask and verify the mounted workflow.
 4. Compare the six writer lifecycle failures against clean dev, fix regressions within the existing ADR-241 contract, and run the full suite.
+5. Keep status reads read-only while projecting the scope and job revision a mutation will reconcile. Verify that another authority change invalidates an earlier observation.
 
 - ADR required: yes
 - ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md
@@ -44,3 +45,5 @@ Let a person find files by meaning or use keyword and semantic retrieval togethe
 - Clean dev at `ae9f9e8d21` passed five of the six Windows writer lifecycle cases. The supervisor-dispatch fixture timed out on dev and the semantic branch. A new deterministic test isolated the additional service-lock dependency on the semantic branch. All six lifecycle cases and the three focused allocation checks passed after the fixes.
 - Writer SQL completion now skips the reader handoff while the service lock is held. Explicit Resume can replace a durable Building claim after acquiring its native lifetime and verifying the exact retired claim. The lifecycle fixtures now follow the allocation gate order, tolerate bounded busy responses, and wait for native retirement when asserting terminal states.
 - The full pytest collection found 135,059 tests and 13 errors. Clean dev reproduced the same 13 errors in the same environment. This blocks a green full-suite result.
+- The old exclusion-floor test reproduced a Refresh failure on the semantic branch and passed on clean dev. Status and management now project the exact scope that the fenced mutation will reconcile without writing the registry witness or index control on a read. Each registry revision advances the epoch and job revision separately so a later unseen edit invalidates an older observation. The original case, new regression case, and neighboring authority and semantic settings cases passed.
+- Both project index SQLite connections use the registered literal owner. The peer preflight inventory documents its private connection helper. The two late-publication tests now await the writer's actual retirement before checking its publication result.

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager, nullcontext
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from functools import wraps
 import hashlib
 import json
@@ -398,7 +398,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
         conn = None
         try:
             conn = connect_private_sqlite(
-                OWNER_ID,
+                "db.workspace_project_index",
                 peer,
                 read_only=True,
                 must_exist=True,
@@ -639,7 +639,9 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
 
     @_activated
     def _open_connection(self):
-        return connect_private_sqlite(OWNER_ID, self.db_path_str, timeout=0)
+        return connect_private_sqlite(
+            "db.workspace_project_index", self.db_path_str, timeout=0
+        )
 
     def _configure_connection(self, conn):
         super()._configure_connection(conn)
@@ -746,11 +748,16 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
             manifest_revision,
         )
 
-    def load_semantic_state(self, scope: ProjectIndexScope) -> ProjectSemanticState:
+    def load_semantic_state(
+        self, scope: ProjectIndexScope, *, authority_revision: int | None = None
+    ) -> ProjectSemanticState:
         """Read consent and readiness without constructing an embedding backend."""
         with self.connection() as conn:
             if self._current(conn, scope) is None:
                 raise ValueError("stale_scope")
+            if authority_revision is not None:
+                advance = self._authority_advance(conn, authority_revision)
+                scope = replace(scope, epoch=scope.epoch + advance)
             if self.schema_version < 4:
                 return ProjectSemanticState(scope, 0, False, None, "Off")
             row = conn.execute(
@@ -1344,15 +1351,45 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 raise ValueError("stale_scope")
             return ProjectIndexPolicy(*json.loads(row["policy"]))
 
+    @staticmethod
+    def _authority_advance(conn: sqlite3.Connection, revision: int) -> int:
+        witness = conn.execute("SELECT revision FROM authority_witness").fetchone()
+        if witness is None:
+            return 0
+        advance = revision - witness[0]
+        if advance < 0:
+            raise ValueError("stale_authority_revision")
+        # Each registry change gets a distinct scope even when no mutation
+        # reconciles the intermediate revisions.
+        return advance
+
+    def project_authority_status(
+        self, status: ProjectIndexStatus, revision: int
+    ) -> ProjectIndexStatus:
+        """Project the reconciled status inside the caller's fenced read unit."""
+        with self.connection() as conn:
+            advance = self._authority_advance(conn, revision)
+        if not advance:
+            return status
+        return replace(
+            status,
+            scope=replace(status.scope, epoch=status.scope.epoch + advance),
+            state="Off" if status.state == "Off" else "Paused",
+            job_id=None,
+            job_revision=status.job_revision + advance,
+        )
+
     @_activated
     def reconcile_authority(self, key: ProjectIndexKey, revision: int) -> None:
         """Invalidate stale readiness/claims on the durable registry witness."""
         with self.transaction() as conn:
             self._control(conn, key)
-            old = conn.execute("SELECT revision FROM authority_witness").fetchone()
-            if old is not None and old[0] != revision:
+            advance = self._authority_advance(conn, revision)
+            if advance:
                 conn.execute(
-                    "UPDATE control SET epoch=epoch+1,job_revision=job_revision+1,state=CASE WHEN enabled=1 THEN 'Paused' ELSE 'Off' END"
+                    "UPDATE control SET epoch=epoch+?,job_revision=job_revision+?,"
+                    "state=CASE WHEN enabled=1 THEN 'Paused' ELSE 'Off' END",
+                    (advance, advance),
                 )
                 self._remember_legacy(conn)
                 conn.execute("DELETE FROM active_job")

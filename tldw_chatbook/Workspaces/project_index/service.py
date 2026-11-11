@@ -452,7 +452,8 @@ class ProjectIndexService:
         def read():
             try:
                 with self._store(key, cleanup_only=True) as store:
-                    return self._status_from_store(store, key)
+                    result, _ = self._status_from_store(store, key)
+                    return result
             except FileNotFoundError:
                 return self._fresh_status(key)
 
@@ -469,7 +470,9 @@ class ProjectIndexService:
                         if authority is None:
                             raise ValueError("authority_unavailable")
                         status = store.load_status(key)
-                        return store.load_semantic_state(status.scope)
+                        return store.load_semantic_state(
+                            status.scope, authority_revision=authority.authority_revision
+                        )
             except FileNotFoundError:
                 return ProjectSemanticState(self._fresh_status(key).scope, 0, False, None, "Off")
 
@@ -504,11 +507,11 @@ class ProjectIndexService:
         def read():
             try:
                 with self._store(key, cleanup_only=True) as store:
-                    status = self._status_from_store(store, key)
-                    with self._read_fenced(store, key) as authority:
-                        if authority is None:
-                            raise ValueError("authority_unavailable")
-                        policy = store.policy(status.scope)
+                    status, policy = self._status_from_store(
+                        store, key, include_policy=True
+                    )
+                    if policy is None:
+                        raise ValueError("authority_unavailable")
                     return (
                         status,
                         policy,
@@ -519,12 +522,17 @@ class ProjectIndexService:
 
         return self._retry_read(key, read)
 
-    def _status_from_store(self, store, key):
+    def _status_from_store(self, store, key, *, include_policy=False):
+        policy = None
         with self._read_fenced(store, key) as authority:
             result = store.load_status(key)
-            claim = store.read_claim(result.scope)
-        if authority is None:
-            result = replace(result, state="Off", job_id=None)
+            if authority is None:
+                result = replace(result, state="Off", job_id=None)
+            else:
+                if include_policy:
+                    policy = store.policy(result.scope)
+                result = store.project_authority_status(result, authority.authority_revision)
+            claim = store.read_claim(result.scope) if result.job_id else None
         # Physical retirement makes a durable Building claim inert. Project the
         # status without writing control on an ordinary status query.
         run = self._runs.get(result.job_id)
@@ -544,7 +552,7 @@ class ProjectIndexService:
                     result = replace(result, state="Interrupted")
                 finally:
                     self._close_capability(lease)
-        return replace(result, cache_bytes=binding_bytes(self._binding_root(store)))
+        return replace(result, cache_bytes=binding_bytes(self._binding_root(store))), policy
 
     def policy(self, scope: ProjectIndexScope) -> ProjectIndexPolicy:
         """Read saved processing choices only under the exact admitted scope."""
@@ -554,7 +562,13 @@ class ProjectIndexService:
                 with self._read_fenced(store, scope.key) as authority:
                     if authority is None:
                         raise ValueError("authority_unavailable")
-                    return store.policy(scope)
+                    durable = store.load_status(scope.key)
+                    observed = store.project_authority_status(
+                        durable, authority.authority_revision
+                    )
+                    if observed.scope != scope:
+                        raise ValueError("stale_scope")
+                    return store.policy(durable.scope)
 
         return self._retry_read(scope.key, read)
 

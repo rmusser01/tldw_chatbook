@@ -385,7 +385,6 @@ internal rollback does not disable local rules. The private-call census pins
 this symbol, literal adapter selection, candidate argument, and validation call.
 
 | C98 | tldw_chatbook/DB/Workspace_Project_Index_DB | WorkspaceProjectIndexDB._open_connection | db.workspace_project_index | private_file | derived cache read/write | Migrated via `connect_private_sqlite`. Through SQLiteStoreKernel. Opaque workspace/binding accounting parent, complete-key namespace children, and stable per-authority native lifetime files. All nested DB, sidecar, control, and lease bytes are excluded from centralized backup payload; the service retains storage admission until native worker and DB owner-thread retirement. Fresh v2 uses incremental reclamation; binding-wide Clear preserves DB identity, control history, and stable lease files. |
-| C100 | tldw_chatbook/DB/Workspace_Project_Index_DB | WorkspaceProjectIndexDB._probe_peer | db.workspace_project_index | read_only_uri | existing-only peer catalog preflight | Serial, must-exist mode=ro inspection of each validated namespace before a write-capable group unit opens its target; native close and inventory precede the next peer or target. The absent-gate legacy bootstrap uses the same read-only site to refuse existing v4 without creating control. |
 
 ## Managed plugin backup (TASK-40132, ADR-126)
 
@@ -395,3 +394,7 @@ copies the registry through its own recovery owner, which only the installed
 
 | C99 | tldw_chatbook/Plugins/backup | _Plugins._inspect | recovery.plugins.registry | private_file, read_only_uri | exact installed v5 registry catalog and live plugin-process check | Migrated via `connect_private_sqlite`. Frozen measured catalog; reads only the `processes` states to refuse capture while a plugin process may run. No runtime owner or registry construction. |
 | B41 | tldw_chatbook/Plugins/backup | _Plugins.capture | recovery.plugins.registry | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Holds the plugin runtime lock and the checked maintenance scope; committed WAL frames fold into the snapshot. Restored plugins stay inactive until plugin authority recovery approves them. |
+
+## Workspace project index peer preflight
+
+| C100 | tldw_chatbook/DB/Workspace_Project_Index_DB | WorkspaceProjectIndexDB._probe_peer | db.workspace_project_index | read_only_uri | existing-only peer catalog preflight | Migrated via `connect_private_sqlite`. Serial, must-exist mode=ro inspection of each validated namespace before a write-capable group unit opens its target; native close and inventory precede the next peer or target. The absent-gate legacy bootstrap uses the same read-only site to refuse existing v4 without creating control. |
