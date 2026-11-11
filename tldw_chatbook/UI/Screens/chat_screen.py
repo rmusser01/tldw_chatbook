@@ -18275,6 +18275,13 @@ class ChatScreen(BaseAppScreen):
             self._focus_console_composer_if_needed(force=True)
             return False
         self._dismiss_console_guidance()
+        from ..Console_Modules.hooks import in_worker_task
+
+        spoken_capture = pending_send_token is None and in_worker_task()
+        if spoken_capture:
+            received_inputs = _send_acknowledgement().capture_visible_send_inputs(
+                self, session_id, stash
+            )
 
         # Command parsing runs before any readiness/blocked gating: a
         # recognized command dispatch (or an unknown-command hint) never
@@ -18378,6 +18385,12 @@ class ChatScreen(BaseAppScreen):
                 "Console chat changed before send; the draft was kept in its original chat.",
                 severity="warning",
             )
+            return False
+        if (
+            spoken_capture
+            and composer is not None
+            and composer.captured_draft_spent(stash)
+        ):
             return False
         return await self._dispatch_console_draft_send(
             draft, stash=stash, session_id=session_id,
