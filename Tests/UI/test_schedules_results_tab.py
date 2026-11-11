@@ -772,6 +772,53 @@ async def test_dismiss_action_queues_server_pushback_mutation(results_db):
 
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
+async def test_queue_definition_detail_can_finish_during_shutdown(
+    results_db, monkeypatch
+):
+    _seed_definition(results_db)
+    app = ResultsWorkbenchTestApp(results_db)
+    workbench = SchedulesWorkbench(app_instance=app)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    fetch_counts = workbench._fetch_definition_detail_counts
+
+    async def held_counts(*args):
+        counts = await fetch_counts(*args)
+        entered.set()
+        await release.wait()
+        return counts
+
+    monkeypatch.setattr(workbench, "_fetch_definition_detail_counts", held_counts)
+    close_all = app._close_all
+    try:
+        async with app.run_test():
+            await app.push_screen(workbench)
+            await asyncio.wait_for(entered.wait(), timeout=5)
+            detail = workbench.query_one("#scheduling-queue-definition-detail")
+            worker = next(
+                worker
+                for worker in app.workers
+                if worker.group == "schedules-load-queue-definition-detail"
+            )
+
+            async def close_with_pending_detail():
+                try:
+                    # Shutdown prunes children before their parent's worker retires.
+                    assert not app.is_running
+                    await detail.remove_children()
+                    release.set()
+                    await asyncio.wait_for(worker.wait(), timeout=5)
+                finally:
+                    release.set()
+                    await close_all()
+
+            monkeypatch.setattr(app, "_close_all", close_with_pending_detail)
+    finally:
+        release.set()
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
 async def test_mark_all_read_fans_out_per_row(results_db):
     """redesign PR-4 task 5: no tab to activate first --
     `action_mark_all_results_read` is ungated now (it was Results-tab-only,

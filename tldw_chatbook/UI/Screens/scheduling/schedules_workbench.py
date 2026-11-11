@@ -4079,9 +4079,8 @@ class SchedulesWorkbench(BaseAppScreen):
         ) = await self._fetch_definition_detail_counts(
             service, definition, definition_id
         )
-        # A newer selection may have won the race with this worker; render
-        # nothing for a stale row (same guard `_load_automation_detail` uses).
-        if row_id != self._selected_row_id:
+        # Shutdown can prune the pane before this worker's read returns.
+        if not self.app.is_running or row_id != self._selected_row_id:
             return
         known_timezones = self._task_timezones()
         # PR-3 task 5: same option source the reminder pane's own Runs-on
