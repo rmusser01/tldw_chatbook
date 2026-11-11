@@ -4,7 +4,7 @@ This document describes the Console (`chat` destination): the screen layout, the
 
 ## Authoritative files
 
-Bug reports ([ADR-252](../../backlog/decisions/252-bug-report-evidence-and-sharing.md))
+Bug reports ([ADR-358](../../backlog/decisions/358-bug-report-evidence-and-sharing.md))
 consume retained Console evidence through `Utils/bug_report_capture.py`, without
 initializing a Console or loading a whole Trace snapshot. The bounded repository
 `read_report_event_tail()` respects attached lineage and inherited fences;

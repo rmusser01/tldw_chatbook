@@ -1,4 +1,4 @@
-"""The reviewed text is the only clipboard candidate (ADR-252)."""
+"""The reviewed text is the only clipboard candidate (ADR-358)."""
 
 import asyncio
 from collections import deque

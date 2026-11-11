@@ -1,4 +1,4 @@
-"""Bounded Markdown reports and exact-copy validation (ADR-252)."""
+"""Bounded Markdown reports and exact-copy validation (ADR-358)."""
 
 from __future__ import annotations
 

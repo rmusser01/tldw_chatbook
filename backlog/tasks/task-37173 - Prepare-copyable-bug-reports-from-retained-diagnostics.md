@@ -12,7 +12,7 @@ labels:
 references:
 - Docs/superpowers/specs/2026-10-28-report-a-bug-design.md
 documentation:
-- backlog/decisions/252-bug-report-evidence-and-sharing.md
+- backlog/decisions/358-bug-report-evidence-and-sharing.md
 updated_date: 2026-10-28 22:25
 ---
 
@@ -37,7 +37,7 @@ Give users a readable report containing their description and retained diagnosti
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
-ADR path: backlog/decisions/252-bug-report-evidence-and-sharing.md
+ADR path: backlog/decisions/358-bug-report-evidence-and-sharing.md
 Reason: User-controlled diagnostic export contract; existing ADR-029, ADR-080 and ADR-097 remain binding. The shared-check follow-up implements existing modal, CSS and profile contracts and requires no new ADR.
 
 1. Implement and verify the pure report privacy projection, Markdown budgets and exact-copy validation.
@@ -63,7 +63,7 @@ Final verification at 478fd5b328: 605 unique passing targeted cases (395 combine
 
 Native WindowsDriver/TTY journeys cover all three entry points, redacted failure evidence, real captured Calculator results, manual review edits, copy requests and discard guards. Decoded OSC52 payloads match reviewed bytes and stored SHA-256 receipts (Palette 2762 bytes; About 2429); no OS clipboard acknowledgement is claimed.
 
-ADR required: yes for the feature; backlog/decisions/252-bug-report-evidence-and-sharing.md governs. Shared-check follow-up requires no new ADR because it enforces existing contracts. Plan: Docs/superpowers/plans/2026-10-28-report-a-bug.md. Final evidence/rulings: Docs/superpowers/verification/2026-10-28-report-a-bug.md and its linked receipts. Updated lessons record exact-top-screen ownership and awaiting native screen work before test teardown.
+ADR required: yes for the feature; backlog/decisions/358-bug-report-evidence-and-sharing.md governs. Shared-check follow-up requires no new ADR because it enforces existing contracts. Plan: Docs/superpowers/plans/2026-10-28-report-a-bug.md. Final evidence/rulings: Docs/superpowers/verification/2026-10-28-report-a-bug.md and its linked receipts. Updated lessons record exact-top-screen ownership and awaiting native screen work before test teardown.
 
 Core files: Utils/bug_report.py, Utils/bug_report_capture.py, Widgets/bug_report_dialog.py, bounded log/trace/DB readers, shared app action and three entry points, focused tests and user/architecture guidance. Shared repairs cover governance/focus/provider/census tests and goal/response-rule/portrait quit hooks. Local commits and the managed worktree are preserved for review.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

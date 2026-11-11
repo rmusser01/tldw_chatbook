@@ -1,9 +1,10 @@
-# ADR-252: Bug report evidence and sharing
+# ADR-358: Bug report evidence and sharing
 
 Status: Accepted for implementation planning
 Date: 2026-10-28
 Related Task: [TASK-37173](../tasks/task-37173%20-%20Prepare-copyable-bug-reports-from-retained-diagnostics.md)
 Supersedes: N/A
+Numbering: Originally drafted as ADR-252. Renumbered to ADR-358 on rebase because dev already uses 252 for tool availability refusals.
 
 ## Decision
 

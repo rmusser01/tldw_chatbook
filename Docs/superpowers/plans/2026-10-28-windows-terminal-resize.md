@@ -2,7 +2,7 @@
 
 **Goal:** Deliver native resize events to every Chatbook screen after a Windows Terminal resize/maximize.
 
-**Scope:** TASK-37173. User requested implementation and a native before/after test. Keep Textual 8.x and existing screen CSS; use the existing `TextualAppGuards` compatibility boundary. Work in the current checkout, preserving unrelated untracked files.
+**Scope:** TASK-40260. User requested implementation and a native before/after test. Keep Textual 8.x and existing screen CSS; use the existing `TextualAppGuards` compatibility boundary. Work in the current checkout, preserving unrelated untracked files.
 
 ADR required: no
 ADR path: N/A

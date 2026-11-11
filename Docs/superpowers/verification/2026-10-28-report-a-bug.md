@@ -33,7 +33,7 @@ Markdown delimiters. Import tests use a fresh Python process.
 ## Independent review
 
 A fresh read-only whole-branch reviewer examined `798f8fc..3edfa21` against the
-approved spec, plan, ADR-252, and rulings. It found four Important issues and no
+approved spec, plan, ADR-358, and rulings. It found four Important issues and no
 Critical or Minor findings. All four reproduced before their fixes; the regression
 went from four failures to four passes:
 
@@ -126,7 +126,7 @@ node ID. Earlier failing runs remain historical evidence, superseded by these
 passing results. Native clipboard receipts above remain applicable because this
 follow-up did not alter report rendering or delivery.
 
-Governance: [ADR-252](../../../backlog/decisions/252-bug-report-evidence-and-sharing.md),
+Governance: [ADR-358](../../../backlog/decisions/358-bug-report-evidence-and-sharing.md),
 [approved spec](../specs/2026-10-28-report-a-bug-design.md),
 [implementation plan](../plans/2026-10-28-report-a-bug.md),
 [ordered rulings](2026-10-28-report-a-bug-rulings.md).

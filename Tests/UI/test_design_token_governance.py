@@ -223,7 +223,7 @@ def test_active_css_extension_is_in_hex_floor(request, tmp_path, monkeypatch):
     assert sheet in _source_modules()
     assert unused not in _source_modules()
     with pytest.raises(
-        AssertionError, match=re.escape(str(sheet.relative_to(tmp_path)))
+        AssertionError, match=re.escape(sheet.relative_to(tmp_path).as_posix())
     ):
         test_hex_literals_are_ratcheted_outside_token_definitions.__wrapped__(request)
 

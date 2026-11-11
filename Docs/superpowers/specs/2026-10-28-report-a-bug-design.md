@@ -123,11 +123,11 @@ Use the design language and ADR-161 component catalog: a scrollable modal body w
 
 ADR required: **yes**.
 
-ADR path: [backlog/decisions/252-bug-report-evidence-and-sharing.md](../../../backlog/decisions/252-bug-report-evidence-and-sharing.md), allocated after checking current dev, recent local Git history, and open-PR reservations.
+ADR path: [backlog/decisions/358-bug-report-evidence-and-sharing.md](../../../backlog/decisions/358-bug-report-evidence-and-sharing.md), allocated after checking current dev, recent local Git history, and open-PR reservations.
 
 Reason: this introduces a user-controlled export contract spanning logs, trace sources, privacy policy, and clipboard output. Existing ADR-029, ADR-080, and ADR-097 (`097-console-reference-backed-semantic-trace-ledger.md`) constrain it but do not define this narrower report format, evidence-selection rule, or tool-only opt-in. The new ADR records those choices without changing their underlying capture/retention contracts. ADR-031, ADR-150, and ADR-161 govern the UI.
 
-TASK-37173 is the atomic implementation task and is In Progress for planning. Its Implementation Plan was added after that status transition and links this design, ADR-252, and the detailed plan. The `superpowers:writing-plans` workflow prepares the execution handoff; no product code, scaffolding, or dependencies are added during planning.
+TASK-37173 is the atomic implementation task and is In Progress for planning. Its Implementation Plan was added after that status transition and links this design, ADR-358, and the detailed plan. The `superpowers:writing-plans` workflow prepares the execution handoff; no product code, scaffolding, or dependencies are added during planning.
 
 ## Acceptance and verification expectations
 

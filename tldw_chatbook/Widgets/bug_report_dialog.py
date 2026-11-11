@@ -1,4 +1,4 @@
-"""Describe, review, and request a client copy of retained diagnostics (ADR-252)."""
+"""Describe, review, and request a client copy of retained diagnostics (ADR-358)."""
 
 from __future__ import annotations
 

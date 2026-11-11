@@ -1,4 +1,4 @@
-# TASK-37173 native Windows Terminal resize evidence
+# TASK-40260 native Windows Terminal resize evidence
 
 Environment: Windows Terminal Preview, native Python 3.12.10, Textual 8.2.8.
 The user operated the window resize gestures because the desktop automation

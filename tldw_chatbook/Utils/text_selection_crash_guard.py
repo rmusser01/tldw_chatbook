@@ -6,7 +6,7 @@ docstring), ``ThreadWorkerContextGuard`` (TASK-33264, see its class),
 ``UserInputTap`` (TASK-33620.15.3: keeps the idle heap re-freeze off typing)
 and ``DetachedFocusGuard`` (TASK-34000.26: a removed widget under focus must
 not swallow the next key).
-The aggregate also selects a resize-capable native Windows driver (TASK-37173),
+The aggregate also selects a resize-capable native Windows driver (TASK-40260),
 and on Windows ``ThreadWorkerContextGuard`` keeps Textual's timer sleeps off the
 default executor (TASK-38462, ``install_windows_timer_sleep``).
 It tracks clipboard write intent so older asynchronous copies cannot publish
