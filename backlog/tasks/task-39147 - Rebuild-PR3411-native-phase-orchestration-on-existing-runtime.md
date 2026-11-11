@@ -1403,3 +1403,29 @@ fixture now represents the missing workflow row. The compact setup probe
 checks the actual worker namespace while retaining the original alias,
 issued request and physical return checks. Existing ADRs 355 and 356 apply.
 Exact PR-head CI and AC23 remain open.
+
+### November 11 rebase and CI repairs
+
+Replayed the 112 published commits onto dev `ae9f9e8d21`, retaining its explicit
+storage provider and shared switch-interval owner at the Console's moved
+call sites. The default-config pin now includes the seven commented workflow
+settings. Removing those comments reproduces the dev template byte for byte.
+
+The ledger receives the existing fence and dispatch validators from the
+original phase issuer before durable acceptance. The accounting driver
+installs the original return and evidence validators before its first
+quiescence cell. Registration is per ledger, rejects replacement, and uses a
+separate lock. Validation and pre-commit checks retain their original
+order. ADR-356 covers the native ownership boundary.
+
+The app service readers, Workspace records and execution owner binding live
+with existing shared owners. The mounted tests exercise actual profile-owned
+workspace consent, streaming and provider selection. Spoken Send carries its
+captured draft across command classification, checks whether another Send
+already took it, and preserves escaped literal chat. The source checks,
+budgets, and the project-chat receipt checker remain in force. ADR-230 covers
+the Send receipt and ADR-355 covers the lint guards.
+
+The original admission-sensitive tests, layer and lookup guards, and
+startup limits were checked in targeted runs. GitHub required CI and the
+current-head review remain part of AC23.
