@@ -30,6 +30,13 @@ NOTES_ORGANIZATION_DOMAINS = (
 )
 
 
+SERVER_TRUSTED_SYNC_POLICY = "server_trusted_v1"
+
+
+class SyncV2EnrollmentError(ValueError):
+    """Enrollment refusal with safe, user-facing Settings copy."""
+
+
 class ConflictStrategy(str, Enum):
     """Conflict strategies available to future sync execution paths."""
 

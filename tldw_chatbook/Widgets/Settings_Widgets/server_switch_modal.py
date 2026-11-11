@@ -21,10 +21,11 @@ from tldw_chatbook.Utils.egress import (
 
 from textual import on, work
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, VerticalScroll
 from textual.css.query import QueryError
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
+from tldw_chatbook.Widgets.state_checkbox import StateCheckbox
 from tldw_chatbook.Widgets.status_line import set_status_line
 
 
@@ -101,7 +102,7 @@ class ServerSwitchModal(ModalScreen[Optional[dict]]):
         else:
             current_copy = "Current source: local. No server is configured."
 
-        with Vertical(id="server-switch-modal"):
+        with VerticalScroll(id="server-switch-modal", can_focus=False):
             yield Static("Switch Runtime Source", classes="destination-section")
             yield Static(current_copy, id="server-switch-current", markup=False)
             with Horizontal(classes="server-switch-row"):
@@ -119,9 +120,13 @@ class ServerSwitchModal(ModalScreen[Optional[dict]]):
                     password=True,
                     id="server-switch-token",
                 )
+            yield StateCheckbox(
+                "Set up manual sync (server can read synced data)",
+                id="server-switch-sync-consent",
+                classes="form-checkbox",
+            )
             yield Static(
-                "Test the connection before activating; activation also "
-                "prepares the Sync v2 profile for this device.",
+                "Test the connection before activating. Sync setup sends no Notes or Chat content.",
                 id="server-switch-status",
                 markup=False,
             )
@@ -145,7 +150,7 @@ class ServerSwitchModal(ModalScreen[Optional[dict]]):
                     id="server-switch-activate",
                     compact=True,
                     classes="destination-action-button console-action-primary",
-                    tooltip="Bind this server as the runtime source and prepare Sync v2.",
+                    tooltip="Bind this server as the runtime source.",
                 )
                 yield Button(
                     "Cancel",
@@ -265,6 +270,9 @@ class ServerSwitchModal(ModalScreen[Optional[dict]]):
                 "action": "activate",
                 "base_url": url,
                 "auth_token": self._entered_token(),
+                "approve_server_trusted_sync": self.query_one(
+                    "#server-switch-sync-consent", StateCheckbox
+                ).value,
             }
         )
 

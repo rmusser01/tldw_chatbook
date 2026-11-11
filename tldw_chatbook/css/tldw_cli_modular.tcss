@@ -8326,6 +8326,8 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     width: $ds-size-66;
     max-width: $ds-percent-90;
     height: auto;
+    max-height: $ds-height-full;
+    overflow-y: auto;
     padding: $ds-space-1 $ds-space-2;
     layout: vertical;
     border: solid $ds-console-frame;
@@ -16567,7 +16569,7 @@ WizardProgress .step-title.active {
 
 .setup-size-hint {
     dock: bottom;
-    height: $ds-size-1;
+    height: auto;
     color: $warning;
     text-align: center;
 }
