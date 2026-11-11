@@ -63,7 +63,6 @@ FAST_LANE_TARGETS = (
     # each) and pure unit tests: a few seconds for the lane in total.
     "Tests/Architecture/test_flush_screens_have_quit_hooks.py",
     "Tests/Architecture/test_quit_flow_prompt_choke_point.py",
-    "Tests/Architecture/test_app_string_lookup_census.py",
     "Tests/Library/test_library_note_autosave_max_wait.py",
     # TASK-34000 wave 1a final review (I2): the fast pins for the export seam
     # (atomic write, no-clobber, symlink write-through, the Report and
@@ -161,7 +160,6 @@ FAST_LANE_TARGETS = (
     "Tests/Library/test_ingest_analysis_load_settings.py",
     "Tests/test_config_load_settings_table_guard.py",
     "Tests/Architecture/test_study_handler_service_keywords.py",
-    "Tests/Architecture/test_layer_direction.py",
     # TASK-38740: the zero-width fold guard still matches Textual (gate-free, <1 s).
     "Tests/Architecture/test_zero_width_fold_guard.py",
     # TASK-25907.23 / 34800: bounded privacy, closed-native and Canvas parity.
@@ -336,10 +334,6 @@ FAST_LANE_TARGETS = (
     "Tests/Agents/test_builtin_tool_gate.py::test_tool_gate_breadcrumb_names_the_off_count",
     "Tests/Agents/test_builtin_tool_gate.py::test_count_off_tool_gates_constructs_no_tools",
     "Tests/Wizards/test_first_run_setup_state.py::TestSummaryThreeState::test_tools_row_off_detail_names_where_to_enable",
-    # TASK-38702: the Console fork-transition and semantic-mutation censuses
-    # (pure AST, whole files). They were red on dev for weeks in no PR lane.
-    "Tests/Chat/test_console_fork_transition_census.py",
-    "Tests/Chat/test_console_semantic_mutation_inventory.py",
     # TASK-34564 / ADR-357: real protected RAG paths without optional runtime.
     "Tests/RAG/test_state_paths.py",
     # TASK-34569 AC9: Speech preimport avoids optional meter runtime.
@@ -509,6 +503,12 @@ ARCH_REVIEW_TARGETS = (
     "Tests/Tools/test_note_tool_user_id.py::test_note_tools_succeed_in_a_process_where_nothing_created_the_db",
     "Tests/Utils/test_optional_deps.py::test_apply_config_eager_flags_propagates_recovery_required",
     "Tests/Architecture/test_agents_chat_boundary.py",
+    # TASK-37173 moved these four AST censuses after PR #3494 hit the fast-lane cap.
+    "Tests/Architecture/test_app_string_lookup_census.py",
+    "Tests/Architecture/test_layer_direction.py",
+    # TASK-38702 added these whole-file Console guards to required PR CI.
+    "Tests/Chat/test_console_fork_transition_census.py",
+    "Tests/Chat/test_console_semantic_mutation_inventory.py",
 )
 #: Owner decision (2026-11-06): suites runnable again after being red in no PR
 #: lane, in their own job, serial under --storage-lease-guard. Sandboxed suites
