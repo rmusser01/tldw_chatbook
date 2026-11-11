@@ -8,13 +8,15 @@
 # - All command palette provider classes must be defined in app.py
 #
 # Imports
+import asyncio
 import time
+import warnings
 from types import SimpleNamespace
 
 from Tests.private_profile import private_profile_test
 
 import pytest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 from typing import List
 
 # 3rd-party Libraries
@@ -460,6 +462,9 @@ class TestTabNavigationProvider:
         # Deferred backfills/reconciliation can outlive a short route test
         # and must not start native storage work this factory does not own.
         app._schedule_deferred_startup_work = lambda: None
+        # The scheduler starts outside deferred startup and can still be
+        # acquiring Windows storage admission after the route workers finish.
+        app.scheduler_loop.run = AsyncMock()
         app.app_config["_first_run"] = False
         app.app_config.setdefault("splash_screen", {})["enabled"] = False
         app.app_config.setdefault("library", {}).setdefault("rail_state", {})[
@@ -512,6 +517,12 @@ class TestTabNavigationProvider:
             ]
             if unfinished:
                 await app.workers.wait_for_complete(unfinished)
+
+        # Cancellation stops Textual waiters before their native callbacks
+        # finish. Join this cold-start app's callbacks before profile teardown.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            await asyncio.get_running_loop().shutdown_default_executor(timeout=30)
 
     @pytest.mark.asyncio
     @private_profile_test

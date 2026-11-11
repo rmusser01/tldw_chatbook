@@ -180,7 +180,28 @@ class ConsoleTraceNativeReader:
                         if kind == "tool_result":
                             value = {key: governed[key] for key in ("name", "tool_name", "result", "output", "content") if key in governed}
                         else:
-                            value = {key: governed[key] for key in ("name", "tool_name", "args", "arguments", "tool_calls") if key in governed}
+                            value = {
+                                key: governed[key]
+                                for key in ("name", "tool_name", "args", "arguments")
+                                if key in governed
+                            }
+                            calls = governed.get("tool_calls")
+                            if isinstance(calls, (list, tuple)):
+                                functions = []
+                                for entry in calls:
+                                    if not isinstance(entry, Mapping):
+                                        continue
+                                    function = entry.get("function")
+                                    if isinstance(function, Mapping):
+                                        fields = {
+                                            key: function[key]
+                                            for key in ("name", "arguments")
+                                            if key in function
+                                        }
+                                        if fields:
+                                            functions.append({"function": fields})
+                                if functions:
+                                    value["tool_calls"] = functions
                         if not value:
                             raise ValueError("report tool shape unavailable")
                     else:

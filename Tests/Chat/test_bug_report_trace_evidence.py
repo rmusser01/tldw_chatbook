@@ -115,7 +115,9 @@ def test_fork_tail_respects_inherited_fence_and_segment_cap(database):
         assert short.lineage_truncated and len(short.events) == 4
 
 
-def _tool_source(database, pii):
+def _tool_source(
+    database, pii, *, content="CUSTOM_PRIVATE_CONTENT", version=CREDENTIAL_FILTER_VERSION
+):
     repo = ConsoleTraceRepository()
     cid = database.add_conversation({"title": "tool evidence"})
     mid = database.add_message(
@@ -123,12 +125,12 @@ def _tool_source(database, pii):
             "conversation_id": cid,
             "sender": "tool",
             "role": "tool",
-            "content": "CUSTOM_PRIVATE_CONTENT",
+            "content": content,
         }
     )
     policy = FrozenTracePolicy(
         new_opaque_id(),
-        CREDENTIAL_FILTER_VERSION,
+        version,
         pii,
         BUILTIN_PII_RULESET_REVISION_ID if pii else None,
     )
@@ -167,6 +169,36 @@ def test_frozen_custom_mask_is_not_recovered_from_canonical_tool_result(database
             ).fetchone()[0]
             == "CUSTOM_PRIVATE_CONTENT"
         )
+
+
+def test_legacy_tool_masks_use_original_coordinates_then_current_credentials(database):
+    credential = "sk_" + "live_" + "1234567890abcdef" * 3
+    private = "CUSTOM_PRIVATE_CONTENT"
+    text = f"Result {credential} {private} " + "padding " * 12
+    cid, revision, policy = _tool_source(
+        database, True, content=text, version="credentials-v1"
+    )
+    with database.transaction() as cursor:
+        start = text.index(private)
+        ConsoleTraceRepository().ensure_redaction_spans(
+            cursor,
+            policy_id=policy.policy_id,
+            semantic_revision_id=revision.revision_id,
+            artifact_id=None,
+            field_path="$/@0",
+            spans=(
+                PIIRedactionSpan(start, start + len(private), "custom", "user-rule", "custom-v1"),
+            ),
+        )
+        result = project_semantic_revision_trace_tool_fields(
+            cursor,
+            revision_id=revision.revision_id,
+            expected_conversation_id=cid,
+            policy_id=policy.policy_id,
+        )
+    assert result["result"] == (
+        "Result [credential omitted] [PII omitted] " + "padding " * 12
+    )
 
 
 def test_missing_policy_has_no_raw_legacy_fallback(database):
@@ -391,6 +423,49 @@ def test_agent_report_tail_uses_sequence_when_clock_moves_backwards():
         runs.close()
 
 
+def test_agent_report_tail_uses_observation_order_and_diagnostic_errors():
+    from Tests.Utils.test_bug_report_capture import _app
+    from tldw_chatbook.Utils.bug_report_capture import (
+        BugReportCollector,
+        capture_bug_report_context,
+    )
+
+    runs = AgentRunsDB(":memory:", "report-observation-order", reconcile_on_init=False)
+    try:
+        rid = runs.create_run(conversation_id="selected", agent_kind="primary")
+        runs.insert_steps_at_indices(
+            rid,
+            (
+                (0, {"index": 0, "kind": "control", "owner_seq": 0}),
+                (
+                    1_000_000,
+                    {
+                        "index": 1_000_000,
+                        "kind": "model_error",
+                        "owner_seq": 1,
+                        "created_at": "2026-11-11T09:00:00Z",
+                        "sensitivity": "diagnostic",
+                        "summary": "Model request failed (TimeoutError)",
+                        "result": "PRIVATE_RESULT",
+                    },
+                ),
+                (1, {"index": 1, "kind": "control", "owner_seq": 2, "summary": "PRIVATE_SUMMARY"}),
+            ),
+        )
+        error, latest = runs.get_report_event_tail("selected", limit=2)
+        assert (error["seq"], latest["seq"]) == (1, 2)
+        assert error["created_at"] == "2026-11-11T09:00:00Z"
+        app = _app()
+        collector = BugReportCollector(app, capture_bug_report_context(app))
+        facts = collector._fact("agent", "first", error).text + collector._fact(
+            "agent", "next", latest
+        ).text
+        assert "TimeoutError" in facts
+        assert "PRIVATE" not in facts
+    finally:
+        runs.close()
+
+
 def test_tool_fields_follow_surface_events_emitted_by_real_capture_service(database):
     from Tests.Chat.test_console_trace_service import (
         _available_bundle,
@@ -422,8 +497,10 @@ def test_tool_fields_follow_surface_events_emitted_by_real_capture_service(datab
             "content": "EXCLUDED_ASSISTANT_BODY",
             "tool_calls": [
                 {
-                    "id": "call-probe",
+                    "id": "EXCLUDED_CALL_ID",
                     "type": "function",
+                    "google_thought_signature": "EXCLUDED_PROVIDER_SIGNATURE",
+                    "cohere_tool_plan": "EXCLUDED_PROVIDER_PLAN",
                     "function": {
                         "name": "calculator",
                         "arguments": '{"expression":"2+2"}',
@@ -478,6 +555,10 @@ def test_tool_fields_follow_surface_events_emitted_by_real_capture_service(datab
     assert any(event.event_type == "surface_append" for event in events)
     projected = ConsoleTraceNativeReader(database).read_report_tool_fields(cid, events)
     assert "calculator-result-4" in str(projected) and "expression" in str(projected)
+    assert "calculator" in str(projected)
+    assert "EXCLUDED_CALL_ID" not in str(projected)
+    assert "EXCLUDED_PROVIDER_SIGNATURE" not in str(projected)
+    assert "EXCLUDED_PROVIDER_PLAN" not in str(projected)
     assert "EXCLUDED_USER_BODY" not in str(
         projected
     ) and "EXCLUDED_ASSISTANT_BODY" not in str(projected)

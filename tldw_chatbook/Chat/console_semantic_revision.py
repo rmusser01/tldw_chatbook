@@ -502,7 +502,17 @@ def project_semantic_revision_trace_tool_fields(
         raise ValueError("report revision locator mismatch")
     if not isinstance(row[2], str):
         return unavailable
-    projected = CredentialSanitizer().sanitize({"role": revision.normalized_role, "content": row[2]})
+    # Frozen offsets index the credential projection used when they were written.
+    version = (
+        policy.credential_filter_version
+        if policy.pii_redaction_enabled
+        else CREDENTIAL_FILTER_VERSION
+    )
+    if version not in READABLE_CREDENTIAL_FILTER_VERSIONS:
+        return unavailable
+    projected = CredentialSanitizer(version=version).sanitize(
+        {"role": revision.normalized_role, "content": row[2]}
+    )
     if not projected.available or not isinstance(projected.value, dict):
         return unavailable
     value = projected.value
@@ -520,7 +530,15 @@ def project_semantic_revision_trace_tool_fields(
             ))
         if not masks:
             return unavailable
-        value = apply_frozen_pii_masks(value, masks)
+        legacy_spans = version != CREDENTIAL_FILTER_VERSION
+        value = apply_frozen_pii_masks(
+            value, masks, widen_over_v2_credentials=legacy_spans
+        )
+        if legacy_spans:
+            remasked = CredentialSanitizer().sanitize(value)
+            if not remasked.available:
+                return unavailable
+            value = remasked.value
     if not isinstance(value, dict) or not isinstance(value.get("content"), str):
         return unavailable
     return {"result": value["content"]}

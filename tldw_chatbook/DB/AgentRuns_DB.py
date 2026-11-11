@@ -2893,29 +2893,37 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 conn.set_progress_handler(stop_read, 1000)
                 conn.execute("PRAGMA busy_timeout = 200")
                 rows = conn.execute(
-                    """SELECT runs.id AS run_id, runs.parent_run_id, runs.status AS run_status,
-                          runs.agent_kind, runs.resolved_provider AS provider,
-                          runs.resolved_model AS model, steps.seq, steps.created_at,
-                          CASE WHEN length(CAST(steps.payload AS BLOB)) <= 65536
-                                    AND json_valid(steps.payload)
-                               THEN substr(json_extract(steps.payload, '$.kind'), 1, 128)
-                               ELSE 'unavailable' END AS event_kind,
-                          CASE WHEN length(CAST(steps.payload AS BLOB)) <= 65536
-                                    AND json_valid(steps.payload)
-                               THEN substr(json_extract(steps.payload, '$.tool_name'), 1, 128)
-                               ELSE NULL END AS tool_name,
-                          CASE WHEN length(CAST(steps.payload AS BLOB)) <= 65536
-                                    AND json_valid(steps.payload)
-                               THEN COALESCE(substr(json_extract(steps.payload, '$.status'), 1, 128), 'unavailable')
-                               ELSE 'unavailable' END AS status,
-                          CASE WHEN length(CAST(steps.payload AS BLOB)) <= 65536
-                                    AND json_valid(steps.payload)
-                               THEN COALESCE(substr(json_extract(steps.payload, '$.tool_outcome'), 1, 128), 'unavailable')
-                               ELSE 'unavailable' END AS tool_outcome
-                     FROM agent_run_steps AS steps
-                     JOIN agent_runs AS runs ON runs.id = steps.run_id
-                    WHERE runs.conversation_id = ?
-                    ORDER BY runs.rowid DESC, steps.seq DESC LIMIT ?""",
+                    """WITH scoped_steps AS (
+                         SELECT runs.rowid AS run_order, runs.id AS run_id,
+                                runs.parent_run_id, runs.status AS run_status,
+                                runs.agent_kind, runs.resolved_provider AS provider,
+                                runs.resolved_model AS model, steps.seq AS step_index,
+                                steps.created_at AS stored_at,
+                                CASE WHEN length(CAST(steps.payload AS BLOB)) <= 65536
+                                          AND json_valid(steps.payload)
+                                     THEN steps.payload END AS bounded
+                           FROM agent_run_steps AS steps
+                           JOIN agent_runs AS runs ON runs.id = steps.run_id
+                          WHERE runs.conversation_id = ?
+                     )
+                     SELECT run_id, parent_run_id, run_status, agent_kind, provider, model,
+                            step_index,
+                            CASE WHEN json_type(bounded, '$.owner_seq') = 'integer'
+                                      AND json_extract(bounded, '$.owner_seq') >= 0
+                                 THEN json_extract(bounded, '$.owner_seq')
+                                 ELSE step_index END AS seq,
+                            NULLIF(substr(json_extract(bounded, '$.created_at'), 1, 64), '') AS created_at,
+                            stored_at,
+                            COALESCE(substr(json_extract(bounded, '$.kind'), 1, 128), 'unavailable') AS event_kind,
+                            substr(json_extract(bounded, '$.tool_name'), 1, 128) AS tool_name,
+                            COALESCE(substr(json_extract(bounded, '$.status'), 1, 128), 'unavailable') AS status,
+                            COALESCE(substr(json_extract(bounded, '$.tool_outcome'), 1, 128), 'unavailable') AS tool_outcome,
+                            CASE WHEN json_extract(bounded, '$.kind') = 'model_error'
+                                      AND json_extract(bounded, '$.sensitivity') = 'diagnostic'
+                                 THEN NULLIF(substr(json_extract(bounded, '$.summary'), 1, 200), '')
+                                 END AS diagnostic_error
+                       FROM scoped_steps
+                      ORDER BY run_order DESC, seq DESC, step_index DESC LIMIT ?""",
                     (conversation_id, limit),
                 ).fetchall()
             finally:

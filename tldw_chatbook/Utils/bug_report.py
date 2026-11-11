@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import re
 from typing import Literal
 
@@ -34,7 +35,7 @@ class BugReportItem:
     source: Literal["logs", "exceptions", "trace", "tools"]
     text: str = field(repr=False)
     event_key: str | None = field(default=None, repr=False)
-    observed_at: str | None = None
+    observed_times: tuple[str, ...] = field(default=(), repr=False)
 
 
 @dataclass(frozen=True)
@@ -80,29 +81,70 @@ def _shorten(text: str, budget: int) -> str:
     return prefix + marker
 
 
-def _section(title: str, texts: tuple[str, ...], budget: int, empty: str) -> str:
-    heading = f"## {title}\n\n"
-    if not texts:
-        return heading + empty + "\n"
-    kept: list[str] = []
-    for text in reversed(texts[-MAX_REPORT_ITEMS:]):
+def _recorded_ranges(items: list[BugReportItem]) -> list[str]:
+    local_times: list[datetime] = []
+    utc_times: list[datetime] = []
+    for value in {value for item in items for value in item.observed_times}:
+        if len(value) > 40:
+            continue
         try:
-            safe = sanitize_string(text)
+            timestamp = datetime.fromisoformat(value)
+            if timestamp.tzinfo is None:
+                local_times.append(timestamp)
+            else:
+                utc_times.append(timestamp.astimezone(timezone.utc))
+        except (ValueError, OverflowError):
+            continue
+    return [
+        f"{label}: "
+        f"{min(times).isoformat()} through {max(times).isoformat()}."
+        for label, times in (
+            ("Recorded UTC time range", utc_times),
+            ("Recorded time range without UTC offsets", local_times),
+        )
+        if times
+    ]
+
+
+def _section(
+    title: str,
+    entries: tuple[str, ...] | tuple[BugReportItem, ...],
+    budget: int,
+    empty: str,
+) -> str:
+    heading = f"## {title}\n\n"
+    if not entries:
+        return heading + empty + "\n"
+    notice_budget = 320 if isinstance(entries[0], BugReportItem) else 160
+    kept: list[str] = []
+    for entry in reversed(entries[-MAX_REPORT_ITEMS:]):
+        try:
+            safe = sanitize_string(
+                entry.text if isinstance(entry, BugReportItem) else entry
+            )
         except Exception:  # A failed evidence field never becomes a raw fallback.
             safe = "[evidence unavailable: sanitization failed]"
         candidate = "\n\n".join(reversed([*kept, safe]))
-        if _size(heading + _fenced(candidate)) + 160 > budget:
+        if _size(heading + _fenced(candidate)) + notice_budget > budget:
             if not kept:
                 safe = _shorten(safe, max(0, budget - _size(heading) - 512))
-                while _size(heading + _fenced(safe)) + 160 > budget and safe:
+                while _size(heading + _fenced(safe)) + notice_budget > budget and safe:
                     safe = _shorten(safe, max(0, _size(safe) // 2))
                 kept.append(safe)
             break
         kept.append(safe)
-    omitted = len(texts) - len(kept)
-    notice = (
-        f"[{omitted} older entries omitted from this excerpt]\n\n" if omitted else ""
-    )
+    omitted = len(entries) - len(kept)
+    kept_items = [
+        entry for entry in entries[omitted:] if isinstance(entry, BugReportItem)
+    ]
+    notices = []
+    if kept_items:
+        noun = "entry" if len(kept_items) == 1 else "entries"
+        notices = [f"Included {len(kept_items)} {noun}.", *_recorded_ranges(kept_items)]
+    if omitted:
+        noun = "entry" if omitted == 1 else "entries"
+        notices.append(f"[{omitted} older {noun} omitted from this excerpt]")
+    notice = "\n\n".join(notices) + "\n\n" if notices else ""
     return heading + notice + _fenced("\n\n".join(reversed(kept)))
 
 
@@ -142,7 +184,7 @@ def render_bug_report(
         )
     environment = tuple(f"{name}: {value}" for name, value in evidence.environment)
     inventory = (
-        "Application-wide session logs; not isolated to the selected conversation."
+        "Application-wide session logs may contain incidental conversation or tool text."
         if options.include_logs
         else "Application-wide session logs excluded.",
         "Recognized credentials and PII are masked. Review before sharing; private text can remain.",
@@ -173,14 +215,14 @@ def render_bug_report(
         parts += [
             _section(
                 "Exceptions",
-                tuple(item.text for item in evidence.exceptions),
-                4_000,
+                evidence.exceptions,
+                SECTION_BUDGETS["exceptions"],
                 "No exception traceback was captured in the selected log excerpt.",
             ),
             _section(
                 "Logs",
-                tuple(item.text for item in evidence.logs),
-                24_000,
+                evidence.logs,
+                SECTION_BUDGETS["logs"],
                 "Session logs unavailable or empty.",
             ),
         ]
@@ -188,8 +230,8 @@ def render_bug_report(
         parts.append(
             _section(
                 "Console trace",
-                tuple(item.text for item in evidence.trace),
-                12_000,
+                evidence.trace,
+                SECTION_BUDGETS["trace"],
                 "Console trace unavailable for the selected context.",
             )
         )
@@ -197,8 +239,8 @@ def render_bug_report(
         parts.append(
             _section(
                 "Redacted tool inputs/results",
-                tuple(item.text for item in evidence.tools),
-                8_000,
+                evidence.tools,
+                SECTION_BUDGETS["tools"],
                 "Governed tool content unavailable for this excerpt.",
             )
         )

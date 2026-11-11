@@ -60,8 +60,8 @@ def test_log_snapshot_is_bounded_sanitized_and_immutable_during_append():
                 None,
             )
         )
-    watermark, rows = app._persistent_log_handler.snapshot_report_tail(3)
-    assert watermark == 8 and len(rows) == 3
+    watermark, buffered, rows = app._persistent_log_handler.snapshot_report_tail(3)
+    assert watermark == 8 and buffered == 8 and len(rows) == 3
     assert "entry-5" in rows[0][2] and "entry-7" in rows[-1][2]
     assert "synthetic-secret" not in str(rows)
     app._persistent_log_handler.handle(
@@ -91,6 +91,7 @@ async def test_collection_without_console_still_produces_log_and_environment_evi
     captured = await collector.collect()
     assert captured.evidence.tools == ()
     assert "captured failure" in captured.evidence.logs[0].text
+    assert captured.evidence.logs[0].observed_times
     assert captured.evidence.environment
     assert "Application-wide" in " ".join(captured.evidence.inventory)
     assert app.console_runtime.chat_store is None

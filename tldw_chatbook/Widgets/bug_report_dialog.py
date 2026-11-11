@@ -17,12 +17,14 @@ from textual.widgets import Button, Checkbox, Collapsible, Label, Static, TextAr
 from tldw_chatbook.Utils.bug_report import (
     MAX_AUTHORED_BYTES,
     BugReportDraft,
+    BugReportEvidence,
     BugReportOptions,
     prepare_bug_report_copy,
     render_bug_report,
 )
 from tldw_chatbook.Utils.bug_report_capture import BugReportCollector
 from tldw_chatbook.Utils.input_validation import validate_text_input
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 from tldw_chatbook.Widgets.confirmation_dialog import (
     ConfirmationDialog,
     confirm_quit_discarding_edits,
@@ -155,7 +157,7 @@ class BugReportDialog(SafeModalDismissMixin, ModalScreen[None]):
                     classes="form-checkbox",
                 )
                 yield Static(
-                    "Tool results can contain file, document and other-conversation excerpts. Tool content requires a selected Console trace. Review before sharing; redaction can miss private details. Nothing is uploaded.",
+                    "Session logs can include conversation or tool text. Opted-in tool results can quote files and other conversations. Review before sharing; redaction can miss private details. Nothing is uploaded.",
                     id="bug-report-disclosure",
                     markup=False,
                 )
@@ -305,29 +307,33 @@ class BugReportDialog(SafeModalDismissMixin, ModalScreen[None]):
         try:
             form = await asyncio.to_thread(_ReportForm.model_validate, values)
             await self._ready.wait()
-            from tldw_chatbook.Utils.bug_report import BugReportEvidence
-
             capture = self._capture
             if capture is not None and options.include_tool_content:
                 capture = await self._collector.collect_tools(capture)
             evidence = capture.evidence if capture is not None else BugReportEvidence()
             if not self._collector.is_current():
-                evidence = replace(
-                    evidence,
-                    trace=(),
-                    tools=(),
-                    inventory=evidence.inventory
-                    + (
-                        "Selection changed; Console evidence excluded. Close and reopen to select it again.",
-                    ),
+                self._status(
+                    "Selection changed. Close and reopen reporting before generating.",
+                    error=True,
                 )
+                return
             text = await asyncio.to_thread(
                 render_bug_report,
                 BugReportDraft(**form.model_dump()),
-                evidence,
+                replace(
+                    evidence,
+                    environment=evidence.environment
+                    + (("Report generated (UTC)", utc_now_iso()),),
+                ),
                 options,
             )
             if self.is_mounted and self.app.screen is self:
+                if not self._collector.is_current():
+                    self._status(
+                        "Selection changed. Close and reopen reporting before generating.",
+                        error=True,
+                    )
+                    return
                 current_values = {
                     name: self.query_one(f"#bug-report-{name}", TextArea).text
                     for name in values
@@ -363,7 +369,9 @@ class BugReportDialog(SafeModalDismissMixin, ModalScreen[None]):
         finally:
             self._generating = False
             if self.is_mounted:
-                self.query_one("#bug-report-generate").disabled = False
+                button = next(self.query("#bug-report-generate").results(Button), None)
+                if button is not None:
+                    button.disabled = False
 
     @on(Button.Pressed, "#bug-report-back")
     def _back(self, event: Button.Pressed) -> None:
@@ -391,7 +399,9 @@ class BugReportDialog(SafeModalDismissMixin, ModalScreen[None]):
             checked = await asyncio.to_thread(prepare_bug_report_copy, candidate)
             if not self.is_mounted or self.app.screen is not self:
                 return
-            review = self.query_one("#bug-report-review", TextArea)
+            review = next(self.query("#bug-report-review").results(TextArea), None)
+            if review is None:
+                return
             if review.text != candidate or self._review_revision != revision:
                 self._status(
                     "Report changed during checking. Review it and press Copy report again."
@@ -424,7 +434,9 @@ class BugReportDialog(SafeModalDismissMixin, ModalScreen[None]):
         finally:
             self._copying = False
             if self.is_mounted:
-                self.query_one("#bug-report-copy").disabled = False
+                button = next(self.query("#bug-report-copy").results(Button), None)
+                if button is not None:
+                    button.disabled = False
 
     def _dirty(self) -> bool:
         return any(

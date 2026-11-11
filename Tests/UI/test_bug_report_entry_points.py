@@ -1,5 +1,6 @@
 """All help surfaces open one report without navigating or bootstrapping Console."""
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -21,7 +22,11 @@ class EntryHarness(ReportHarness):
 
     def compose(self):
         yield Input("underlying unsaved text", id="draft")
-        yield LogsWindow(self)
+        # In the app the destination shell bounds this window. Leave room for
+        # the harness's draft input so the action bar remains inside the screen.
+        window = LogsWindow(self)
+        window.styles.height = "1fr"
+        yield window
 
 
 async def test_palette_search_and_discovery_expose_report_action():
@@ -49,8 +54,13 @@ async def test_logs_action_preserves_filter_and_duplicate_invocation_reuses_repo
         window = app.query_one(LogsWindow)
         window.query_one("#logs-filter-text", Input).value = "needle"
         await pilot.pause()
-        await pilot.click("#report-bug-button")
-        await pilot.pause()
+        button = window.query_one("#report-bug-button")
+        center = (button.region.width // 2, button.region.height // 2)
+        assert await pilot.click(button, offset=center)
+        # The shared action opens the dialog after the next screen refresh.
+        async with asyncio.timeout(10):
+            while not isinstance(app.screen, BugReportDialog):
+                await pilot.pause()
         dialog = app.screen
         assert isinstance(dialog, BugReportDialog)
         dialog.query_one("#bug-report-description", TextArea).load_text(

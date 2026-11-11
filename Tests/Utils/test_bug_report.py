@@ -82,6 +82,32 @@ def test_multiline_credentials_are_redacted_before_clipping():
     assert "REDACTED" in report
 
 
+def test_evidence_summary_describes_only_included_entries():
+    evidence = BugReportEvidence(
+        logs=tuple(
+            BugReportItem(
+                "logs", f"entry-{hour} " + "界" * 3000,
+                observed_times=(f"2026-01-02T{hour:02d}:00:00",),
+            )
+            for hour in (8, 9, 10)
+        ),
+        trace=(
+            BugReportItem(
+                "trace", "request dispatch and settlement",
+                observed_times=("2026-01-02T10:00:00Z", "2026-01-02T10:02:00Z"),
+            ),
+        ),
+    )
+    report = render_bug_report(BugReportDraft("Failure"), evidence, BugReportOptions())
+
+    assert "Included 2 entries" in report
+    assert "2026-01-02T09:00:00 through 2026-01-02T10:00:00" in report
+    assert "2026-01-02T08:00:00" not in report
+    assert "1 older entry omitted" in report
+    assert "may contain incidental conversation or tool text" in report
+    assert "2026-01-02T10:00:00+00:00 through 2026-01-02T10:02:00+00:00" in report
+
+
 def test_description_and_environment_use_real_diagnostic_redaction():
     report = render_bug_report(
         BugReportDraft("Contact tester@example.invalid; api_key=synthetic-secret"),

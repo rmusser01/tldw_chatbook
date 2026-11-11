@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime
 import platform
 import re
 import sqlite3
@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from tldw_chatbook.UI.Navigation.screen_state_store import RuntimeIdentity
 from tldw_chatbook.Utils.bug_report import BugReportEvidence, BugReportItem
 from tldw_chatbook.Utils.log_sanitizer import sanitize_string
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
@@ -69,7 +70,7 @@ def capture_bug_report_context(app: TldwCli) -> BugReportContext:
         store.active_session_epoch() if store else None,
         getattr(session, "persisted_conversation_id", None) if eligible else None,
         str(getattr(app, "current_tab", "unknown")),
-        datetime.now(timezone.utc).isoformat(),
+        utc_now_iso(),
         str(getattr(session, "title", "Untitled conversation")) if eligible else None,
     )
 
@@ -168,7 +169,7 @@ class BugReportCollector:
         except PackageNotFoundError:
             textual_version = "unavailable"
         return (
-            ("Collected (UTC)", self.context.collection_started_at),
+            ("Collection started (UTC)", self.context.collection_started_at),
             ("App version", get_app_version()),
             ("Python", platform.python_version()),
             ("Textual", textual_version),
@@ -191,10 +192,13 @@ class BugReportCollector:
             return BugReportEvidence(
                 inventory=("Application-wide session logs unavailable.",)
             )
-        sequence, rows = self.log_handler.snapshot_report_tail()
-        logs = tuple(BugReportItem("logs", row[2]) for row in rows)
+        sequence, buffered, rows = self.log_handler.snapshot_report_tail()
+        logs = tuple(
+            BugReportItem("logs", text, observed_times=(text.partition(" - ")[0],))
+            for _, _, text in rows
+        )
         exceptions = tuple(
-            BugReportItem("exceptions", item.text)
+            replace(item, source="exceptions")
             for item in logs
             if "Traceback (most recent call last)" in item.text
         )
@@ -203,7 +207,7 @@ class BugReportCollector:
             logs=logs,
             exceptions=exceptions,
             inventory=(
-                f"Application-wide session logs: {len(logs)} retained source entries through sequence {sequence}.",
+                f"Application-wide session logs: {len(logs)} selected from {buffered} buffered entries through sequence {sequence}.",
                 f"Log clock: captured app-server local time; offset at collection {clock}; historical offset not inferred.",
                 "Only current-session log tail is available; original entries may already be truncated to 2,000 characters.",
             ),
@@ -225,6 +229,8 @@ class BugReportCollector:
             "status",
             "run_status",
             "tool_outcome",
+            "diagnostic_error",
+            "omission_reason_code",
             "tool_name",
             "provider",
             "model",
@@ -233,6 +239,7 @@ class BugReportCollector:
             "first_token_at",
             "completed_at",
             "created_at",
+            "stored_at",
             "dispatch_started_at",
             "response_started_at",
             "settled_at",
@@ -248,7 +255,20 @@ class BugReportCollector:
                 values.append(
                     f"{name}={self._alias(row[name], name.removesuffix('_id'))}"
                 )
-        return BugReportItem("trace", " ".join(values), event_key=key)
+        observed_times = tuple(
+            row[name]
+            for name in (
+                "created_at",
+                "settled_at",
+                "response_started_at",
+                "dispatch_started_at",
+                "completed_at",
+                "first_token_at",
+                "step_started_at",
+            )
+            if isinstance(row.get(name), str) and row[name]
+        )
+        return BugReportItem("trace", " ".join(values), key, observed_times)
 
     def _read_trace(self) -> tuple[BugReportEvidence, tuple]:
         if self.chat_db is None or not self.context.conversation_id:
@@ -295,7 +315,12 @@ class BugReportCollector:
                             )
                             break
                         call = repo.get_call(cursor, event.call_id or "")
-                        row = {"event_kind": event.event_type, "seq": event.sequence}
+                        row = {
+                            "event_kind": event.event_type,
+                            "seq": event.sequence,
+                            "turn_id": event.turn_id,
+                            "omission_reason_code": event.omission_reason_code,
+                        }
                         if call is not None:
                             row.update(
                                 state=call.state.value,
@@ -305,6 +330,9 @@ class BugReportCollector:
                                 response_started_at=call.response_started_at,
                                 settled_at=call.settled_at,
                                 outcome=call.outcome,
+                                omission_reason_code=(
+                                    event.omission_reason_code or call.omission_reason_code
+                                ),
                                 run_id=call.run_id,
                                 turn_id=call.turn_id,
                             )
@@ -338,12 +366,14 @@ class BugReportCollector:
                 rows = self.agent_db.get_report_event_tail(self.context.conversation_id)
                 streams.append(
                     [
-                        self._fact("agent", f"agent:{row['run_id']}:{row['seq']}", row)
+                        self._fact(
+                            "agent", f"agent:{row['run_id']}:{row['step_index']}", row
+                        )
                         for row in rows
                     ]
                 )
                 notes.append(
-                    "Agent steps preserve per-run sequence; run groups follow insertion order. Cross-run chronology is unknown."
+                    "Agent steps use per-run observation order where available, otherwise stored indices. Run groups follow insertion order."
                 )
             except Exception:
                 notes.append("Agent metadata unavailable.")
@@ -433,7 +463,7 @@ class BugReportCollector:
             inventory=log_evidence.inventory
             + trace_evidence.inventory
             + (
-                f"Source collection finished (UTC): {datetime.now(timezone.utc).isoformat()}",
+                f"Source collection finished (UTC): {utc_now_iso()}",
             )
             + (
                 ()

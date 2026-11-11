@@ -129,4 +129,23 @@ follow-up did not alter report rendering or delivery.
 Governance: [ADR-358](../../../backlog/decisions/358-bug-report-evidence-and-sharing.md),
 [approved spec](../specs/2026-10-28-report-a-bug-design.md),
 [implementation plan](../plans/2026-10-28-report-a-bug.md),
+
+## PR #3494 follow-up
+
+The mounted Windows Skills navigation test passed through profile teardown.
+The test stubs the independently started scheduler and joins native callbacks
+after the app closes. The shared fixture still checks executor retirement.
+
+The independent re-review found no remaining blockers in the report changes.
+The report applies frozen PII masks in the original credential projection,
+limits nested provider tool calls to names and arguments, and rejects previews
+from a previous runtime. Agent evidence follows recorded observation order and
+includes retained diagnostic model errors. The report shows the counts and
+timestamp ranges of the entries that fit, and warns about incidental text in
+application-wide logs.
+
+The Windows report, capture, trace, and dialog suites passed all 56 tests after
+the fixes. All four entry-point tests passed after bounding the Logs window
+in its harness and waiting for the deferred dialog open. The Textual worker
+and timestamp guards also passed.
 [ordered rulings](2026-10-28-report-a-bug-rulings.md).

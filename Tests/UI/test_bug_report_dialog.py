@@ -294,8 +294,9 @@ async def test_authored_field_budget_is_validated_at_description(capture):
         assert dialog.query_one("#bug-report-review", TextArea).text == ""
 
 
-async def test_description_edit_during_generation_keeps_newer_form(
-    capture, monkeypatch
+@pytest.mark.parametrize("change", ["description", "runtime"])
+async def test_generation_preserves_form_when_inputs_or_runtime_change(
+    capture, monkeypatch, change
 ):
     app = ReportHarness()
     entered, release = threading.Event(), threading.Event()
@@ -315,13 +316,18 @@ async def test_description_edit_during_generation_keeps_newer_form(
         await pilot.click("#bug-report-generate")
         try:
             assert await asyncio.to_thread(entered.wait, 2)
-            description.load_text("newer description")
+            if change == "description":
+                description.load_text("newer description")
+            else:
+                app.identity = RuntimeIdentity("server", "different-server")
             await pilot.pause()
         finally:
             release.set()
         await app.workers.wait_for_complete()
         assert dialog.query_one("#bug-report-review", TextArea).text == ""
-        assert description.text == "newer description"
+        assert description.text == (
+            "newer description" if change == "description" else "original description"
+        )
 
 
 @pytest.mark.parametrize("interruption", ["close", "runtime"])

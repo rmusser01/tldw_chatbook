@@ -447,15 +447,17 @@ class LogsBufferHandler(logging.Handler):
         app._log_records_lock = threading.Lock()
         app._log_records_seq = 0
 
-    def snapshot_report_tail(self, limit: int = 500) -> tuple[int, tuple[tuple[str, str, str], ...]]:
-        """Return an immutable sanitized tail and its source sequence watermark."""
+    def snapshot_report_tail(
+        self, limit: int = 500
+    ) -> tuple[int, int, tuple[tuple[str, str, str], ...]]:
+        """Return the sequence watermark, buffer size, and immutable sanitized tail."""
         if type(limit) is not int or not 1 <= limit <= 500:
             raise ValueError("report log limit must be between 1 and 500")
         from itertools import islice
 
         with self.app._log_records_lock:
             records = tuple(reversed(tuple(islice(reversed(self.app._log_records), limit))))
-            return self.app._log_records_seq, records
+            return self.app._log_records_seq, len(self.app._log_records), records
 
     def emit(self, record: logging.LogRecord) -> None:
         """Append the redacted line to the buffers, then show it in the Logs view.
