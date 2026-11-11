@@ -199,7 +199,9 @@ def _run_isolated(
         "XDG_DATA_HOME": str(data),
         "XDG_CONFIG_HOME": str(config_dir),
         "TLDW_TEST_MODE": "1",
-        "PYTHONPATH": str(REPO_ROOT),
+        "PYTHONPATH": os.pathsep.join(
+            (str(REPO_ROOT), str(REPO_ROOT / "packages/tldw_profile_core/src"))
+        ),
     }
     env.pop("PYTEST_CURRENT_TEST", None)
     env.pop("TLDW_CONFIG_PATH", None)
@@ -214,6 +216,18 @@ def _run_isolated(
     )
     assert result.returncode == 0, result.stderr[-4000:]
     return result
+
+
+def test_isolated_preimport_uses_the_selected_core_checkout(tmp_path):
+    """The subprocess must not inherit Core from another editable checkout."""
+    result = _run_isolated(
+        tmp_path,
+        "import importlib.util; print(importlib.util.find_spec('tldw_profile_core').origin)",
+    )
+    expected = (
+        REPO_ROOT / "packages/tldw_profile_core/src/tldw_profile_core/__init__.py"
+    )
+    assert Path(result.stdout.strip()).resolve() == expected.resolve()
 
 
 @pytest.fixture(scope="module")
@@ -388,7 +402,9 @@ def test_html_parser_dependencies_have_their_own_ordered_steps():
     from tldw_chatbook.Chat.console_first_send_modules import FIRST_SEND_MODULES
 
     assert FIRST_SEND_MODULES.index("six") < FIRST_SEND_MODULES.index("html5lib")
-    assert FIRST_SEND_MODULES.index("webencodings") < FIRST_SEND_MODULES.index("html5lib")
+    assert FIRST_SEND_MODULES.index("webencodings") < FIRST_SEND_MODULES.index(
+        "html5lib"
+    )
 
 
 @private_profile_test
@@ -397,9 +413,12 @@ def test_web_tool_catalog_import_keeps_deep_search_footer_cold(request):
 
     name = "tldw_chatbook.Web_Scraping.deep_search_citations"
     assert name not in sys.modules
-    assert web_tool_impls.deep_search_citations_footer(
-        {"markers_total": 2, "markers_resolved": 1, "unknown_marker_ids": [9]}
-    ) == "Citations: 1/2 resolved (1 unknown)"
+    assert (
+        web_tool_impls.deep_search_citations_footer(
+            {"markers_total": 2, "markers_resolved": 1, "unknown_marker_ids": [9]}
+        )
+        == "Citations: 1/2 resolved (1 unknown)"
+    )
     assert name in sys.modules
 
 
@@ -1084,7 +1103,10 @@ async def test_an_automatic_library_send_loads_only_the_two_library_modules_lazi
                 "pr3339_cold_dependency_probe",
                 "pr3339_cold_dependency_probe.child",
             }.isdisjoint(sys.modules)
-            with _recording_send_imports() as seen, _recording_cold_send_loads() as cold:
+            with (
+                _recording_send_imports() as seen,
+                _recording_cold_send_loads() as cold,
+            ):
                 press(host, "enter", "\r")
                 await until(gateway.validation_started.is_set)
                 gateway.validation_release.set()

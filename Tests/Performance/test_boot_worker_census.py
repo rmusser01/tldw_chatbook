@@ -186,6 +186,13 @@ ALLOWED_BOOT_THREADS: frozenset[tuple[str, str, str]] = frozenset(
         ("ThreadPoolExecutor-#_#", "concurrent.futures.thread", "_worker"),
         # asyncio's default executor: Textual thread workers land here.
         ("asyncio_#", "concurrent.futures.thread", "_worker"),
+        # TASK-38462: install_windows_timer_sleep gives Textual's short waits
+        # their own pool so they cannot starve application executor work.
+        *(
+            {("textual-timer_#", "concurrent.futures.thread", "_worker")}
+            if sys.platform == "win32"
+            else set()
+        ),
         # Whole-registry screen pre-importer (daemon; finding 22214's list).
         (
             "tldw-screen-preimport",
@@ -368,9 +375,9 @@ async def test_census_waits_for_the_serially_delayed_required_worker(
         assert 1.5 <= now < 2.0, "return once the required delayed starter arrives"
     else:
         assert delayed not in observed
-        assert 1.5 < now <= 10.1, (
-            "missing required work must stop at a bounded deadline"
-        )
+        assert (
+            1.5 < now <= 10.1
+        ), "missing required work must stop at a bounded deadline"
 
 
 def _normalize_thread_name(name: str) -> str:
@@ -411,7 +418,9 @@ def _boot_and_census(tmp_path: Path) -> dict[str, list[dict[str, str | None]]]:
         "XDG_CONFIG_HOME": str(config_dir),
         "TLDW_CONFIG_PATH": str(config_dir / "config.toml"),
         "TLDW_TEST_MODE": "1",
-        "PYTHONPATH": str(REPO_ROOT),
+        "PYTHONPATH": os.pathsep.join(
+            (str(REPO_ROOT), str(REPO_ROOT / "packages/tldw_profile_core/src"))
+        ),
     }
     env.pop("PYTEST_CURRENT_TEST", None)
 
@@ -435,6 +444,24 @@ def _boot_and_census(tmp_path: Path) -> dict[str, list[dict[str, str | None]]]:
     ]
     assert payloads, f"census sentinel missing from stdout:\n{result.stdout[-2000:]}"
     return json.loads(payloads[-1])
+
+
+def test_boot_census_uses_the_selected_core_checkout(tmp_path, monkeypatch):
+    """The child must not use another checkout's editable Core installation."""
+    monkeypatch.setitem(
+        globals(),
+        "_CENSUS_SCRIPT",
+        "import importlib.util, json; "
+        "print('CENSUS_JSON:' + json.dumps({'core_origin': "
+        "importlib.util.find_spec('tldw_profile_core').origin}))",
+    )
+    observed = _boot_and_census(tmp_path)
+    assert (
+        Path(observed["core_origin"]).resolve()
+        == (
+            REPO_ROOT / "packages/tldw_profile_core/src/tldw_profile_core/__init__.py"
+        ).resolve()
+    )
 
 
 @pytest.mark.integration

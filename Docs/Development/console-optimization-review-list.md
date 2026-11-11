@@ -21,6 +21,31 @@ Sources: [phase-attribution report](2026-10-06-console-send-phase-attribution.md
 [ADR-230](../../backlog/decisions/230-console-send-preparation-and-io-ownership.md),
 and [qualification task](../../backlog/tasks/task-34563.4%20-%20Qualify-shared-preparation-Send-latency.md).
 
+## Current-dev regression follow-up (2026-11-11)
+
+PR #3050 (including #3049) merged on October 31. Verification against dev
+`ae9f9e8d21c999b30ac52b2258324ef92a04c8e1` found test-harness drift:
+child interpreters could import Core from a different editable checkout; the
+mounted feedback host lacked the production executor/timer guard; and receipt
+setup could send before the real emergency-stop arrival read published.
+Correct these without changing product storage or permission policy.
+
+Retain OPT-73 (native admission) and OPT-78 (executor attribution) separately.
+In `current-dev-provider-entry-stacks-20261111-1`, a diagnostic 60-second
+provider-entry deadline expired while the agent's RunLogWriter.bind called
+resolve_sensitive_context → config.get_user_data_dir and waited for the existing
+root-scoped storage initializer. The active initializer belonged to a workspace
+availability read and was in Windows file-identity qualification. Thirty-five
+executor threads were idle. This identifies an admission queue, not a deadlock,
+a 60-second syscall, or executor starvation. Admission serialization predates
+PR #3050; workspace availability already coalesces in-flight refreshes. A larger
+functional timeout did not resolve the failure and was reverted.
+
+No new product optimization is selected. All four image controls passed: two empty-selection cases and two actual
+current/detached native-read shutdown cases with physical native cleanup. Other sessions were
+running native work on the same host: these regression runs are not quiet timing
+comparisons and establish no new Send or physical-terminal latency result.
+
 ## Latest bounded cleanup and quiet comparison (2026-10-08)
 
 Integration commit `fa3dad2d82d31920bd18fdb8db2b7abf74565faf` implements

@@ -993,6 +993,10 @@ MINIMUM_FILES = 2028
 # The floor is the measured entry count.
 MINIMUM_FILES = 2029
 
+# TASK-34601.1 (2026-11-11): feedback handoff, Stop and actual image-reader
+# shutdown and held-read input join the gate without moving earlier shards.
+MINIMUM_FILES = 2033
+
 
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
@@ -1221,7 +1225,7 @@ def _parametrize_ids(decorator: ast.Call, scope: dict[str, ast.AST]) -> list[str
         ids.append(
             "-".join(
                 _value_id(element, name, index, scope)
-                for element, name in zip(values.elts, argnames)
+                for element, name in zip(values.elts, argnames, strict=True)
             )
         )
     return _unique(ids)

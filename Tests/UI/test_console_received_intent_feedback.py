@@ -299,6 +299,14 @@ async def _received_console_case(monkeypatch, name, *, durable=False):
                     10,
                 )
                 console = host.screen
+                # Receipt eligibility also requires the arrival stop read. A
+                # reconciled view may still be waiting for that native read;
+                # sending then correctly takes the ordinary dispatch route.
+                assert await _until(
+                    lambda: getattr(console, "_console_emergency_stop_path", None)
+                    is not None,
+                    10,
+                )
                 runtime = console._console_runtime()
                 controller = console._ensure_console_chat_controller()
                 store = controller.store
@@ -649,9 +657,9 @@ async def test_actual_send_paints_sending_and_accepts_input_within_100ms(
                 assert preparing.feedback_frame_at is not None
                 # A loaded host only reports wall misses; the Sending frame
                 # must still land before the held read is released.
-                assert preparing.feedback_while_held, (
-                    "Sending painted only after the held read was released"
-                )
+                assert (
+                    preparing.feedback_while_held
+                ), "Sending painted only after the held read was released"
                 assert preparing.frame_at is not None and preparing.while_held
                 # Preparing follows the immediate Sending frame at real receipt.
                 assert typing.mutated_while_held and typing.frame_while_held
@@ -936,7 +944,9 @@ class _NaturalRunFeedbackFrames(_NaturalPreparingFrame):
             return
         widget = self.case.console.query_one(_RUN_FEEDBACK)
         for marker in ("Sending", "Waiting for reply", "Thinking", "Streaming"):
-            if _update_contains(frame.f_locals.get("renderable"), widget.region, marker):
+            if _update_contains(
+                frame.f_locals.get("renderable"), widget.region, marker
+            ):
                 entry = (marker, _RUN_FEEDBACK)
                 if not self.frames or self.frames[-1] != entry:
                     self.frames.append(entry)
@@ -953,6 +963,7 @@ async def test_send_feedback_survives_preparation_and_provider_wait(route, monke
         monkeypatch, f"progress-{route}", durable=True
     ) as case:
         entered, release = threading.Event(), threading.Event()
+        stream_release = threading.Event()
 
         def reply(**kwargs):
             case.provider_calls.append(kwargs)
@@ -969,7 +980,14 @@ async def test_send_feedback_survives_preparation_and_provider_wait(route, monke
                         }
                     ]
                 }
-                return iter(["data: " + json.dumps(chunk) + "\n\n", "data: [DONE]\n\n"])
+
+                def chunks():
+                    yield "data: " + json.dumps(chunk) + "\n\n"
+                    if not stream_release.wait(15):
+                        raise RuntimeError("test stream completion wait timed out")
+                    yield "data: [DONE]\n\n"
+
+                return chunks()
             return {"choices": [{"message": {"content": "received intent reply"}}]}
 
         monkeypatch.setattr("tldw_chatbook.Chat.Chat_Functions.chat_api_call", reply)
@@ -1000,7 +1018,15 @@ async def test_send_feedback_survives_preparation_and_provider_wait(route, monke
                 assert shown and "Waiting for reply" in text, text
                 assert not release.is_set()
                 assert case.composer.draft_text() == ""
+                assert case.provider_calls[0]["streaming"] is True
                 release.set()
+                assert await _until(
+                    lambda: ("Streaming", selector) in frames.frames, 5
+                ), frames.frames
+                shown, text = _run_segment(case.console)
+                assert shown and "Streaming reply" in text, text
+                assert not stream_release.is_set()
+                stream_release.set()
                 await _turn_settles(case, record.task)
                 assert await _until(
                     lambda: not _run_segment(case.console)[0], 5
@@ -1014,6 +1040,7 @@ async def test_send_feedback_survives_preparation_and_provider_wait(route, monke
                 )
                 assert case.store.received_turn_for_session(case.session.id) is None
             finally:
+                stream_release.set()
                 release.set()
                 case.probe.release.set()
 
