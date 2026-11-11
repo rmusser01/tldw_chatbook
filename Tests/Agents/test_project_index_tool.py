@@ -580,7 +580,7 @@ async def test_unproven_native_reader_retains_admission_and_refuses_reuse(
             token = len(issued)
             issued.append(token)
             return SimpleNamespace(
-                bind=nullcontext, close=lambda: released.append(token)
+                token=token, bind=nullcontext, close=lambda: released.append(token)
             )
 
         monkeypatch.setattr(rig.service, "_retain", retain)
@@ -598,11 +598,15 @@ async def test_unproven_native_reader_retains_admission_and_refuses_reuse(
             None,
             read,
         )
-        query_pin = len(issued)
+        previous_pins = set(issued)
         released.clear()
         with pytest.raises(ProjectIndexRetirementUnproven):
             rig.service.search(auth, "marker")
-        assert released == []
+        (search,) = rig.service._searches
+        assert search.retirement_unproven
+        query_pin = search.pin.token
+        assert query_pin not in previous_pins
+        assert set(released) == set(issued) - previous_pins - {query_pin}
         with pytest.raises(ProjectIndexRetirementUnproven):
             rig.service.search(auth, "marker")
         assert rig.service._read_slots.acquire(blocking=False)
@@ -615,8 +619,8 @@ async def test_unproven_native_reader_retains_admission_and_refuses_reuse(
         assert (
             query_pin not in released
         ), "the failed query's own admission must remain held"
-        assert set(released) == set(
-            issued[query_pin + 1 :]
+        assert set(released) == (
+            set(issued) - previous_pins - {query_pin}
         ), "other operations release their own pins"
     finally:
         # The injected reader owns no native resource. Keep the unresolved
