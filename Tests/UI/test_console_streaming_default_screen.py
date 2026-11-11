@@ -34,7 +34,10 @@ from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
-FIRST_CHUNK = "Partial-drip-one "
+# Leave text after the marker for the agent stream parser to hold while
+# it rules out a tool-fence prefix split across chunks.
+FIRST_MARKER = "Partial-drip-one"
+FIRST_CHUNK = FIRST_MARKER + " The story begins. "
 SECOND_CHUNK = "partial-drip-two."
 #: Long enough for a slow CI worker to render the first chunk; the provider
 #: is released by the test long before this in every passing run.
@@ -125,10 +128,9 @@ def _assistant_rows(store):
 async def test_a_fresh_openai_console_shows_partial_reply_text_before_the_reply_completes(
     monkeypatch,
 ):
-    app = _build_test_app()
-    attach_chachanotes_db(app)
-    # This harness has no world-books schema for exchange capture (the same
-    # ordinary-send policy the composer send tests use).
+    app = _build_test_app(user_data_dir=config_module.get_user_data_dir())
+    attach_chachanotes_db(app, db_path=config_module.get_chachanotes_db_path())
+    # Exercise reply streaming with exchange capture disabled.
     assert config_module.save_settings_to_cli_config(
         {
             "console": {"exchange_capture": False},
@@ -164,7 +166,7 @@ async def test_a_fresh_openai_console_shows_partial_reply_text_before_the_reply_
                 await pilot.pause(0.05)
                 rows = _assistant_rows(store)
                 if (
-                    FIRST_CHUNK.strip() in _visible_text(console)
+                    FIRST_MARKER in _visible_text(console)
                     and rows
                     and rows[-1].status == "streaming"
                 ):
