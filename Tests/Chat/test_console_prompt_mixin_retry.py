@@ -704,15 +704,21 @@ async def test_failed_turn_resend_saves_original_mixins_during_a_competing_write
 async def test_real_agent_tool_loop_reuses_once_composed_request(
     trace_harness, monkeypatch, tmp_path, capture
 ):
+    from contextlib import closing
+
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.Chat.console_prepared_request import thaw_json
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
 
     h = trace_harness
     capture_mode(monkeypatch, capture)
     select(h, monkeypatch)
-    runs = AgentRunsDB(tmp_path / "mixin-agent.sqlite", client_id="mixin-test")
-    try:
+    path = tmp_path / "mixin-agent.sqlite"
+    with (
+        ConsoleExecutionOwner.acquire(path) as owner,
+        closing(AgentRunsDB(path, client_id="mixin-test", execution_owner=owner)) as runs,
+    ):
         bridge = ConsoleAgentBridge(
             agent_runs_db=runs,
             store=h.store,
@@ -752,8 +758,6 @@ async def test_real_agent_tool_loop_reuses_once_composed_request(
                 assert len(calls) == 2 and binding == calls[0][0]
             else:
                 assert binding is None
-    finally:
-        runs.close()
 
 
 @pytest.mark.asyncio

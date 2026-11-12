@@ -595,8 +595,8 @@ def test_legacy_workflow_bridge_refusal_preserves_exact_catalog_and_rows(
     before = _legacy_sql_state(path)
     original = recovery_operations._legacy_workflow_upgrade
 
-    def invalid_after_real_ddl(connection):
-        end, statements = original(connection)
+    def invalid_after_real_ddl(connection, **kwargs):
+        end, statements = original(connection, **kwargs)
         return end, (*statements, "invalid installed SQL")
 
     with monkeypatch.context() as patch:
@@ -631,8 +631,8 @@ def test_legacy_workflow_bridge_cancellation_rolls_back_real_first_ddl(
     original = recovery_operations._legacy_workflow_upgrade
     first_ddl_returned = []
 
-    def interrupted(connection):
-        end, statements = original(connection)
+    def interrupted(connection, **kwargs):
+        end, statements = original(connection, **kwargs)
 
         def actual_statements():
             for index, statement in enumerate(statements):

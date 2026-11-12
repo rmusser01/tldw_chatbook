@@ -8,19 +8,24 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import ExitStack, closing, contextmanager
 from contextvars import ContextVar
+from functools import partial
 from pathlib import Path
 from threading import Event
 from time import monotonic
 from typing import Any
 
 from .models import OwnerAdapter
-from tldw_chatbook.DB.recovery_sqlite import _split_statistics, _statistics_metadata
+from tldw_chatbook.DB.recovery_sqlite import (
+    _CATALOG_BYTES,
+    _CATALOG_LIMIT,
+    _read_bounded_catalog,
+    _split_statistics,
+    _statistics_metadata,
+)
 
 _PROGRESS_INTERVAL = 1000
 _STEP_BUDGET = 5_000_000
 _SECONDS = 30.0
-_CATALOG_LIMIT = 10_000
-_CATALOG_BYTES = 8 * 1024**2
 
 
 _active_restrictions = ContextVar("recovery_sqlite_restrictions", default=None)
@@ -1204,16 +1209,17 @@ def _catalog(connection, *, _schemas=None):
     if _schemas is not None and current() is not None:
         return literal_catalog(connection, _schemas)
     catalog_cost(connection)
-    rows = []
-    size = 0
-    for row in connection.execute(
-        "SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name"
-    ):
-        size += sum(len(value.encode("utf-8")) for value in row if value is not None)
-        if len(rows) >= _CATALOG_LIMIT or size > _CATALOG_BYTES:
-            raise ValueError("sqlite_resource_limit")
-        rows.append(tuple(row))
-    return tuple(rows)
+    return _read_bounded_catalog(
+        connection, row_limit=_CATALOG_LIMIT, byte_limit=_CATALOG_BYTES
+    )
+
+
+def _budgeted_legacy_catalog_reader(connection):
+    from .mobile_preview_budget import scalar_cost
+    from tldw_chatbook.DB.recovery_operations import _LEGACY_WORKFLOW_SCHEMAS
+
+    scalar_cost(connection, 3)
+    return partial(_catalog, _schemas=_LEGACY_WORKFLOW_SCHEMAS)
 
 
 def _metadata(connection, catalog, restrictions=None):
@@ -1700,7 +1706,10 @@ def _validate_candidate(
                                 _legacy_workflow_upgrade,
                             )
 
-                            bridge = _legacy_workflow_upgrade(connection)
+                            bridge = _legacy_workflow_upgrade(
+                                connection,
+                                read_catalog=_budgeted_legacy_catalog_reader(connection),
+                            )
                         if bridge is not None:
                             expected, statements = bridge
                         elif len(choices) == 1:

@@ -15,6 +15,7 @@ from tldw_chatbook.Backup_Recovery.activation import (
 )
 from tldw_chatbook.Backup_Recovery.admission_runtime import execution_identity
 from tldw_chatbook.Backup_Recovery.participants import (
+    native_prepared_scratch,
     native_scratch_writer as _native_writer,
 )
 from tldw_chatbook.Backup_Recovery.storage_admission import (
@@ -154,29 +155,6 @@ def _check_selected(frame, guard):
         ) or not _source_scope_admitted(root, names or (), path):
             _refuse()
     _check_activation(selected, root, names)
-
-
-def native_prepared_scratch(manager, snapshot, session_id):
-    from tldw_chatbook.Backup_Recovery.participants import _methods_unchanged
-    from tldw_chatbook.Chat.console_scratch_space import (
-        _SCRATCH_ADMISSION_ORIGINAL,
-        ConsoleScratchSnapshot,
-    )
-
-    if type(snapshot) is not ConsoleScratchSnapshot or not _methods_unchanged(
-        manager, _SCRATCH_ADMISSION_ORIGINAL
-    ):
-        return False
-    manager._check_process()
-    with manager._condition:
-        record = manager._matching_record_locked(snapshot)
-        return (
-            record is not None
-            and record.snapshot is snapshot
-            and record.session_id == session_id
-            and record.leases > 0
-            and manager._identity_matches(snapshot)
-        )
 
 
 def check_prepared_scratch(manager, snapshot, session_id):

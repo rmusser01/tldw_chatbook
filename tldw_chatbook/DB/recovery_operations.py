@@ -21,6 +21,8 @@ from tldw_chatbook.Backup_Recovery.models import (
 )
 from tldw_chatbook.DB.recovery_sqlite import (
     _checked_capture,  # noqa: F401 - Live compatibility binding.
+    _read_bounded_catalog,
+    _split_statistics,
     _validate_sqlite,  # noqa: F401 - Live compatibility binding.
 )
 from tldw_chatbook.DB.recovery_workflow_schema import (
@@ -1311,10 +1313,7 @@ def _build_legacy_workflow_schemas():
 _LEGACY_WORKFLOW_SCHEMAS = _build_legacy_workflow_schemas()
 
 
-def _legacy_workflow_version(connection):
-    from tldw_chatbook.Backup_Recovery.mobile_preview_budget import scalar_cost
-
-    scalar_cost(connection, 3)
+def _legacy_workflow_version(connection, *, read_catalog=_read_bounded_catalog):
     tables = {
         row[0]
         for row in connection.execute(
@@ -1328,10 +1327,7 @@ def _legacy_workflow_version(connection):
     if row is None or type(row[0]) is not int:
         return None
 
-    from tldw_chatbook.Backup_Recovery.sqlite_validation import _catalog
-    from tldw_chatbook.DB.recovery_sqlite import _split_statistics
-
-    rows = _catalog(connection, _schemas=_LEGACY_WORKFLOW_SCHEMAS)
+    rows = read_catalog(connection)
     try:
         base, _stats = _split_statistics(rows)
     except ValueError:
@@ -1340,9 +1336,9 @@ def _legacy_workflow_version(connection):
     return row[0] if (row[0], catalog) in _LEGACY_WORKFLOW_SCHEMAS else None
 
 
-def _legacy_workflow_upgrade(connection):
+def _legacy_workflow_upgrade(connection, *, read_catalog=_read_bounded_catalog):
     """Return one installed additive bridge only for an exact legacy catalog."""
-    version = _legacy_workflow_version(connection)
+    version = _legacy_workflow_version(connection, read_catalog=read_catalog)
     if version is None:
         return None
     statements = list(REVIEW_BOUNDARY_MIGRATION[:-1])
