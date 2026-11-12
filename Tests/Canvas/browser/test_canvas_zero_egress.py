@@ -13,6 +13,7 @@ import shutil
 import sys
 import time
 from collections.abc import Iterator
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -1713,6 +1714,37 @@ def test_product_route_recorder_rejects_foreign_startup_worker() -> None:
             trusted_origin="https://127.0.0.1:9443",
             trusted_route_root="/canvas/cap/",
             forbidden_canary_path="/canvas-generated-same-origin-canary",
+        )
+
+
+@pytest.mark.parametrize(
+    ("owner_path", "terminal_id", "allowed"),
+    [
+        ("/", "a" * 32, True),
+        ("/canvas/cap/render", "a" * 32, False),
+        ("/", "b" * 32, False),
+    ],
+    ids=["current-shell", "renderer", "wrong-terminal"],
+)
+def test_served_route_recorder_requires_current_shell_poll(owner_path, terminal_id, allowed):
+    origin = "https://127.0.0.1:9443"
+    recorder = ProductRouteRecorder(served=True)
+    recorder.mark_generated()
+    recorder.add(
+        "request",
+        f"{origin}/canvas/api/session?terminal_id={terminal_id}",
+        json.dumps(
+            {"owner": origin + owner_path, "method": "GET", "resource_type": "fetch"}
+        ),
+    )
+    outcome = nullcontext() if allowed else pytest.raises(AssertionError, match="escaped")
+    with outcome:
+        recorder.assert_generated_confined(
+            trusted_origin=origin,
+            trusted_route_root="/canvas/cap/",
+            forbidden_canary_path="/canvas-generated-same-origin-canary",
+            trusted_shell_paths=(("/canvas/api/session", "GET", "fetch"),),
+            served_terminal_id="a" * 32,
         )
 
 

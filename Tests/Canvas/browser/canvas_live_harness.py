@@ -550,10 +550,15 @@ class ProductRouteRecorder:
         forbidden_canary_path: str,
         trusted_shell_paths: tuple[tuple[str, str, str], ...] = (),
         trusted_static_paths: tuple[str, ...] = (),
+        served_terminal_id: str | None = None,
     ) -> None:
         assert self.overflow is False
         assert self.startup_error is None, self.startup_error
         root = trusted_route_root.rstrip("/")
+        session_poll = None
+        if served_terminal_id is not None:
+            assert self.served and re.fullmatch(r"[a-f0-9]{32}", served_terminal_id)
+            session_poll = f"{trusted_origin}/canvas/api/session?terminal_id={served_terminal_id}"
         route_rules = {
             root + suffix: rule
             for suffix, rule in {
@@ -619,7 +624,16 @@ class ProductRouteRecorder:
                     f"unexpected {parsed.scheme or 'relative'} browser event"
                 )
             origin = f"{parsed.scheme}://{parsed.netloc}"
-            if origin != trusted_origin or parsed.query or parsed.fragment:
+            shell_poll = (
+                item.target == session_poll
+                and item.kind in {"request", "response", "request-finished", "request-failed"}
+                and json.loads(item.detail)["owner"] == trusted_origin + "/"
+            )
+            if (
+                origin != trusted_origin
+                or parsed.fragment
+                or (parsed.query and not shell_poll)
+            ):
                 raise AssertionError(
                     f"browser traffic escaped trusted Canvas route: {item.kind}"
                 )

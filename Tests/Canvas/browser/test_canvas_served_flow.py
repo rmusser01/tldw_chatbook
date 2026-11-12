@@ -1934,11 +1934,14 @@ async def test_canonical_adversarial_corpus_stays_in_served_product_route(
                 )
                 assert shell_src is not None
                 route_path = urlsplit(shell_src).path
+                terminal_id = await page.locator("#terminal").get_attribute("data-terminal-id")
+                assert terminal_id is not None
                 recorder.assert_generated_confined(
                     trusted_origin=stack.origin,
                     trusted_route_root=route_path,
                     forbidden_canary_path=canary_path,
                     trusted_shell_paths=(("/canvas/api/session", "GET", "fetch"),),
+                    served_terminal_id=terminal_id,
                     trusted_static_paths=(
                         "/static/chatbook-canvas/canvas_renderer.js",
                         "/static/chatbook-canvas/canvas_runtime_worker.js",
@@ -2441,6 +2444,7 @@ async def test_mounted_production_authority_renders_and_settles_submit(
                 trusted_route_root=urlsplit(shell_url).path,
                 forbidden_canary_path="/canvas-forbidden-canary",
                 trusted_shell_paths=(("/canvas/api/session", "GET", "fetch"),),
+                served_terminal_id=page_id,
                 trusted_static_paths=(
                     f"/static/chatbook-canvas/canvas_renderer{suffix}.js",
                     f"/static/chatbook-canvas/canvas_runtime_worker{suffix}.js",
