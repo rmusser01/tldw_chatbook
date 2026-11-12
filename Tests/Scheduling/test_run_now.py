@@ -209,7 +209,13 @@ def test_manual_and_scheduled_dispatch_share_the_seam(db):
 
     handler = AsyncMock()
     clock = {"now": NOW}
-    loop = _make_loop(db, handler, clock=lambda: clock["now"])
+    loop = SchedulerLoop(
+        db,
+        handlers={"reminder": handler},
+        clock=lambda: clock["now"],
+        missed_fire_grace_seconds=60.0,
+        emergency_stop_path=db.db_path.with_name("stop.json"),
+    )
     loop.queue.load()
 
     # Scheduled side: advance the clock to the due time and tick.

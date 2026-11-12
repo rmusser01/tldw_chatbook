@@ -134,7 +134,7 @@ async def test_run_reports_configuration_before_polling(captured_logs):
 
 
 @pytest.mark.asyncio
-async def test_dropped_task_is_counted_distinctly_from_a_task_that_ran():
+async def test_dropped_task_is_counted_distinctly_from_a_task_that_ran(tmp_path):
     """A metric must separate "dropped for want of a handler" from "ran"."""
     from tldw_chatbook.Scheduling.scheduler import loop as loop_module
 
@@ -142,7 +142,9 @@ async def test_dropped_task_is_counted_distinctly_from_a_task_that_ran():
     original = loop_module.log_counter
     loop_module.log_counter = lambda name, **kw: counted.append((name, kw))
     try:
-        loop = SchedulerLoop(_tasks_db(), handlers={})
+        loop = SchedulerLoop(
+            _tasks_db(), handlers={}, emergency_stop_path=tmp_path / "stop.json"
+        )
         loop.queue.push(_due_watchlist_task())
         await loop.tick()
     finally:

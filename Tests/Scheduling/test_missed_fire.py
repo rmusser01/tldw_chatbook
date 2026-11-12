@@ -61,6 +61,7 @@ def _dispatch_first_due(db, now, *, grace_seconds=60.0, success=True):
         handlers={"reminder": handler},
         clock=lambda: now,
         missed_fire_grace_seconds=grace_seconds,
+        emergency_stop_path=db.db_path.with_name("stop.json"),
     )
     loop.queue.load()
     asyncio.run(loop.tick())
@@ -220,6 +221,7 @@ def test_handler_failure_records_missed_status_but_not_fire_state(db):
         handlers={"reminder": failing},
         clock=lambda: NOW,
         missed_fire_grace_seconds=60.0,
+        emergency_stop_path=db.db_path.with_name("stop.json"),
     )
     loop.queue.load()
     asyncio.run(loop.tick())
