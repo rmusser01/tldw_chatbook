@@ -169,6 +169,7 @@ def test_third_party_payload_is_file_filtered_but_remains_available_to_ui(
 def test_remaining_domain_records_stay_out_of_the_clipboard_artifact(
     operation: str,
     module_name: str,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The real collector retains diagnostics with credentials and PII masked."""
     from tldw_chatbook.app import TldwCli
@@ -178,8 +179,8 @@ def test_remaining_domain_records_stay_out_of_the_clipboard_artifact(
 
     stub = _AppStub()
     root = logging.getLogger()
-    old_level = root.level
-    root.setLevel(logging.DEBUG)
+    caplog.set_level(logging.INFO, logger="tldw_chatbook")
+    caplog.set_level(logging.DEBUG, logger=module_name)
     TldwCli._setup_buffered_logging(stub)
     sink_id = loguru_logger.add(_forward_loguru_to_standard, level="DEBUG")
     domain_logger = logging.getLogger(module_name)
@@ -206,7 +207,6 @@ def test_remaining_domain_records_stay_out_of_the_clipboard_artifact(
     finally:
         loguru_logger.remove(sink_id)
         root.removeHandler(stub._persistent_log_handler)
-        root.setLevel(old_level)
 
     shareable = "\n".join(stub._log_buffer)
     rendered = "\n".join(message for _l, _n, message in stub._log_records)
