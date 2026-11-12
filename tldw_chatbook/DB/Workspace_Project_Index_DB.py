@@ -2080,11 +2080,10 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 "SELECT 1 FROM cleanup_receipts WHERE epoch=?", (scope.epoch,)
             ).fetchone():
                 return True
-            tables = (
-                ("semantic_members", "semantic_generations")
-                if self.schema_version >= 4
-                else ()
-            ) + (
+            if self.schema_version >= 4:
+                conn.execute("DELETE FROM semantic_members")
+                conn.execute("DELETE FROM semantic_generations")
+            for table in (
                 "chunks",
                 "files",
                 "chunk_fts",
@@ -2092,8 +2091,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 "directories",
                 "scan_pages",
                 "scan_seen",
-            )
-            for table in tables:
+            ):
                 conn.execute(f"DELETE FROM {table}")
             conn.execute("UPDATE control SET manifest_revision=manifest_revision+1")
             conn.execute(
@@ -2135,11 +2133,10 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 "UPDATE control SET epoch=epoch+1,enabled=0,state='Off',job_revision=job_revision+1,manifest_revision=manifest_revision+1"
             )
             conn.execute("DELETE FROM active_job")
-            tables = (
-                ("semantic_members", "semantic_generations")
-                if self.schema_version >= 4
-                else ()
-            ) + (
+            if self.schema_version >= 4:
+                conn.execute("DELETE FROM semantic_members")
+                conn.execute("DELETE FROM semantic_generations")
+            for table in (
                 "chunks",
                 "files",
                 "chunk_fts",
@@ -2147,8 +2144,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
                 "directories",
                 "scan_pages",
                 "scan_seen",
-            )
-            for table in tables:
+            ):
                 conn.execute(f"DELETE FROM {table}")
             conn.execute(
                 "INSERT INTO cleanup_receipts SELECT epoch,? FROM control",
