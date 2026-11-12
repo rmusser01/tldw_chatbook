@@ -116,6 +116,9 @@ class BootWorkerSpec:
 #:
 #: Priority reasoning, recorded because it is the reviewable part:
 #:
+#: 0. ``full_agent_tools_upgrade`` (TASK-34100.5.3.2) is first: the first
+#:    plain chat send on an upgraded profile that uses agent features reads
+#:    its result, and it is a few time-budgeted reads, once per profile.
 #: 1. ``actor_pack_recovery`` and ``actor_pack_staging_sweep`` are prefetches
 #:    for surfaces that gate on the SAME once-lock (Personas' first library
 #:    read / ``create_persona``; the importer's ``inspect_archive``). If the
@@ -156,6 +159,19 @@ BOOT_WORKER_POLICY: tuple[BootWorkerSpec, ...] = (
         ),
     ),
     # -- STAGGERED: after `_ui_ready`, capped, in this order --
+    BootWorkerSpec(
+        key="full_agent_tools_upgrade",
+        name="_run_full_agent_tools_upgrade",
+        group="full-agent-tools-upgrade",
+        tier=BootWorkerTier.STAGGERED,
+        unblocks=(
+            "Plain Console chat's tool surface on a profile upgraded from "
+            "before the light surface (TASK-34100.5.3.2): until it lands, a "
+            "profile that uses agent features still gets the light set. A "
+            "one-time check, recorded once done: a few reads under a time "
+            "budget and at most one config write, so it goes first."
+        ),
+    ),
     BootWorkerSpec(
         key="actor_pack_recovery",
         name="deferred_actor_pack_recovery",

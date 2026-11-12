@@ -163,7 +163,9 @@ _BUDGETS: dict[str, int] = {
     # +9, TldwCli.screen_preimport_running, the public accessor the Console's
     # idle maintenance asks instead of reading the private pre-import threads
     # by name (the app string-lookup census freezes private names).
-    "tldw_chatbook/app.py": 5720,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.5.3.2 +19 (the
+    # one-time Full agent tools upgrade's boot-worker starter and body).
+    "tldw_chatbook/app.py": 5739,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
