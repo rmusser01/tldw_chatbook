@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-10 16:15
-updated_date: 2026-11-12 16:47
+updated_date: 2026-11-12 17:14
 labels:
 - follow-up
 - backup
@@ -220,6 +220,13 @@ Implemented on dev ae9f9e8d21 plus the filing commit, 2026-11-10. Owner decision
 - `Tests/Backup_Recovery/test_detached_layout.py::test_detached_import_refuses_a_plugin_root_by_name`.
 - `Tests/Backup_Recovery/test_restore_plan_excluded_directories.py::test_replace_keeps_an_excluded_directory_whole_without_listing_it[archived|added]`, a new Hypothesis-free module (`test_restore_plan.py` imports Hypothesis, which the PR lanes do not install), run by `derived-artifacts.yml`'s Architecture guard job and pinned in `ARCHITECTURE_GUARD_TARGETS` (I-2).
 - UI: `test_backup_data_groups.py::test_backup_review_explains_refused_live_plugins`, `test_plugins_browse.py::test_authority_recovery_copy_is_truthful_without_a_reset_step` and `test_plugin_review.py::test_unlock_mismatch_shows_restore_copy_not_passphrase_advice`, all on the UI census (the last appended at the tail in this round). The shard replay was not run, so the coordinator rebalances if needed.
+
+**Covering runs (review r13g-rev3, at 4715929df1, load 15–35).**
+- The rev2 selection below plus the new planner module and all of `Tests/CI`, at `-n 4`, e2e deselected: 3343 passed, 29 failed, 8 skipped. The 29 are the same as rev2's: 28 also fail at base, and the 29th is again `test_fresh_app_complete_public_capture_preserves_real_bytes_and_resumes` on its 20 s capture watchdog (`cancelled`); it passes alone at HEAD (22 s).
+- `Tests/CI` alone: 1240 passed, 1 skipped, including the Architecture guard pin.
+- The Architecture census with the size ratchets, serially: 224 passed.
+- The three UI files at `-n 4` under load ~35: 101 passed, 4 failed in one run and 2 in another, varying among `test_plugin_review.py`'s `refresh_growth[size1]`, `action_inputs_hide…[size0|size1]` and `confirmed_profile_save…[save-success]`. All 8 cases of those three tests pass serially; this round changed only a comment in that dialog. In rev2 these files gave 104 passed.
+- `./scripts/preflight.sh` passes, and `ruff --select F` on the changed files is clean.
 
 **Covering runs (review r13g-rev2, at 43bcdccfd1, load 15–40).**
 - At `-n 4`: `Tests/Plugins`, the 30 `Tests/Backup_Recovery` files covering the touched dispatch, inventory, walker, planner, detached-layout and restore paths, `Tests/DB/test_private_sqlite_inventory.py`, `Tests/CI/test_plugin_qualification_workflow.py` and `Tests/CI/test_ui_pr_gate_census_checker.py`, with the e2e deselected (run on its own, above): 2185 passed, 29 failed, 7 skipped. The same command on the 29 failures at base 42fc21939d: 28 fail there too:
