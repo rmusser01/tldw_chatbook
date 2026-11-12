@@ -354,6 +354,7 @@ async def test_subagent_badge_counts_batch_once_and_cache_until_the_row_set_chan
         assert len(calls) == 2
 
 
+@pytest.mark.bootstrap_profile
 def test_agent_bridge_is_built_from_the_sibling_run_store_and_memoized(tmp_path):
     """``_ensure_console_agent_bridge`` keys the run store off the durable
     ChaChaNotes path, sees rows another handle persisted there, and hands
@@ -374,6 +375,7 @@ def test_agent_bridge_is_built_from_the_sibling_run_store_and_memoized(tmp_path)
     assert screen._ensure_console_agent_bridge() is bridge
 
 
+@pytest.mark.bootstrap_profile
 def test_agent_bridge_is_absent_without_a_durable_run_store(tmp_path):
     """An in-memory harness has nowhere to key the sibling run store off, so
     there is no agent runtime.
@@ -401,6 +403,7 @@ def test_agent_bridge_is_absent_without_a_durable_run_store(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_drilldown_header_names_the_resumed_from_run(tmp_path):
     """PR3b Task 4: a resumed sub-agent's drill-in header carries its
     lineage -- ``resumed from <id>`` -- read straight off the run row's

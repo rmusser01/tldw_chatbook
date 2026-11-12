@@ -82,6 +82,7 @@ class _CancelAllFleetBridge(_SteeringFleetBridge):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_cancel_all_paints_while_a_live_child_exists():
     """With a live child on the fleet, the affordance is genuinely painted
     at its own region -- not merely present in the DOM."""
@@ -101,6 +102,7 @@ async def test_cancel_all_paints_while_a_live_child_exists():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_cancel_all_does_not_paint_with_no_live_rows():
     """A fleet of FINISHED children has nothing to cancel: the affordance
     must not paint even though the section still shows their rows --
@@ -119,6 +121,7 @@ async def test_cancel_all_does_not_paint_with_no_live_rows():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_cancel_all_does_not_paint_with_no_fleet_at_all():
     """No coordinator handles at all (never spawned): hidden likewise."""
     coordinator = None
@@ -142,6 +145,7 @@ async def test_cancel_all_does_not_paint_with_no_fleet_at_all():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_pressing_cancel_all_reaches_the_bridge_once_and_clears_the_affordance():
     """A REAL click routes to `cancel_all_subagents` exactly once, and the
     next sync -- reading the now-terminal handles -- hides the button
@@ -171,6 +175,7 @@ async def test_pressing_cancel_all_reaches_the_bridge_once_and_clears_the_afford
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_cancel_all_and_the_steering_bar_hide_together_after_cancel_all():
     """Drilled into a LIVE survivor, both the steering bar and Cancel-all
     are painted; after Cancel-all finishes the fleet, the SAME sync hides

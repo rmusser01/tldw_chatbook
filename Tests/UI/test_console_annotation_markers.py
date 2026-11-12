@@ -113,6 +113,7 @@ def test_marker_widget_is_a_static_keyed_to_the_message() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_live_comment_updates_the_screen_preview_map():
     async with make_console_pilot() as pilot:
         screen = pilot.app.screen
@@ -133,6 +134,7 @@ async def test_live_comment_updates_the_screen_preview_map():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_failed_annotation_write_leaves_the_preview_map_alone():
     async with make_console_pilot() as pilot:
         screen = pilot.app.screen
@@ -233,6 +235,7 @@ class _ReviewNotesTranscriptApp(ConsolidatedCSSApp):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_marker_click_requests_notes_not_message_toggle():
     app = _ReviewNotesTranscriptApp()
     app.previews = {"m1": ("note",)}
@@ -253,6 +256,7 @@ async def test_marker_click_requests_notes_not_message_toggle():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_n_on_selected_noted_message_requests_notes():
     app = _ReviewNotesTranscriptApp()
     app.previews = {"m1": ("note",)}
@@ -271,6 +275,7 @@ async def test_n_on_selected_noted_message_requests_notes():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_n_without_notes_toasts_and_requests_nothing():
     app = _ReviewNotesTranscriptApp()
 
@@ -329,6 +334,7 @@ async def _wait_until(pilot, predicate, attempts: int = 40) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_edit_then_delete_round_trip_pins_the_sidecar_row(tmp_path):
     """Unmocked screen->store->SQLite: an edit changes only comment/updated_at
     (quote/row_key byte-identical), a delete soft-deletes the row, and a
@@ -632,6 +638,7 @@ async def test_on_edit_and_on_delete_never_raise_on_db_failure(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_double_trigger_pushes_exactly_one_modal_and_reads_once(tmp_path):
     """Rapid double marker-click / double-`n` on the same anchor, before the
     first worker's off-thread DB read resolves, must not stack two

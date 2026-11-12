@@ -249,6 +249,7 @@ async def test_first_open_paints_an_answerable_card_nav_away_path(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_first_ever_open_paints_an_answerable_card_launch_path(tmp_path):
     """AC#2: the round armed before ANY ChatScreen ever existed in the
     process (launch wake, Console never opened); the first-ever open must

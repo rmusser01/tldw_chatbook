@@ -114,6 +114,7 @@ async def test_inspect_select_concurrent_arrival_discard_preserves_exact_ids_and
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_unsaved_mode_off_progress_entry_and_captured_owner_survive_navigation(
     tmp_path,
 ):
@@ -249,6 +250,7 @@ async def test_model_collection_refreshes_open_modal_without_discard_or_wake():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(180, 48), (100, 36)])
+@pytest.mark.bootstrap_profile
 async def test_console_progress_navigation_pruned_access_and_actual_paint(
     tmp_path, size
 ):
