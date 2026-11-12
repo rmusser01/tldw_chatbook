@@ -474,24 +474,25 @@ async def test_actual_async_local_composer_reads_switch_off_loop(snapshot_case):
 
     case = snapshot_case
 
-    async def no_external_catalog(*args, **kwargs):
-        return None
-
-    case.controller._compose_mcp_provider = no_external_catalog
     context = _test_execution_context(
         case.controller._scratch_spaces.snapshot(case.session.id),
         session_id=case.session.id,
         tool_configuration={"local_tools_enabled": True},
     )
+    context = replace(
+        context,
+        configuration=replace(context.configuration, mcp_tool_maximum=frozenset()),
+    )
     probe = _MaximumProbe(case.source, case.permissions)
     with probe.installed():
-        _, _, local, _ = await case.controller._compose_agent_request_providers(
+        mcp, _, local, _ = await case.controller._compose_agent_request_providers(
             session_id=case.session.id,
             project_selection=None,
             project_authority_guard=None,
             turn_context=context,
             admitted_roots=(),
         )
+    assert mcp is None
     assert local is not None
     assert len(probe.permission_threads) == 1
     assert (
@@ -537,13 +538,19 @@ async def test_local_async_composer_retains_native_custody_and_refuses_changed_o
         session_id=case.session.id,
         tool_configuration={"local_tools_enabled": True},
     )
+    context = replace(
+        context,
+        configuration=replace(context.configuration, mcp_tool_maximum=frozenset()),
+    )
     old_path = case.permissions.path
     replacement = tmp_path / "redirected-permissions.json"
     probe = _PermissionProbe(case.source, case.permissions)
     with probe.installed():
         task = asyncio.create_task(
-            case.controller._compose_local_provider_async(
+            case.controller._compose_agent_request_providers(
                 session_id=case.session.id,
+                project_selection=None,
+                project_authority_guard=None,
                 turn_context=context,
                 admitted_roots=(),
             )
@@ -580,7 +587,8 @@ async def test_local_async_composer_retains_native_custody_and_refuses_changed_o
                 ):
                     await task
             else:
-                assert await task == (None, None)
+                mcp, _, local, review = await task
+                assert (mcp, local, review) == (None, None, None)
                 assert not replacement.exists()
             assert all(
                 lease not in storage_admission._live_leases for lease in probe.leases
