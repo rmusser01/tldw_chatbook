@@ -53,6 +53,7 @@ from Tests.UI.test_console_send_transition_layout_requests import (
     _console_host,
 )
 from tldw_chatbook.config import load_settings
+from tldw_chatbook.Widgets.Console.console_bounded_section import ConsoleBoundedSection
 from tldw_chatbook.Widgets.Console.console_run_inspector import ConsoleRunInspector
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
@@ -336,7 +337,17 @@ async def _rail_after_first_send(
         if not open_first:
             recording[0] = True
             await _open_inspector(console, pilot)
-        await pilot.pause(0.5)
+        await _wait_for(
+            pilot,
+            lambda: (
+                not rail._outer_reconcile_scheduled
+                and not any(
+                    section._reconcile_scheduled
+                    for section in rail.query(ConsoleBoundedSection)
+                )
+            ),
+            "the Inspector fold never settled",
+        )
         recording[0] = False
         witness = _witness(rail)
         await _leave_collapsed(console, pilot)

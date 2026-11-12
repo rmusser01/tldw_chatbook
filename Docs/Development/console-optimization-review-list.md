@@ -71,6 +71,27 @@ mutation at 8.1 ms and a supplied frame at 24.4 ms while the original configurat
 read stayed held. It predates the preview correction and is not a whole-Send,
 physical terminal flush or consistent 100 ms qualification claim.
 
+### PR3496 first-feedback follow-up (2026-11-12)
+
+At published `20cd2cf`, `merge-windows-final-20261111-1` passed eight Windows
+checks, including actual current/detached native image-read shutdown and physical
+retirement. Enter supplied feedback was 60.3 ms; button feedback failed at
+1135.8 ms wall / 968.8 ms loop CPU. Both full-handoff routes missed their
+unchanged 15-second provider-entry bounds. A separate cold original button
+control failed at 866.2 / 828.1 ms. These failures remain retained.
+
+Original-function diagnostics then observed button feedback at 239.2 / 171.9 ms,
+72.2 / 62.5 ms, and cold 95.0 / 93.8 ms without a production change. They preserve
+original input, observers, I/O and deadlines but add sampling/phase callbacks, so
+they do not establish acceptance timing or a gain. The 239 ms sample places a
+queued full-sync prefix before Send handling, then transcript/config metadata and
+layout before the natural frame; the final display scan adds only 1.7 ms before
+detection. GC accounts for 28.7 ms in that sample. The larger uninstrumented CPU
+intervals remain unexplained. Keep OPT30/60 for full-sync/render scheduling and
+configuration metadata investigation; no replay suppression, readiness warm-up,
+new cache, permission shortcut or increased deadline is selected. OPT102 retains
+the narrowly scoped lookup alternative without claiming it fixes the delay.
+
 ## Latest bounded cleanup and quiet comparison (2026-10-08)
 
 Integration commit `fa3dad2d82d31920bd18fdb8db2b7abf74565faf` implements
@@ -279,6 +300,7 @@ Source: `chat_screen.py` d221 lines 17507-17842, 18219, 20682-20743;
 | OPT-99 / Deferred; source invalidation owner missing | **Retain reusable versioned MCP definition metadata on LocalMCPStore.** This could amortize inventory reads across consumers. | Not implemented: hand edits, other processes, recovery and cold empty snapshots need a complete invalidation contract. OPT98 removes the duplicate initial stage using existing owners; no cross-attempt cache is needed for that gain. A shared mutable attempt ceiling is also unselected under OPT14 because hooks, previews and live runs have distinct lifetimes. |
 | OPT-100 / Deferred; startup config-lock consumer identified | **Review scheduler heartbeat default-path naming's full config admission within its existing finite worker.** The original failure-time trace identifies `default_heartbeat_path` holding both config RLocks through recovery metadata observation while Console FULL retries. Explicit `heartbeat_path` skips default naming, but no elapsed saving is measured. | Latency shrink is paused. The producer/default route pre-exists dev; no matched dev contention measurement proves unchanged cost or permits cached/constructor-path substitution. Heartbeat is already off-loop. Revisit only after establishing live profile/source currentness and a compatible existing destination owner; preserve selected-root changes, cold establishment/refusal, native recovery/pause evidence, atomic durable heartbeat write and awaited shutdown retirement. Any chosen change needs causal correctness and separate timing evidence; no geometry, timer, executor, TTL or budget shortcut. See archived `pr3050-closeout/geometry-readiness-consumer-evidence/evidence-note.md` (SHA17358203) and `final-geometry-consumer-evidence-2`. |
 | OPT-101 / Selected; final qualification pending | **Prepare the stock light-preview kill-switch observation off the input loop.** Capacity and history preflights currently perform real permission admission synchronously despite the preview's former no-I/O description. | Reuse the existing finite preparation owner and one-pass result, preserve fresh kill-state representation, original custom callback routes, source/session checks and physical retirement. This is distinct from OPT-98's composition ceiling. Initial original-body RED and candidate ownership controls are retained above; no reduction in admission work or whole-Send latency is claimed. |
+| OPT-102 / Deferred; benefit unqualified | **Use the portrait radio's existing typed ID lookup instead of a class-selector scan.** A slow first-feedback diagnostic sampled `update_portrait_radio` during a queued full Console sync. Stock construction fixes the ID to `console-character-radio`; Textual can use its ID lookup while retaining type checking and per-call replacement handling. | No application widget cache is proposed. A later cold phase trace measured this call at only 0.09 ms, so no material saving or cause of the 828/969 ms loop-CPU misses is established. Preserve custom/absent widget behavior and prove a reached cost before choosing this change. |
 
 ## Architecture alternatives retained with their decision
 

@@ -847,6 +847,7 @@ ADMISSION_2_TARGETS = (
     "Tests/Chat/test_console_owner_live_bindings.py::test_compaction_reads_replaced_services_globals_and_accounting",
     "Tests/Chat/test_console_light_tool_surface.py",
     "Tests/Chat/test_console_light_surface_context_meter.py",
+    "Tests/Chat/test_console_tool_surface_preparation.py",
     "Tests/Chat/test_console_light_surface_voice.py",
     "Tests/Chat/test_console_light_surface_goal_runs.py",
     "Tests/UI/test_mcp_full_agent_tools_gate.py",
