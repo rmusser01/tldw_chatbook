@@ -240,3 +240,52 @@ async def test_a_resumed_draft_puts_search_and_appearance_choices_back(
     appearance = next(write for write in writes if "splash_screen" in write)
     assert appearance["splash_screen"] == {"enabled": True, "duration": 2.0}
     assert appearance["appearance"] == {"reduce_motion": True, "ascii_glyphs": True}
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_a_resumed_automatic_search_is_not_restored_without_the_extras(
+    monkeypatch,
+) -> None:
+    """Pre-merge review (2026-11-12): a draft saved with "automatically"
+    resumed by pressing the disabled "automatic — unavailable" radio once the
+    RAG extras were gone, and Next then wrote the flag the step says cannot
+    run. The draft's choice is restored only when it can be chosen; otherwise
+    the step shows what is saved and Next writes nothing."""
+    from unittest.mock import AsyncMock
+
+    from textual.widgets import RadioSet
+
+    from tldw_chatbook.UI.Wizards import first_run_rag_state as rag_state
+    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupWizardContainer
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Utils.optional_deps.embeddings_rag_deps_installed",
+        lambda: False,
+    )
+    monkeypatch.setattr(rag_state, "resolve_active_embedding_model", lambda: None)
+    draft = wizard_state.SetupDraft(
+        version=wizard_state.SETUP_DRAFT_VERSION,
+        track=wizard_state.TRACK_FULL,
+        active_step_id=wizard_state.STEP_RAG,
+        values={
+            wizard_state.STEP_WELCOME: {"track": wizard_state.TRACK_FULL},
+            wizard_state.STEP_RAG: {"auto_retrieve": True},
+        },
+    )
+    app = _hosted_wizard(resume_draft=draft)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.5)
+        container = app.screen.query_one(SetupWizardContainer)
+        rag = container.steps[container._step_index_for_id(wizard_state.STEP_RAG)]
+        choice = rag.query_one("#setup-rag-auto-retrieve", RadioSet)
+        pressed = choice.pressed_button
+        automatic = rag.query_one("#setup-rag-auto-retrieve-automatic")
+        container.commit_config = AsyncMock(return_value=True)
+        ok, _ = await rag.commit()
+        data = rag.get_step_data()
+    assert automatic.disabled
+    assert pressed is not None and pressed.id == "setup-rag-auto-retrieve-on-request"
+    assert ok
+    container.commit_config.assert_not_awaited()
+    assert data == {"auto_retrieve": False}

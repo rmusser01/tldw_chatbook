@@ -365,7 +365,9 @@ can't be picked; the line under it says why: Console's automatic search
 needs the extras. You can still search your Library yourself from
 Library ▸ Search / RAG. If automatic search was already saved, the step says
 so, and that each message stops at "Library search failed" before it is sent
-until you choose **only when I ask** (which Next then saves). Below that, the
+until you choose **only when I ask** (which Next then saves). Resuming setup
+after the extras were removed does not put back an "automatically" from your
+saved progress; the step shows what is saved instead. Below that, the
 step names the extras package, `tldw_chatbook[embeddings_rag]`, with a
 **Copy package name** button: install it with whatever tool you installed
 chatbook with, restart chatbook, then turn on Automatic retrieval in

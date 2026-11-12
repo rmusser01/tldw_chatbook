@@ -1203,11 +1203,17 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
             rag_step = self.steps[self._step_index_for_id(wizard_state.STEP_RAG)]
             if isinstance(rag_step, RagStep) and "auto_retrieve" in rag_values:
                 automatic = rag_values["auto_retrieve"] is True
-                rag_step.auto_retrieve = automatic
-                self._restore_radio_selection(
-                    rag_step.query_one("#setup-rag-auto-retrieve", RadioSet),
-                    lambda button: (button.id or "").endswith("-automatic") == automatic,
+                rag_radio = rag_step.query_one("#setup-rag-auto-retrieve", RadioSet)
+                draft_pick = next(
+                    (b for b in rag_radio.query(RadioButton)
+                     if (b.id or "").endswith("-automatic") == automatic),
+                    None,
                 )
+                # Pre-merge review (2026-11-12): never press a row the step
+                # disabled ("automatic — unavailable" without the RAG extras).
+                if draft_pick is not None and not draft_pick.disabled:
+                    rag_step.auto_retrieve = automatic
+                    self._restore_radio_selection(rag_radio, lambda b: b is draft_pick)
 
             appearance_values = draft.values.get(wizard_state.STEP_APPEARANCE, {})
             appearance_step = self.steps[
