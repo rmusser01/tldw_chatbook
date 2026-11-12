@@ -902,10 +902,46 @@ def _compose_raw_shell_provider(
         RawShellToolProvider,
     )
 
+    try:
+        project_authority = getattr(turn_context, "project_authority", None)
+        workspace_id = (
+            project_authority.workspace_id
+            if project_authority is not None
+            else self.store.session_workspace_id(session_id)
+        )
+    except (AttributeError, KeyError, ValueError):
+        workspace_id = None
+
+    def protected_roots() -> tuple[native_host.Path, ...]:
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+        from tldw_chatbook.Workspaces.models import (
+            DEFAULT_WORKSPACE_ID,
+            RuntimeBindingKind,
+        )
+
+        if workspace_id in (
+            native_host.CONSOLE_GLOBAL_WORKSPACE_ID,
+            DEFAULT_WORKSPACE_ID,
+        ):
+            return ()
+        if not workspace_id:
+            raise ValueError("raw shell workspace unavailable")
+        registry = getattr(self.app, "workspace_registry_service", None)
+        if registry is None:
+            raise ValueError("workspace registry unavailable")
+        with operation_owned_connection(registry.db):
+            bindings = registry.list_runtime_bindings(workspace_id)
+        return tuple(
+            native_host.Path(binding.locator)
+            for binding in bindings
+            if binding.binding_kind == RuntimeBindingKind.LOCAL_FILESYSTEM
+        )
+
     provider = RawShellToolProvider(
         runtime=runtime,
         console_session_id=session_id,
         initial_directory=lambda: initial_directory,
+        protected_roots=protected_roots,
         resolve_state=resolve_state,
         local_tools_enabled=lambda: local_enabled,
         kill_switch=kill_switch,

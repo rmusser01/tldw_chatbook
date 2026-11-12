@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -401,3 +402,296 @@ def test_raw_pending_captures_chat_owner_without_changing_schema(tmp_path):
     assert row.options == ("approve_once", "approve_session", "deny")
     assert provider.load_schema("raw_shell:shell_exec") == schema
     assert args == {"command": "echo hello"}
+
+
+class _WorkspaceGuardRuntime(_RuntimeProbe):
+    granted = False
+
+    def model_session_granted(self, session_id):
+        return self.granted
+
+    def set_model_authority_revoker(self, callback):
+        self.revoker = callback
+
+    def execute(self, request, on_event):
+        from tldw_chatbook.Tools.raw_cli_executor import RawCliResult
+
+        self.execute_calls.append((request, on_event))
+        return RawCliResult(
+            invocation_id=request.invocation_id,
+            caller="model",
+            resolved_shell=request.shell,
+            initial_directory=request.initial_directory,
+            elapsed_seconds=0,
+            stdout_preview="",
+            stderr_preview="",
+            record_output="",
+            exit_code=0,
+            terminal_state="exited",
+            truncated=False,
+            cleanup_proven=True,
+        )
+
+
+def _delete_directory_args(path: str) -> dict[str, str]:
+    if os.name == "nt":
+        return {"command": f'rd /s /q "{path}"', "shell": "cmd"}
+    return {"command": f'rm -r -- "{path}"', "shell": "bash"}
+
+
+def test_workspace_wipe_never_reaches_runtime_even_with_session_grant(tmp_path):
+    from tldw_chatbook.Agents.agent_models import ToolCall
+
+    root = tmp_path / "project"
+    (root / "build").mkdir(parents=True)
+    (root / "source.py").touch()
+    runtime = _WorkspaceGuardRuntime()
+    provider = _provider(root, runtime=runtime, protected_roots=lambda: (root,))
+    wipe = (
+        {"command": "del /s /q *.*", "shell": "cmd"}
+        if os.name == "nt"
+        else {"command": "rm -r ./*", "shell": "bash"}
+    )
+    assert provider.pending_gate_for(ToolCall("shell_exec", wipe, "wipe")) is None
+
+    runtime.granted = True
+    result = provider.invoke("shell_exec", wipe)
+
+    assert result.outcome == "blocked"
+    assert "workspace-folder-wipe" in result.error
+    assert str(root) not in result.error
+    assert result.approval_decision is None
+    assert runtime.execute_calls == []
+    assert (root / "source.py").exists()
+
+    allowed = provider.invoke("shell_exec", _delete_directory_args("build"))
+
+    assert allowed.ok is True
+    assert len(runtime.execute_calls) == 1
+    assert runtime.execute_calls[0][0].protected_roots == (root,)
+
+
+def test_workspace_guard_refreshes_roots_after_review(tmp_path):
+    from tldw_chatbook.Agents.agent_models import ToolCall
+
+    root = tmp_path / "new binding"
+    root.mkdir()
+    roots = []
+    runtime = _WorkspaceGuardRuntime()
+    provider = _provider(
+        tmp_path, runtime=runtime, protected_roots=lambda: tuple(roots)
+    )
+    args = _delete_directory_args(root.name)
+    assert provider.pending_gate_for(ToolCall("shell_exec", args, "delete")) is not None
+
+    roots.append(root)
+    runtime.granted = True
+    result = provider.invoke("shell_exec", args)
+
+    assert result.outcome == "blocked"
+    assert "workspace-folder-delete" in result.error
+    assert runtime.execute_calls == []
+
+
+def test_workspace_guard_refuses_when_binding_lookup_fails(tmp_path):
+    from tldw_chatbook.Agents.agent_models import ToolCall
+
+    def unavailable():
+        raise OSError(f"cannot open registry at {tmp_path}")
+
+    runtime = _WorkspaceGuardRuntime()
+    provider = _provider(tmp_path, runtime=runtime, protected_roots=unavailable)
+    args = {"command": "echo harmless"}
+    assert provider.pending_gate_for(ToolCall("shell_exec", args, "probe")) is None
+
+    runtime.granted = True
+    result = provider.invoke("shell_exec", args)
+
+    assert result.outcome == "blocked"
+    assert "workspace-protection-unavailable" in result.error
+    assert str(tmp_path) not in result.error
+    assert runtime.execute_calls == []
+
+
+def test_workspace_guard_discards_one_use_approval_on_refusal(tmp_path):
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
+
+    root = tmp_path / "new binding"
+    root.mkdir()
+    roots = []
+    runtime = _WorkspaceGuardRuntime()
+    provider = _provider(
+        tmp_path, runtime=runtime, protected_roots=lambda: tuple(roots)
+    )
+    args = _delete_directory_args(root.name)
+    row = provider.pending_gate_for(ToolCall("shell_exec", args, "delete"))
+    assert row is not None
+    provider.apply_batch_decisions("run", {"delete": "approve_once"}, [row])
+    roots.append(root)
+
+    with use_run_id("run"), use_tool_call_id("delete"):
+        refused = provider.invoke("shell_exec", args)
+        roots.clear()
+        later = provider.invoke("shell_exec", args)
+
+    assert refused.outcome == "blocked"
+    assert "workspace-folder-delete" in refused.error
+    assert "requires command-visible user approval" in later.error
+    assert runtime.execute_calls == []
+
+
+def test_workspace_guard_projects_late_executor_refusal(tmp_path):
+    from tldw_chatbook.Tools.raw_cli_executor import RawCliHardlineViolation
+
+    class RefusingRuntime(_WorkspaceGuardRuntime):
+        granted = True
+
+        def execute(self, request, on_event):
+            raise RawCliHardlineViolation("workspace-folder-wipe")
+
+    provider = _provider(tmp_path, runtime=RefusingRuntime())
+    result = provider.invoke("shell_exec", {"command": "echo harmless"})
+
+    assert result.outcome == "blocked"
+    assert "workspace-folder-wipe" in result.error
+    assert result.approval_decision is None
+
+
+def _workspace_guard_controller(runtime, store, registry=None):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    controller = object.__new__(ConsoleChatController)
+    controller.app = SimpleNamespace(
+        unified_mcp_service=SimpleNamespace(
+            get_kill_switch=lambda: False,
+            gate_tool_test=lambda _: EffectiveToolState(
+                state="ask", origin="global_default"
+            ),
+        ),
+        raw_cli_runtime=runtime,
+        workspace_registry_service=registry,
+    )
+    controller.store = store
+    controller._agent_bridge = None
+    return controller
+
+
+@pytest.mark.parametrize("has_captured_owner", [True, False])
+def test_console_raw_shell_protects_all_bindings_of_owning_workspace(
+    tmp_path, monkeypatch, has_captured_owner
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+
+    owner = "owning-workspace"
+    other = "visible-workspace"
+    db = WorkspaceDB(tmp_path / "workspace.sqlite", client_id="raw-shell-guard")
+    registry = LocalWorkspaceRegistryService(db)
+    registry.create_workspace(workspace_id=owner, name="Owner")
+    registry.create_workspace(workspace_id=other, name="Visible")
+    selected = tmp_path / "selected"
+    second = tmp_path / "second binding"
+    selected.mkdir()
+    second.mkdir()
+    registry.add_folder_binding(owner, selected, allow_write=True)
+    registry.add_folder_binding(owner, second)
+    second.rmdir()
+    registry.save_runtime_binding(
+        WorkspaceRuntimeBinding(
+            workspace_id=owner,
+            binding_id="remote-folder",
+            binding_kind="ssh-filesystem",
+            label="Remote",
+            locator="ssh://devbox/srv/project",
+            status="ready",
+            metadata={"access": "ro"},
+            created_at="2026-11-11T00:00:00Z",
+            updated_at="2026-11-11T00:00:00Z",
+        )
+    )
+    lookup_ids = []
+    list_bindings = registry.list_runtime_bindings
+
+    def record_lookup(workspace_id):
+        lookup_ids.append(workspace_id)
+        return list_bindings(workspace_id)
+
+    monkeypatch.setattr(registry, "list_runtime_bindings", record_lookup)
+    runtime = _WorkspaceGuardRuntime()
+    store = SimpleNamespace(
+        active_workspace_id=other,
+        session_workspace_id=lambda _: other if has_captured_owner else owner,
+    )
+    controller = _workspace_guard_controller(runtime, store, registry)
+    context = SimpleNamespace(
+        tool_configuration={"local_tools_enabled": True},
+        tool_policy_profile_id="default",
+        project_authority=SimpleNamespace(workspace_id=owner)
+        if has_captured_owner
+        else None,
+    )
+    provider, _ = controller._compose_raw_shell_provider(
+        session_id="owning-chat", turn_context=context, project_root=selected
+    )
+    assert provider is not None
+    args = _delete_directory_args(second.as_posix())
+
+    def check_on_worker():
+        assert getattr(db._thread_local, "conn", None) is None
+        pending = provider.pending_gate_for(ToolCall("shell_exec", args, "delete"))
+        assert getattr(db._thread_local, "conn", None) is None
+        result = provider.invoke("shell_exec", args)
+        assert getattr(db._thread_local, "conn", None) is None
+        return pending, result
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as worker:
+            pending, result = worker.submit(check_on_worker).result(timeout=15)
+    finally:
+        db.close()
+
+    assert lookup_ids == [owner, owner]
+    assert pending is None
+    assert result.outcome == "blocked"
+    assert "workspace-folder-delete" in result.error
+    assert runtime.execute_calls == []
+
+
+@pytest.mark.parametrize("default", [True, False])
+def test_console_raw_shell_known_unbound_workspace_can_still_request_approval(
+    tmp_path, default
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_models import ToolCall
+    from tldw_chatbook.Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
+    from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
+
+    workspace_id = DEFAULT_WORKSPACE_ID if default else CONSOLE_GLOBAL_WORKSPACE_ID
+    runtime = _WorkspaceGuardRuntime()
+    store = SimpleNamespace(session_workspace_id=lambda _: workspace_id)
+    controller = _workspace_guard_controller(runtime, store)
+    context = SimpleNamespace(
+        tool_configuration={"local_tools_enabled": True},
+        tool_policy_profile_id="default",
+        project_authority=None,
+    )
+    provider, _ = controller._compose_raw_shell_provider(
+        session_id="unbound-chat", turn_context=context, project_root=tmp_path
+    )
+    assert provider is not None
+
+    row = provider.pending_gate_for(
+        ToolCall("shell_exec", {"command": "echo hello"}, "call")
+    )
+
+    assert row is not None
+    assert row.arguments["command"] == "echo hello"

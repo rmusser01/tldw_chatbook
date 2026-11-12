@@ -32,6 +32,28 @@ Per-**tab**, not per-conversation: each open Console tab gets its own opaque roo
 
 At run start, `capture_run_admitted_workspace_roots` freezes the run's authority as an immutable tuple of `RunAdmittedWorkspaceRoot` records — workspace id, binding id/alias, root path, locator fingerprint, root identity (name/dev/ino/mode), `allow_write`, and a guard closure that re-checks registry membership, locator, identity, and access on use. The Default/global workspace admits `()` — path tools are simply not advertised. With a project-instruction binding selected, that binding is the run's **only** admitted root. Frozen roots are revalidated at use: existing, non-symlink, non-drifted, identity-matching.
 
+### Raw shell deletion guard
+
+The model's `shell_exec` safety floor protects all local folder bindings of the
+owning chat's workspace, including read-only or currently missing bindings. It
+uses the owning workspace ID, independent of the active tab, the initial shell
+directory, and the narrower root selection for structured file tools. Binding
+locators are read before approval and refreshed at dispatch. An unavailable
+binding lookup refuses the model request without disclosing the paths.
+
+`Tools/workspace_shell_guard.py` recognizes literal Bash/sh, PowerShell, and
+cmd deletion targets, including a bound folder, a recursive ancestor, a
+whole-folder selection, and an explicit set that removes every immediate
+child. A refusal applies even with a session grant. The executor checks the
+bindings from dispatch against the shell argv it passes to the worker.
+
+This is a prelaunch check for recognizable commands under
+[ADR-094](../../backlog/decisions/094-raw-and-virtual-cli-execution-boundaries.md).
+The raw shell still has host authority. Arbitrary programs, dynamic shell
+expressions, external tools, SSH bindings, and concurrent changes to the
+filesystem or workspace registry can fall outside the check. User-authored
+commands keep their existing authority.
+
 ### Native Windows root identity
 
 The workspace helper retains a no-follow directory handle and verifies its

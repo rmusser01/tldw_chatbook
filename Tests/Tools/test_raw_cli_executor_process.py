@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import multiprocessing
 import multiprocessing.queues
 from multiprocessing.connection import wait
@@ -1965,3 +1966,70 @@ def test_required_output_stays_unsealed_until_actual_helper_return(
         assert not errors, errors
     assert len(results) == 1 and results[0].cleanup_proven is join_helpers
     assert output.sealed is join_helpers
+
+
+def test_guarded_wipe_refuses_before_worker_setup(tmp_path, monkeypatch):
+    root = tmp_path / "workspace"
+    root.mkdir()
+    command = "del /s /q *.*" if os.name == "nt" else "rm -r ./*"
+    request = replace(_request(root, command), caller="model", protected_roots=(root,))
+
+    def unexpected_spool(_limit):
+        pytest.fail("Guarded wipe reached worker setup")
+
+    monkeypatch.setattr(raw_cli, "_open_spool", unexpected_spool)
+    with pytest.raises(raw_cli.RawCliHardlineViolation, match="workspace-folder-wipe"):
+        _executor().execute(
+            request,
+            cancel_event=threading.Event(),
+            on_event=lambda _event: None,
+            admit_worker=_admit,
+        )
+    assert root.is_dir()
+
+
+@pytest.mark.parametrize(
+    "caller,output", [("model", "checked-argv"), ("user", "original-command")]
+)
+def test_worker_uses_checked_shell_argv(tmp_path, monkeypatch, caller, output):
+    request = replace(
+        _request(tmp_path, "echo original-command"),
+        caller=caller,
+        protected_roots=(tmp_path,),
+    )
+    monkeypatch.setattr(
+        raw_cli,
+        "resolve_checked_workspace_shell_argv",
+        lambda _request: (sys.executable, "-c", "print('checked-argv')"),
+    )
+
+    result = _executor().execute(
+        request,
+        cancel_event=threading.Event(),
+        on_event=lambda _event: None,
+        admit_worker=_admit,
+    )
+
+    assert result.terminal_state == "exited"
+    assert result.exit_code == 0
+    assert result.stdout_preview.strip() == output
+
+
+def test_missing_shell_keeps_guarded_request_outcome(tmp_path, monkeypatch):
+    request = replace(
+        _request(tmp_path, "echo must-not-launch"),
+        caller="model",
+        protected_roots=(tmp_path,),
+    )
+    monkeypatch.setattr(raw_cli.shutil, "which", lambda _name: None)
+
+    result = _executor().execute(
+        request,
+        cancel_event=threading.Event(),
+        on_event=lambda _event: None,
+        admit_worker=_admit,
+    )
+
+    assert result.terminal_state == "shell_unavailable"
+    assert result.exit_code is None
+    assert result.stdout_preview == ""

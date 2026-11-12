@@ -13,6 +13,7 @@ def bound_roots(tmp_path: Path) -> tuple[Path, Path]:
     root = tmp_path / "bound project"
     (root / "src").mkdir(parents=True)
     (root / "src" / "code.py").touch()
+    (root / "src" / "cache").mkdir()
     (root / ".keep").touch()
     other_root = tmp_path / "container" / "second binding"
     other_root.mkdir(parents=True)
@@ -24,6 +25,9 @@ def bound_roots(tmp_path: Path) -> tuple[Path, Path]:
     [
         ("bash", 'rm -r -- "{root}"', "workspace-folder-delete"),
         ("bash", "rmdir .", "workspace-folder-delete"),
+        ("bash", "rm -r . 2>/dev/null", "workspace-folder-delete"),
+        ("bash", "rm -r ../container 2>&1", "workspace-folder-delete"),
+        ("bash", 'rmdir -p "{root}/src/cache"', "workspace-folder-delete"),
         ("bash", "rm -r ../container", "workspace-folder-delete"),
         ("bash", "rm -r ../container/*", "workspace-folder-delete"),
         ("bash", "rm -r ./*", "workspace-folder-wipe"),
@@ -42,7 +46,12 @@ def bound_roots(tmp_path: Path) -> tuple[Path, Path]:
             "Remove-Item -Recurse -Force -LiteralPath '{root}'",
             "workspace-folder-delete",
         ),
-        ("powershell", "rm -r -Path '*'", "workspace-folder-wipe"),
+        ("powershell", "rm -r -Path '*' -Force:$true", "workspace-folder-wipe"),
+        (
+            "powershell",
+            "Remove-Item -Recurse:$true -Force:$false . > 'log.txt'",
+            "workspace-folder-delete",
+        ),
         (
             "powershell",
             "Remove-Item -LiteralPath 'src','.keep' -Recurse",
@@ -59,6 +68,7 @@ def bound_roots(tmp_path: Path) -> tuple[Path, Path]:
             "workspace-folder-wipe",
         ),
         ("cmd", 'RD /S /Q "{root}"', "workspace-folder-delete"),
+        ("cmd", 'rd /s /q "{root}" 2>nul', "workspace-folder-delete"),
         ("cmd", 'cd /d "{root}" && del /s /q *.*', "workspace-folder-wipe"),
         ("cmd", 'del /q "{root}"', "workspace-folder-wipe"),
         ("cmd", 'erase /q "*.*"', "workspace-folder-wipe"),
@@ -83,6 +93,8 @@ def test_protected_workspace_deletions(bound_roots, dialect, command, violation)
     "dialect,command",
     [
         ("bash", "rm -r src"),
+        ("bash", "rm -r src > ."),
+        ("bash", "rmdir -p src/cache"),
         ("bash", "rm .keep"),
         ("bash", "rm -r src || rm .keep"),
         ("bash", "rm src; rm .keep"),
@@ -95,6 +107,9 @@ def test_protected_workspace_deletions(bound_roots, dialect, command, violation)
         ("bash", "printf '%s' text # note; rm -r ."),
         ("powershell", "Remove-Item -LiteralPath '*' -Recurse"),
         ("powershell", "Remove-Item -Path . -Recurse -WhatIf"),
+        ("powershell", "Remove-Item -Path . -Recurse -WhatIf:$true"),
+        ("powershell", "Remove-Item -Recurse src *> 'log.txt'"),
+        ("powershell", "<# note\nRemove-Item -Recurse .\n#>\nWrite-Output normal"),
         ("powershell", "Remove-Item -Path '*' -Filter '*.tmp'"),
         ("powershell", "Get-ChildItem -Filter '*.tmp' | Remove-Item -Recurse"),
         ("powershell", "Write-Output 'text; Remove-Item -Recurse .; more text'"),
@@ -169,14 +184,15 @@ def test_link_traversal_protects_binding_but_unlinking_alias_is_allowed(
     assert workspace_deletion_violation("rm -r shortcut", **options) is None
 
 
-def test_windows_path_case_and_separators_resolve_to_binding(bound_roots):
+@pytest.mark.parametrize("suffix", ["", "."])
+def test_windows_path_alias_resolves_to_binding(bound_roots, suffix):
     if os.name != "nt":
         pytest.skip("Native Windows path semantics")
     root, _ = bound_roots
 
     assert (
         workspace_deletion_violation(
-            f'RD /S "{str(root).swapcase()}"',
+            f'RD /S "{str(root).swapcase()}{suffix}"',
             dialect="cmd",
             cwd=root.parent,
             protected_roots=bound_roots,
