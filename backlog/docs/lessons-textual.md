@@ -2613,3 +2613,37 @@ round that asked for a test of the new restore-mismatch copy found it.
 - A subclass handler that must replace the base's takes the event and calls
   `event.prevent_default()` first; that stops dispatch to base classes.
 - Pin dialog errors by their text, not their visibility.
+
+---
+
+## Cancelling a worker that `wait()`s on another worker cancels the awaited one too (PR #3441, 2026-11-08)
+
+**Incident.** Roleplay's mode switch (TASK-33910.39/.41/.43, PR #3441) ran
+the kind's read in the exclusive `personas-library-search` worker, which for
+Characters awaited the `roleplay-list-window` worker with `worker.wait()`.
+A second switch cancelled the first search worker, and the characters window
+worker, running in its own thread, was stopped with it. The follow-up
+report recorded this as "through `worker.wait()`, the characters window
+worker (its thread finishes, its result is discarded)", and a test pinned it.
+Nobody had asked for that coupling.
+
+**Cause, read from the installed source (Textual 8.2.8,
+`textual/worker.py`, `Worker.wait`).** After its state checks, `wait()` is
+a bare `await self._task`, in a `try` that catches `asyncio.CancelledError`,
+sets the awaited worker's state to `CANCELLED`, and then raises
+`WorkerCancelled`. Awaiting an `asyncio.Task` directly means that cancelling
+the awaiting task cancels the awaited one too, with no shield between them.
+So cancelling the outer worker cancels the inner, and the outer's own
+cancellation reaches its code as a `WorkerCancelled` exception, not a
+`CancelledError`.
+
+**What to do.**
+- Treat `await other_worker.wait()` as parent and child: cancelling the
+  waiter cancels the awaited worker. If the two must have independent
+  lifetimes, do not wait on the worker. Await a future or an event it sets,
+  or `asyncio.shield` the task.
+- Do not catch `WorkerCancelled` around a `wait()` as if only the inner
+  worker had been cancelled. It also fires when the waiter itself is being
+  cancelled.
+- A test that two switches in a row stop the first read should assert the
+  awaited worker's state, not only the outer one's.
