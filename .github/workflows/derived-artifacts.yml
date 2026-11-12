@@ -1389,8 +1389,9 @@ jobs:
       # (Persona_Buddy/library.py, migrate_legacy_selection). TASK-39119's
       # wake and goal-iteration reply pins follow, by node: the three fleet-wake
       # nodes are private-profile tests (each body runs in its own child
-      # process) and the goal-dispatch file is bootstrap_profile; the four
-      # other fleet-wake nodes stay in pr-fast-lane. Last, the goal recovery file
+      # process); the four other fleet-wake nodes stay in pr-fast-lane.
+      # TASK-39168 runs the goal-dispatch file whole (bootstrap_profile) in
+      # place of its three reply-pin nodes. Then the goal recovery file
       # (bootstrap_profile, 4 tests), which runs on no other lane. TASK-39149's
       # two Trace export credential nodes (pure, no config read, ~5 s serial)
       # follow the sandboxed prompt suites, before the bootstrap_profile ones.
@@ -1399,7 +1400,8 @@ jobs:
       # reads config in-process, so it runs before any bootstrap suite); the
       # Console files of TASK-39154 (rewind/summarize, per-session run state),
       # TASK-39164 (edit-and-resend, regenerate branching) and TASK-40097's
-      # controller node are bootstrap_profile and go last.
+      # controller node are bootstrap_profile and follow the goal recovery file.
+      # Last, TASK-39163's automatic Library preparation file (bootstrap_profile).
       - name: Run the recovered suites
         run: |
           pytest \
@@ -1426,15 +1428,14 @@ jobs:
             Tests/Chat/test_console_fleet_wake.py::test_a_wake_takes_no_mixin_anchor_from_an_earlier_unsaved_user_row \
             Tests/Chat/test_console_fleet_wake.py::test_a_failed_wake_reply_is_saved_as_failed \
             Tests/Chat/test_console_fleet_wake.py::test_a_wake_reply_is_the_durable_active_leaf \
-            Tests/Chat/test_console_goal_dispatch.py::test_a_goal_iteration_takes_no_mixin_anchor_from_an_unsaved_earlier_turn \
-            Tests/Chat/test_console_goal_dispatch.py::test_a_failed_goal_iteration_reply_is_saved_as_failed \
-            Tests/Chat/test_console_goal_dispatch.py::test_a_goal_iteration_reply_is_the_durable_active_leaf \
+            Tests/Chat/test_console_goal_dispatch.py \
             Tests/Chat/test_console_goal_recovery.py \
             Tests/Chat/test_console_rewind_summarize.py \
             Tests/Chat/test_console_run_state_per_session.py \
             Tests/Chat/test_console_edit_resend.py \
             Tests/Chat/test_console_regenerate_branching.py \
             Tests/Chat/test_console_chat_controller.py::test_review_hook_gives_a_mutating_builtin_the_mutation_effect \
+            Tests/Chat/test_console_automatic_library_preparation.py \
             --storage-lease-guard \
             --timeout=180 \
             --tb=short

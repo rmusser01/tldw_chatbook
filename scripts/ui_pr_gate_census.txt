@@ -2871,3 +2871,8 @@ Tests/UI/test_destination_visual_parity_correction.py::test_watchlists_populated
 Tests/UI/test_destination_visual_parity_correction.py::test_watchlists_overview_cards_paint_their_labels_and_numbers
 # TASK-39170 review r13c-rev1: the Collections action node, now that its shell wait outlasts a loaded mount (10 of 10 at load 42-53).
 Tests/UI/test_destination_visual_parity_correction.py::test_library_source_browser_collections_action_switches_to_collections_mode
+# TASK-39171 (2026-11-10): the 80x24 theme-row status line stays on screen
+# under the list, and a Try-then-clean category switch restores the theme
+# (it now waits out the Appearance pane swap). Serial 19-39 s and 31-46 s.
+Tests/UI/test_settings_theme_picker_screen.py::test_highlighted_launch_and_override_status_is_on_screen[size0]
+Tests/UI/test_settings_theme_picker_screen.py::test_try_then_clean_category_switch_restores_the_pre_editor_theme

@@ -15,9 +15,12 @@ config's mapping before any IO.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import re
 import sys
+import threading
 
 import pytest
 
@@ -206,3 +209,100 @@ async def test_a_history_opened_after_a_reload_binds_the_live_path(
     assert await reopened.append("after the edit")
     assert _inputs(reopened) == ["after the edit"]
     assert _inputs(history) == ["first prompt"]
+
+
+@contextlib.asynccontextmanager
+async def _config_rebuild_held(config):
+    """Hold a config rebuild; ``blocked`` is set (and the hold ends) if the loop stalls.
+
+    A loop that runs no posted callback for 5 s is waiting, not slow. Yields
+    ``(blocked, release)``; the caller sets ``release`` to end the hold.
+    """
+    loop = asyncio.get_running_loop()
+    held, release = threading.Event(), threading.Event()
+    blocked, done = threading.Event(), threading.Event()
+
+    def hold_rebuild():
+        with config._settings_rebuild_lock():
+            config._invalidate_config_caches()
+            held.set()
+            release.wait(30)
+
+    def watch_loop():
+        while not done.is_set():
+            ran = threading.Event()
+            loop.call_soon_threadsafe(ran.set)
+            if not ran.wait(5):
+                blocked.set()
+                release.set()
+                return
+            done.wait(0.05)
+
+    holder = threading.Thread(target=hold_rebuild)
+    watcher = threading.Thread(target=watch_loop)
+    holder.start()
+    try:
+        assert held.wait(10), "the holder never took the rebuild lock"
+        watcher.start()
+        yield blocked, release
+    finally:
+        done.set()
+        release.set()
+        holder.join(10)
+        if watcher.ident is not None:
+            watcher.join(10)
+
+
+@pytest.mark.asyncio
+async def test_a_load_during_a_config_rebuild_never_waits_on_the_ui_loop(
+    local_root, monkeypatch
+):
+    """TASK-39166: the Console composer warm-loads its history on the UI loop.
+
+    A rebuild that held config dropped the kept path, so the load's file job
+    resolved it again on the loop, through ``get_user_data_dir()``, and the
+    loop waited for the rebuild's lock. The resolution now runs on a worker
+    thread first. Red before: the loop ran no callback until the hold ended.
+    """
+    config = install_config_source(monkeypatch)
+    history = PromptHistory(prompt_history.default_prompt_history_path())
+    async with _config_rebuild_held(config) as (blocked, release):
+        load = asyncio.create_task(history.load())
+        await asyncio.sleep(0.2)  # the load starts while the rebuild holds config
+        assert not blocked.is_set(), (
+            "the history load waited on the UI loop for the config rebuild"
+        )
+        release.set()
+        await asyncio.wait_for(load, 30)
+    assert history.persistence_error is None, history.persistence_error
+
+
+@pytest.mark.asyncio
+async def test_a_history_first_built_during_a_config_rebuild_never_waits(
+    local_root, monkeypatch
+):
+    """TASK-39166 review: the Console's shared history is built on the UI loop.
+
+    ``ConsoleRuntime.ensure_prompt_history`` built it with
+    ``PromptHistory(default_prompt_history_path())``, so a first build while a
+    rebuild held config waited there too. The history now takes its default
+    path lazily and resolves it off the loop on first use. Red before: the
+    loop ran no callback until the hold ended.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    config = install_config_source(monkeypatch)
+    owner = SimpleNamespace(_prompt_history=None, _app=SimpleNamespace())
+    async with _config_rebuild_held(config) as (blocked, release):
+        history = ConsoleRuntime.ensure_prompt_history(owner)
+        load = asyncio.create_task(history.load())
+        await asyncio.sleep(0.2)  # the load starts while the rebuild holds config
+        assert not blocked.is_set(), (
+            "building and loading the history waited on the UI loop for the rebuild"
+        )
+        release.set()
+        await asyncio.wait_for(load, 30)
+    assert history.persistence_error is None, history.persistence_error
+    assert history.path == config.get_user_data_dir() / "prompt_history.jsonl"

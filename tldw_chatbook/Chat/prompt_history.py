@@ -83,6 +83,24 @@ def _same_inputs(kept: tuple, current: tuple) -> bool:
     return kept[0] is current[0] and kept[1] is current[1] and kept[2:] == current[2:]
 
 
+async def _resolve_default_path_off_loop() -> None:
+    """Keep the default path resolved before a file job resolves it on the loop.
+
+    TASK-39166: a file job's source selection calls
+    ``default_prompt_history_path()`` on the UI loop. When the kept path is
+    stale (a config rebuild dropped the cache), that ran ``get_user_data_dir()``
+    there, and the loop waited for the rebuild's lock. The resolution runs on a
+    worker thread instead. A resolution whose inputs moved under it is not
+    kept, so it is retried, at most three times; after that the caller's own
+    resolution on the loop runs as before.
+    """
+    for _ in range(3):
+        memo = _DEFAULT_PATH_MEMO
+        if memo is not None and _same_inputs(memo[0], _default_path_inputs()):
+            return
+        await asyncio.to_thread(default_prompt_history_path)
+
+
 def default_prompt_history_path() -> Path:
     """Return the default per-user prompt history file path.
 
@@ -137,15 +155,18 @@ class PromptHistory:
     """Manages a JSONL prompt-history file with async IO and draft stashing."""
 
     def __init__(
-        self, path: Path | str, max_entries: int = DEFAULT_MAX_ENTRIES
+        self, path: Path | str | None = None, max_entries: int = DEFAULT_MAX_ENTRIES
     ) -> None:
         """Initialize the history store.
 
         Args:
             path: Path of the JSONL history file (created on first write).
+                None means the default per-user file, resolved off the UI loop
+                on first use (TASK-39166): a build on the loop during a config
+                rebuild would wait for it.
             max_entries: Cap on stored entries; the most recent entries win.
         """
-        self.path = lexical_path(path)
+        self.path = lexical_path(path) if path is not None else None
         self.max_entries = max_entries
         self._entries: list[HistoryEntry] = []
         self._current: str | None = None
@@ -274,10 +295,18 @@ class PromptHistory:
                 if rewrite:
                     raw.remove_temporary(operation, destination)
 
+    async def _file_job(self) -> FileJob:
+        # Only the exact class is checked against the default path (TASK-39166).
+        if type(self) is PromptHistory or self.path is None:
+            await _resolve_default_path_off_loop()
+        if self.path is None:
+            self.path = lexical_path(default_prompt_history_path())
+        return FileJob(self, "prompt_history")
+
     async def _load_locked(self) -> None:
         if self._loaded:
             return
-        with FileJob(self, "prompt_history") as job:
+        with await self._file_job() as job:
             outcome = await job.run(None)
             if outcome.error is None:
                 self._entries = outcome.value[-self.max_entries :]
@@ -322,7 +351,7 @@ class PromptHistory:
             return False
         try:
             await self._load_locked()
-            with FileJob(self, "prompt_history") as job:
+            with await self._file_job() as job:
                 if self._entries and self._entries[-1]["input"] == text:
                     return False
                 draft_revision = self._draft_revision

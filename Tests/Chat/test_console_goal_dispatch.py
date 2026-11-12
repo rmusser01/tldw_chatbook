@@ -12,6 +12,7 @@ from Tests.Chat.test_goal_conversation_provisioning import stores as _stores_fix
 
 stores = _stores_fixture
 from Tests.Chat.test_automatic_provider_budget import resolution, response
+from Tests.console_provider_doubles import until_provider_starts
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -302,7 +303,9 @@ async def test_cancellation_during_preparation_retains_primary_until_own_cleanup
     controller._apply_skill_substitution = blocked
     task = asyncio.create_task(coordinator.dispatch_once(goal.id))
     try:
-        await asyncio.wait_for(entered.wait(), 2)
+        # TASK-39168 follow-up: the preparation hold's start, or the dispatch's
+        # end naming its result -- not a 2 s clock.
+        await until_provider_starts(entered, task)
         task.cancel()
         await asyncio.sleep(0.02)
         assert not task.done()
@@ -342,21 +345,24 @@ async def test_both_coordinators_wait_for_one_runtime_audit(stores, monkeypatch)
     goal, _store, _session, controller, coordinator, gateway, calls = build_goal_rig(
         stores, monkeypatch
     )
-    entered, release = threading.Event(), threading.Event()
+    loop = asyncio.get_running_loop()
+    entered, release = asyncio.Event(), threading.Event()
     recover = stores[0].automatic_work.recover
     audits = []
 
     def delayed(**kwargs):
+        # TASK-39168 follow-up: no clock bound that could let the audit finish
+        # early under load; the test's finally releases it.
         audits.append(kwargs["current_owner_id"])
-        entered.set()
-        release.wait(3)
+        loop.call_soon_threadsafe(entered.set)
+        release.wait()
         return recover(**kwargs)
 
     monkeypatch.setattr(stores[0].automatic_work, "recover", delayed)
     controller.fleet_wake.start_recovery()
     task = asyncio.create_task(coordinator.dispatch_once(goal.id))
     try:
-        assert await asyncio.to_thread(entered.wait, 2)
+        await until_provider_starts(entered, task)
         await asyncio.sleep(0.02)
         assert calls == [] and not task.done()
         release.set()
@@ -499,11 +505,17 @@ async def test_repeated_start_cannot_reprovision_an_accepted_attempt(
     import asyncio
     import threading
 
-    entered, release = threading.Event(), threading.Event()
+    loop = asyncio.get_running_loop()
+    entered, release, starts = asyncio.Event(), threading.Event(), []
 
     def provider(**kwargs):
-        entered.set()
-        assert release.wait(3)
+        # TASK-39168: no clock bound to fail a passing run. Only the first call
+        # holds (the test's finally releases it), so a regression that calls
+        # the provider again fails on its assertion instead of hanging.
+        starts.append(kwargs)
+        loop.call_soon_threadsafe(entered.set)
+        if len(starts) == 1:
+            release.wait()
         return response()
 
     goal, _store, _session, _controller, coordinator, gateway, _calls = build_goal_rig(
@@ -511,7 +523,7 @@ async def test_repeated_start_cannot_reprovision_an_accepted_attempt(
     )
     task = asyncio.create_task(coordinator.dispatch_once(goal.id))
     try:
-        assert await asyncio.to_thread(entered.wait, 3)
+        await until_provider_starts(entered, task)
         monkeypatch.setattr(
             coordinator.service.persistence,
             "provision_goal_conversation",
@@ -536,11 +548,17 @@ async def test_goal_authorization_cannot_be_forged_or_moved_to_another_session(
 
     from tldw_chatbook.Chat.console_chat_models import ConsoleSubmissionOrigin
 
-    entered, release = threading.Event(), threading.Event()
+    loop = asyncio.get_running_loop()
+    entered, release, starts = asyncio.Event(), threading.Event(), []
 
     def provider(**kwargs):
-        entered.set()
-        assert release.wait(3)
+        # TASK-39168: no clock bound to fail a passing run. Only the first call
+        # holds (the test's finally releases it), so a regression that calls
+        # the provider again fails on its assertion instead of hanging.
+        starts.append(kwargs)
+        loop.call_soon_threadsafe(entered.set)
+        if len(starts) == 1:
+            release.wait()
         return response()
 
     goal, store, session, controller, coordinator, gateway, calls = build_goal_rig(
@@ -557,7 +575,7 @@ async def test_goal_authorization_cannot_be_forged_or_moved_to_another_session(
         assert calls == []
         task = asyncio.create_task(coordinator.dispatch_once(goal.id))
         try:
-            assert await asyncio.to_thread(entered.wait, 3)
+            await until_provider_starts(entered, task)
             other = store.create_session(workspace_id="workspace")
             other.persisted_conversation_id = goal.conversation_id
             blocked = await controller.submit_draft("manual alias", session_id=other.id)

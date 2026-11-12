@@ -1,11 +1,11 @@
 ---
 id: TASK-38977
 title: "Console prompts-modal and response-rule run-copy tests pin superseded copy and a stale gateway call, so they are red on dev"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:42
-updated_date: 2026-11-07 22:31
+updated_date: 2026-11-10 21:03
 labels:
 - follow-up
 - tests
@@ -52,7 +52,7 @@ TASK-38536, TASK-38747 and TASK-38703 recorded some of these as pre-existing. No
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The five nodes pass 3 of 3 runs alone, and both files pass 3 of 3 whole-file runs at -n 4 on dev (red before: 5 of 5, and 4 failed with 121 passed for the prompts file)
+- [x] #1 The five nodes pass 3 of 3 runs alone, and both files pass 3 of 3 whole-file runs at -n 4 on dev (red before: 5 of 5, and 4 failed with 121 passed for the prompts file)
 - [x] #2 Each updated pin still fails under a temporary edit that breaks what it pins (an unavailable result without source-unavailable copy; a recipe fill that never reaches the gateway; active-run copy losing priority to an earlier rule verdict), with the red runs recorded
 - [x] #3 If complete_auxiliary's call shape changes again, the recipe tests fail naming the call mismatch rather than reading it as a generic provider_error
 - [x] #4 The five nodes join the UI census with their measured serial times, and their shard stays at least 5 minutes under its cap
@@ -99,4 +99,14 @@ They failed 1-6 per run, plus `test_compact_recipe_working_copy_scrolls_to_the_b
 **Lane (AC#4).** The five nodes are appended at the UI census tail, one entry per test (0.6-9.1 s each serially at load about 27; 13-17 s for all five). They land on shards 18-22 at the current census length. The slowest of the last 12 PR runs on those shards was 14.15, 14.4, 13.72, 13.95 and 13.25 min (collected 2026-11-07 06:05Z), so each stays more than 5 min under the 20-min cap.
 
 **Files.** `Tests/UI/test_console_prompts_modal.py`, `Tests/UI/test_console_response_rules.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`.
+
+**Round 13 re-check of AC#1 (2026-11-10, branch fu/r13-load after TASK-39165 and TASK-39166).** The coordinator's run on dev ae9f9e8d21 at load 9-13: the five nodes 3 of 3; both files whole 2 of 3, the one failure `test_console_syncs_never_wait_for_a_config_rebuild[full-ui-held]` ("waited 2.417s for the config rebuild"), which TASK-39166 has since replaced with a loop-liveness watch. Here, both files in one `-n 4` invocation, ten runs at load 36-47: 4 passed; the five nodes passed in all ten. The failures:
+- `test_console_mount_refreshes_never_wait_for_a_config_rebuild[roleplay]`, 4 runs: the UI thread waiting on the config rebuild in `PromptHistory.load` (a product wait; TASK-39166's notes);
+- `test_rule_phase_events_project_only_the_mounted_current_session[rebuild]`, 1 run: a UI-thread `load_settings()` through `_provider_readiness_app_config` during the hold;
+- `test_actual_stop_after_generation_cancels_rule_check`, 3 runs (the first three, none since), message not captured;
+- `test_preservation_veto_retains_candidate_in_review_and_tamper_blocks_apply`, 1 run, message not captured.
+
+AC#1 stays unticked: the whole files did not pass 3 of 3, and two of the failures are product waits that TASK-39166 left for a ruling.
+
+**AC#1 met (2026-11-10, fu/r13-load after TASK-39166's round 2).** Both files in one `-n 4` invocation, three runs: 150 passed each, at load 41-52 (198 s, 251 s, 246 s). With the coordinator's run on dev ae9f9e8d21 at load 9-13 (the five nodes 3 of 3; whole files 2 of 3, failing only `[full-ui-held]`, since replaced) and the round-13 runs above (the five nodes passed in every run), the five nodes and both whole files now pass 3 of 3.
 <!-- SECTION:NOTES:END -->

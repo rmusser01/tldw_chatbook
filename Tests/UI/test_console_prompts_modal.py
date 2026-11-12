@@ -167,6 +167,45 @@ async def _recipe_fill_settled(modal: Any) -> None:
     assert await until(settled, 15), "the recipe fill never finished"
 
 
+async def _recipe_editor_mounted(root: Any) -> Any:
+    """Return the block editor once both lanes' block cards are mounted.
+
+    TASK-39165: each lane's cards compose inside its Collapsible, one pump
+    after the editor itself mounts, so a mounted editor can still lack them.
+    """
+    editor = await _mounted(root, "#console-prompts-editor", PromptBlockEditor)
+    for lane in ("system", "user"):
+        await _mounted(editor, f"#prompt-lane-add-{lane}")
+    return editor
+
+
+async def _editor_change_reached_modal(modal: Any, editor: Any) -> None:
+    """Wait until the modal holds the block editor's current state.
+
+    TASK-39165: each block edit reaches the modal as a posted message, and
+    Fill with AI reads the modal's copy; a Fill pressed before that message
+    lands snapshots the previous definition.
+    """
+    assert await until(lambda: modal._editor_state is editor.state, 10), (
+        "the block editor's change never reached the modal"
+    )
+
+
+async def _guard_offers_keep_editing(modal: Any, what: str) -> Any:
+    """Return the dirty guard once it shows with Keep editing focused.
+
+    TASK-39165: the guard shows at once but focuses Keep editing after a
+    refresh, so one ``pilot.pause()`` could read the old focus.
+    """
+    guard = modal.query_one("#console-prompts-dirty-guard")
+    assert await until(
+        lambda: guard.display
+        and getattr(modal.app.focused, "id", None) == "console-prompts-keep-editing",
+        10,
+    ), what
+    return guard
+
+
 def _choose_save_action(root: Any, action: str) -> None:
     """Choose one currently offered action from the editor's Save menu."""
     menu = root.query_one("#prompt-editor-save-menu", Select)
@@ -582,11 +621,16 @@ async def test_improve_and_back_preserve_browse_state_and_focus() -> None:
         )
         modal.query_one("#console-prompts-search", Input).focus()
         modal.query_one("#console-prompts-improve", Button).press()
-        await pilot.pause()
+        assert await until(lambda: modal.state.mode == "improve", 10), (
+            "Improve never opened"
+        )
         assert modal.state.mode == "improve"
 
-        modal.query_one("#console-prompts-back", Button).press()
-        await pilot.pause()
+        (await _mounted(modal, "#console-prompts-back")).press()
+        # Back remounts Browse, then restores focus after a refresh.
+        assert await until(
+            lambda: getattr(app.focused, "id", None) == "console-prompts-search", 10
+        ), f"Back never restored Browse focus: {modal.state.mode!r}"
 
         assert modal.state.mode == "browse"
         assert modal.state.query == "kept query"
@@ -619,7 +663,9 @@ async def test_empty_query_paginates_and_nonempty_query_uses_backend_search() ->
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         app.screen.query_one("#console-prompts-next", Button).press()
-        await pilot.pause()
+        assert await until(lambda: len(backend.list_calls) == 2, 10), (
+            f"Next never loaded a page: {backend.list_calls!r}"
+        )
         assert backend.list_calls[-1] == ("local", 2)
 
         search = app.screen.query_one("#console-prompts-search", Input)
@@ -710,8 +756,11 @@ async def test_no_matches_retry_and_source_unavailable_are_explicit() -> None:
         assert "Search failed" in str(status.renderable)
 
         backend.search_error = None
+        searches = len(backend.search_calls)
         app.screen.query_one("#console-prompts-retry", Button).press()
-        await pilot.pause()
+        assert await until(lambda: len(backend.search_calls) > searches, 10), (
+            "Retry never searched again"
+        )
         assert backend.search_calls[-1] == ("local", "missing")
 
         backend.list_error = ValueError("Server prompt backend is unavailable.")
@@ -736,6 +785,10 @@ async def test_selected_row_deleted_before_detail_fetch_stays_in_browse() -> Non
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         app.screen.query_one("#console-prompts-result-prompt-1", Button).press()
+        # The refused detail fetch reports in the same step as its call.
+        assert await until(lambda: backend.detail_calls, 10), (
+            "the row press never fetched its detail"
+        )
         await pilot.pause()
 
         assert app.screen.state.mode == "browse"
@@ -783,14 +836,13 @@ async def test_normalized_browse_detail_and_update_use_source_id_not_composite_i
         assert composite_id.encode("utf-8").hex() in result_button.id
 
         result_button.press()
-        await pilot.pause()
+        await _mounted(app.screen, "#prompt-editor-save-menu", Select)
 
         assert backend.detail_calls == [("local", source_id)]
         assert app.screen.state.selected_identity == source_id
 
         _choose_save_action(app.screen, "update")
-        await pilot.pause()
-        await pilot.pause()
+        assert await until(lambda: backend.save_calls, 10), "Update never saved"
 
     assert backend.save_calls[-1]["prompt_identifier"] == source_id
 
@@ -860,23 +912,22 @@ async def test_real_normalized_local_prompt_round_trip_opens_updates_and_uses_so
             assert row["source_id"] == prompt_uuid
 
             app.screen.query_one(".console-prompts-result", Button).press()
-            await pilot.pause()
-            await pilot.pause()
+            await _mounted(app.screen, "#prompt-editor-save-menu", Select)
 
             assert app.screen.state.mode == "edit"
             assert app.screen.state.selected_identity == prompt_uuid
             assert backend.detail_calls == [("local", prompt_uuid)]
 
             _choose_save_action(app.screen, "update")
-            await pilot.pause()
-            await pilot.pause()
+            assert await until(lambda: backend.save_calls, 10), "Update never saved"
 
             assert backend.save_calls[-1]["prompt_identifier"] == prompt_uuid
             assert app.screen.state.selected_identity == prompt_uuid
 
             app.screen.query_one("#prompt-editor-apply", Button).press()
-            await pilot.pause()
-            await pilot.pause()
+            assert await until(lambda: len(guarded_identities) >= 2, 10), (
+                f"Apply never finished its guarded apply: {guarded_identities!r}"
+            )
 
         assert guarded_identities == [
             (prompt_uuid, prompt_uuid),
@@ -1251,13 +1302,11 @@ async def _open_dirty_prompt_mode(
         await modal.open_artifact("prompt-1")
     else:
         await modal.enter_mode("improve")
-        modal.query_one("#console-prompts-structured-recipe", Button).press()
-        await pilot.pause()
-        modal.query_one("#console-prompts-recipe-outcome-first", Button).press()
-    await pilot.pause()
-    editor = modal.query_one("#prompt-block-content-role", TextArea)
+        (await _mounted(modal, "#console-prompts-structured-recipe")).press()
+        (await _mounted(modal, "#console-prompts-recipe-outcome-first")).press()
+    editor = await _mounted(modal, "#prompt-block-content-role", TextArea)
     editor.focus()
-    await pilot.pause()
+    assert await until(lambda: editor.has_focus, 10), "the editor never took focus"
     modal.mark_dirty()
     return editor
 
@@ -1278,9 +1327,10 @@ async def test_prompts_dirty_dismissal_reveals_guard(
         await _open_dirty_prompt_mode(modal, pilot, mode)
 
         await _dismissal_gesture(pilot, gesture)
-        await pilot.pause()
+        guard = await _guard_offers_keep_editing(
+            modal, f"{gesture} never revealed the guarded Keep editing"
+        )
 
-        guard = modal.query_one("#console-prompts-dirty-guard")
         assert app.screen is modal
         assert guard.display is True
         assert modal.state.mode == mode
@@ -1303,12 +1353,19 @@ async def test_prompts_guard_visible_cannot_be_bypassed(
         modal = app.screen
         editor = await _open_dirty_prompt_mode(modal, pilot, mode)
         await pilot.press("escape")
-        await pilot.pause()
-        guard = modal.query_one("#console-prompts-dirty-guard")
+        guard = await _guard_offers_keep_editing(
+            modal, "Escape never revealed the guarded Keep editing"
+        )
         assert guard.display is True
 
         await _dismissal_gesture(pilot, gesture)
-        await pilot.pause()
+        if gesture == "escape":
+            # Keep editing hides the guard, then refocuses the editor.
+            assert await until(
+                lambda: not guard.display and app.focused is editor, 10
+            ), "the second Escape never returned to the editor"
+        else:
+            await pilot.pause()
 
         assert app.screen is modal
         assert app.results == []
@@ -1334,8 +1391,9 @@ async def test_prompts_repeated_visible_close_preserves_guard_editor_focus(
         editor = await _open_dirty_prompt_mode(modal, pilot, mode)
         close = modal.query_one("#console-prompts-close", Button)
         close.press()
-        await pilot.pause()
-        guard = modal.query_one("#console-prompts-dirty-guard")
+        guard = await _guard_offers_keep_editing(
+            modal, "Close never revealed the guarded Keep editing"
+        )
         assert guard.display is True
         assert getattr(app.focused, "id", None) == "console-prompts-keep-editing"
 
@@ -1346,7 +1404,9 @@ async def test_prompts_repeated_visible_close_preserves_guard_editor_focus(
         assert app.results == []
 
         await pilot.press("escape")
-        await pilot.pause()
+        assert await until(lambda: not guard.display and app.focused is editor, 10), (
+            "Escape never returned from the guard to the editor"
+        )
         assert guard.display is False
         assert app.focused is editor
         assert app.results == []
@@ -1371,17 +1431,20 @@ async def test_prompts_close_activation_restores_last_content_focus(
             await pilot.click("#console-prompts-close")
         else:
             close.focus()
-            await pilot.pause()
+            assert await until(lambda: close.has_focus, 10), "Close never took focus"
             await pilot.press("enter")
-        await pilot.pause()
+        guard = await _guard_offers_keep_editing(
+            modal, f"Close by {activation} never revealed the guarded Keep editing"
+        )
 
-        guard = modal.query_one("#console-prompts-dirty-guard")
         assert guard.display is True
         assert getattr(app.focused, "id", None) == "console-prompts-keep-editing"
         assert app.results == []
 
         await pilot.press("escape")
-        await pilot.pause()
+        assert await until(lambda: not guard.display and app.focused is editor, 10), (
+            "Escape never returned from the guard to the editor"
+        )
         assert guard.display is False
         assert app.focused is editor
         assert app.results == []
@@ -1450,7 +1513,10 @@ async def test_prompts_active_improvement_dismissal_cancels_once(
         focused_before = app.focused
 
         await _dismissal_gesture(pilot, gesture)
-        await pilot.pause()
+        # Escape cancels from a worker; wait for that, not one pause.
+        assert await until(lambda: modal._active_request_id is None, 10), (
+            f"{gesture} never cancelled the active improvement"
+        )
 
         assert app.screen is modal
         assert modal.state.mode == "improve"
@@ -1507,9 +1573,13 @@ async def test_prompts_cancelling_improvement_dismissal_stays_in_transaction(
         await wait_for_signal(started, what="the prompt improvement starting")
         cancel = modal.query_one("#console-prompts-improvement-cancel", Button)
         cancel.focus()
-        await pilot.pause()
+        assert await until(lambda: cancel.has_focus, 10), "Cancel never took focus"
         cancel.press()
-        await pilot.pause()
+        assert await until(
+            lambda: modal._improvement_worker is not None
+            and modal._improvement_worker.is_cancelled,
+            10,
+        ), "Cancel never cancelled the improvement worker"
         assert modal._improvement_worker is not None
         assert modal._improvement_worker.is_cancelled
         focused_before = app.focused
@@ -1975,11 +2045,15 @@ async def test_provider_unavailable_configure_action_is_focusable_and_injected()
         configure = modal.query_one("#console-prompts-configure-provider", Button)
         assert configure.disabled is False
         configure.focus()
-        await pilot.pause()
+        assert await until(lambda: app.focused is configure, 10), (
+            "Configure never took focus"
+        )
         assert app.focused is configure
 
         configure.press()
-        await pilot.pause()
+        assert await until(lambda: configure_calls, 10), (
+            "Configure never reached the host"
+        )
 
         assert configure_calls == [True]
         assert modal.state.mode == "browse"
@@ -2073,8 +2147,9 @@ async def test_recipe_chooser_explains_each_starting_point_before_selection() ->
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
         await app.screen.enter_mode("improve")
-        app.screen.query_one("#console-prompts-structured-recipe", Button).press()
-        await pilot.pause()
+        (await _mounted(app.screen, "#console-prompts-structured-recipe")).press()
+        # The Blank description mounts last in the chooser.
+        await _mounted(app.screen, "#console-prompts-recipe-blank-description", Static)
 
         assert str(
             app.screen.query_one(
@@ -2113,7 +2188,7 @@ async def test_recipe_chooser_explains_each_starting_point_before_selection() ->
         assert "Blank" in "".join(_rendered_lines(blank))
 
         outcome.press()
-        await pilot.pause()
+        await _recipe_editor_mounted(app.screen)
 
         for block_id in ("goal", "context-evidence", "constraints", "output"):
             assert app.screen.query_one(f"#prompt-block-{block_id}").display
@@ -2159,14 +2234,18 @@ async def test_recipe_save_confirms_library_destination_and_opens_saved_identity
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         await app.screen.enter_mode("improve")
-        app.screen.query_one("#console-prompts-structured-recipe", Button).press()
-        await pilot.pause()
-        app.screen.query_one("#console-prompts-recipe-outcome-first", Button).press()
-        await pilot.pause()
+        (await _mounted(app.screen, "#console-prompts-structured-recipe")).press()
+        (await _mounted(app.screen, "#console-prompts-recipe-outcome-first")).press()
+        await _mounted(app.screen, "#prompt-editor-save-menu", Select)
 
         _choose_save_action(app.screen, "recipe")
-        await pilot.pause()
-        await pilot.pause()
+        open_library = app.screen.query_one(
+            "#console-prompts-open-saved-recipe", Button
+        )
+        # The save ends by focusing Open Library after a refresh.
+        assert await until(lambda: open_library.has_focus, 10), (
+            f"the Recipe save never focused Open Library: {backend.save_calls!r}"
+        )
 
         assert len(backend.save_calls) == 1
         confirmation = app.screen.query_one(
@@ -2175,14 +2254,13 @@ async def test_recipe_save_confirms_library_destination_and_opens_saved_identity
         assert str(confirmation.renderable) == (
             "Reusable analysis saved to Library > Prompts as a Recipe."
         )
-        open_library = app.screen.query_one(
-            "#console-prompts-open-saved-recipe", Button
-        )
         assert open_library.display is True
         assert open_library.has_focus
 
         open_library.press()
-        await pilot.pause()
+        assert await until(lambda: app.results, 10), (
+            f"Open Library never closed the modal: opened={opened!r}"
+        )
 
     assert opened == [("local", "77")]
     assert app.results == [None]
@@ -2203,7 +2281,7 @@ async def test_recipe_saved_confirmation_disables_unsupported_library_target() -
         modal = app.screen
         await modal.enter_mode("recipe")
         modal.query_one("#console-prompts-recipe-outcome-first", Button).press()
-        await pilot.pause()
+        await _recipe_editor_mounted(modal)
         modal._show_recipe_saved_confirmation(
             {
                 "backend": "server",
@@ -2224,10 +2302,13 @@ async def test_recipe_saved_confirmation_disables_unsupported_library_target() -
 @pytest.mark.asyncio
 async def test_recipe_library_open_keeps_modal_when_navigation_declines() -> None:
     backend = _PromptBackend()
+    asked: list[tuple[str, str]] = []
     app = _Harness(
         backend,
         improvement_kwargs={
-            "open_library_prompt": lambda _source, _identity: False,
+            "open_library_prompt": lambda source, identity: (
+                asked.append((source, identity)) or False
+            ),
         },
     )
 
@@ -2236,7 +2317,7 @@ async def test_recipe_library_open_keeps_modal_when_navigation_declines() -> Non
         modal = app.screen
         await modal.enter_mode("recipe")
         modal.query_one("#console-prompts-recipe-outcome-first", Button).press()
-        await pilot.pause()
+        await _recipe_editor_mounted(modal)
         modal._show_recipe_saved_confirmation(
             {
                 "backend": "local",
@@ -2247,6 +2328,7 @@ async def test_recipe_library_open_keeps_modal_when_navigation_declines() -> Non
         await pilot.pause()
 
         modal.query_one("#console-prompts-open-saved-recipe", Button).press()
+        assert await until(lambda: asked, 10), "Open Library never asked the host"
         await pilot.pause()
 
         assert app.screen is modal
@@ -2275,19 +2357,20 @@ async def test_system_analysis_opt_out_survives_recipe_path_replacement() -> Non
         include_system.value = False
         await pilot.pause()
         app.screen.query_one("#console-prompts-auto-improve", Button).press()
-        await pilot.pause()
-        await pilot.pause()
+        await _recipe_fill_settled(app.screen)
 
         assert driver.requests[-1].system_prompt is None
         assert driver.requests[-1].system_fingerprint is None
 
-        app.screen.query_one("#console-prompts-structured-recipe", Button).press()
-        await pilot.pause()
-        app.screen.query_one("#console-prompts-recipe-outcome-first", Button).press()
-        await pilot.pause()
-        app.screen.query_one("#console-prompts-recipe-fill", Button).press()
-        await pilot.pause()
-        await pilot.pause()
+        (await _mounted(app.screen, "#console-prompts-structured-recipe")).press()
+        (await _mounted(app.screen, "#console-prompts-recipe-outcome-first")).press()
+        (await _mounted(app.screen, "#console-prompts-recipe-fill")).press()
+        # The auto improvement's finished worker would satisfy the settle
+        # check at once; the Fill's own request comes first.
+        assert await until(lambda: len(driver.requests) == 2, 10), (
+            "Fill with AI never captured its request"
+        )
+        await _recipe_fill_settled(app.screen)
 
         assert driver.requests[-1].mode == "recipe"
         assert driver.requests[-1].system_prompt is None
@@ -2348,20 +2431,19 @@ async def test_improvement_system_read_permission_is_request_only(
         elif mode == "review":
             app.screen.query_one("#console-prompts-review-improve", Button).press()
         else:
-            app.screen.query_one("#console-prompts-structured-recipe", Button).press()
-            await pilot.pause()
-            app.screen.query_one(
-                "#console-prompts-recipe-outcome-first", Button
+            (await _mounted(app.screen, "#console-prompts-structured-recipe")).press()
+            (
+                await _mounted(app.screen, "#console-prompts-recipe-outcome-first")
             ).press()
-            await pilot.pause()
+            # The editor mounts last in the same body as the recipe checkbox.
+            await _recipe_editor_mounted(app.screen)
             recipe_checkbox = app.screen.query_one(
                 "#console-prompts-include-system", Checkbox
             )
             assert recipe_checkbox.value is (system_case == "included")
             app.screen.query_one("#console-prompts-recipe-fill", Button).press()
 
-        await pilot.pause()
-        await pilot.pause()
+        await _recipe_fill_settled(app.screen)
 
         request = driver.requests[-1]
         assert request.mode == mode
@@ -2400,15 +2482,12 @@ async def test_recipe_editor_keeps_analysis_disclosure_bound_through_edits_and_f
         await pilot.pause()
         modal = app.screen
         await modal.enter_mode("improve")
-        modal.query_one("#console-prompts-structured-recipe", Button).press()
-        await pilot.pause()
-        await pilot.pause()
-        modal.query_one("#console-prompts-recipe-outcome-first", Button).press()
-        await pilot.pause()
+        (await _mounted(modal, "#console-prompts-structured-recipe")).press()
+        (await _mounted(modal, "#console-prompts-recipe-outcome-first")).press()
 
-        editor = modal.query_one(PromptBlockEditor)
+        editor = await _recipe_editor_mounted(modal)
         await editor._change_field("goal", "content", "Edited before Fill.")
-        await pilot.pause()
+        await _editor_change_reached_modal(modal, editor)
         edited_definition = modal.query_one(PromptBlockEditor).state.definition
         assert modal.state.dirty is True
 
@@ -2427,10 +2506,11 @@ async def test_recipe_editor_keeps_analysis_disclosure_bound_through_edits_and_f
         )
         assert modal.query_one("#prompt-editor-apply-system", Checkbox).value is False
 
-        analysis_context.value = not include_system
-        await pilot.pause()
-        analysis_context.value = include_system
-        await pilot.pause()
+        for value in (not include_system, include_system):
+            analysis_context.value = value
+            assert await until(
+                lambda value=value: modal._include_system_context is value, 10
+            ), f"the analysis permission change to {value} never reached the modal"
 
         assert modal._include_system_context is include_system
         assert modal.query_one(PromptBlockEditor).state.definition == edited_definition
@@ -2470,10 +2550,9 @@ async def test_compact_recipe_working_copy_scrolls_to_the_block_editor() -> None
         await pilot.pause()
         modal = app.screen
         await modal.enter_mode("improve")
-        modal.query_one("#console-prompts-structured-recipe", Button).press()
-        await pilot.pause()
-        modal.query_one("#console-prompts-recipe-outcome-first", Button).press()
-        await pilot.pause()
+        (await _mounted(modal, "#console-prompts-structured-recipe")).press()
+        (await _mounted(modal, "#console-prompts-recipe-outcome-first")).press()
+        await _recipe_editor_mounted(modal)
 
         scroll = modal.query_one("#console-prompts-recipe-scroll")
         scroll.scroll_end(animate=False)
@@ -2503,10 +2582,9 @@ async def test_recipe_retry_save_is_absent_from_compact_tab_order_until_failure(
         await pilot.pause()
         modal = app.screen
         await modal.enter_mode("improve")
-        modal.query_one("#console-prompts-structured-recipe", Button).press()
-        await pilot.pause()
-        modal.query_one("#console-prompts-recipe-outcome-first", Button).press()
-        await pilot.pause()
+        (await _mounted(modal, "#console-prompts-structured-recipe")).press()
+        (await _mounted(modal, "#console-prompts-recipe-outcome-first")).press()
+        await _recipe_editor_mounted(modal)
 
         retry = modal.query_one("#console-prompts-persistence-retry", Button)
         assert retry.display is False
@@ -2532,7 +2610,10 @@ async def test_recipe_retry_save_is_absent_from_compact_tab_order_until_failure(
             captured=captured,
         )
         await modal._coordinate_apply(result, captured)
-        await pilot.pause()
+        # The failed save shows Retry save, then focuses it after a refresh.
+        assert await until(lambda: app.focused is retry, 10), (
+            f"Retry save never took focus: focused={app.focused!r}"
+        )
 
         assert retry.display is True
         assert retry.disabled is False
@@ -2580,10 +2661,11 @@ async def test_held_improve_activation_navigation_cancels_and_ignores_late_resol
         modal = app.screen
         improve = modal.query_one("#console-prompts-improve", Button)
         improve.press()
-        await pilot.pause()
-        modal.query_one("#console-prompts-review-improve", Button).press()
+        (await _mounted(modal, "#console-prompts-review-improve")).press()
         await wait_for_signal(started, what="the held improvement activation starting")
         await asyncio.sleep(0.05)
+        activation = modal._activation_worker
+        assert activation is not None
 
         if navigation == "close":
             modal.query_one("#console-prompts-close", Button).press()
@@ -2591,11 +2673,17 @@ async def test_held_improve_activation_navigation_cancels_and_ignores_late_resol
             modal.query_one("#console-prompts-back", Button).press()
         else:
             modal.action_back()
-        await asyncio.sleep(0.05)
+        # Every navigation cancels the held activation first, in the same step
+        # that dismisses (close) or goes back (back, escape).
+        assert await until(lambda: modal._active_activation_id is None, 10), (
+            f"{navigation} never cancelled the held activation"
+        )
         dismissed_while_held = app.screen is not modal
 
         release.set()
-        await pilot.pause()
+        assert await until(lambda: activation.is_finished, 10), (
+            "the late activation resolution was never handled"
+        )
         await pilot.pause()
 
         assert dismissed_while_held is (navigation == "close")
@@ -2629,13 +2717,15 @@ async def test_held_improve_activation_disables_duplicate_resolution() -> None:
         modal = app.screen
         improve = modal.query_one("#console-prompts-improve", Button)
         improve.press()
-        await pilot.pause()
+        # Structured mounts last in the Improve path picker.
+        structured = await _mounted(modal, "#console-prompts-structured-recipe")
         auto = modal.query_one("#console-prompts-auto-improve", Button)
         review = modal.query_one("#console-prompts-review-improve", Button)
-        structured = modal.query_one("#console-prompts-structured-recipe", Button)
         auto.press()
         await wait_for_signal(started, what="the held improvement activation starting")
         await asyncio.sleep(0.05)
+        activation = modal._activation_worker
+        assert activation is not None
 
         disabled_while_held = all(
             button.disabled for button in (auto, review, structured)
@@ -2648,7 +2738,9 @@ async def test_held_improve_activation_disables_duplicate_resolution() -> None:
         calls_while_held = activation_calls
 
         release.set()
-        await pilot.pause()
+        assert await until(lambda: activation.is_finished, 10), (
+            "the held activation never finished after release"
+        )
         await pilot.pause()
 
         assert disabled_while_held is True
@@ -2681,10 +2773,13 @@ async def test_stale_opening_context_does_not_offer_provider_recovery() -> None:
         await pilot.pause()
         modal = app.screen
         modal.query_one("#console-prompts-improve", Button).press()
-        await pilot.pause()
-        modal.query_one("#console-prompts-review-improve", Button).press()
-        await pilot.pause()
-        await pilot.pause()
+        (await _mounted(modal, "#console-prompts-review-improve")).press()
+        # The refused activation remounts Improve, then focuses Structured.
+        assert await until(
+            lambda: getattr(app.focused, "id", None)
+            == "console-prompts-structured-recipe",
+            10,
+        ), "the refused activation never returned focus to Structured"
 
         status = modal.query_one("#console-prompts-improvement-status", Static)
         assert str(status.renderable) == "The Console System prompt changed."
@@ -2745,11 +2840,11 @@ async def test_auto_success_returns_one_apply_transaction_and_closes() -> None:
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        app.screen.query_one("#console-prompts-improve", Button).press()
-        await pilot.pause()
-        app.screen.query_one("#console-prompts-auto-improve", Button).press()
-        await pilot.pause()
-        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#console-prompts-improve", Button).press()
+        (await _mounted(modal, "#console-prompts-auto-improve")).press()
+        # Auto success applies inside the improvement worker.
+        await _recipe_fill_settled(modal)
 
         assert len(driver.applies) == 1
         result, captured = driver.applies[0]
@@ -2773,8 +2868,7 @@ async def test_no_change_keeps_modal_open_without_apply_or_new_usage() -> None:
         await pilot.pause()
         await app.screen.enter_mode("improve")
         app.screen.query_one("#console-prompts-auto-improve", Button).press()
-        await pilot.pause()
-        await pilot.pause()
+        await _recipe_fill_settled(app.screen)
 
         assert app.screen.state.mode == "improve"
         assert (
@@ -2827,13 +2921,7 @@ async def test_active_improvement_disables_duplicate_model_launches() -> None:
         assert improve_calls == ["prompt-improvement-1"]
 
         release.set()
-        for _ in range(20):
-            await pilot.pause()
-            if (
-                app.screen._active_activation_id is None
-                and app.screen._active_request_id is None
-            ):
-                break
+        await _recipe_fill_settled(app.screen)
         assert auto.disabled is False
         assert review.disabled is False
 
@@ -2881,12 +2969,15 @@ async def test_apply_transaction_blocks_every_close_path_until_commit_finishes(
             else "#console-prompts-review-improve",
             Button,
         ).press()
-        await pilot.pause()
-        await pilot.pause()
         if mode == "review":
-            modal.query_one("#console-prompts-review-apply", Button).press()
+            (await _mounted(modal, "#console-prompts-review-apply")).press()
         await wait_for_signal(started, what=f"the {mode} apply commit starting")
-        await pilot.pause()
+        # The commit focuses its status line through a deferred focus.
+        assert await until(
+            lambda: getattr(app.focused, "id", None)
+            == "console-prompts-improvement-status",
+            10,
+        ), f"the {mode} apply never focused its status line"
 
         assert modal._apply_in_progress is True
         assert "Applying" in str(
@@ -2926,8 +3017,9 @@ async def test_apply_transaction_blocks_every_close_path_until_commit_finishes(
         assert app.results == []
 
         release.set()
-        await pilot.pause()
-        await pilot.pause()
+        assert await until(lambda: app.results, 10), (
+            "the released apply commit never closed the modal"
+        )
 
         assert apply_calls == 1
         assert len(app.results) == 1
@@ -2976,7 +3068,8 @@ async def test_stale_apply_completion_cannot_dismiss_a_new_top_screen() -> None:
         await pilot.pause()
 
         release.set()
-        await pilot.pause()
+        # The stale commit finishes inside the improvement worker.
+        await _recipe_fill_settled(modal)
         await pilot.pause()
 
         assert app.screen is overlay
@@ -3020,10 +3113,9 @@ async def test_apply_completion_keeps_nested_top_then_closes_once_uncovered() ->
         overlay = _ApplyOverlay()
         await app.push_screen(overlay)
         release.set()
-        for _ in range(50):
-            if not modal._apply_in_progress:
-                break
-            await pilot.pause(0.02)
+        assert await until(lambda: not modal._apply_in_progress, 10), (
+            "the covered apply commit never finished"
+        )
         await pilot.pause()
 
         assert app.screen is overlay
@@ -3039,10 +3131,9 @@ async def test_apply_completion_keeps_nested_top_then_closes_once_uncovered() ->
         assert app.results == []
 
         overlay.dismiss(None)
-        for _ in range(50):
-            if modal not in app.screen_stack and app.results:
-                break
-            await pilot.pause(0.02)
+        assert await until(
+            lambda: modal not in app.screen_stack and app.results, 10
+        ), "the uncovered modal never closed with its applied result"
         assert modal not in app.screen_stack
         assert len(app.results) == 1
         assert app.results[0].kind == "apply"
@@ -3098,18 +3189,28 @@ async def test_stale_review_validation_cannot_mutate_or_commit_after_remount(
         modal = app.screen
         await modal.enter_mode("improve")
         modal.query_one("#console-prompts-review-improve", Button).press()
-        await pilot.pause()
-        await pilot.pause()
-        modal.query_one("#console-prompts-review-apply", Button).press()
+        (await _mounted(modal, "#console-prompts-review-apply")).press()
         await wait_for_signal(
             validation_started, what="the stale review validation starting"
         )
+        stale_applies = [
+            worker
+            for worker in app.workers
+            if worker.group == f"console-prompts-apply-{id(modal)}"
+        ]
+        assert stale_applies, "the review Apply started no apply worker"
         old_generation = modal._safe_mount_generation
 
-        modal.dismiss(None)
-        await pilot.pause()
+        popped = modal.dismiss(None)
+        # Re-pushing a screen whose pop (and removal) has not finished
+        # reuses the old instance, which never mounts again.
+        assert await until(lambda: popped.is_done, 10), (
+            "the dismissed modal's pop never finished"
+        )
         await app.push_screen(modal)
-        await pilot.pause()
+        assert await until(
+            lambda: modal._safe_mount_generation > old_generation, 10
+        ), "the re-pushed modal never started a new mount generation"
         assert modal._safe_mount_generation > old_generation
         await modal.enter_mode("improve")
         assert modal._claim_apply_transaction() == modal._safe_mount_generation
@@ -3119,7 +3220,9 @@ async def test_stale_review_validation_cannot_mutate_or_commit_after_remount(
         await wait_for_signal(
             validation_finished, what="the stale review validation finishing"
         )
-        await pilot.pause()
+        assert await until(
+            lambda: all(worker.is_finished for worker in stale_applies), 10
+        ), "the stale review apply never finished after its validation"
         await pilot.pause()
 
         assert apply_calls == 0
@@ -3154,16 +3257,17 @@ async def test_review_success_exposes_exactly_one_editable_user_area_then_applie
         await pilot.pause()
         await app.screen.enter_mode("improve")
         app.screen.query_one("#console-prompts-review-improve", Button).press()
-        await pilot.pause()
-        await pilot.pause()
+        await _recipe_fill_settled(app.screen)
+        apply_button = await _mounted(app.screen, "#console-prompts-review-apply")
 
         areas = [area for area in app.screen.query(TextArea) if not area.read_only]
         assert len(areas) == 1
         assert areas[0].id == "console-prompts-review-user"
         assert areas[0].text == rewritten
-        app.screen.query_one("#console-prompts-review-apply", Button).press()
-        await pilot.pause()
-        await pilot.pause()
+        apply_button.press()
+        assert await until(lambda: driver.applies, 10), (
+            "the review Apply never reached the host's apply"
+        )
 
         assert len(driver.applies) == 1
         result, _snapshot = driver.applies[0]
@@ -3189,8 +3293,8 @@ async def test_preservation_veto_retains_candidate_in_review_and_tamper_blocks_a
         await pilot.pause()
         await app.screen.enter_mode("improve")
         app.screen.query_one("#console-prompts-review-improve", Button).press()
-        await pilot.pause()
-        await pilot.pause()
+        await _recipe_fill_settled(app.screen)
+        apply_button = await _mounted(app.screen, "#console-prompts-review-apply")
 
         assert (
             str(
@@ -3202,8 +3306,17 @@ async def test_preservation_veto_retains_candidate_in_review_and_tamper_blocks_a
         )
         area = app.screen.query_one("#console-prompts-review-user", TextArea)
         assert area.text == "Candidate with protected token removed"
-        app.screen.query_one("#console-prompts-review-apply", Button).press()
-        await pilot.pause()
+        status = app.screen.query_one("#console-prompts-improvement-status", Static)
+        apply_button.press()
+        # The refused validation rewrites the status line and releases the
+        # apply transaction. "Applying changes to the Console…" is the
+        # transaction's own status, written before validation runs, so a
+        # changed line alone is not the end (2 of 120 runs at load ~42).
+        assert await until(
+            lambda: not app.screen._apply_in_progress
+            and str(status.renderable) != "Review required before applying",
+            10,
+        ), f"the tampered Apply never reported its refusal: {str(status.renderable)!r}"
 
         assert driver.applies == []
         assert (
@@ -3233,8 +3346,7 @@ async def test_typed_provider_error_keeps_state_and_exposes_retry() -> None:
         await pilot.pause()
         await app.screen.enter_mode("improve")
         app.screen.query_one("#console-prompts-auto-improve", Button).press()
-        await pilot.pause()
-        await pilot.pause()
+        await _recipe_fill_settled(app.screen)
 
         retry = app.screen.query_one("#console-prompts-improvement-retry", Button)
         assert retry.display and not retry.disabled
@@ -3244,8 +3356,9 @@ async def test_typed_provider_error_keeps_state_and_exposes_retry() -> None:
             ).renderable
         )
         retry.press()
-        await pilot.pause()
-        await pilot.pause()
+        assert await until(lambda: len(driver.requests) == 2, 10), (
+            f"Retry never sent a second request: {len(driver.requests)}"
+        )
         assert len(driver.requests) == 2
 
 
@@ -3277,8 +3390,11 @@ async def test_cancel_invalidates_request_and_ignores_late_completion() -> None:
         await app.screen.enter_mode("improve")
         app.screen.query_one("#console-prompts-auto-improve", Button).press()
         await wait_for_signal(started, what="the auto-improvement starting")
+        worker = app.screen._improvement_worker
         app.screen.query_one("#console-prompts-improvement-cancel", Button).press()
-        await pilot.pause()
+        assert await until(lambda: app.screen._active_request_id is None, 10), (
+            "Cancel never invalidated the active request"
+        )
         assert (
             str(
                 app.screen.query_one(
@@ -3288,7 +3404,9 @@ async def test_cancel_invalidates_request_and_ignores_late_completion() -> None:
             == "Cancelling..."
         )
         release.set()
-        await pilot.pause()
+        assert await until(lambda: worker.is_finished, 10), (
+            "the cancelled improvement never finished after release"
+        )
         await pilot.pause()
 
         assert driver.applies == []
@@ -3325,12 +3443,15 @@ async def test_back_and_escape_cancel_active_improvement_before_navigation(
         await app.screen.enter_mode("improve")
         app.screen.query_one("#console-prompts-auto-improve", Button).press()
         await wait_for_signal(started, what="the auto-improvement starting")
+        worker = app.screen._improvement_worker
 
         if navigation == "back":
             app.screen.query_one("#console-prompts-back", Button).press()
         else:
             await pilot.press("escape")
-        await pilot.pause()
+        assert await until(lambda: app.screen._active_request_id is None, 10), (
+            f"{navigation} never cancelled the active improvement"
+        )
 
         assert app.screen.state.mode == "improve"
         assert app.screen._active_request_id is None
@@ -3344,7 +3465,9 @@ async def test_back_and_escape_cancel_active_improvement_before_navigation(
         )
 
         release.set()
-        await pilot.pause()
+        assert await until(lambda: worker.is_finished, 10), (
+            "the cancelled improvement never finished after release"
+        )
         await pilot.pause()
         assert driver.applies == []
 
@@ -3375,17 +3498,15 @@ async def test_recipe_fill_mounts_service_block_prompt_as_unsaved_prompt_review(
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         await app.screen.enter_mode("improve")
-        app.screen.query_one("#console-prompts-structured-recipe", Button).press()
-        await pilot.pause()
-        app.screen.query_one("#console-prompts-recipe-outcome-first", Button).press()
-        await pilot.pause()
+        (await _mounted(app.screen, "#console-prompts-structured-recipe")).press()
+        (await _mounted(app.screen, "#console-prompts-recipe-outcome-first")).press()
+        fill = await _mounted(app.screen, "#console-prompts-recipe-fill")
         source_fingerprint = app.screen._recipe_source_fingerprint
 
-        app.screen.query_one("#console-prompts-recipe-fill", Button).press()
-        await pilot.pause()
-        await pilot.pause()
+        fill.press()
+        await _recipe_fill_settled(app.screen)
 
-        editor = app.screen.query_one(PromptBlockEditor)
+        editor = await _recipe_editor_mounted(app.screen)
         assert editor.state.artifact_type == "prompt"
         assert editor.state.definition == filled_prompt
         assert app.screen.state.working_copy_unsaved is True
@@ -3421,7 +3542,7 @@ async def test_real_recipe_fill_with_additional_context_reaches_block_review() -
         (await _mounted(app.screen, "#console-prompts-recipe-fill")).press()
         await _recipe_fill_settled(app.screen)
 
-        editor = await _mounted(app.screen, "#console-prompts-editor", PromptBlockEditor)
+        editor = await _recipe_editor_mounted(app.screen)
         mapped = editor.state.definition.lanes[1].blocks[-1]
         assert editor.state.artifact_type == "prompt"
         assert mapped.id == ADDITIONAL_CONTEXT_RESERVED_PREFIX
@@ -3461,7 +3582,7 @@ async def test_mapped_context_blocks_recipe_save_until_deleted(
         (await _mounted(modal, "#console-prompts-recipe-fill")).press()
         await _recipe_fill_settled(modal)
 
-        editor = await _mounted(modal, "#console-prompts-editor", PromptBlockEditor)
+        editor = await _recipe_editor_mounted(modal)
         save_menu = await _mounted(modal, "#prompt-editor-save-menu", Select)
         editor._sync_footer()
         modal._sync_editor_host_gates(editor)
@@ -3520,36 +3641,35 @@ async def test_recipe_fill_snapshots_current_editor_definition(
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        await app.screen.enter_mode("improve")
-        app.screen.query_one("#console-prompts-structured-recipe", Button).press()
-        await pilot.pause()
+        modal = app.screen
+        await modal.enter_mode("improve")
+        (await _mounted(modal, "#console-prompts-structured-recipe")).press()
         selector = (
             "#console-prompts-recipe-outcome-first"
             if recipe_kind == "outcome"
             else "#console-prompts-recipe-blank"
         )
-        app.screen.query_one(selector, Button).press()
-        await pilot.pause()
-        editor = app.screen.query_one(PromptBlockEditor)
+        (await _mounted(modal, selector)).press()
+        editor = await _recipe_editor_mounted(modal)
         if recipe_kind == "blank":
             await editor._add_lane_block("user")
-            await pilot.pause()
-            editor = app.screen.query_one(PromptBlockEditor)
+            await _editor_change_reached_modal(modal, editor)
             block_id = editor.state.definition.lanes[1].blocks[0].id
         else:
             block_id = "goal"
         await editor._change_field(block_id, "content", "Edited before Fill.")
-        await pilot.pause()
-        editor = app.screen.query_one(PromptBlockEditor)
+        await _editor_change_reached_modal(modal, editor)
         if recipe_kind == "outcome":
+            before = editor.state
             editor.query_one("#prompt-block-duplicate-goal", Button).press()
-            await pilot.pause()
-            editor = app.screen.query_one(PromptBlockEditor)
+            assert await until(lambda: editor.state is not before, 10), (
+                "Duplicate never changed the block editor"
+            )
+            await _editor_change_reached_modal(modal, editor)
         expected = replace(editor.state.definition, kind="block_recipe")
 
-        app.screen.query_one("#console-prompts-recipe-fill", Button).press()
-        await pilot.pause()
-        await pilot.pause()
+        modal.query_one("#console-prompts-recipe-fill", Button).press()
+        await _recipe_fill_settled(modal)
 
         assert driver.requests[-1].recipe_definition == expected
         assert driver.requests[-1].recipe_fingerprint is not None
@@ -3588,26 +3708,22 @@ async def test_saved_recipe_ai_fill_snapshots_accepted_source_with_raw_identity(
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        await app.screen.enter_mode("improve")
-        app.screen.query_one("#console-prompts-structured-recipe", Button).press()
-        await pilot.pause()
-        app.screen.query_one("#console-prompts-recipe-saved", Button).press()
-        await pilot.pause()
-        app.screen.query_one(".console-prompts-result", Button).press()
-        await pilot.pause()
-        await pilot.pause()
-
-        app.screen.query_one("#console-prompts-recipe-fill", Button).press()
-        await pilot.pause()
-        await pilot.pause()
+        modal = app.screen
+        await modal.enter_mode("improve")
+        (await _mounted(modal, "#console-prompts-structured-recipe")).press()
+        (await _mounted(modal, "#console-prompts-recipe-saved")).press()
+        (await _mounted(modal, ".console-prompts-result")).press()
+        (await _mounted(modal, "#console-prompts-recipe-fill")).press()
+        await _recipe_fill_settled(modal)
 
         assert driver.requests[-1].recipe_source == "local"
         assert driver.requests[-1].recipe_source_id == source_id
         assert backend.detail_calls == [("local", source_id)]
 
-        app.screen.query_one("#prompt-editor-apply", Button).press()
-        await pilot.pause()
-        await pilot.pause()
+        modal.query_one("#prompt-editor-apply", Button).press()
+        assert await until(lambda: driver.applies, 10), (
+            "the editor's Apply never reached the host's apply"
+        )
 
         guard = driver.applies[-1][1]
         assert isinstance(guard, ConsoleRecipeApplyGuard)
@@ -3623,18 +3739,18 @@ async def test_builtin_recipe_manual_guard_has_no_saved_source() -> None:
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        await app.screen.enter_mode("improve")
-        app.screen.query_one("#console-prompts-structured-recipe", Button).press()
-        await pilot.pause()
-        app.screen.query_one("#console-prompts-recipe-outcome-first", Button).press()
-        await pilot.pause()
-        editor = app.screen.query_one(PromptBlockEditor)
+        modal = app.screen
+        await modal.enter_mode("improve")
+        (await _mounted(modal, "#console-prompts-structured-recipe")).press()
+        (await _mounted(modal, "#console-prompts-recipe-outcome-first")).press()
+        editor = await _recipe_editor_mounted(modal)
         await editor._change_field("goal", "content", "Answer the question.")
-        await pilot.pause()
+        await _editor_change_reached_modal(modal, editor)
 
-        app.screen.query_one("#prompt-editor-apply", Button).press()
-        await pilot.pause()
-        await pilot.pause()
+        modal.query_one("#prompt-editor-apply", Button).press()
+        assert await until(lambda: driver.applies, 10), (
+            "the editor's Apply never reached the host's apply"
+        )
 
     guard = driver.applies[-1][1]
     assert isinstance(guard, ConsoleRecipeApplyGuard)
@@ -3655,10 +3771,11 @@ async def test_leaving_saved_recipe_chooser_clears_selection_intent(
         await pilot.pause()
         modal = app.screen
         await modal.enter_mode("improve")
-        modal.query_one("#console-prompts-structured-recipe", Button).press()
-        await pilot.pause()
-        modal.query_one("#console-prompts-recipe-saved", Button).press()
-        await pilot.pause()
+        (await _mounted(modal, "#console-prompts-structured-recipe")).press()
+        (await _mounted(modal, "#console-prompts-recipe-saved")).press()
+        assert await until(lambda: modal.state.mode == "browse", 10), (
+            "Saved Recipe never opened the chooser"
+        )
         assert modal._recipe_selecting is True
 
         if navigation == "back":
@@ -3667,7 +3784,15 @@ async def test_leaving_saved_recipe_chooser_clears_selection_intent(
             await pilot.press("escape")
         else:
             modal.query_one("#console-prompts-close", Button).press()
-        await pilot.pause()
+        # Back returns to the Recipe step; Escape and Close dismiss.
+        if navigation == "back":
+            assert await until(lambda: modal.state.mode != "browse", 10), (
+                "Back never left the chooser"
+            )
+        else:
+            assert await until(lambda: app.screen is not modal, 10), (
+                f"{navigation} never dismissed the chooser"
+            )
 
         assert modal._recipe_selecting is False
 
@@ -3738,17 +3863,16 @@ async def test_recipe_manual_paths_work_without_provider_and_lane_defaults_are_s
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         await app.screen.enter_mode("improve")
-        app.screen.query_one("#console-prompts-structured-recipe", Button).press()
-        await pilot.pause()
+        (await _mounted(app.screen, "#console-prompts-structured-recipe")).press()
 
+        # Blank mounts last in the chooser, beside Outcome-first.
+        blank = await _mounted(app.screen, "#console-prompts-recipe-blank")
         outcome = app.screen.query_one("#console-prompts-recipe-outcome-first", Button)
-        blank = app.screen.query_one("#console-prompts-recipe-blank", Button)
         assert not outcome.disabled and not blank.disabled
         assert not app.screen.query("#console-prompts-recipe-fill")
         outcome.press()
-        await pilot.pause()
 
-        editor = app.screen.query_one(PromptBlockEditor)
+        editor = await _recipe_editor_mounted(app.screen)
         assert editor.state.definition == outcome_first_recipe()
         assert not editor.query_one("#prompt-editor-apply-system", Checkbox).value
         assert not editor.query_one("#prompt-editor-apply-user", Checkbox).value

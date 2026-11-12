@@ -119,7 +119,7 @@ from ...Chat.console_provider_endpoints import (
     normalize_generic_endpoint_for_compare,
     safe_endpoint_display,
 )
-from ...Chat.prompt_history import PromptHistory, default_prompt_history_path
+from ...Chat.prompt_history import PromptHistory
 from ...Constants import (
     LIBRARY_NAV_CONTEXT_MODE,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
@@ -1598,7 +1598,7 @@ class ConsolePromptsController:
             history = (
                 factory()
                 if callable(factory)
-                else PromptHistory(default_prompt_history_path())
+                else PromptHistory()  # default path resolved off the loop (TASK-39166)
             )
             self._console_prompt_history = history
         return history

@@ -9,6 +9,8 @@ Save still wrote the linked provider.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from textual.widgets import Button, Input, Select, Static
 
@@ -45,6 +47,22 @@ async def _deep_link_to_anthropic_key(
     await _settle(host, pilot)
     await pilot.pause()
     return screen
+
+
+async def _until_reads(pilot, read, expected, what: str) -> None:
+    """Pump until ``read()`` is ``expected``, or fail naming ``what`` (TASK-39167).
+
+    A Select's ``Changed`` reaches the screen's handler a message hop after
+    the value is set, so one ``pilot.pause()`` can end before it is staged.
+    """
+    timeout = 15.0
+    deadline = time.monotonic() + timeout
+    while read() != expected:
+        if time.monotonic() > deadline:
+            pytest.fail(
+                f"{what} never became {expected!r} within {timeout:g} s: {read()!r}"
+            )
+        await pilot.pause(0.02)
 
 
 def _app():
@@ -91,18 +109,31 @@ async def test_the_first_edit_after_a_deep_link_keeps_the_linked_provider(
 
         # "Sign in with" still answers for the linked provider.
         auth = screen.query_one("#settings-provider-auth-source", Select)
+
+        def staged_auth():
+            return screen._provider_auth_source_value("anthropic")
+
         auth.value = "claude_subscription"
-        await pilot.pause()
-        assert screen._provider_auth_source_value("anthropic") == (
-            "claude_subscription"
+        await _until_reads(
+            pilot, staged_auth, "claude_subscription", "the staged auth source"
         )
         auth.value = "api_key"
-        await pilot.pause()
-        assert screen._provider_auth_source_value("anthropic") == "api_key"
+        await _until_reads(pilot, staged_auth, "api_key", "the staged auth source")
 
         api_key.focus()
-        await pilot.pause()
-        await pilot.press("backspace", *_TYPED_KEY, "escape", "s")
+        await _until_reads(
+            pilot, lambda: api_key.has_focus, True, "the API key's focus"
+        )
+        await pilot.press("backspace", *_TYPED_KEY, "escape")
+        # TASK-39167: once, at load ~75, no save had reached the writer when
+        # _settle returned (`[]`). Wait for Esc's release, then the mutation.
+        await _until_reads(
+            pilot, lambda: api_key.has_focus, False, "the API key's focus after Esc"
+        )
+        await pilot.press("s")
+        await _until_reads(
+            pilot, lambda: bool(mutations), True, "a saved provider mutation"
+        )
         await _settle(host, pilot)
 
         assert len(mutations) == 1, mutations

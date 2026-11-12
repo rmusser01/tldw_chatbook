@@ -52,6 +52,7 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_inspector_section import (
     ConsoleInspectorSection,
 )
@@ -125,6 +126,50 @@ def _fleet_row_text(console) -> str:
     )
 
 
+async def _until(predicate, what, timeout: float = 15.0) -> None:
+    """Wait until ``predicate()`` holds, or fail naming ``what`` (str or callable).
+
+    TASK-39162: fixed 0.5-2.5 s pauses before the timer assertions failed
+    under load. ``asyncio.sleep`` lets the screen's timers run without
+    ``pilot.pause()``'s wait on every pump.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not predicate():
+        if loop.time() >= deadline:
+            pytest.fail(f"{what() if callable(what) else what} (waited {timeout:g} s)")
+        await asyncio.sleep(0.05)
+
+
+def _observe_mount_hedge(monkeypatch) -> list[bool]:
+    """Record when ``ChatScreen.on_mount``'s 0.3 s survivor-tick hedge has run."""
+    fired: list[bool] = []
+    original = ChatScreen.set_timer
+
+    def set_timer(self, delay, callback=None, *args, **kwargs):
+        if getattr(callback, "__name__", "") == "_maybe_start_console_fleet_survivor_tick":
+            hedge = callback
+
+            def callback():
+                try:
+                    hedge()
+                finally:
+                    fired.append(True)
+
+        return original(self, delay, callback, *args, **kwargs)
+
+    monkeypatch.setattr(ChatScreen, "set_timer", set_timer)
+    return fired
+
+
+async def _until_poll_self_stops(console) -> None:
+    await _until(
+        lambda: console._console_transcript_sync_timer is None,
+        "precondition: the transcript poll must have self-stopped -- "
+        "this is the exact state 15664 describes",
+    )
+
+
 async def _wire_survivor(pilot, host, bridge):
     """Mount Console, open the rail, expand the Sub-agents section (the
     elapsed segment lives on the expanded rows), and wire the bridge into
@@ -142,7 +187,7 @@ async def _wire_survivor(pilot, host, bridge):
 
 
 @pytest.mark.asyncio
-async def test_survivor_elapsed_advances_with_no_other_interaction():
+async def test_survivor_elapsed_advances_with_no_other_interaction(monkeypatch):
     """15664 AC#1 + AC#3, red against unmodified production: only a
     survivor runs (the transcript poll self-stops -- its production stop
     edge is driven for real); the clock advances a minute; the row's
@@ -155,11 +200,12 @@ async def test_survivor_elapsed_advances_with_no_other_interaction():
     # thing that can arm the tick below is the poll's stop edge -- the
     # production seam under test (and the seam whose absence is the bug).
     bridge.unsettled = False
+    hedge_fired = _observe_mount_hedge(monkeypatch)
     app = _build_test_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console, controller = await _wire_survivor(pilot, host, bridge)
-        await pilot.pause(0.5)  # let the mount hedge fire against idle
+        await _until(lambda: hedge_fired, "the mount hedge never fired against idle")
         assert console._fleet._console_fleet_survivor_timer is None
         bridge.unsettled = True
         bridge.started_at = _time.monotonic() - 1.0
@@ -176,19 +222,13 @@ async def test_survivor_elapsed_advances_with_no_other_interaction():
         # self-stops -- ONLY THEN does the clock advance, so the poll's
         # own last paint cannot mask a frozen rail.
         console._start_console_transcript_sync_timer()
-        await pilot.pause(0.5)
-        assert console._console_transcript_sync_timer is None, (
-            "precondition: the transcript poll must have self-stopped -- "
-            "this is the exact state 15664 describes"
-        )
+        await _until_poll_self_stops(console)
         # A minute passes while ONLY the survivor runs.
         bridge.started_at -= 60.0
-        await pilot.pause(2.5)  # >= 2 survivor-tick beats
-
-        after = _fleet_row_text(console)
-        assert "1m " in after, (
-            "the elapsed segment froze with no other interaction: "
-            f"{after!r} (was {first!r}) -- task-15664's defect"
+        await _until(
+            lambda: "1m " in _fleet_row_text(console),
+            lambda: "the elapsed segment froze with no other interaction: "
+            f"{_fleet_row_text(console)!r} (was {first!r}) -- task-15664's defect",
         )
         # Geometry, not DOM presence: the advanced row is actually painted.
         primary = console.query_one(
@@ -219,14 +259,21 @@ async def test_survivor_tick_observes_new_published_usage_without_a_new_timer(re
         assert section.rows[0].secondary_text == "Target unavailable · long job · ~3 local output tok"
 
         console._start_console_transcript_sync_timer()
-        await pilot.pause(0.5)
-        assert console._fleet._console_fleet_survivor_timer is not None
+        await _until_poll_self_stops(console)
+        await _until(
+            lambda: console._fleet._console_fleet_survivor_timer is not None,
+            "the survivor tick never armed at the poll's stop edge",
+        )
         timer = console._fleet._console_fleet_survivor_timer
         bridge.output_tokens = 11
-        await pilot.pause(1.5)
+        expected = "Target unavailable · long job · ~11 local output tok"
+        await _until(
+            lambda: section.rows[0].secondary_text == expected,
+            lambda: "the survivor tick never painted the new usage: "
+            f"{section.rows[0].secondary_text!r}",
+        )
 
         assert console._fleet._console_fleet_survivor_timer is timer
-        assert section.rows[0].secondary_text == "Target unavailable · long job · ~11 local output tok"
 
 
 @pytest.mark.asyncio
@@ -246,41 +293,42 @@ async def test_the_tick_stops_itself_with_one_final_settle_paint():
         console._sync_console_agent_section()
         await pilot.pause()
         console._start_console_transcript_sync_timer()
-        await pilot.pause(0.5)
-        assert console._fleet._console_fleet_survivor_timer is not None, (
-            "precondition: the survivor tick armed at the poll's stop edge"
+        await _until_poll_self_stops(console)
+        await _until(
+            lambda: console._fleet._console_fleet_survivor_timer is not None,
+            "precondition: the survivor tick armed at the poll's stop edge",
         )
 
         # The child settles: drain owed -> none; handle goes terminal.
         bridge.unsettled = False
         bridge.status = "done"
         bridge.finished_at = bridge.started_at + 5.0
-        await pilot.pause(2.5)
-
-        assert console._fleet._console_fleet_survivor_timer is None, (
-            "15664 AC#2: the survivor tick must stop itself when nothing is live"
+        await _until(
+            lambda: console._fleet._console_fleet_survivor_timer is None,
+            "15664 AC#2: the survivor tick must stop itself when nothing is live",
         )
-        after = _fleet_row_text(console)
-        assert "✓" in after, (
-            "the tick's final pass must paint the terminal glyph without "
-            f"any user interaction: {after!r}; state={console._agent._console_agent_fleet_section_state()!r}; mounted={console.is_mounted}; active={host.screen is console}"
+        await _until(
+            lambda: "✓" in _fleet_row_text(console),
+            lambda: "the tick's final pass must paint the terminal glyph without "
+            f"any user interaction: {_fleet_row_text(console)!r}; state={console._agent._console_agent_fleet_section_state()!r}; mounted={console.is_mounted}; active={host.screen is console}",
         )
 
 
 @pytest.mark.asyncio
-async def test_an_idle_console_never_gains_a_survivor_timer():
+async def test_an_idle_console_never_gains_a_survivor_timer(monkeypatch):
     """15664 AC#2's other face: with nothing live, neither the mount hedge
     nor the poll's stop edge may create the timer at all."""
     bridge = _SurvivorBridge()
     bridge.unsettled = False
+    hedge_fired = _observe_mount_hedge(monkeypatch)
     app = _build_test_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console, controller = await _wire_survivor(pilot, host, bridge)
         console._fleet._maybe_start_console_fleet_survivor_tick()
         console._start_console_transcript_sync_timer()
-        await pilot.pause(0.6)
-        assert console._console_transcript_sync_timer is None
+        await _until(lambda: hedge_fired, "the mount hedge never fired")
+        await _until_poll_self_stops(console)
         assert console._fleet._console_fleet_survivor_timer is None
 
 

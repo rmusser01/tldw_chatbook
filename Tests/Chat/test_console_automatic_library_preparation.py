@@ -645,30 +645,43 @@ def _vision_capable(monkeypatch) -> None:
     )
 
 
+async def _until_entered(
+    entered: asyncio.Event,
+    *turns: asyncio.Future,
+    what: str,
+    timeout: float = 30,
+) -> None:
+    """Wait for a boundary's ``entered`` event, or fail naming a turn's result.
+
+    TASK-38947 / TASK-39045 / TASK-39163: a bare ``await entered.wait()``
+    hangs to the 300 s pytest timeout when the turn ends before the boundary
+    (a refusal or a raise never sets ``entered``). With several turns, the
+    first one to end fails the wait.
+    """
+    waiter = asyncio.ensure_future(entered.wait())
+    await asyncio.wait(
+        (waiter, *turns), timeout=timeout, return_when=asyncio.FIRST_COMPLETED
+    )
+    if entered.is_set():
+        return
+    waiter.cancel()
+    ended = next((turn for turn in turns if turn.done()), None)
+    if ended is None:
+        for turn in turns:
+            turn.cancel()
+        pytest.fail(f"the turn never reached {what} within {timeout:g} s")
+    if ended.cancelled():
+        outcome = "cancelled"
+    else:
+        outcome = ended.exception() or ended.result()
+    pytest.fail(f"the turn ended before {what}: {outcome!r}")
+
+
 async def _until_provider_starts(
     started: asyncio.Event, turn: asyncio.Future, *, timeout: float = 30
 ) -> None:
-    """Wait for the provider fence, or fail at once naming the turn's result.
-
-    TASK-38947 / TASK-39045: a bare ``await started.wait()`` hangs to the
-    300 s pytest timeout when the turn ends before the provider (a refusal
-    or a raise never sets ``started``).
-    """
-    waiter = asyncio.ensure_future(started.wait())
-    await asyncio.wait(
-        (waiter, turn), timeout=timeout, return_when=asyncio.FIRST_COMPLETED
-    )
-    if started.is_set():
-        return
-    waiter.cancel()
-    if not turn.done():
-        turn.cancel()
-        pytest.fail(f"the turn never reached the provider within {timeout:g} s")
-    if turn.cancelled():
-        outcome = "cancelled"
-    else:
-        outcome = turn.exception() or turn.result()
-    pytest.fail(f"the turn ended before the provider: {outcome!r}")
+    """Wait for the provider fence, or fail at once naming the turn's result."""
+    await _until_entered(started, turn, what="the provider", timeout=timeout)
 
 
 async def _paused_queued_send(*, persistence=None, gateway=None):
@@ -1236,7 +1249,7 @@ async def test_close_wins_race_with_inflight_retrieval_without_dispatch():
     running = asyncio.create_task(
         controller.prepare_library_for_turn(preparation.preparation_id)
     )
-    await service.entered.wait()
+    await _until_entered(service.entered, running, what="the held Library retrieval")
     store.close_session(preparation.session_id)
     service.release.set()
     outcome = await running
@@ -2441,7 +2454,7 @@ async def test_shutdown_tracks_accepted_submit_and_rechecks_before_external_call
         )
 
     submit = asyncio.create_task(controller.submit_draft("frozen draft"))
-    await held.entered.wait()
+    await _until_entered(held.entered, submit, what="the held preparation seam")
     shutdown = asyncio.create_task(controller.shutdown())
     for _ in range(10):
         await asyncio.sleep(0)
@@ -2483,7 +2496,7 @@ async def test_shutdown_tracks_committing_submit_before_stream_registration(
 
     monkeypatch.setattr(controller, "_record_prompt_history", hold_history)
     submit = asyncio.create_task(controller.submit_draft("frozen draft"))
-    await held.entered.wait()
+    await _until_entered(held.entered, submit, what="the held prompt-history write")
     preparation = store.preparation_for_session(store.active_session_id)
     outcome = controller.preparation_outcome(preparation.preparation_id)
     assert outcome is not None and outcome.contribution is not None
@@ -2546,7 +2559,7 @@ async def test_close_drops_submit_owner_before_cancelled_task_finalizer(
         )
 
     submit = asyncio.create_task(controller.submit_draft("frozen draft"))
-    await held.entered.wait()
+    await _until_entered(held.entered, submit, what="the held preparation seam")
     session_id = store.active_session_id
     preparation = store.preparation_for_session(session_id)
     assert preparation is not None and preparation.state is expected_state
@@ -2708,7 +2721,7 @@ async def test_explicit_evidence_lease_never_releases_newer_launch(
         retrieval_module, "capture_console_staged_evidence_for_chat", capture_evidence
     )
     submit = asyncio.create_task(controller.submit_draft("frozen draft"))
-    await held.entered.wait()
+    await _until_entered(held.entered, submit, what="the held evidence capture")
     state["launch"] = newer
     held.release.set()
     assert (await submit).accepted
@@ -2751,7 +2764,7 @@ async def test_explicit_evidence_lease_cancel_keeps_original_staged(
         retrieval_module, "capture_console_staged_evidence_for_chat", capture_evidence
     )
     submit = asyncio.create_task(controller.submit_draft("frozen draft"))
-    await held.entered.wait()
+    await _until_entered(held.entered, submit, what="the held evidence capture")
     preparation = store.preparation_for_session(store.active_session_id)
     cancelled = controller.cancel_library_preparation(preparation.preparation_id)
     assert not cancelled.accepted
@@ -2774,7 +2787,7 @@ async def test_same_session_refusal_cannot_overwrite_first_submit_owner():
     first = asyncio.create_task(
         controller.submit_draft("first draft", session_id=session.id)
     )
-    await boundary.entered.wait()
+    await _until_entered(boundary.entered, first, what="the held provider resolution")
     refused = await controller.submit_draft("second draft", session_id=session.id)
 
     registry_preserved_first = controller._active_submit_tasks == {first: session.id}
@@ -2817,7 +2830,9 @@ async def test_submit_registry_tracks_multiple_sessions_and_cleans_exact_done_ta
     second = asyncio.create_task(
         controller.submit_draft("second draft", session_id=second_session.id)
     )
-    await gateway.both_entered.wait()
+    await _until_entered(
+        gateway.both_entered, first, second, what="both held provider resolutions"
+    )
 
     registry_owned_both = controller._active_submit_tasks == {
         first: first_session.id,
@@ -2876,7 +2891,7 @@ async def test_postaccept_cancellation_returns_exact_accepted_result(monkeypatch
     submit = asyncio.create_task(
         controller.submit_draft("frozen draft", session_id=session.id)
     )
-    await held.entered.wait()
+    await _until_entered(held.entered, submit, what="the held preparation seam")
     preparation = store.preparation_for_session(session.id)
     assert preparation is not None
     assert preparation.state is ConsoleTurnPreparationState.ACCEPTED
@@ -2959,7 +2974,7 @@ async def test_off_thread_begin_shutdown_schedules_owner_loop_cancellation(
         submit = _OwnerThreadTask(
             controller.submit_draft("frozen draft", session_id=session.id), loop=loop
         )
-        await held.entered.wait()
+        await _until_entered(held.entered, submit, what="the held preparation seam")
         shutdown_error = None
         try:
             await asyncio.to_thread(controller.begin_shutdown)
@@ -3008,7 +3023,7 @@ def test_live_loop_shutdown_cancels_and_awaits_submit_without_asyncio_diagnostic
             active_controller.submit_draft("live draft", session_id=session.id)
         )
         submit_ref = weakref.ref(submit)
-        await held.wait()
+        await _until_entered(held, submit, what="the held prompt-history write")
         preparation = store.preparation_for_session(session.id)
         assert preparation is not None
         assert preparation.state is ConsoleTurnPreparationState.COMMITTING
@@ -3167,7 +3182,7 @@ async def test_closed_loop_peer_never_blocks_same_session_live_submit_shutdown(
     live_submit = asyncio.create_task(
         controller.submit_draft("live draft", session_id=session.id)
     )
-    await held.entered.wait()
+    await _until_entered(held.entered, live_submit, what="the held memory preflight")
     preparation = store.preparation_for_session(session.id)
     assert preparation is not None
     assert preparation.state is ConsoleTurnPreparationState.ACCEPTED
@@ -3257,7 +3272,7 @@ async def test_shutdown_callback_failure_rethrows_after_all_task_cleanup(
     live_submit = asyncio.create_task(
         controller.run_prompt_chain("live draft", session_id=session.id)
     )
-    await held.entered.wait()
+    await _until_entered(held.entered, live_submit, what="the held memory preflight")
     preparation = store.preparation_for_session(session.id)
     assert preparation is not None
     assert preparation.state is ConsoleTurnPreparationState.ACCEPTED
@@ -3403,7 +3418,7 @@ async def test_ready_close_removes_echo_idempotently_and_preserves_evidence_laun
     submit = asyncio.create_task(
         controller.submit_draft("frozen draft", session_id=session.id)
     )
-    await held.entered.wait()
+    await _until_entered(held.entered, submit, what="the held evidence capture")
     preparation = store.preparation_for_session(session.id)
     assert preparation is not None
     assert preparation.state is ConsoleTurnPreparationState.READY
@@ -3490,7 +3505,7 @@ async def test_recovered_queue_acknowledges_postaccept_cancellation_once(
     recovery = asyncio.create_task(
         controller.retry_library_preparation(paused.preparation_id)
     )
-    await held.entered.wait()
+    await _until_entered(held.entered, recovery, what="the held preparation seam")
     accepted_rows = store.messages_for_session(paused.session_id)
     recovery.cancel()
     result = await recovery

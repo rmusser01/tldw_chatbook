@@ -1527,6 +1527,18 @@ class _ConsolePendingSend:
     received_inputs: Any | None = field(default=None, repr=False)
 
 
+@spend.retry_after_config_rebuild
+def _show_console_fleet_coachmark(screen: "ChatScreen") -> None:
+    """The cap reads config: a held rebuild defers the show (TASK-39166)."""
+    if screen._console_fleet_coachmark_seen() or (surface := screen.console_session_surface) is None:
+        return  # dismissed during the deferral; the surface is read at show time
+    max_parallel_runs = screen._ensure_console_chat_controller().max_parallel_runs
+    surface.show_fleet_coachmark(
+        f"Each tab runs its own agent — up to {max_parallel_runs} in "
+        "parallel (change in Settings > Console Behavior)."
+    )
+
+
 class ChatScreen(BaseAppScreen):
     """
     Chat screen with comprehensive state management.
@@ -11897,11 +11909,7 @@ class ChatScreen(BaseAppScreen):
             self._console_fleet_coachmark_seen_cached = coerce_bool_setting(raw, False)
         return self._console_fleet_coachmark_seen_cached
 
-    def _maybe_show_fleet_coachmark(
-        self,
-        sessions: list[ConsoleChatSession],
-        surface: ConsoleSessionSurface,
-    ) -> None:
+    def _maybe_show_fleet_coachmark(self, sessions: list[ConsoleChatSession]) -> None:
         """Show the one-time "each tab runs its own agent" coach-mark.
 
         Fleet-UX expert review F2 / Upgrade proposal 1 (task-1232): fires the
@@ -11916,8 +11924,6 @@ class ChatScreen(BaseAppScreen):
         Args:
             sessions: The current Console session list (already fetched by
                 the caller for the tab-strip sync).
-            surface: The mounted Console session surface to render the
-                banner on (already resolved by the caller).
         """
         current_count = len(sessions)
         previous_count = self._last_console_session_count
@@ -11930,11 +11936,7 @@ class ChatScreen(BaseAppScreen):
             return
         if self._console_fleet_coachmark_seen():
             return
-        max_parallel_runs = self._ensure_console_chat_controller().max_parallel_runs
-        surface.show_fleet_coachmark(
-            f"Each tab runs its own agent — up to {max_parallel_runs} in "
-            "parallel (change in Settings > Console Behavior)."
-        )
+        _show_console_fleet_coachmark(self)
 
     def _record_console_fleet_coachmark_dismissed(self) -> None:
         """Hide the fleet coach-mark and persist the one-time seen flag.
@@ -17904,7 +17906,7 @@ class ChatScreen(BaseAppScreen):
                         if controller is not None
                         else None
                     )
-                    self._maybe_show_fleet_coachmark(sessions, surface)
+                    self._maybe_show_fleet_coachmark(sessions)
                     await surface.sync_sessions(
                         sessions=sessions,
                         active_session_id=active_session_id,

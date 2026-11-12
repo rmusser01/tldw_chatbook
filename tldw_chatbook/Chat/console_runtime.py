@@ -2416,12 +2416,10 @@ class ConsoleRuntime:
             if callable(factory):
                 self._prompt_history = factory()
             else:
-                from tldw_chatbook.Chat.prompt_history import (
-                    PromptHistory,
-                    default_prompt_history_path,
-                )
+                from tldw_chatbook.Chat.prompt_history import PromptHistory
 
-                self._prompt_history = PromptHistory(default_prompt_history_path())
+                # Default path resolved off the loop on first use (TASK-39166).
+                self._prompt_history = PromptHistory()
         return self._prompt_history
 
     async def _select_project_instruction_binding(

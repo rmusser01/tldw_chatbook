@@ -1,6 +1,10 @@
 """Native composer commands over the actual Console screen."""
 
 import asyncio
+import sys
+import threading
+import time
+import traceback
 
 import pytest
 from textual.errors import NoWidget
@@ -40,6 +44,89 @@ def _run_text(console) -> str:
     return console.query_one(
         "#console-status-chips", ConsoleStatusChips
     ).segment_text("run")
+
+
+#: TASK-39166: patience for an event or flag a test reads next. A bound on
+#: state, not a latency budget: a loaded host only makes the wait longer.
+_STATE_SECONDS = 30.0
+#: How long a config holder holds without its test's release. Every test
+#: releases in ``finally``; this only ends the thread if one cannot.
+_HOLD_SECONDS = 60.0
+#: How long the UI loop may go without running a posted callback before a
+#: config-hold test calls it blocked (TASK-39166).
+_BLOCKED_LOOP_SECONDS = 10.0
+
+
+async def _until(predicate, what, step=None):
+    """Wait, bounded, until ``predicate()``; fail naming ``what`` (TASK-39166)."""
+    try:
+        async with asyncio.timeout(_STATE_SECONDS):
+            while not predicate():
+                await (step() if step is not None else asyncio.sleep(0.01))
+    except TimeoutError:
+        pytest.fail(f"{what}: not within {_STATE_SECONDS:g} s")
+
+
+async def _until_set(event, what):
+    await _until(event.is_set, what)
+
+
+class _UiLoopWatch:
+    """Release a config hold only when the UI loop has stopped running.
+
+    TASK-39166. These tests released the hold from a timer started with it
+    (2 s, or 5 s for a mount) and failed if it fired. Under load it fired while
+    the loop still ran: at expiry the main thread sat in ``selectors.select``,
+    idle, because the sync was slow, not waiting. A UI thread that waits for
+    the rebuild runs no callback until the hold ends, so this posts one every
+    50 ms and fires when the loop has not run it in ``_BLOCKED_LOOP_SECONDS``:
+    it records the loop thread's stack, sets ``fired`` and calls ``on_block``.
+    """
+
+    def __init__(self, on_block):
+        self._loop = asyncio.get_running_loop()
+        self._loop_thread = threading.get_ident()
+        self._on_block = on_block
+        self._done = threading.Event()
+        self.fired = threading.Event()
+        self.stack: list[str] = []
+        self._thread = threading.Thread(target=self._watch, daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self, timeout: float = 3) -> None:
+        self._done.set()
+        if self._thread.ident is not None:
+            self._thread.join(timeout)
+
+    def is_alive(self) -> bool:
+        return self._thread.is_alive()
+
+    def _watch(self) -> None:
+        while not self._done.is_set():
+            ran = threading.Event()
+            try:
+                self._loop.call_soon_threadsafe(ran.set)
+            except RuntimeError:  # the loop closed with the test
+                return
+            deadline = time.monotonic() + _BLOCKED_LOOP_SECONDS
+            while not ran.wait(0.05):
+                if self._done.is_set():
+                    return
+                if time.monotonic() >= deadline:
+                    frame = sys._current_frames()[self._loop_thread]
+                    self.stack.extend(traceback.format_stack(frame))
+                    self.fired.set()
+                    self._on_block()
+                    return
+            self._done.wait(0.05)
+
+    def failure(self, what: str) -> str:
+        return (
+            f"{what}: the UI loop ran no callback for {_BLOCKED_LOOP_SECONDS:g} s"
+            " while the rebuild held config:\n" + "".join(self.stack[-14:])
+        )
 
 
 
@@ -86,20 +173,22 @@ async def test_actual_composer_refusal_preserves_draft_and_rules_is_native(tmp_p
             assert calls == []
         composer.load_draft("/rules")
         console.query_one("#console-send-message", Button).press()
-        for _ in range(12):
-            await pilot.pause()
-            if isinstance(host.screen, ResponseRulesModal):
-                break
-        assert isinstance(host.screen, ResponseRulesModal)
+        # TASK-39166: bounded waits on each step's state (the modal mounted,
+        # not just pushed; then the Console and its composer focus back).
+        await _until(
+            lambda: isinstance(host.screen, ResponseRulesModal)
+            and host.screen.is_mounted,
+            "/rules mounting the Response rules manager",
+            lambda: pilot.pause(0.01),
+        )
         assert host.screen.scope.kind == "chat"
         assert calls == []
         await pilot.press("escape")
-        for _ in range(8):
-            await pilot.pause()
-            if host.screen is console:
-                break
-        assert host.screen is console
-        assert host.focused is composer
+        await _until(
+            lambda: host.screen is console and host.focused is composer,
+            "Escape returning to the Console with the composer focused",
+            lambda: pilot.pause(0.01),
+        )
 
 
 @pytest.mark.asyncio
@@ -119,23 +208,43 @@ async def test_actual_stop_after_generation_cancels_rule_check(tmp_path):
         case.rules.evaluator.assess = held
         case.composer.load_draft("Explain another result")
         case.console.query_one("#console-send-message", Button).press()
-        for _ in range(60):
-            await case.pilot.pause()
-            if entered.is_set():
-                break
-        assert entered.is_set(), case.controller.run_state
+        # TASK-39166: bounded waits on each step's own state, not 60 and 10
+        # pilot turns.
+        await _until_set(entered, "the held rule check's assessment")
         before = len(case.requests)
         assert (
             case.chats.get_message(case.chats.active_leaf(case.session_id)).status
             == "complete"
         )
+        stop = case.console.query_one("#console-stop-generation", Button)
+
+        def stop_under_pointer():
+            # pilot.click aims at the region's origin and reports whether the
+            # button was the widget there; a Stop not laid out yet misses.
+            if not (stop.display and not stop.disabled and stop.region.area):
+                return False
+            try:
+                return case.host.get_widget_at(*stop.region.offset)[0] is stop
+            except NoWidget:
+                return False
+
+        await _until(
+            stop_under_pointer,
+            "the Stop button laid out under the pointer",
+            lambda: case.pilot.pause(0.01),
+        )
         assert await case.pilot.click("#console-stop-generation")
-        for _ in range(10):
-            await case.pilot.pause()
+        await _until(
+            lambda: case.rules.state(case.session_id).phase == "idle",
+            "Stop cancelling the held rule check (phase idle)",
+        )
         release.set()
         assert case.rules.state(case.session_id).phase == "idle"
         assert len(case.requests) == before
-        assert case.host.focused is case.composer
+        await _until(
+            lambda: case.host.focused is case.composer,
+            "focus returning to the composer after Stop",
+        )
 
 
 @pytest.mark.asyncio
@@ -152,7 +261,21 @@ async def test_fixture_failure_retires_held_transport(tmp_path, transport):
 
     entered, release = asyncio.Event(), ObservedRelease()
     failure = AssertionError("response-rule setup failed before its release block")
-    async with asyncio.timeout(10):
+    rescued = []
+
+    async def release_after_bound():
+        # TASK-39166: bound the teardown that must retire the held transport.
+        # A cancel cannot: ConsoleRuntime.dispose() waits out a helper's
+        # physical exit by design and re-raises the cancel only afterwards,
+        # so an unreleased helper hold ran to the 300 s pytest timeout. Past
+        # the bound the test frees the hold itself and fails naming it.
+        await asyncio.sleep(_STATE_SECONDS)
+        if not release.is_set():
+            rescued.append(release.task)
+            release.set()
+
+    rescue = None
+    try:
         with pytest.raises(AssertionError) as caught:
             async with mounted_rules_console(tmp_path) as case:
                 if transport == "helper":
@@ -164,15 +287,22 @@ async def test_fixture_failure_retires_held_transport(tmp_path, transport):
                     draft = "Explain another result"
                 case.composer.load_draft(draft)
                 case.console.query_one("#console-send-message", Button).press()
-                async with asyncio.timeout(5):
-                    await entered.wait()
+                await _until_set(entered, f"the {transport} transport's request")
                 assert release.task is not None and not release.task.done()
                 assert not release.is_set()
+                rescue = asyncio.create_task(release_after_bound())
                 raise failure
+        assert not rescued, (
+            f"the fixture's teardown did not retire the held {transport} transport "
+            f"within {_STATE_SECONDS:g} s; the test released it (task={rescued[0]!r})"
+        )
         assert caught.value is failure
         assert release.is_set()
         assert release.task.done()
         assert case.rules.helpers.unsettled_count == 0
+    finally:
+        if rescue is not None:
+            rescue.cancel()
 
 
 @pytest.mark.asyncio
@@ -185,7 +315,14 @@ async def test_workspace_command_opens_same_manager_in_registered_scope(tmp_path
         )
         case.console._workspace.activate_workspace_id(workspace.workspace_id)
         await case.pilot.pause()
-        await case.console.workers.wait_for_complete()
+        # TASK-39166: wait for these workers to finish, a cancelled one included.
+        # wait_for_complete() raised WorkerCancelled when a newer sync replaced
+        # one (2 of 10 whole-file runs at load 44-80).
+        activation = tuple(case.console.workers)
+        await _until(
+            lambda: all(worker.is_finished for worker in activation),
+            "the workspace activation's workers finishing",
+        )
         session = next(
             s for s in case.chats.sessions() if s.id == case.chats.active_session_id
         )
@@ -194,10 +331,14 @@ async def test_workspace_command_opens_same_manager_in_registered_scope(tmp_path
         case.composer.load_draft("/rules workspace")
         await case.pilot.pause()
         assert await case.pilot.click("#console-send-message")
-        for _ in range(15):
-            await case.pilot.pause()
-            if isinstance(case.host.screen, ResponseRulesModal):
-                break
+        # Mounted, not just pushed: is_mounted turns True only after on_mount's
+        # awaited reload, so the test cannot end with the modal mid-mount.
+        await _until(
+            lambda: isinstance(case.host.screen, ResponseRulesModal)
+            and case.host.screen.is_mounted,
+            "the /rules workspace command's ResponseRulesModal mounting",
+            lambda: case.pilot.pause(0.01),
+        )
         assert isinstance(case.host.screen, ResponseRulesModal), (
             case.chats.active_session_id,
             case.rules.scopes(session.id),
@@ -214,29 +355,43 @@ async def test_chat_and_canonical_settings_open_the_same_scoped_manager(tmp_path
 
     async with mounted_rules_console(tmp_path, (120, 35)) as case:
         case.console.action_open_console_session_settings()
-        for _ in range(30):
-            await case.pilot.pause()
-            if case.host.screen.query("#console-settings-response-rules"):
-                break
+        # TASK-39166: bounded waits on each step's state, not pilot-turn counts.
+        step = lambda: case.pilot.pause(0.01)  # noqa: E731
+        await _until(
+            lambda: bool(case.host.screen.query("#console-settings-response-rules")),
+            "the session settings' Response rules button",
+            step,
+        )
         case.host.screen.query_one("#console-settings-response-rules", Button).press()
-        for _ in range(10):
-            await case.pilot.pause()
-        assert isinstance(case.host.screen, ResponseRulesModal)
+        await _until(
+            lambda: isinstance(case.host.screen, ResponseRulesModal)
+            and case.host.screen.is_mounted,
+            "the chat-scoped Response rules manager mounting",
+            step,
+        )
         assert case.host.screen.scope == case.rules.scopes(case.session_id)[0]
         await case.pilot.press("escape")
-        await case.pilot.pause()
+        await _until(
+            lambda: not isinstance(case.host.screen, ResponseRulesModal),
+            "Escape closing the chat-scoped manager",
+            step,
+        )
         await case.host.pop_screen()
         settings = SettingsScreen(case.app)
         settings.apply_navigation_context({"category": "hooks"})
         await case.host.push_screen(settings)
-        for _ in range(20):
-            await case.pilot.pause()
-            if settings.query("#settings-response-rules"):
-                break
+        await _until(
+            lambda: bool(settings.query("#settings-response-rules")),
+            "the Hooks category's Response rules button",
+            step,
+        )
         settings.query_one("#settings-response-rules", Button).press()
-        for _ in range(10):
-            await case.pilot.pause()
-        assert isinstance(case.host.screen, ResponseRulesModal)
+        await _until(
+            lambda: isinstance(case.host.screen, ResponseRulesModal)
+            and case.host.screen.is_mounted,
+            "the global Response rules manager mounting",
+            step,
+        )
         assert case.host.screen.scope.kind == "global"
         assert case.host.screen.runtime is case.rules
 
@@ -256,15 +411,21 @@ async def test_canonical_settings_opens_global_rules_before_console_visit(tmp_pa
     settings.apply_navigation_context({"category": "hooks"})
     try:
         async with ManagerHost(settings).run_test(size=(120, 35)) as pilot:
-            for _ in range(25):
-                await pilot.pause()
-                if settings.query("#settings-response-rules"):
-                    break
+            # TASK-39166: bounded waits on each step's state. The modal must be
+            # mounted, not just pushed: under load the test ended with its
+            # Selects still mounting, and teardown raised NoMatches from them.
+            await _until(
+                lambda: bool(settings.query("#settings-response-rules")),
+                "the Hooks category's Response rules button",
+                lambda: pilot.pause(0.01),
+            )
             settings.query_one("#settings-response-rules", Button).press()
-            for _ in range(30):
-                await pilot.pause()
-                if isinstance(settings.app.screen, ResponseRulesModal):
-                    break
+            await _until(
+                lambda: isinstance(settings.app.screen, ResponseRulesModal)
+                and settings.app.screen.is_mounted,
+                "the Response rules manager mounting",
+                lambda: pilot.pause(0.01),
+            )
             assert isinstance(settings.app.screen, ResponseRulesModal)
             modal = settings.app.screen
             assert modal.scope.kind == "global"
@@ -289,11 +450,7 @@ async def test_active_run_copy_takes_priority_over_an_earlier_rule_verdict(tmp_p
         case.composer.load_draft("Explain another result")
         case.console.query_one("#console-send-message", Button).press()
         try:
-            for _ in range(60):
-                await case.pilot.pause()
-                if entered.is_set():
-                    break
-            assert entered.is_set(), case.controller.run_state
+            await _until_set(entered, "the held primary request")  # TASK-39166
             # The held provider has sent no chunk yet, so the run's own copy
             # is the pre-first-chunk wording (077e5bfa09 moved streaming copy
             # to Agent.console_run_feedback_copy), never the rule verdict.
@@ -326,9 +483,13 @@ async def test_violation_status_opens_rules_with_disable_action(tmp_path):
         case.console.query_one(
             "#console-status-text", ConsoleStatusText
         ).action_open_segment("run")
-        for _ in range(12):
-            await case.pilot.pause()
-        assert isinstance(case.host.screen, ResponseRulesModal)
+        # TASK-39166: mounted means on_mount's reload set the Disable action.
+        await _until(
+            lambda: isinstance(case.host.screen, ResponseRulesModal)
+            and case.host.screen.is_mounted,
+            "the run segment opening the Response rules manager",
+            lambda: case.pilot.pause(0.01),
+        )
         assert not case.host.screen.query_one("#rr-disable", Button).disabled
 
 
@@ -445,11 +606,6 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
     async with mounted_rules_console(tmp_path) as case:
         other_session_id = case.chats.create_session(activate=False).id
         if deferral != "none":
-            import sys
-            import threading
-            import time
-            import traceback
-
             from tldw_chatbook import config
 
             case.host.app_config = config.load_settings()
@@ -461,49 +617,34 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
             complaint = "/omfg Include evidence in the answer"
             case.composer.load_draft(complaint)
             case.console.query_one("#console-send-message", Button).press()
-            async with asyncio.timeout(5):
-                await case.helper_entered.wait()
+            await _until_set(case.helper_entered, "the /omfg helper's request")
             await case.pilot.pause()
-            async with asyncio.timeout(2):
-                while (
-                    not case.console._console_attach_reconciled
-                    or case.console._console_control_bar_sync_scheduled
-                ):
-                    await case.pilot.pause(0.01)
-                # Attach readiness precedes its queued full-refresh callback.
-                refreshed = asyncio.Event()
-                case.console.call_after_refresh(refreshed.set)
-                await refreshed.wait()
+            await _until(
+                lambda: case.console._console_attach_reconciled
+                and not case.console._console_control_bar_sync_scheduled,
+                "the attach reconcile and its control-bar sync",
+                lambda: case.pilot.pause(0.01),
+            )
+            # Attach readiness precedes its queued full-refresh callback.
+            refreshed = asyncio.Event()
+            case.console.call_after_refresh(refreshed.set)
+            await _until_set(refreshed, "the attach's queued full refresh")
             assert case.console._console_credential_poll_timer is not None
             source = case.rules._sources[case.session_id]
             assert case.rules.acceptance_current(source)
             stop = case.console.query_one("#console-stop-generation", Button)
             assert stop.display and not stop.disabled
-            held, release, expired = (
-                threading.Event(),
-                threading.Event(),
-                threading.Event(),
-            )
+            held, release = threading.Event(), threading.Event()
             errors = []
-            blocked_stack = []
 
             def hold_rebuild():
                 try:
                     with config._settings_rebuild_lock():
                         config._invalidate_config_caches()
                         held.set()
-                        assert release.wait(5), "config holder was not released"
+                        assert release.wait(_HOLD_SECONDS), "config holder was not released"
                 except BaseException as error:  # noqa: BLE001 - asserted after thread retirement.
                     errors.append(error)
-
-            def unblock_failure():
-                blocked_stack.extend(
-                    traceback.format_stack(
-                        sys._current_frames()[threading.main_thread().ident]
-                    )
-                )
-                expired.set()
-                release.set()
 
             sync_results = []
             sync_control_bar = case.console._sync_console_control_bar
@@ -514,20 +655,21 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
                 return result
 
             holder = threading.Thread(target=hold_rebuild)
-            watchdog = threading.Timer(2, unblock_failure)
+            watch = _UiLoopWatch(release.set)
+            expired = watch.fired
             if deferral == "maintenance":
                 case.console._console_sync_maintenance_close_admission()
             try:
                 holder.start()
-                assert held.wait(3)
-                watchdog.start()
+                assert held.wait(_STATE_SECONDS), "the holder never took the rebuild lock"
+                watch.start()
                 with monkeypatch.context() as observer:
                     observer.setattr(case.console, "_sync_console_control_bar", observed_sync)
                     started = time.monotonic()
                     case.rules._project(case.session_id, phase="testing")
                     elapsed = time.monotonic() - started
-                assert not expired.is_set(), (
-                    f"rule event blocked on the config rebuild for {elapsed:.3f}s"
+                assert not expired.is_set(), watch.failure(
+                    f"the rule event ({elapsed:.3f}s)"
                 )
                 assert _run_visible(case.console)
                 assert "Testing rule" in _run_text(case.console)
@@ -557,20 +699,23 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
                 await case.console._console_credential_poll_timer._tick(
                     next_timer=time.monotonic(), count=0
                 )
-                assert not expired.is_set(), "credential timer blocked the UI loop"
+                assert not expired.is_set(), watch.failure("the credential timer")
                 # Exercise passive recovery even before its periodic refresh fires.
                 region = case.console._console_transcript_region_or_none()
                 assert region is not None
                 region.sync_recovery()
-                assert not expired.is_set(), "passive recovery blocked the UI loop"
+                assert not expired.is_set(), watch.failure("passive recovery")
                 stop.press()
-                async with asyncio.timeout(1):
-                    while case.rules.state(case.session_id).phase != "idle" or (
+                await _until(
+                    lambda: case.rules.state(case.session_id).phase == "idle"
+                    and not (
                         _run_visible(case.console)
                         and "Testing rule" in _run_text(case.console)
-                    ):
-                        await asyncio.sleep(0.01)
-                assert not expired.is_set() and not release.is_set()
+                    ),
+                    "Stop returning the rule phase to idle and clearing 'Testing rule'",
+                )
+                assert not expired.is_set(), watch.failure("Stop")
+                assert not release.is_set()
                 assert holder.is_alive()
                 assert not _run_visible(case.console) or (
                     "Testing rule" not in _run_text(case.console)
@@ -580,19 +725,23 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
                 assert case.rules.helpers.unsettled_count == 1
                 assert case.composer.draft_text() == complaint
             finally:
-                watchdog.cancel()
+                watch.stop()
                 release.set()
                 holder.join(3)
-                if watchdog.ident is not None:
-                    watchdog.join(3)
                 case.console._console_sync_maintenance_resume()
-                assert not holder.is_alive() and not watchdog.is_alive()
+                assert not holder.is_alive() and not watch.is_alive()
                 assert not errors
-                if blocked_stack:
-                    print("Blocked UI stack:\n" + "".join(blocked_stack))
+                if watch.stack:
+                    print("Blocked UI stack:\n" + "".join(watch.stack))
                 case.helper_release.set()
-                async with asyncio.timeout(5):
-                    await case.rules.helpers.wait_for_cleanup()
+                try:
+                    async with asyncio.timeout(_STATE_SECONDS):
+                        await case.rules.helpers.wait_for_cleanup()
+                except TimeoutError:
+                    pytest.fail(
+                        "the response-rule helpers did not clean up within "
+                        f"{_STATE_SECONDS:g} s"
+                    )
                 from textual.worker import WorkerCancelled
 
                 for worker in tuple(case.console.workers):
@@ -603,9 +752,16 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
             assert case.rules.helpers.unsettled_count == 0
             assert case.composer.draft_text() == complaint
             assert case.learning_results and case.learning_results[-1][0] != "active"
-            async with asyncio.timeout(5):
-                while case.console._console_control_bar_sync_scheduled:
-                    await case.pilot.pause(0.01)
+            # TASK-39166: wait on what is read next. The flag can clear before
+            # a later sync hides Stop (1 of 10 whole-file runs at load ~51).
+            await _until(
+                lambda: not case.console._console_control_bar_sync_scheduled
+                and not stop.display
+                and "Testing rule" not in _run_text(case.console),
+                "the control-bar sync deferred during the hold hiding Stop "
+                "and 'Testing rule'",
+                lambda: case.pilot.pause(0.01),
+            )
             assert "Testing rule" not in _run_text(case.console)
             assert not stop.display
             assert case.rules.state(case.session_id).phase == "idle"
@@ -645,7 +801,10 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("sync", ["recovery-and-resume", "full-ui", "full-ui-held"])
+@pytest.mark.parametrize(
+    "sync",
+    ["recovery-and-resume", "full-ui", "full-ui-held", "coachmark", "coachmark-dismissed"],
+)
 async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypatch, sync):
     """TASK-35444, TASK-35645: display syncs never wait while a rebuild holds config.
 
@@ -659,14 +818,13 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
     then reconciles the seeded rows ("full-ui"), before the whole sync
     ("full-ui-held"), or before the recovery sync and a screen resume
     ("recovery-and-resume", one mount for both). Queued refreshes get loop
-    turns inside the hold too. The watchdog records where the UI thread was
-    waiting.
+    turns inside the hold too. The watch (TASK-39166) records where the UI
+    thread was waiting. "coachmark" (TASK-39166): a tab sync that sees the
+    session count reach two shows the fleet coach-mark, whose copy reads the
+    parallel-run cap; it waited in ``load_settings()`` through
+    ``_ensure_console_chat_controller`` under load. "coachmark-dismissed": a
+    dismissal while that show is deferred keeps it from appearing afterwards.
     """
-    import sys
-    import threading
-    import time
-    import traceback
-
     from tldw_chatbook import config
 
     async with mounted_rules_console(tmp_path) as case:
@@ -677,32 +835,38 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
         region = case.console._console_transcript_region_or_none()
         assert region is not None and region.is_mounted
         hold, held, release = threading.Event(), threading.Event(), threading.Event()
-        blocked = []
 
         def hold_rebuild():
-            hold.wait(5)
+            hold.wait(_HOLD_SECONDS)
             with config._settings_rebuild_lock():
                 config._invalidate_config_caches()
                 held.set()
-                release.wait(5)
-
-        def expire():
-            frame = sys._current_frames()[threading.main_thread().ident]
-            blocked.extend(traceback.format_stack(frame))
-            release.set()
+                release.wait(_HOLD_SECONDS)
 
         def start_rebuild():
             hold.set()
-            assert held.wait(3)
+            assert held.wait(_STATE_SECONDS), "the holder never took the rebuild lock"
             started.append(time.monotonic())
-            watchdog.start()
+            watch.start()
 
         holder = threading.Thread(target=hold_rebuild)
-        watchdog = threading.Timer(2, expire)
+        watch = _UiLoopWatch(release.set)
         started = []  # when the hold began
         holder.start()
         try:
-            if sync == "recovery-and-resume":
+            if sync.startswith("coachmark"):
+                await settle(case.console)
+                await case.console._sync_console_native_session_tabs()  # seeds the count
+                assert len(case.chats.sessions()) == 1
+                case.chats.create_session(activate=False)
+                start_rebuild()
+                await case.console._sync_console_native_session_tabs()
+                if sync == "coachmark-dismissed":
+                    assert "_show_console_fleet_coachmark" in (
+                        getattr(case.console, "_console_config_retries", None) or {}
+                    ), "the coach-mark show was not deferred"
+                    case.console._record_console_fleet_coachmark_dismissed()
+            elif sync == "recovery-and-resume":
                 await settle(case.console)
                 start_rebuild()
                 region.sync_recovery()
@@ -755,16 +919,32 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
                 if sync == "full-ui":
                     assert reconciled, "no transcript rows reconciled under the rebuild"
             elapsed = time.monotonic() - started[0]
-            assert not release.is_set(), (
-                f"{sync} sync waited {elapsed:.3f}s for the config rebuild:\n"
-                + "".join(blocked[-14:])
+            assert not watch.fired.is_set(), watch.failure(
+                f"the {sync} sync ({elapsed:.3f}s into the hold)"
             )
         finally:
             hold.set()
-            watchdog.cancel()
+            watch.stop()
             release.set()
             holder.join(3)
-        assert not holder.is_alive()
+        assert not holder.is_alive() and not watch.is_alive()
+        banner = case.console.query_one("#console-fleet-coachmark")
+        if sync == "coachmark-dismissed":
+            await _until(
+                lambda: "_show_console_fleet_coachmark"
+                not in (getattr(case.console, "_console_config_retries", None) or {}),
+                "the deferred coach-mark show running after the release",
+            )
+            assert banner.styles.display != "block", "the dismissed coach-mark reappeared"
+        if sync == "coachmark":
+            # Deferred, not dropped: the coach-mark shows once the hold ends.
+            await _until(
+                lambda: banner.styles.display == "block",
+                "the fleet coach-mark showing after the release",
+            )
+            assert "in parallel" in str(
+                case.console.query_one("#console-fleet-coachmark-text").renderable
+            )
         if sync.startswith("full-ui"):
             # Deferred, not dropped: any whole-sync replay finishes after release.
             await settle(case.console)
@@ -779,13 +959,14 @@ async def settle(console):
     reconcile's resume is pinned by the recovery-and-resume case; the mount's
     own refreshes by the test below (TASK-35836).
     """
-    async with asyncio.timeout(5):
-        while (
+    await _until(
+        lambda: not (
             console._console_sync_in_progress
             or getattr(console, "_console_control_bar_replay_whole_sync", False)
             or not console._console_attach_reconciled
-        ):
-            await asyncio.sleep(0.01)
+        ),
+        "the app's own sync, its replay and the attach reconcile settling",
+    )
 
 
 _MOUNT_REBUILD_STARTS = {
@@ -798,7 +979,7 @@ _MOUNT_REBUILD_STARTS = {
 @pytest.mark.asyncio
 @pytest.mark.parametrize("start", list(_MOUNT_REBUILD_STARTS))
 async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
-    tmp_path, start
+    tmp_path, start, monkeypatch
 ):
     """TASK-35836: the refreshes a Console mount schedules never wait for a rebuild.
 
@@ -813,23 +994,41 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
     """
     import inspect
     import itertools
-    import sys
-    import threading
-    import traceback
 
     from Tests.UI.test_destination_shells import _build_test_app
     from tldw_chatbook import config
     from tldw_chatbook.config import save_setting_to_cli_config
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.Widgets import compact_model_bar
 
     app = _build_test_app()
     app.chachanotes_db = CharactersRAGDB(tmp_path / "console-mount.sqlite", "mount-ui")
     _configure_native_ready_console(app, model="test-model")
     assert save_setting_to_cli_config("console", "agent_runtime", False)
     app.app_config.setdefault("console", {})["agent_runtime"] = False
+    # TASK-39166: ConsoleHarness hosts ChatScreen on its own App, so the compact
+    # model bar's checked setup refuses (`widget.app` is not its app_instance)
+    # and the bar takes its direct-read compatibility route in compose and
+    # on_mount. Under load the roleplay start's hold began before that on_mount,
+    # which then waited for the rebuild in load_settings(); production's bar reads
+    # off the loop. Those two harness-only reads get the providers read here.
+    read_providers = compact_model_bar.get_cli_providers_and_models
+    providers = read_providers()
+    harness_reads = {
+        compact_model_bar.CompactModelBar.compose.__code__,
+        compact_model_bar.CompactModelBar.on_mount.__code__,
+    }
+
+    def providers_for_harness_bar():
+        if sys._getframe(1).f_code in harness_reads:
+            return {name: list(models) for name, models in providers.items()}
+        return read_providers()
+
+    monkeypatch.setattr(
+        compact_model_bar, "get_cli_providers_and_models", providers_for_harness_bar
+    )
     hold, held, release = threading.Event(), threading.Event(), threading.Event()
-    blocked = []
 
     def hold_rebuild():
         hold.wait()
@@ -838,12 +1037,7 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
         with config._settings_rebuild_lock():
             config._invalidate_config_caches()
             held.set()
-            release.wait(10)
-
-    def expire():
-        frame = sys._current_frames()[threading.main_thread().ident]
-        blocked.extend(traceback.format_stack(frame))
-        release.set()
+            release.wait(_HOLD_SECONDS)
 
     step = getattr(ChatScreen, _MOUNT_REBUILD_STARTS[start])
     original_step = inspect.unwrap(step)
@@ -855,10 +1049,10 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
         ensure_console_runtime(app).ensure_chat_store().create_session()
 
     holder = threading.Thread(target=hold_rebuild)
-    # 5 s, not 2: from on_mount the rest of startup runs inside the hold, and a
-    # loaded runner can take seconds; a UI thread that waits stays blocked
-    # until this fires, since the test cannot run to release it.
-    watchdog = threading.Timer(5, expire)
+    # From on_mount the rest of startup runs inside the hold, and a loaded
+    # runner can take seconds; a UI thread that waits stays blocked until the
+    # watch fires, since the test cannot run to release it (TASK-39166).
+    watch = _UiLoopWatch(release.set)
     fetches = []  # when skill discovery fetched its context: before, in or after the hold
     service = app.skills_scope_service
     get_context = service.get_context
@@ -891,8 +1085,8 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
         ):
             observed_entry.append(frame.f_locals.get("screen", frame.f_locals.get("self")))
             hold.set()
-            assert held.wait(3)
-            watchdog.start()
+            assert held.wait(_STATE_SECONDS), "the holder never took the rebuild lock"
+            watch.start()
         if code in body_codes and observed_entry and frame.f_locals.get("self") is observed_entry[0]:
             bodies.append((body_codes[code], "after" if release.is_set() else "hold"))
         if code is context_code and frame.f_locals.get("self") is service:
@@ -907,9 +1101,7 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
         # run_test may wait for readiness work blocked by this artificial hold.
         # Observe loop progress and release independently of entering its body.
         try:
-            async with asyncio.timeout(30):
-                while not held.is_set():
-                    await asyncio.sleep(0.01)
+            await _until_set(held, f"the {start} step's entry (the hold's start)")
             console = observed_entry[0]
             expected = {
                 "mount": "_adapt_console_workspace_to_width",
@@ -917,7 +1109,10 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
             }.get(start)
             deferred, discovery_waited = set(), False
             heartbeats = 0
-            deadline = asyncio.get_running_loop().time() + 2
+            # TASK-39166: observe the hold until it has seen 15 loop turns and
+            # the deferral this start expects, not for a fixed 2 s: under load
+            # 2 s held 7 turns. The watch detects a loop that stopped.
+            deadline = asyncio.get_running_loop().time() + _STATE_SECONDS
             for tick in itertools.count():
                 if held.is_set() and not release.is_set():
                     heartbeats += 1
@@ -929,12 +1124,15 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
                 seen = (expected is None or expected in deferred) and (
                     discovery_waited or start != "view-start"
                 )
-                if (tick >= 15 and seen) or asyncio.get_running_loop().time() > deadline:
+                if (
+                    (heartbeats >= 15 and seen)
+                    or release.is_set()
+                    or asyncio.get_running_loop().time() > deadline
+                ):
                     break
                 await asyncio.sleep(0.05)
-            assert not release.is_set(), "the Console mount waited for the config rebuild:\n" + "".join(
-                blocked[-14:]
-            )
+            assert not watch.fired.is_set(), watch.failure("the Console mount")
+            assert not release.is_set()
             assert heartbeats >= 15, "the UI loop did not progress during the hold"
             assert expected is None or expected in deferred, deferred
             assert discovery_waited or start != "view-start"
@@ -943,7 +1141,7 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
             return deferred
         finally:
             release.set()
-            watchdog.cancel()
+            watch.stop()
 
     holder.start()
     coordinator = asyncio.create_task(coordinate_hold())
@@ -959,20 +1157,19 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
             # releases. Attach, discovery, and readiness own that lifecycle;
             # their completion is not the display callback delivery budget.
             # Re-read readiness because startup may issue another projection.
-            async with asyncio.timeout(30):
-                while (
-                    not console._console_attach_reconciled
-                    or not {"before", "after"} & set(fetches)
-                    or any(
-                        worker.group == "console-skill-discovery" and not worker.is_finished
-                        for worker in console.workers
-                    )
-                    or (
-                        (projection := getattr(console, "_console_readiness_config_projection", None))
-                        is not None and projection.pending
-                    )
-                ):
-                    await asyncio.sleep(0.02)
+            await _until(
+                lambda: console._console_attach_reconciled
+                and bool({"before", "after"} & set(fetches))
+                and not any(
+                    worker.group == "console-skill-discovery" and not worker.is_finished
+                    for worker in console.workers
+                )
+                and not (
+                    (projection := getattr(console, "_console_readiness_config_projection", None))
+                    is not None and projection.pending
+                ),
+                "attach, skill discovery and readiness settling after the release",
+            )
             # Deferred, not dropped: every original display retry must run
             # within the unchanged five-second delivery budget.
             try:
@@ -1002,11 +1199,11 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
             sys.monitoring.set_local_events(monitor, code, 0)
         sys.monitoring.register_callback(monitor, entry_event, None)
         sys.monitoring.free_tool_id(monitor)
-        watchdog.cancel()
+        watch.stop()
         release.set()
         hold.set()
         holder.join(3)
-    assert not holder.is_alive()
+    assert not holder.is_alive() and not watch.is_alive()
 
 
 def test_a_deferred_refresh_runs_once_with_its_latest_call(monkeypatch):

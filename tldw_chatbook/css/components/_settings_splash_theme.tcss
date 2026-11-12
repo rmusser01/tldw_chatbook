@@ -118,8 +118,13 @@
     color: $ds-text-muted;
     text-style: bold;
 }
+/* TASK-39171: 8, not 9. At 80x24 the compact detail body shows 14 rows,
+   and the Settings header's Plugins row (177a2936c7) took the 15th, so a
+   9-row list pushed the status line below it (#settings-theme-row-status,
+   TASK-33122) off screen. Pinned by
+   test_highlighted_launch_and_override_status_is_on_screen[size0]. */
 #settings-workbench.settings-workbench-compact #settings-theme-list {
-    max-height: $ds-size-9;
+    max-height: $ds-size-8;
 }
 /* TASK-33122: a narrow row drops "launch"/"overrides …" to stay on one
    line, and at 80x24 the card is scrolled off under the list, so this line

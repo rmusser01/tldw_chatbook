@@ -2589,3 +2589,9 @@ cancellation case failed before the same one-line correction and passed afterwar
 with a separate admitted-publication control. Follow the callback binding and
 consumer, capture warnings/GC inside child processes, and preserve distinct failed
 and passing source epochs; the printed warning receiver is not allocation proof.
+
+## Re-pushing a dismissed screen before its pop finishes never mounts it again (TASK-39165, 2026-11-10)
+
+**Incident.** `test_stale_review_validation_cannot_mutate_or_commit_after_remount` dismisses its modal, waits one `pilot.pause()`, pushes the same instance again and asserts that `on_mount` bumped `_safe_mount_generation`. Under load (round-13 runs at load 54-106) a bounded wait on that generation ran out in 2 of 20 cases: the re-push never mounted. `App._get_screen` registers and mounts a pushed screen only when it is not `is_running`; a screen whose pop is still in flight is reused as is (`AwaitMount(screen, [])`), and no Mount follows. Waiting for `not modal.is_running` before the push was not enough either: it failed the same way in one whole-file run at load ~70, so the pump stops running before the pop's removal is over. Waiting for the pop itself (`popped = modal.dismiss(None)`, then a bounded wait on `popped.is_done`) passed 10 of 10 whole-file runs at load 75-93.
+
+**What to do.** Before pushing a dismissed screen instance again, wait for the `AwaitComplete` that `dismiss()` (or `pop_screen()`) returned: `is_done` lets a test bound it without awaiting it from a handler. Neither one `pilot.pause()` nor `is_running` marks the end of a pop.
