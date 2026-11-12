@@ -834,17 +834,16 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
         )
         region = case.console._console_transcript_region_or_none()
         assert region is not None and region.is_mounted
-        hold, held, release = threading.Event(), threading.Event(), threading.Event()
+        held, release = threading.Event(), threading.Event()
 
         def hold_rebuild():
-            hold.wait(_HOLD_SECONDS)
             with config._settings_rebuild_lock():
                 config._invalidate_config_caches()
                 held.set()
                 release.wait(_HOLD_SECONDS)
 
         def start_rebuild():
-            hold.set()
+            holder.start()
             assert held.wait(_STATE_SECONDS), "the holder never took the rebuild lock"
             started.append(time.monotonic())
             watch.start()
@@ -852,7 +851,6 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
         holder = threading.Thread(target=hold_rebuild)
         watch = _UiLoopWatch(release.set)
         started = []  # when the hold began
-        holder.start()
         try:
             if sync.startswith("coachmark"):
                 await settle(case.console)
@@ -897,7 +895,9 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
                     await transcript_sync(force=True)
 
                 monkeypatch.setattr(
-                    case.console, "_sync_native_console_transcript", rebuild_then_transcript
+                    case.console,
+                    "_sync_native_console_transcript",
+                    rebuild_then_transcript,
                 )
                 if sync == "full-ui-held":
                     await settle(case.console)
@@ -923,10 +923,10 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
                 f"the {sync} sync ({elapsed:.3f}s into the hold)"
             )
         finally:
-            hold.set()
             watch.stop()
             release.set()
-            holder.join(3)
+            if holder.ident is not None:
+                holder.join(3)
         assert not holder.is_alive() and not watch.is_alive()
         banner = case.console.query_one("#console-fleet-coachmark")
         if sync == "coachmark-dismissed":
