@@ -31,9 +31,10 @@ guard = next(
 methods = {
     n.name: n
     for n in screen.body
-    if isinstance(n, ast.AsyncFunctionDef)
+    if isinstance(n, (ast.AsyncFunctionDef, ast.FunctionDef))
     and n.name
     in {
+        "_current_console_run_status_value",
         "_sync_native_console_chat_ui",
         "_sync_console_native_session_tabs",
         "_console_sync_maintenance_drain",

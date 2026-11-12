@@ -186,3 +186,47 @@ def test_passive_recovery_before_controller_creation_has_no_state():
     )
     session._read_trace_recovery_state = lambda: chat_screen.trace_call_recovery_state
     assert session._console_trace_recovery_state() is None
+
+@pytest.mark.asyncio
+async def test_transcript_sync_reads_recovery_after_ensuring_the_controller(monkeypatch):
+    """The transcript sync sets up the controller before projecting recovery."""
+    from tldw_chatbook.UI.Console_Modules import console_spend_projection
+
+    class Stop(Exception):
+        pass
+
+    screen = chat_screen.ChatScreen.__new__(chat_screen.ChatScreen)
+    screen._change_review_projection = None
+    live = SimpleNamespace(controller=None)
+    events = []
+    monkeypatch.setattr(
+        chat_screen.ChatScreen,
+        "_console_chat_controller",
+        property(lambda _screen: live.controller),
+    )
+    monkeypatch.setattr(
+        chat_screen.ChatScreen,
+        "_console_chat_store",
+        property(lambda _screen: SimpleNamespace(active_session_id="s")),
+    )
+    monkeypatch.setattr(
+        console_spend_projection, "console_transcript_context_inputs", lambda *_a: None
+    )
+    screen.query_one = lambda *_a, **_k: object()
+
+    def ensure():
+        events.append("ensure")
+        live.controller = object()
+        return live.controller
+
+    def sync_recovery():
+        events.append(("recovery", live.controller is not None))
+        raise Stop  # the rest of the transcript pipeline is not under test
+
+    screen._ensure_console_chat_controller = ensure
+    screen._console_transcript_region_or_none = lambda: SimpleNamespace(
+        sync_recovery=sync_recovery
+    )
+    with pytest.raises(Stop):
+        await screen._sync_native_console_transcript()
+    assert events == ["ensure", ("recovery", True)]

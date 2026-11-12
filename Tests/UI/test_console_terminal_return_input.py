@@ -261,8 +261,8 @@ async def test_deferred_return_sync_does_not_schedule_a_restore(monkeypatch):
     )
     monkeypatch.setattr(terminal, "sync_terminal_center_chrome", lambda screen: None)
     terminal.finish_center_swap(screen)
-    for worker in workers:
-        await worker
+    assert workers == [held_sync]
+    await workers[0]()
     assert not any(
         fn == screen._restore_console_transcript_reading_state for fn, _ in callbacks
     ), "Held sync restored an empty center"

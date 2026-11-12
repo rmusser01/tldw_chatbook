@@ -373,7 +373,19 @@ async def test_stock_canvas_poll_leaves_the_retired_read_callback_handoff(
         with eager_tasks():
             console, _composer = await ready_console(host, pilot, gateway)
             projection = await _fresh_display(console)
-            await until(lambda: not console._console_sync_in_progress, timeout=30)
+            # Attach can leave a refresh queued even when no FULL is running.
+            # Drain that refresh and its coalesced replay before taking over delivery.
+            async with asyncio.timeout(30):
+                await until(lambda: console._console_attach_reconciled, timeout=30)
+                await console.wait_for_refresh()
+                await until(
+                    lambda: not (
+                        console._console_sync_in_progress
+                        or getattr(console, "_console_control_bar_sync_scheduled", False)
+                        or getattr(console, "_console_control_bar_replay_whole_sync", False)
+                    ),
+                    timeout=30,
+                )
             runtime = console._console_runtime()
             assert type(runtime) is ConsoleRuntime
             assert (

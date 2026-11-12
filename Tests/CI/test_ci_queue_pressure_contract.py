@@ -156,9 +156,7 @@ FAST_LANE_TARGETS = (
     "Tests/Chat/test_first_reply_failure_copy.py",
     "Tests/Chat/test_first_token_window.py",
     "Tests/Architecture/test_surface_swap_guard.py",
-    "Tests/Architecture/test_agent_runtime_import_footprint.py",
     "Tests/Library/test_ingest_analysis_load_settings.py",
-    "Tests/test_config_load_settings_table_guard.py",
     "Tests/Architecture/test_study_handler_service_keywords.py",
     # TASK-38740: the zero-width fold guard still matches Textual (gate-free, <1 s).
     "Tests/Architecture/test_zero_width_fold_guard.py",
@@ -300,10 +298,6 @@ FAST_LANE_TARGETS = (
     # TASK-33003.16: the theme loader drops 'auto NN%' on a background name and
     # a value of the wrong kind, and the loaded theme applies (whole file).
     "Tests/Utils/test_user_theme_loader.py",
-    # TASK-33641.1 AC#3: the boot CSS byte budget
-    # and the ancestor-scoped bare-type rule ratchet (private profile each).
-    "Tests/Performance/test_boot_css_byte_budget.py",
-    "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
     # TASK-33001.15: the loader names the tables it filled from legacy [API],
     # and a kept stored key is written only into such a table.
     "Tests/Chat/test_provider_readiness.py::test_loader_names_the_tables_it_filled_from_the_legacy_api_section",
@@ -509,6 +503,11 @@ ARCH_REVIEW_TARGETS = (
     # TASK-38702 added these whole-file Console guards to required PR CI.
     "Tests/Chat/test_console_fork_transition_census.py",
     "Tests/Chat/test_console_semantic_mutation_inventory.py",
+    # Keep these guards required without spending the serial fast lane's margin.
+    "Tests/Architecture/test_agent_runtime_import_footprint.py",
+    "Tests/test_config_load_settings_table_guard.py",
+    "Tests/Performance/test_boot_css_byte_budget.py",
+    "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
 )
 #: Owner decision (2026-11-06): suites runnable again after being red in no PR
 #: lane, in their own job, serial under --storage-lease-guard. Sandboxed suites

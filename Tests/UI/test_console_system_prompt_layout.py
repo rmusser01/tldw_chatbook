@@ -58,6 +58,7 @@ def assert_actions_painted(editor):
         (CLEAR_BUTTON_ID, ""),
         (CANCEL_BUTTON_ID, None),
     ],
+    ids=("apply", "clear", "cancel"),
 )
 @private_profile_test
 async def test_prompt_editor_actions_are_painted_and_clickable(

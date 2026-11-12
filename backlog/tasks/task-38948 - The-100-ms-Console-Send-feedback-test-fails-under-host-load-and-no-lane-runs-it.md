@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-05 21:35
-updated_date: 2026-11-10 23:30
+updated_date: 2026-11-12 15:09
 labels:
 - follow-up
 - console
@@ -38,7 +38,7 @@ These alone runs were at higher load than most of the whole-file runs, so they c
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 On a host loaded below its CPU count, the test passes 10 of 10 runs alone and in its file at -n 4, with the median and maximum of all three intervals recorded
+- [x] #1 On a host loaded below its CPU count, the test passes 10 of 10 runs alone and in its file at -n 4, with the median and maximum of all three intervals recorded
 - [x] #2 Under heavy load the test either still passes 10 of 10, or reports a miss together with the measured loop lag instead of failing as a product regression; the choice is recorded in the notes
 - [x] #3 A temporary delay of about 150 ms before the Sending paint makes the test fail (negative control)
 - [ ] #4 The test runs on a PR lane, with the measured lane time recorded (about 27-49 s for both cases serially at load 50 on dev)
@@ -95,6 +95,26 @@ Also changed: the held provider read waited only 0.5 s for the paints. At load 1
 
 **Files.** `Tests/UI/test_console_received_intent_feedback.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `backlog/docs/lessons-testing-evidence.md`.
 
-**Not met: AC#1** (10 of 10 alone and in-file on a host loaded below its CPU count). Re-run 10x alone and 10x in-file at `-n 4` once the host is under 18. On such a host the wall budget is enforced, so those runs are the strict check.
 **Off the PR gate (2026-11-10, owner decision; AC#4 unticked).** On CI runners the test failed intermittently in the required UI lane after round 12 merged: PR run 42841511400 (branch fu/r12-lanes), job 129933421436 shard 16 `[send-button]` "the event loop spent 112 ms of CPU against 100 ms (123 ms wall)", job 129933421583 shard 15 `[enter]` 119 ms / 128 ms. Owner decision 2026-11-10 (AskUserQuestion): "Off the gate, reorder next (Recommended)", option text: "Move it out of the required PR lane now (it keeps running in the dev-push job), and implement the paint reorder: 'Sending…' paints one frame before the user row, which measured Sending CPU median 56→30 ms. Re-gate it once it passes on CI." Both census entries were removed in the hotfix branch fu/hotfix-restyle (floor 1913 → 1911); the subagent's attempt was refused by the permission system as a CI bypass, and the owner then authorized the coordinator to make this one edit. The paint reorder and the dev-push watch follow on the round-13 send branch; re-gating waits for CI evidence.
+
+**Mounted-ready qualification on the merged PR #3480 tree (November 12, 2026 UTC).**
+
+Exact source `e10ce63fe8bbd03104849aae007835e82c88f719` was loaded in the test process and
+all four xdist workers. Enter and Send-button both passed ten isolated runs and ten
+whole-file runs at `-n 4` on a host with 18 logical CPUs. Every qualifying whole-file run
+passed all 17 tests. The recorded one-minute load was 7.63–10.71 for isolated runs
+and 8.35–14.06 for whole-file runs. A supplemental whole-file run also passed
+at load 18.51 and was excluded from AC#1. No timing assertion used a load waiver.
+
+| Run | Sending frame median / max | Input mutation median / max | Input frame median / max |
+| --- | ---: | ---: | ---: |
+| Isolated | 51.9 / 74.6 ms | 2.4 / 3.6 ms | 6.8 / 37.5 ms |
+| Whole file, four workers | 43.9 / 78.0 ms | 2.4 / 3.3 ms | 7.4 / 31.1 ms |
+
+The timer covers the original Send, held native configuration read, actual frame, and
+input while that read is held. The fixture settles the mount-only discovery worker
+before timing. This qualification applies to mounted-ready Send and does not cover
+Send overlapping cold mount discovery or a physical terminal flush.
+
+AC#1 is met on that tree. AC#4 remains open pending hosted qualification and re-enrollment.
 <!-- SECTION:NOTES:END -->

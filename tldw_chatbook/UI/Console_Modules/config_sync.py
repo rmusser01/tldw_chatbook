@@ -886,7 +886,7 @@ def publish_console_presentation(screen: Any, group: str) -> None:
         cadence.owed = True
         return
     screen.run_worker(
-        screen._sync_native_console_chat_ui(), exclusive=False, group=group
+        screen._sync_native_console_chat_ui, exclusive=False, group=group
     )
 
 
