@@ -803,9 +803,17 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "sync",
-    ["recovery-and-resume", "full-ui", "full-ui-held", "coachmark", "coachmark-dismissed"],
+    [
+        "recovery-and-resume",
+        "full-ui",
+        "full-ui-held",
+        "coachmark",
+        "coachmark-dismissed",
+    ],
 )
-async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypatch, sync):
+async def test_console_syncs_never_wait_for_a_config_rebuild(
+    tmp_path, monkeypatch, sync
+):
     """TASK-35444, TASK-35645: display syncs never wait while a rebuild holds config.
 
     The phase test above failed in CI when a sync during Stop rebuilt the
@@ -854,7 +862,9 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
         try:
             if sync.startswith("coachmark"):
                 await settle(case.console)
-                await case.console._sync_console_native_session_tabs()  # seeds the count
+                await (
+                    case.console._sync_console_native_session_tabs()
+                )  # seeds the count
                 assert len(case.chats.sessions()) == 1
                 case.chats.create_session(activate=False)
                 start_rebuild()
@@ -931,11 +941,17 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
         banner = case.console.query_one("#console-fleet-coachmark")
         if sync == "coachmark-dismissed":
             await _until(
-                lambda: "_show_console_fleet_coachmark"
-                not in (getattr(case.console, "_console_config_retries", None) or {}),
+                lambda: (
+                    "_show_console_fleet_coachmark"
+                    not in (
+                        getattr(case.console, "_console_config_retries", None) or {}
+                    )
+                ),
                 "the deferred coach-mark show running after the release",
             )
-            assert banner.styles.display != "block", "the dismissed coach-mark reappeared"
+            assert banner.styles.display != "block", (
+                "the dismissed coach-mark reappeared"
+            )
         if sync == "coachmark":
             # Deferred, not dropped: the coach-mark shows once the hold ends.
             await _until(

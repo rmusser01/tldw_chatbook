@@ -996,6 +996,7 @@ MINIMUM_FILES = 2029
 # TASK-34601.1 (2026-11-11): feedback handoff, Stop and actual image-reader
 # shutdown and held-read input join the gate without moving earlier shards.
 # The spoken Send shared-reader control is appended without shifting existing entries.
+# Dev includes the native sync-admission file before these five entries.
 MINIMUM_FILES = 2034
 
 

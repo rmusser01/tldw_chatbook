@@ -1004,10 +1004,10 @@ async def test_send_feedback_survives_preparation_and_provider_wait(route, monke
                 await _until(
                     lambda: entered.is_set() or record.task.done(), _SETTLE_SECONDS
                 )
-                assert entered.is_set(), (
-                    "the turn never reached the provider: "
-                    + (f"it ended first ({record.task!r})" if record.task.done()
-                       else f"not within {_SETTLE_SECONDS:g} s")
+                assert entered.is_set(), "the turn never reached the provider: " + (
+                    f"it ended first ({record.task!r})"
+                    if record.task.done()
+                    else f"not within {_SETTLE_SECONDS:g} s"
                 )
                 assert await _until(
                     lambda: ("Waiting for reply", selector) in frames.frames, 5
@@ -1028,9 +1028,9 @@ async def test_send_feedback_survives_preparation_and_provider_wait(route, monke
                 assert not stream_release.is_set()
                 stream_release.set()
                 await _turn_settles(case, record.task)
-                assert await _until(
-                    lambda: not _run_segment(case.console)[0], 5
-                ), "the run segment never hid after the turn settled"
+                assert await _until(lambda: not _run_segment(case.console)[0], 5), (
+                    "the run segment never hid after the turn settled"
+                )
                 assert len(case.provider_calls) == 1
                 assert any(
                     message.role.value == "assistant"
