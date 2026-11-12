@@ -45,6 +45,7 @@ async def test_canvas_disposal_diagnostics_omit_exception_content(
     assert all("PRIVATE-CANVAS" not in record["message"] for record in records)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("stage", "expected_error_messages"),
     [

@@ -64,6 +64,7 @@ def _isolated_environment(tmp_path: Path) -> dict[str, str]:
     return environment
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("environment", "expects_handler", "expects_client"),
     [
@@ -92,6 +93,7 @@ def test_app_constructs_served_control_only_for_present_spawn_environment(
         assert app.served_canvas_control.child_id == "child-a"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "package_damage",
     [
@@ -134,6 +136,7 @@ def test_served_child_keeps_control_without_native_fallback_when_profiles_fail(
         asyncio.run(app.console_runtime.dispose())
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
 async def test_unavailable_child_retains_snapshot_and_healthy_parent_refuses(

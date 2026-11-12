@@ -1490,6 +1490,7 @@ async def test_live_stack_child_data_root_preserves_parent_profile(
         await stack.aclose()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("fail_site", [1, 2], ids=["backend", "proxy"])
 async def test_live_stack_setup_failure_rolls_back_owned_resources(
     tmp_path, monkeypatch, fail_site
@@ -1574,6 +1575,7 @@ async def test_actual_child_abnormal_exit_cleans_owned_state(
     assert all(service._process.returncode is not None for service in stack.services)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("mode", "start_index", "update_count"),
     (("fresh", 7, 1), ("rapid", 0, 8)),
@@ -1702,6 +1704,7 @@ async def test_served_renderer_case_seven_keeps_exact_scope_and_execution_ack(
             await stack.aclose()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.loopback_network
 async def test_canonical_adversarial_corpus_stays_in_served_product_route(
     tmp_path: Path, monkeypatch
@@ -2043,6 +2046,7 @@ async def test_owned_shell_mounts_from_chatbook_origin_before_canvas(
         await server._served_canvas_gateway.aclose()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "package_damage",
     [
@@ -2266,6 +2270,7 @@ async def test_unavailable_served_parent_keeps_authenticated_source_lineage_expo
         await server._served_canvas_gateway.aclose()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("diagrams", [False, True, "failed"])
 async def test_mounted_production_authority_renders_and_settles_submit(
     tmp_path: Path, unused_tcp_port: int, candidate_snapshot, diagrams
@@ -2786,6 +2791,7 @@ async def test_hot_reload_branch_switch_exact_reopen_and_control_loss_keep_termi
         await browser.close()
 
 
+@pytest.mark.bootstrap_profile
 async def test_parent_scope_poll_marks_delayed_selection_as_passive_sync(
     tmp_path: Path,
     monkeypatch,
@@ -2815,6 +2821,7 @@ async def test_parent_scope_poll_marks_delayed_selection_as_passive_sync(
         await server._served_canvas_gateway.aclose()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "transition",
     [
@@ -2960,6 +2967,7 @@ async def test_two_browser_sessions_cannot_reuse_child_canvas_scope(
         await server.served_canvas_state("browser-a")
 
 
+@pytest.mark.bootstrap_profile
 async def test_connected_child_without_canvas_is_terminal_only_then_reconnecting(
     tmp_path: Path,
 ) -> None:

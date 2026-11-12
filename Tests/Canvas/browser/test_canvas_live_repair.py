@@ -21,6 +21,7 @@ from Tests.Canvas.browser.test_canvas_served_flow import (
 from tldw_chatbook.Web_Server import serve
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.loopback_network
 async def test_actual_child_failed_preview_repairs_only_confirmed_unsent_draft(
     tmp_path, monkeypatch, candidate_snapshot
