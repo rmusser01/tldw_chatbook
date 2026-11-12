@@ -22,6 +22,7 @@ from Tests.UI.test_console_native_chat_flow import _configure_native_ready_conso
 from Tests.UI.test_console_workspace_tree_cursor_layout import (
     APP_SIZE,
     _console_with_probe_tree,
+    _console_with_visible_workspace_tree,
     _settle,
 )
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -47,6 +48,18 @@ def _count_tooltip_recomputes(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return calls
 
 
+async def _hovered_workspace_tree(host, pilot):
+    _, rail, tree = await _console_with_visible_workspace_tree(host, pilot)
+    hovered = tree.workspace_nodes["ws-alpha"]
+    tree.move_cursor(hovered)
+    await _settle(pilot, passes=4)
+    assert await pilot.hover(tree, offset=(4, int(hovered.line) - round(tree.scroll_y)))
+    await _settle(pilot, passes=4)
+    assert tree.hover_line == int(hovered.line)
+    return rail, tree, hovered
+
+
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reconcile_passes_that_move_nothing_keep_the_hover_row(
     monkeypatch: pytest.MonkeyPatch,
@@ -58,11 +71,7 @@ async def test_reconcile_passes_that_move_nothing_keep_the_hover_row(
     host = ConsoleHarness(app)
 
     async with host.run_test(size=APP_SIZE) as pilot:
-        console, rail, tree = await _console_with_probe_tree(host, pilot)
-        hovered = tree.workspace_nodes["ws-alpha"]
-        tree.hover_line = int(hovered.line)
-        await _settle(pilot, passes=4)
-        assert tree.hover_line == int(hovered.line)
+        rail, tree, hovered = await _hovered_workspace_tree(host, pilot)
 
         cleared = 0
         tooltips = _count_tooltip_recomputes(monkeypatch)
@@ -85,6 +94,7 @@ async def test_reconcile_passes_that_move_nothing_keep_the_hover_row(
         assert tooltips == [], tooltips
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_reflow_that_moves_the_tree_still_clears_hover() -> None:
     """The leg must keep doing its job when the rows really do shift."""
@@ -94,11 +104,7 @@ async def test_a_reflow_that_moves_the_tree_still_clears_hover() -> None:
     host = ConsoleHarness(app)
 
     async with host.run_test(size=APP_SIZE) as pilot:
-        console, rail, tree = await _console_with_probe_tree(host, pilot)
-        hovered = tree.workspace_nodes["ws-alpha"]
-        tree.hover_line = int(hovered.line)
-        await _settle(pilot, passes=4)
-        assert tree.hover_line == int(hovered.line)
+        rail, tree, _ = await _hovered_workspace_tree(host, pilot)
         before = tree.region
 
         # A real rail geometry change: the tree's own region moves with it.
@@ -110,6 +116,7 @@ async def test_a_reflow_that_moves_the_tree_still_clears_hover() -> None:
         assert tree.hover_line == -1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_hover_survives_a_reconcile_burst_then_clears_on_a_real_move() -> None:
     """Both halves in one session: quiet ticks, then a genuine reflow."""
@@ -119,10 +126,7 @@ async def test_hover_survives_a_reconcile_burst_then_clears_on_a_real_move() -> 
     host = ConsoleHarness(app)
 
     async with host.run_test(size=APP_SIZE) as pilot:
-        console, rail, tree = await _console_with_probe_tree(host, pilot)
-        hovered = tree.workspace_nodes["ws-alpha"]
-        tree.hover_line = int(hovered.line)
-        await _settle(pilot, passes=4)
+        rail, tree, hovered = await _hovered_workspace_tree(host, pilot)
 
         for _ in range(PASSES):
             rail.request_allocation_reconcile()
