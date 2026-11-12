@@ -4,7 +4,7 @@ title: "Six UI Fast Lane shards already run 15.0-16.9 min of their 20 min cap, s
 status: In Progress
 assignee: ['@claude']
 created_date: 2026-11-07 02:28
-updated_date: 2026-11-10 00:20
+updated_date: '2026-11-12 19:40'
 labels:
 - follow-up
 - ci
@@ -132,3 +132,22 @@ The after column is 14.87-14.90 on every shard with the untimed entries at 1.0 t
 **Round-12 restack (2026-11-08).** The coordinator restacked the six round-12 branches onto dev b590a15afd; the census kept this branch's 36-shard deal whole and took 37 tail entries from dev and the other branches (1907 entries, floor 1907). Of those, 5 (the TestPersonaHumanIdentityRemoval nodes) have CI timings in the 22 runs' logs (#3419's PR runs); the other 32 are charged at their local serial time, measured through run.sh in one batch with the UI step's command (84 passed in 301 s at load 20-27; per entry 0.6-48.6 s, 283 s in all). The census then carries 457 worst-case pytest min: a 12.69-min floor over 36 shards, so the asked `--rebalance 12.6` cannot be reached (it ends at the floor after 95 swaps). `--rebalance 12.7 --write` took 40 swaps and puts every shard at 12.68-12.70 pytest min: **14.38-14.40 min a job** with setup, about 13.7-14.3 at the median CI-to-local ratio. As listed after the restack the heaviest shard replayed 13.8 (about 15.5 min a job). The 32 entries were measured at a lower load than the earlier charges (20-27, against 50-155), so their charge is closer to CI's own time. ADR-103's runner arithmetic, recomputed from the stacked workflow: 11 lanes, 36 shards, `max-parallel: 18`: 46 eligible test jobs, 28 test runners in parallel, 29 with perf-guard, as ADR-103 says.
 
 **Restack onto dev 3a6498ae14 (2026-11-09).** The census kept the 12.7 deal and took dev's 7 TASK-34569 approval entries at the tail (1913 entries). The earlier weights were lost with the scratch directory, so they were re-read, read-only, from the 22 most recent PR runs whose 32 UI shards all finished (42538427422, 2026-11-09 00:07Z, to 42715332317, 22:49Z; 42539733304 left out, 28 of its shards red on its own change). Those logs time dev's 7 entries; the 92 entries no log timed (all round-12 entries) are charged at their local serial time, measured in one run.sh batch with the UI step's command (154 passed, 1 failed, 851 s at load 10-29; 0.3-28.3 s per entry). The census carries 430 worst-case pytest min (floor 11.9 a shard over 36). As listed the heaviest shard replayed 13.7; `--rebalance 12.7 --write` took 12 swaps and projects **13.1-14.4 min a job** (11.4-12.7 pytest min plus 1.7), about 12.9-14.3 at the median CI-to-local ratio. The one failure is not this branch's: `Tests/UI/test_cancelled_dialog_waits.py::test_cancelling_the_waiting_worker_leaves_the_dialog_closable[media-analysis-delete]` (TASK-39146, another round-12 branch) imports `tldw_chatbook.Widgets.Media.media_viewer_panel`, which TASK-38605 (dc456a948e, on dev) deleted; 3 of 3 reruns fail with ModuleNotFoundError.
+
+**AC#1, CI after the change (round-13 closeout, 2026-11-12; read-only `gh` on derived-artifacts.yml PR runs). Not met.** Round 12 merged with the 36-shard deal at about 15:40Z on 2026-11-10 (dev ae9f9e8d21). #3500 (merged 15:06Z on 2026-11-12) removed two census entries, which shifts every later entry's shard, so runs are split around it.
+- **Before #3500:** 33 PR runs (2026-11-10 19:39Z to 2026-11-12 14:58Z), 24 of them with all 36 shards finished (42887475221 to 43242842744). Run 43085804799 is left out: its own change put shards 34 and 35 at 19.2 and 17.9 min. Slowest finished job per shard: 12.62-16.32 min. Four shards passed the 15-min mark:
+  - shard 5: 16.32 (run 43192096387), median 15.08 over 34 jobs;
+  - shard 21: 15.70 (run 43142676395);
+  - shard 3: 15.68 (run 42919238652);
+  - shard 35: 15.15 (run 43138509441).
+- **After #3500:** 7 PR runs so far, 4 with all 36 finished (43244450534, 43245032382, 43248233114, 43248578539). Slowest per shard: 11.05-18.38 min. Over the mark: shard 5, 18.38 (run 43248233114, median 15.73 over 7 jobs), and shard 22, 15.05.
+- **Before the change** (the table above): 22 runs at 32 shards, slowest per shard 12.38-18.63 min.
+- **Reading.** The deal holds the margin on 31-32 of 36 shards, but shard 5 is over it in most runs (its median is above 15 min). Shard 5's 18.38-min job (131298357463) ran 351 passed in 1021.5 s of pytest. No single entry dominates: the slowest are `test_library_reader_console_delete_refresh.py`'s two delete cases, 22.9 s each.
+- **Round 13 makes it heavier.** The census goes from 1913 to 2028 entries (117 added, 2 removed). Under the append rule (`ui_pr_gate_census.txt:17-20`), 46 of the additions were never charged and replayed:
+  - TASK-39169: 13
+  - TASK-40132: 17
+  - TASK-38948: 7
+  - TASK-39130 and TASK-39153: 6
+  - TASK-39171: 2
+  - TASK-39170: 1
+
+  Only the cred stream's 71 were rebalanced, on its own branch at base 1913, and the restack then shifted them by 11 slots. The header (`:11-16`) still describes the 11-09 deal. A charge, replay and `--rebalance 13.3 --write` of the stacked census is due before the round-13 PR, and shard 5 is the one to relieve. This criterion then needs 12 PR runs after that deal.

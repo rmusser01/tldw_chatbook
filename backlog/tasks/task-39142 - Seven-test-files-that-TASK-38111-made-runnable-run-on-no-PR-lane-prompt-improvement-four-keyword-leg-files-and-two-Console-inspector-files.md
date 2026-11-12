@@ -1,10 +1,10 @@
 ---
 id: TASK-39142
 title: "Seven test files that TASK-38111 made runnable run on no PR lane: prompt improvement, four keyword-leg files and two Console inspector files"
-status: In Progress
+status: Done
 assignee: ['@claude']
 created_date: 2026-11-07 02:03
-updated_date: 2026-11-08 06:45
+updated_date: '2026-11-12 19:40'
 labels:
 - follow-up
 - ci
@@ -63,7 +63,7 @@ None is in the census or any PR workflow. The fifth keyword-leg file, `test_keyw
 <!-- AC:BEGIN -->
 - [x] #1 The owner decides the lane for the five non-UI files (a new derived-artifacts job or an existing one); the decision is recorded
 - [x] #2 Each of the seven files runs on a PR lane, never the fast PR contract; the two Tests/UI files use UI census tail entries of about 30 s each, split by node where needed
-- [ ] #3 Every step touched is timed 3 times with its exact command, with the load, and the CI job times of every touched lane are quoted before and after
+- [x] #3 Every step touched is timed 3 times with its exact command, with the load, and the CI job times of every touched lane are quoted before and after
 - [x] #4 Any target added to the Dreams boundary step passes under `--storage-lease-guard`, sits after the pinned storage-pausing targets, and leaves the job under its 20 min cap with the margin recorded; all lane pins are updated
 - [x] #5 The keyword-leg files end on one lane together with TASK-39049's `test_keyword_leg_db_resolution`, or the notes say why not
 <!-- AC:END -->
@@ -101,3 +101,8 @@ The keyword-leg files alone, serially under the guard: 339 passed with the two p
 **Review r12l-rev1 (2026-11-08).** The two bootstrap_profile Tests/UI files left the recovered-suites step for the UI census (the census does hold bootstrap_profile files: 512 entries already, and TASK-36478 restores the shared bootstrap config after each test; my earlier "may not hold" was wrong). TASK-39124's built-in pixel buddy file joined the step last. The final step, 13 targets, `jobstep.sh fu-r12-lanes "Run the recovered suites"`, 3 runs: 363.3 s (load 38 falling to 21), 742.9 s (load 21-50), 467.1 s (load 50-43); each 715 passed, 1 skipped, 2 failed (TASK-39140's pin, fixed on fu/r12-ctlr), no lease finding. The slowest run plus about 1.5 min of setup is about 13.9 min, 6.1 under the cap.
 
 **After the round-12 restack (2026-11-08).** The step now has 20 targets (TASK-39124's pixel buddy file, TASK-39119's six reply-pin nodes and the goal recovery file joined it). `jobstep.sh fu-r12-lanes "Run the recovered suites"`, 3 runs: 534.7 s (load 22-33), 353.8 s (load 22-28), 312.5 s (load 20-28); each 733 passed, 1 skipped, nothing red (TASK-39140's pin is fixed in the stack) and no lease finding. The slowest run plus about 1.5 min of setup is about 10.4 of the job's 20 min.
+
+**AC#3, CI after times (round-13 closeout, 2026-11-12; read-only `gh` on derived-artifacts.yml PR runs).** Round 12 merged at about 15:40Z on 2026-11-10 (dev ae9f9e8d21); #3500 (merged 15:06Z on 2026-11-12) removed two UI census entries, so runs are split around it.
+- **PR lane (recovered suites).** New in round 12, so there is no before; its 4 round-12 PR runs on 2026-11-10 gave job 6.02-6.87 min, step 5.22-5.97 min. After the merge, 38 PR runs (2026-11-10 16:39Z to 2026-11-12 16:24Z): job 5.08-7.78 min, step "Run the recovered suites" 4.38-6.88 min, so 12-15 min under the 20-min cap. 37 were green; the red one (run 43085804799, branch codex/task-39147-native-phase-rebuild) was that branch's own change, and its later runs passed the step. The 7 runs after #3500 fall inside the same range (job 5.73-7.67 min).
+- **UI Fast Lane** (the two Tests/UI files' census entries). Before: 22 PR runs at 32 shards, slowest job per shard 12.38-18.63 min (TASK-39144's table). After, at 36 shards: 33 PR runs before #3500 (run 43085804799 left out: its own change put shards 34 and 35 at 19.2 and 17.9 min), slowest job per shard 12.62-16.32 min; 7 PR runs after #3500, 11.05-18.38 min. Four or five shards still pass the 15-min mark (shard 5 every time); that is TASK-39144's open AC#1.
+- **Dreams boundary.** No target of this task (AC#4).
