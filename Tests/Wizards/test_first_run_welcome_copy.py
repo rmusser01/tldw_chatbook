@@ -180,6 +180,63 @@ async def test_back_to_welcome_shows_the_reduce_motion_saved_later_in_the_run() 
     )
 
 
+async def _toggle_reduce_motion_then_leave(app_config, leave, *, commit_first=False):
+    """Tick Welcome's Reduce motion, optionally Next, then leave setup."""
+    from tldw_chatbook.UI.Wizards.first_run_finish_later import skip_setup
+
+    wizard, app_instance = _wizard(app_config)
+    app = _Host(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        step = app.screen.query_one(WelcomeStep)
+        container = app.screen.query_one(SetupWizardContainer)
+        container.commit_config = AsyncMock(return_value=True)
+        container._complete_setup_locked = AsyncMock(return_value=True)
+        app.screen.query_one("#setup-welcome-reduce-motion", Checkbox).value = True
+        await pilot.pause()
+        live = app_instance.app_config["appearance"]["reduce_motion"]
+        if commit_first:
+            ok, _ = await step.commit()
+            assert ok
+        if leave == "skip":
+            await skip_setup(container)
+        else:
+            container._dismiss_screen(None)
+        await pilot.pause(0.3)
+        assert not isinstance(app.screen, FirstRunSetupWizard)
+    return live, app_instance.app_config
+
+
+@pytest.mark.parametrize("leave", ["skip", "exit"])
+@pytest.mark.asyncio
+async def test_an_unsaved_welcome_reduce_motion_is_undone_when_setup_closes(leave) -> None:
+    """Pre-merge review (2026-11-12): Welcome's Reduce motion applies live to
+    the in-memory settings, and Skip setup (or Exit setup) left it applied
+    but unsaved -- a later Settings ▸ Appearance save then wrote it. Leaving
+    setup without Welcome's Next puts the in-memory value back."""
+    live, app_config = await _toggle_reduce_motion_then_leave(
+        {"appearance": {"reduce_motion": False, "theme_hint": "kept"}}, leave
+    )
+    assert live is True
+    assert app_config["appearance"] == {"reduce_motion": False, "theme_hint": "kept"}
+
+
+@pytest.mark.asyncio
+async def test_an_unsaved_reduce_motion_leaves_no_trace_in_a_config_without_it() -> None:
+    live, app_config = await _toggle_reduce_motion_then_leave({}, "skip")
+    assert live is True
+    assert "reduce_motion" not in app_config.get("appearance", {})
+
+
+@pytest.mark.asyncio
+async def test_a_reduce_motion_saved_on_welcomes_next_stays_when_setup_closes() -> None:
+    live, app_config = await _toggle_reduce_motion_then_leave(
+        {"appearance": {"reduce_motion": False}}, "exit", commit_first=True
+    )
+    assert live is True
+    assert app_config["appearance"]["reduce_motion"] is True
+
+
 def test_the_welcome_rows_keep_their_handlers_on_a_message_pump() -> None:
     """The Restore handler moved with its button (TASK-34100.1's frozen-list rule)."""
     from tldw_chatbook.UI.Wizards.first_run_welcome_step import WelcomeFooter
