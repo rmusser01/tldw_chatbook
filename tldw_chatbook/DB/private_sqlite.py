@@ -118,6 +118,11 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_MEMORY_AND_READ_ONLY,
         "Private plugin intent and process recovery metadata; disk mutation requires the runtime owner.",
     ),
+    "recovery.plugins.registry": SQLiteOwnerPolicy(
+        "tldw_chatbook/Plugins/backup", _PRIVATE_AND_READ_ONLY,
+        "Installed plugin registry snapshot; restored plugins stay inactive until authority recovery.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True, recovery_capture_allowed=True,
+    ),
     "recovery.credentials": SQLiteOwnerPolicy(
         "tldw_chatbook/Backup_Recovery/credentials",
         _PRIVATE_FILE,

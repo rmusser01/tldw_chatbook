@@ -242,10 +242,13 @@ class PluginAdmission:
         workspace_lookup: Callable,
         *,
         fences: LivePluginFences | None = None,
+        restore_review: Callable[[], bool] | None = None,
     ) -> None:
         self.coordinator = coordinator
         self.workspace_lookup = workspace_lookup
         self.fences = fences or coordinator.fences
+        # TASK-40132: restored plugins wait for plugin authority recovery.
+        self.restore_review = restore_review
 
     def seal(self, target: RevocationTarget) -> tuple[str, ...]:
         """Fence the exact scope synchronously; return retained cancellation tokens."""
@@ -514,6 +517,8 @@ class PluginAdmission:
         component_ceiling: tuple[str, ...] | None = None,
     ) -> RunPluginSnapshot:
         """Capture a trusted, enabled revision and dependency-complete skills."""
+        if self.restore_review is not None and self.restore_review():
+            raise PluginUnavailable("plugin_restore_review_required")
         self.fences.check(installation_id, workspace_id)
         self._workspace(workspace_id)
         if not isinstance(run_id, str) or not run_id.strip():

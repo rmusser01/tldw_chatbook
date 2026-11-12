@@ -501,3 +501,50 @@ async def test_changed_restore_selection_discards_inflight_review(
         assert delivered and delivered[0].requested_groups == ("workspaces",)
         assert screen._restore_plan is None
         assert screen.query_one("#backup-start-restore", Button).disabled
+
+
+@pytest.mark.asyncio
+async def test_backup_review_explains_refused_live_plugins(tmp_path):
+    """TASK-40132 AC4: the preview names why plugins were refused and what to do."""
+    from textual.widgets import Static
+
+    from tldw_chatbook.Backup_Recovery.models import Inventory
+
+    async with mounted(tmp_path) as (pilot, screen, _service):
+        await press(pilot, "#backup-open-create")
+        details = {
+            "inventory": Inventory((), False, "scope", ("plugin_writers_active",)),
+            "complete": False,
+            "maintenance": "Writers resume after copying.",
+            "availability": (True, ""),
+            "capacity": (),
+            "credential_mode": "exclude",
+        }
+        screen._show_preview(
+            screen._revision,
+            details,
+            ((tmp_path / "config.toml",), tmp_path / "backup.zip", screen._options()),
+        )
+        coverage = str(screen.query_one("#backup-coverage", Static).render())
+        assert "Plugins are in use" in coverage
+        assert "quit Chatbook" in coverage
+
+
+@pytest.mark.asyncio
+async def test_restore_review_explains_refused_newer_plugin_fetches(tmp_path):
+    """TASK-40132 I-1 (owner decision 2026-11-12, refuse early): a restore review
+    refused over plugin fetches newer than the backup says what to do."""
+    from textual.widgets import Static
+
+    async with mounted(tmp_path) as (pilot, screen, _service):
+        await screen._restore_ready(
+            screen._revision, None, "plugin_fetch_added_since_backup"
+        )
+        await pilot.pause()
+        review = str(screen.query_one("#backup-restore-preview", Static).render())
+        assert "Restore review refused" in review
+        # r13g-rev4: every repository download leaves such a folder, not only
+        # installs and updates.
+        assert "downloaded from a repository since this backup" in review
+        assert "a source refresh, an update check, an install or an update" in review
+        assert "without the Tools and skills group" in review

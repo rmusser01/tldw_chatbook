@@ -41,6 +41,28 @@ archive **Partial**, even when every selected file is included. Review and expli
 acknowledge Partial creation. Partial archives support validated isolated recovery
 and file extraction; they cannot replace existing installation data.
 
+**Plugins** belong to the **Tools and skills** group. A backup holds the plugin
+folder: the plugin registry, installed package bytes, every plugin's saved data,
+and each repository fetch's checked snapshot and fetch record, which recovery
+needs to re-verify a plugin installed from a repository. Left out, and shown as
+excluded in the review: the plugin runtime lock file and everything else in each
+fetch folder, such as the copies of your git and SSH configuration the fetch used
+(they can hold credential helpers), its git object store (`repository.git`) and
+its working copy (`content/`). Each is one excluded entry; Chatbook does not look
+inside it. Plugins in use are not copied: while a plugin process may still be
+running, or Chatbook's plugin service is active, the review lists
+`plugin_writers_active` with an explanation and shows the plugin folder as
+unavailable. A partial backup then leaves plugins out, and a backup of groups
+without **Tools and skills** is unaffected. Chatbook keeps its plugin service
+running from the first plugin use, in Plugins or in a Console chat that uses a
+plugin, until you quit. For a complete backup after using plugins, quit Chatbook,
+reopen it and back up before using plugins. If the review still lists
+`plugin_writers_active` after reopening, an earlier session left a plugin process
+recorded as running: open **Plugins → Authority…** and unlock plugin authority
+(or recover it if already unlocked); if that session stopped unexpectedly, also
+review the plugin's reboot reconciliation. Then quit, reopen and back up before
+using plugins.
+
 Keep the password separately. Chatbook does not retain it, and a lost password
 cannot be recovered. Encryption does not eliminate plaintext working files:
 capture, decryption, validation, and restore use private local staging with
@@ -227,6 +249,28 @@ sync, schedules, MCP, skill scripts, model processes, downloads, or automatic
 refresh. Use the owning feature's explicit recovery review when available; one
 feature's approval does not approve another. Unavailable review controls leave the
 corresponding capability inactive.
+
+Plugins restore only onto the profile and data folder they came from: their
+registry and authority record those folder paths, so restoring them into a
+separate profile, or after the profile's data folder moved, is refused with
+`owner_relocation_unverified`. Choose groups without **Tools and skills** to
+restore the rest of such a backup. A restore after plugins were downloaded from a
+repository since the backup (a source refresh, an update check, an install or an
+update) is refused too, at review, with `plugin_fetch_added_since_backup`: each
+such download leaves a download folder the backup does not have, holding files a
+backup never includes, and Chatbook cannot yet restore around them. Restore
+without **Tools and skills**, or open the plugin folder's `staging` folder and,
+inside each folder created after the backup, delete everything except `snapshot`
+(installed plugins keep working; uninstalling a plugin does not remove these
+folders), then review the restore again. After a restore, plugins stay off until plugin
+authority recovery completes. What works today: restoring onto the same profile,
+on the same computer, with plugins unchanged since the backup. Then
+**Plugins → Authority…** asks for the plugin passphrase, and unlocking recovers
+the plugins and lets them run again. What does not work yet: on another computer
+at the same paths, or after the OS keyring was reset (the protected marker lives
+in the OS keyring and is never in a backup), or after plugins changed since the
+backup, Chatbook cannot recover the restored plugins. They stay off, and their files and saved data stay on disk. See
+[Managed plugin operations](Plugins/operations.md#after-restoring-a-backup).
 
 Re-enter missing credentials, review external-folder bindings against their current
 local contents, and explicitly rebuild derived indexes when required. Missing model

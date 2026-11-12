@@ -783,6 +783,14 @@ def _owner_items(source, selected, root, config, context, owners, normal, cancel
                 )
             )
             continue
+        if owner_id == "plugins":
+            # TASK-40132: plugins restore only onto the profile they came from,
+            # and a raw tree walk would copy runtime.lock and registry sidecars.
+            path = root / owner.leaf
+            if path.exists() or path.is_symlink():
+                raise ValueError("detached_owner_unavailable:plugins")
+            add(owner_id, path, tree=True)
+            continue
         if owner_id in {"persona.assets", "persona.visual_identity", "skills"}:
             if owner_id != "skills" and core.status != "included":
                 path = (

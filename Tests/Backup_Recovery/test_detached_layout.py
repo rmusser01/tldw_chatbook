@@ -843,3 +843,17 @@ print('FRESH_PRIVATE_PET_READ',flush=True)
             bundle.rename(moved)
             assert not bundle.exists()
             source = moved / "Data"
+
+
+def test_detached_import_refuses_a_plugin_root_by_name(tmp_path):
+    """TASK-40132 M1: plugins restore only in place, and the generic tree walk
+    would copy runtime.lock and registry sidecars raw; refuse the root by name."""
+    source, root, _old = _base_profile(tmp_path)
+    plugins = root / "plugins"
+    (plugins / "packages" / "inst").mkdir(parents=True)
+    (plugins / "packages" / "inst" / "plugin.json").write_text('{"name": "inst"}')
+    (plugins / "runtime.lock").write_bytes(b"")
+    with pytest.raises(ValueError, match="detached_owner_unavailable:plugins"):
+        _layout().produce_detached_archive(
+            source.absolute(), (tmp_path / "work").absolute(), Event()
+        )

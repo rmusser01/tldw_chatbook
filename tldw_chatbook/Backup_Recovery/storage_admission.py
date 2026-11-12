@@ -2629,6 +2629,7 @@ _RAW_RECOVERY_LIMITS = {
     "rag.definitions": 16 * 1024**2,
     "rag.projections": 256 * 1024**3,
     "recovered.media": 512 * 1024**2,
+    "plugins": 256 * 1024**3,
     "generation.assets": 256 * 1024**3,
     "diagnostics.logs": 256 * 1024**3,
     "tokenizers.custom": 256 * 1024**3,

@@ -86,7 +86,7 @@ BACKUP_GROUPS = (
     BackupGroup(
         "tools",
         "Tools and skills",
-        "MCP definitions, context, retained permission history, execution history, and installed skills.",
+        "MCP definitions, context, retained permission history, execution history, installed skills, and plugins.",
     ),
     BackupGroup(
         "retrieval",
@@ -182,6 +182,7 @@ _GROUP_OWNERS = {
         "mcp.permissions",
         "mcp.history",
         "skills",
+        "plugins",
     ),
     "retrieval": (
         "rag.definitions",

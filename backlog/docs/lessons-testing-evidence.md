@@ -25218,3 +25218,36 @@ limit rather than treating focused passing cases as whole-module qualification.
 ## Preserve fixture and process boundaries when testing immutable sources
 
 During TASK-39147's PR #3480 integration, the first immutable-source test runner left subprocesses on the preserved checkout. A restored child later opened a candidate schema86 database with the checkout's schema81 code. Virtual modules parented directly to the session also missed directory-scoped fixtures; a virtual root lookup misclassified the real hook working directory. Those results did not qualify the candidate. Keep directory collectors in the pytest parent chain, provide the same immutable source to every relevant child, and make filesystem-only checks run in real CI. Keep mixed-source, bootstrap and bare-interpreter claims separate.
+
+## A real replace-restore test needs a narrow group, its own config folder and no stray reads (TASK-40132, 2026-11-10)
+
+The plugin backup round-trip test first reused the persona replace harness on a
+whole TldwCli-seeded profile. Three traps cost runs before it passed in about two
+minutes:
+
+- **Whole-profile replacement is too slow under load.** Publication re-parses the
+  journal for every published file; at load ~45 the restore child hit 240 s and
+  then 580 s timeouts inside `publish_candidate`. Restricting backup and restore to
+  one data group (`options={'data_groups': ('tools',)}` and
+  `preview_restore(..., data_groups=('tools',))`, as
+  `Tests/Backup_Recovery/test_selective_restore_service.py` does) made the child
+  finish in well under a minute.
+- **The selector's folder must hold only known things.** With the selector under
+  `~/.config/tldw_cli` (beside recovery control), or with an extra test folder next
+  to it, first binding refused `replacement_config_container_unverified`. Put the
+  test selector in its own folder and pass it to `_child(..., selector=...)`.
+- **Reads outside the bound profile are refused after a restore.** Importing
+  `tldw_chatbook.config` in the restore child before `replace` held a lease and
+  timed out maintenance (`admission_timeout`); and a file-based marker kept outside
+  the profile worked before the restore but raised `storage_scope_not_enrolled`
+  afterwards, which the authority reported as posture `unavailable`. Locate restore
+  inputs from the preview inventory, and give a keyring stand-in a plain-file
+  backend (`KeyringPluginMarkerStore` with a test backend) rather than an admitted
+  private-file path.
+- **Opening stores in the backup/restore child does the same.** In review round
+  r13g-rev1, `_populate_required_dependencies` (and importing a test module whose
+  imports load config before the config file existed) in the same child as
+  `start_backup`/`start_restore` failed them with `admission_timeout`, or added a
+  default `~/.local/share/tldw_cli/default_user` that previewed as `unknown`.
+  Build stores in a separate setup child, or copy store files plainly with
+  `shutil.copytree`, and write the config (and its data folder) before any import.

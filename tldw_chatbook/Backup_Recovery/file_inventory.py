@@ -111,7 +111,10 @@ def _inventory_tree(
     external: bool,
     selected_paths: frozenset[str] | None = None,
     root_only: bool = False,
+    prune=None,
 ) -> tuple[StorageItem, ...]:
+    """``prune(relative)`` true keeps a directory's row but never lists it, so
+    an owner's excluded subtree costs one entry however large it is."""
     if type(root_only) is not bool or (root_only and selected_paths is not None):
         raise ValueError("invalid_root_inspection")
     if selected_paths is not None:
@@ -249,7 +252,7 @@ def _inventory_tree(
                 metadata=metadata,
             )
         )
-        if root_only:
+        if root_only or (prune is not None and relative and prune(relative)):
             return
         fd = os.open(leaf, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
         try:

@@ -1538,7 +1538,13 @@ class BackupRestoreScreen(Screen):
             f"{item.owner}: {item.status}" + (f" — {item.path}" if item.path else "")
             for item in preview.items
         )
-        rows.extend(preview.issues)
+        rows.extend(
+            # TASK-40132: refused live plugins say why and what to do.
+            f"{issue}: {self.service.issue_message(issue)}"
+            if issue == "plugin_writers_active"
+            else issue
+            for issue in preview.issues
+        )
         self.query_one("#backup-coverage", Static).update("\n".join(rows))
         blocked = create_unavailable_reason(
             complete=details["complete"],

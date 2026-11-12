@@ -2595,3 +2595,21 @@ and passing source epochs; the printed warning receiver is not allocation proof.
 **Incident.** `test_stale_review_validation_cannot_mutate_or_commit_after_remount` dismisses its modal, waits one `pilot.pause()`, pushes the same instance again and asserts that `on_mount` bumped `_safe_mount_generation`. Under load (round-13 runs at load 54-106) a bounded wait on that generation ran out in 2 of 20 cases: the re-push never mounted. `App._get_screen` registers and mounts a pushed screen only when it is not `is_running`; a screen whose pop is still in flight is reused as is (`AwaitMount(screen, [])`), and no Mount follows. Waiting for `not modal.is_running` before the push was not enough either: it failed the same way in one whole-file run at load ~70, so the pump stops running before the pop's removal is over. Waiting for the pop itself (`popped = modal.dismiss(None)`, then a bounded wait on `popped.is_done`) passed 10 of 10 whole-file runs at load 75-93.
 
 **What to do.** Before pushing a dismissed screen instance again, wait for the `AwaitComplete` that `dismiss()` (or `pop_screen()`) returned: `is_done` lets a test bound it without awaiting it from a handler. Neither one `pilot.pause()` nor `is_running` marks the end of a pop.
+
+---
+
+## Overriding an `@on`-decorated handler by name does not replace the base's: both run, and the base's error wins (TASK-40132, 2026-11-10)
+
+**Incident.** `PluginAuthorityDialog(PasswordDialog)` overrides `on_submit`, and both
+classes decorate it `@on(Button.Pressed, "#submit-button")`. `_get_dispatch_methods`
+walks the MRO and yields each class's own decorated function, so after the subclass
+awaited a failed unlock, cleared the fields and showed its error, the base
+`on_submit` ran too, found the field empty and replaced the error with "Password
+cannot be empty". Every failed plugin unlock showed that text. The existing test
+asserted only `error.has_class("visible")`, which was true either way; the review
+round that asked for a test of the new restore-mismatch copy found it.
+
+**What to do.**
+- A subclass handler that must replace the base's takes the event and calls
+  `event.prevent_default()` first; that stops dispatch to base classes.
+- Pin dialog errors by their text, not their visibility.

@@ -352,6 +352,19 @@ class PluginVariableDialog(ModalScreen):
             self._busy = False
 
 
+def authority_failure_message(error: BaseException, mode: str) -> str:
+    """Name the restore mismatch truthfully; other failures keep the retry advice."""
+    if mode == "unlock" and isinstance(error, FileNotFoundError):
+        # TASK-40132 (D2): the marker names authority files a restored backup lacks.
+        return (
+            "Plugin authority does not match the plugin files here: its protected "
+            "marker names authority files that are missing, as when plugins changed "
+            "after a restored backup was made. Chatbook cannot recover these plugins "
+            "yet. They stay off, and their files and saved data stay on disk."
+        )
+    return "Authority unavailable or passphrase incorrect. Retry after checking the protected backend."
+
+
 class PluginAuthorityDialog(PasswordDialog):
     """Keep passphrases in the existing masked credential flow only."""
 
@@ -377,7 +390,11 @@ class PluginAuthorityDialog(PasswordDialog):
                 field.value = ""
 
     @on(Button.Pressed, "#submit-button")
-    async def on_submit(self):
+    async def on_submit(self, event=None):
+        if event is not None:
+            # PasswordDialog's own submit handler would run next and replace this
+            # dialog's error with "Password cannot be empty" (fields are cleared).
+            event.prevent_default()
         if self._submitting:
             return
         password = self.query_one("#password-input", Input).value
@@ -399,17 +416,18 @@ class PluginAuthorityDialog(PasswordDialog):
             )
             self._clear()
             self.dismiss(True)
-        except (ValueError, OSError, RuntimeError):
+        except (ValueError, OSError, RuntimeError) as error:
             self._clear()
-            self.show_error(
-                "Authority unavailable or passphrase incorrect. Retry after checking the protected backend."
-            )
+            self.show_error(authority_failure_message(error, self.mode))
         finally:
             password = ""
             self._submitting = False
 
     @on(Input.Submitted)
     async def on_input_submitted(self, event):
+        # PasswordDialog's handler would call self.on_submit(), which is this
+        # class's coroutine, and never await it.
+        event.prevent_default()
         if self.mode == "setup" and event.input.id == "password-input":
             self.query_one("#confirm-input", Input).focus()
         else:

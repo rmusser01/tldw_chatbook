@@ -50,6 +50,8 @@ def install_adapters() -> tuple[OwnerAdapter, ...]:
         ("Backup_Recovery.config_adapter", "recovery_adapters"),
         ("Backup_Recovery.recovered_media", "recovery_adapters"),
         ("Backup_Recovery.rag_inventory", "recovery_adapters"),
+        # Plugins/recovery.py is plugin operation recovery, not a backup owner.
+        ("Plugins.backup", "recovery_adapters"),
         *(
             (name + ".recovery", "recovery_adapters")
             for name in (

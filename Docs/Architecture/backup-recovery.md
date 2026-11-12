@@ -139,3 +139,34 @@ existing restricted authorizer; validation compares the complete resulting SQL
 catalog and foreign keys. Runtime constructors and source files are not used as
 restore candidates. Existing restored-profile admission and activation gates
 remain authoritative.
+
+## Plugins owner (TASK-40132)
+
+`Plugins/backup.py` installs the `plugins` owner: one tree over `<user data>/plugins`
+in the `tools` group, shaped like `recovered.media` (`inventory.sqlite_tree_member`
+names each mixed tree's single SQLite member for sidecar declaration and capture
+dispatch). `registry.sqlite3` is captured through the `recovery.plugins.registry`
+SQLite owner (backup route, WAL folded) against the frozen v5 catalog
+`REGISTRY_SCHEMAS`; everything else is raw bytes. Excluded: `runtime.lock` and,
+inside each `staging/<name>/`, every member but `snapshot/` (an allow-list: only
+`snapshot/` and the custody record serve recovery). The owner passes
+`_staging_excluded` to the tree walk as `prune`, so each excluded member is one
+row whose contents are never listed (a local-source `repository.git` can hold
+tens of thousands of files), and replace restore keeps such a directory whole
+when the archive excluded it too (`restore_plan`'s unknown-children rule skips
+it). A fetch folder the archive lacks that holds excluded members cannot be
+retired around them, so `plan_restore` calls `refuse_added_fetch_folders` and the
+review refuses with `plugin_fetch_added_since_backup` (owner decision
+2026-11-12: refuse early; automatic handling is a follow-up). Capture refuses rather than waits: an unsettled `processes` row or a
+held runtime lock reduces the owner to one unavailable root plus a
+`writers_active` row, and the inventory adds `plugin_writers_active` after group
+selection; each item's copy creates if needed and holds the lock. Restore is in
+place only: `staging._config_targets` refuses the owner for a different profile,
+`relocate_restore` refuses a registry whose data-root or package paths name
+another root (`owner_relocation_unverified:plugins`; the destination root is
+resolved as `PluginRuntimeOwner` names it), and detached import refuses
+a plugin root by name. The owner is activation-required:
+`PluginAdmission.capture` refuses `plugin_restore_review_required` while a restored
+generation that lists `plugins` is unapproved, and `PluginService` approves it once
+its authority recovery completes. The keyring generation marker is never captured,
+so a restored profile without it reports `recovery_required`.

@@ -56,12 +56,16 @@ class _RawDeclaration:
             else None,
         )
 
-    def _tree(self, config, root, *, external=False, selected_paths=None):
+    def _tree(self, config, root, *, external=False, selected_paths=None, prune=None):
         context = discovery_context(config)
         from .file_inventory import _inventory_tree
 
         entries = _inventory_tree(
-            root, owner=self.owner_id, external=external, selected_paths=selected_paths
+            root,
+            owner=self.owner_id,
+            external=external,
+            selected_paths=selected_paths,
+            prune=prune,
         )
         keys = {
             e.logical_id: storage_logical_id(

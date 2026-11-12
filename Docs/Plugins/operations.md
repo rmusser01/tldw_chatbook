@@ -94,6 +94,56 @@ replaying execution. Credential refresh within the same authorized binding does
 not authorize replay of an uncertain call. Changed account, endpoint, scope or
 binding reference requires reviewed current authority.
 
+### After restoring a backup
+
+A backup holds the plugin root (registry, package bytes, saved data, and each
+fetch's snapshot and record) and the plugin authority files, but never the
+protected marker kept in the OS keyring. After a restore, plugins stay off until
+plugin authority recovery completes; a successful recovery when you unlock (or
+from **Authority…**) also records that review, and plugins can run again.
+
+What works today: a restore onto the same profile on the same computer, with
+plugins unchanged since the backup. **Authority…** asks for the plugin
+passphrase as usual, and unlocking recovers the plugins, including ones
+installed from a repository.
+
+What does not work yet, and what Plugins says:
+
+- After plugins changed since the backup, unlocking reports "Plugin authority
+  does not match the plugin files here: its protected marker names authority
+  files that are missing, as when plugins changed after a restored backup was
+  made. Chatbook cannot recover these plugins yet. They stay off, and their files
+  and saved data stay on disk."
+- On another computer at the same paths, or after the OS keyring was reset,
+  **Authority…** reports "Plugin authority needs recovery: its protected marker
+  is missing or does not match the plugin files here, as after restoring a backup
+  on another computer at the same paths, or after the OS keyring was reset.
+  Chatbook cannot recover these plugins yet. They stay off, and their files and
+  saved data stay on disk." (A separate profile cannot occur: a restore there
+  refuses plugins.)
+
+Resetting plugin authority does not help in either case: setting it up again
+refuses while the restored registry still lists installed plugins.
+
+A restore after plugins were downloaded from a repository since the backup (a
+source refresh, an update check, an install or an update) is refused when you
+review it (`plugin_fetch_added_since_backup`). Each such download leaves a
+download folder, `staging/<name>/` in the plugin folder, that the backup lacks,
+holding files a backup never includes (the fetch's git copy and your git/SSH
+configuration copies). Uninstalling a plugin does not remove these folders.
+Restore without **Tools and skills**, or delete everything except `snapshot/`
+inside each such folder (an installed plugin keeps working from `snapshot/` and
+its fetch record), then review the restore again; the restore then removes the
+folder with the rest of the plugin state newer than the backup.
+
+File identity matters too. A restore over the existing plugin folders keeps
+their identities. If the plugin folder, `staging/` or a saved-data folder was
+deleted before the restore, the restored copy has a new identity: saved data then
+reports a changed root (`root_anchor_changed`), and fetch records fail their
+check, so a plugin installed from a repository cannot run. Chatbook has no way
+to rebind restored folders yet. Plugins restore only onto the profile they came
+from; see [Local backup and recovery](../Backup-and-Recovery.md).
+
 See [compatibility](compatibility.md) for unqualified environments and
 [authoring](authoring.md) for component and resource contracts.
 

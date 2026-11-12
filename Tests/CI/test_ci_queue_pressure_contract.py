@@ -479,6 +479,10 @@ ARCHITECTURE_GUARD_TARGETS = (
     "Tests/Architecture/test_console_realtime_controller_boundary.py",
     "Tests/Architecture/test_console_review_selection_controller_boundary.py",
     "Tests/Architecture/test_console_wave6_inventory.py",
+    # TASK-40132 review r13g-rev3: replace restore keeps a directory the target
+    # and archive both exclude whole and refuses one the archive lacks (the
+    # plugins owner's never-listed fetch members). Hypothesis-free module.
+    "Tests/Backup_Recovery/test_restore_plan_excluded_directories.py",
     # TASK-39153: last, after every sandboxed suite (one bootstrap_profile node).
     "Tests/Architecture/test_persistent_terminal_privacy_boundary.py",
 )

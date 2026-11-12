@@ -515,3 +515,38 @@ async def test_navigation_during_child_prune_settles_original_load(
         finally:
             gate.release.set()
             hold.release.set()
+
+
+@private_profile_test
+@pytest.mark.asyncio
+async def test_authority_recovery_copy_is_truthful_without_a_reset_step(
+    request, native_console
+):
+    """TASK-40132 (Q2, narrowed by D2): recovery_required names when it happens
+    (a restore on another computer at the same paths, or a reset OS keyring) and
+    that plugins cannot be recovered yet. It offers no Reset authority step,
+    because setting authority up again refuses while the restored registry lists
+    installed plugins; and no other-profile case, which AC#8 refuses."""
+    rig = native_console
+
+    async def recovery_required():
+        return "recovery_required"
+
+    rig.service.authority_status = recovery_required
+    app = BrowseApp(rig)
+    async with app.run_test(size=(120, 35)) as pilot:
+        screen = app.screen
+        await settled(pilot, screen)
+        screen.query_one("#plugins-authority", Button).focus()
+        await pilot.press("enter")
+        for _ in range(100):
+            await pilot.pause(0.02)
+            status = str(screen.query_one("#plugins-status", Static).render())
+            if "needs recovery" in status:
+                break
+        # D2: say what is true; no Reset authority step that bootstrap refuses.
+        assert "restoring a backup on another computer at the same paths" in status
+        assert "OS keyring was reset" in status and "profile" not in status
+        assert "cannot recover these plugins yet" in status
+        assert "saved data stay on disk" in status
+        assert "Reset authority" not in status

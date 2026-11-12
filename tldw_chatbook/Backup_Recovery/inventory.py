@@ -105,6 +105,23 @@ def _identity(path: Path) -> tuple[int, int]:
     return value.st_dev, value.st_ino
 
 
+# Installed owners whose tree holds one SQLite member among raw files.
+_SQLITE_TREE_MEMBERS = {
+    "recovered.media": "catalog.sqlite3",
+    "plugins": "registry.sqlite3",
+}
+
+
+def sqlite_tree_member(item: StorageItem) -> bool:
+    """Whether an item is its owner's SQLite store, not a raw member of its tree."""
+    member = _SQLITE_TREE_MEMBERS.get(item.owner)
+    if member is None:
+        return True
+    if item.metadata is not None:
+        return item.metadata.relative_path == member
+    return item.path is not None and item.path.name == member
+
+
 def _sqlite_sidecars(declared, adapters):
     """Exclude exact SQLite transient files without hiding unknown lookalikes.
 
@@ -159,9 +176,9 @@ def _sqlite_sidecars(declared, adapters):
             or item.path is None
         ):
             continue
-        # This installed adapter owns both its SQLite catalog and raw media.
-        # Mirror its capture dispatch; payload names never confer SQLite scope.
-        if item.owner == "recovered.media" and item.path.name != "catalog.sqlite3":
+        # These installed adapters own both a SQLite store and raw files.
+        # Mirror their capture dispatch; payload names never confer SQLite scope.
+        if not sqlite_tree_member(item):
             continue
         claim(item.path, item.logical_id)
     # An unselected store is still constructed at startup, so its sidecars must
@@ -170,7 +187,7 @@ def _sqlite_sidecars(declared, adapters):
     for item in declared:
         if item.owner not in sqlite_owners or item.path is None:
             continue
-        if item.owner == "recovered.media" and item.path.name != "catalog.sqlite3":
+        if not sqlite_tree_member(item):
             continue
         if any(
             item.path.with_name(item.path.name + suffix) in claimed
@@ -745,6 +762,15 @@ def discover(
             selections.data_groups,
         )
         issues = set(result.issues)
+    # After group selection: an unselected Tools group excludes the marker, so
+    # live plugin writers never block a backup that leaves plugins out.
+    if any(
+        item.owner == "plugins"
+        and item.logical_id.endswith(":writers_active")
+        and item.status == "unavailable"
+        for item in result.items
+    ):
+        issues.add("plugin_writers_active")
     return replace(
         result,
         complete=result.complete and not issues,
