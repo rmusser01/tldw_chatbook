@@ -21,20 +21,17 @@ def _t(offset=0):
     return datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc) + timedelta(seconds=offset)
 
 
-def _loop(tmp_path):
-    loop = SchedulerLoop.__new__(SchedulerLoop)
-    loop.db = ScheduledTasksDB(tmp_path / "pf.db")
-    loop.clock = lambda: _t(0)
+def _loop(tmp_path, request):
+    db = ScheduledTasksDB(tmp_path / "pf.db")
+    request.addfinalizer(db.close)
+    loop = SchedulerLoop(db, handlers={}, clock=lambda: _t(0), handler_timeout_seconds=0)
     loop.missed_fire_grace_seconds = 0.0
-    loop.handler_timeout_seconds = None
-    loop._effective_timeout_seconds = lambda task: None
-    loop._report_lateness_cause = lambda *a, **k: None
     return loop
 
 
 @pytest.mark.asyncio
-async def test_failed_preflight_skips_handler_and_records_distinct_outcome(tmp_path):
-    loop = _loop(tmp_path)
+async def test_failed_preflight_skips_handler_and_records_distinct_outcome(tmp_path, request):
+    loop = _loop(tmp_path, request)
     ran = {"handler": False}
 
     async def handler(task):
@@ -60,8 +57,8 @@ async def test_failed_preflight_skips_handler_and_records_distinct_outcome(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_repeated_preflight_failures_group_into_one_incident(tmp_path):
-    loop = _loop(tmp_path)
+async def test_repeated_preflight_failures_group_into_one_incident(tmp_path, request):
+    loop = _loop(tmp_path, request)
 
     async def handler(task):
         pass
@@ -81,8 +78,8 @@ async def test_repeated_preflight_failures_group_into_one_incident(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_passing_preflight_dispatches_normally(tmp_path):
-    loop = _loop(tmp_path)
+async def test_passing_preflight_dispatches_normally(tmp_path, request):
+    loop = _loop(tmp_path, request)
     ran = {"handler": False}
 
     async def handler(task):
@@ -102,8 +99,8 @@ async def test_passing_preflight_dispatches_normally(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_no_preflight_dispatches_exactly_as_today(tmp_path):
-    loop = _loop(tmp_path)
+async def test_no_preflight_dispatches_exactly_as_today(tmp_path, request):
+    loop = _loop(tmp_path, request)
     ran = {"handler": False}
 
     async def handler(task):
@@ -122,12 +119,12 @@ async def test_no_preflight_dispatches_exactly_as_today(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_preflight_failure_does_not_consume_the_occurrence(tmp_path):
+async def test_preflight_failure_does_not_consume_the_occurrence(tmp_path, request):
     """Review minor #2 / AC#3: a failed preflight must not disable a
     one_time reminder (which would hide the problem) -- the task stays
     due so it retries once the precondition is fixed, with the incident
     grouping preventing notification spam."""
-    loop = _loop(tmp_path)
+    loop = _loop(tmp_path, request)
     marked = {"called": False}
 
     def _mark(*a, **k):

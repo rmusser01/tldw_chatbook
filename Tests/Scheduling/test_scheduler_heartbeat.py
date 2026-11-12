@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 from tldw_chatbook.Scheduling.scheduler_heartbeat import (
     SchedulerHeartbeat,
@@ -95,15 +96,15 @@ def _make_loop(tmp_path, dispatch_raises=False):
                 raise RuntimeError("handler exploded")
             return []
 
-    loop = SchedulerLoop.__new__(SchedulerLoop)
-    # minimal hand-wired instance (avoid the full ctor's DB deps)
-    loop.clock = lambda: _t(0)
-    loop.poll_interval = 30.0
+    loop = SchedulerLoop(
+        SimpleNamespace(db_path=tmp_path / "schedules.db"),
+        handlers={},
+        clock=lambda: _t(0),
+        poll_interval=30.0,
+        heartbeat_path=tmp_path / "hb.json",
+        emergency_stop_path=tmp_path / "stop.json",
+    )
     loop.queue = _Queue()
-    loop._heartbeat_path = tmp_path / "hb.json"
-    loop._last_success_at = None
-    loop._last_error = None
-    loop._last_tick_dispatch_seconds = 0.0
     loop._tick_count = 7
     return loop
 
@@ -257,27 +258,34 @@ async def test_cancelled_tick_still_completes_the_started_heartbeat_write(
     monkeypatch.setattr(scheduler_heartbeat, "write_heartbeat", gated_write)
     loop = _make_loop(tmp_path)
     task = asyncio.ensure_future(loop.tick())
-    assert await asyncio.to_thread(write_started.wait, 10), (
-        "heartbeat write never started"
-    )
-    task.cancel()
-    # The discriminating window: while the write is still GATED, a correctly
-    # shielded tick cannot finish -- it is waiting on the write. (The first
-    # version of this test released the gate before awaiting the task; the
-    # near-instant write then completed before the assert either way, and
-    # the un-shielded mutation passed. Order is the assertion here.)
-    for _ in range(20):
-        await asyncio.sleep(0.01)
-        if task.done():
-            break
-    assert not task.done(), (
-        "tick() finished (cancelled) while the heartbeat write was still "
-        "gated -- the write may now land after the scheduler stopped"
-    )
-    release_write.set()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert write_completed.is_set()
+    try:
+        if not await asyncio.to_thread(write_started.wait, 10):
+            if task.done():
+                await task
+            pytest.fail("heartbeat write never started")
+        task.cancel()
+        # The discriminating window: while the write is still GATED, a correctly
+        # shielded tick cannot finish -- it is waiting on the write. (The first
+        # version of this test released the gate before awaiting the task; the
+        # near-instant write then completed before the assert either way, and
+        # the un-shielded mutation passed. Order is the assertion here.)
+        for _ in range(20):
+            await asyncio.sleep(0.01)
+            if task.done():
+                break
+        assert not task.done(), (
+            "tick() finished (cancelled) while the heartbeat write was still "
+            "gated -- the write may now land after the scheduler stopped"
+        )
+        release_write.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert write_completed.is_set()
+    finally:
+        release_write.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 
@@ -324,10 +332,6 @@ async def test_a_held_dispatch_is_recorded_in_the_next_heartbeat(tmp_path):
 
     loop = _make_loop(tmp_path)
     loop._emergency_stop_path = tmp_path / "stop.json"
-    # ``_offload``'s task bookkeeping (the full constructor's, TASK-33620.15.24).
-    loop._maintenance_db_tasks = set()
-    loop._maintenance_changed = asyncio.Event()
-
     set_emergency_stop(loop._emergency_stop_path, reason="hold")
     await loop._dispatch_due(_t(0))
     loop._record_heartbeat(_t(0), error=None)
