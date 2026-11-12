@@ -1568,3 +1568,7 @@ class ConsoleVideoController:
                 max_seconds=MAX_STREAM_SECONDS,
             )
         )
+        # It played: take "/stream-video <url>" out (TASK-33628.20).
+        from .command_draft import take_ran_command_draft
+
+        take_ran_command_draft(self)

@@ -93,6 +93,63 @@ def take_command_draft(
     return TakenCommandDraft(composer, stash, _generation(composer))
 
 
+def take_ran_command_draft(owner: Any) -> None:
+    """Take a slash command's own text out of the composer once it ran.
+
+    TASK-33628.20, owner decision 2026-11-12 ("Clear it after running"): a
+    command that ran leaves an empty composer, the same as a sent message. A
+    refused or unknown command never calls this, so its text stays to be
+    corrected. Only the revision the send captured goes (``take_command_draft``):
+    text typed since stays, and a composer that moved to another chat is left
+    alone. Outside a sent command -- a button that opens the same dialog, or a
+    direct call -- there is no captured command, and nothing is taken.
+
+    Args:
+        owner: The Console screen, or a controller with its
+            ``_console_composer_or_none()`` and, optionally, its
+            ``_clear_console_composer_draft`` (which also resyncs the command
+            popup; the composer's own ``clear_draft`` otherwise). Read only
+            inside a sent command.
+    """
+    if CAPTURED_COMMAND_DRAFT.get() is None:
+        return
+    composer = owner._console_composer_or_none()
+    if composer is None:
+        return
+    clear_draft = getattr(owner, "_clear_console_composer_draft", None)
+    take_command_draft(composer, clear_draft or composer.clear_draft)
+
+
+def ran_command_draft_taker(owner: Any) -> Callable[[], None]:
+    """Hold the running command's draft for a dialog that finishes it later.
+
+    A command whose dialog is only a setup step -- /goal's launch review,
+    /workflow new, /system's editor and picker -- has run once that dialog
+    starts or applies something; Cancel keeps its text. The dialog's callback
+    runs outside the command, so the captured draft is kept here.
+
+    Args:
+        owner: As for ``take_ran_command_draft``.
+
+    Returns:
+        A call that takes the command's own text out, as
+        ``take_ran_command_draft`` would have inside the command; a no-op
+        outside a sent command.
+    """
+    stash = CAPTURED_COMMAND_DRAFT.get()
+
+    def _take() -> None:
+        if stash is None:
+            return
+        token = CAPTURED_COMMAND_DRAFT.set(stash)
+        try:
+            take_ran_command_draft(owner)
+        finally:
+            CAPTURED_COMMAND_DRAFT.reset(token)
+
+    return _take
+
+
 def restore_command_draft(composer: Any | None, taken: TakenCommandDraft | None) -> str:
     """Put a taken command back where it cannot overwrite anything.
 

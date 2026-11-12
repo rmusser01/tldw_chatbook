@@ -100,6 +100,9 @@ class ConsoleResponseRulesUI:
         )
         self._show, self._notify = show_manager, notify
 
+    def _console_composer_or_none(self) -> Any:
+        return self._composer()
+
     async def learn(self, parse: CommandParse) -> None:
         """Learn from the current eligible answer while preserving refused drafts."""
         if not parse.args.strip():
@@ -147,10 +150,18 @@ class ConsoleResponseRulesUI:
         if scope is None:
             self._notify("This Chat has no named Workspace. Use Chat or global scope.")
             return
-        await self.open_manager(scope)
+        if await self.open_manager(scope):
+            # It opened: take "/rules" out (TASK-33628.20).
+            from .command_draft import take_ran_command_draft
 
-    async def open_manager(self, scope: RuleScope) -> None:
-        """Open the same manager from composer or scoped settings."""
+            take_ran_command_draft(self)
+
+    async def open_manager(self, scope: RuleScope) -> bool:
+        """Open the same manager from composer or scoped settings.
+
+        Returns:
+            True when the manager opened; False without a local profile.
+        """
         from tldw_chatbook.Widgets.Console.response_rules_modal import (
             ResponseRulesModal,
         )
@@ -158,8 +169,9 @@ class ConsoleResponseRulesUI:
         runtime = self._runtime()
         if runtime is None:
             self._notify("Response rules require a local profile.")
-            return
+            return False
         await self._show(ResponseRulesModal(scope, runtime.store, runtime))
+        return True
 
 
 async def open_profile_rules(screen: Any) -> None:
