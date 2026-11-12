@@ -23,6 +23,7 @@ from textual.geometry import Region
 from textual.widgets import Static
 
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
+from Tests.UI.test_console_voice_chip import ProductionCssComposerApp
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 #: App size whose composer row cannot hold left cluster + actions row + a
@@ -273,10 +274,9 @@ async def test_narrow_composer_keeps_draft_visible_beside_voice_chip():
 
 @pytest.mark.asyncio
 async def test_wide_composer_keeps_voice_chip_capped_and_draft_floor():
-    _, host = _ready_host()
+    host = ProductionCssComposerApp()
     async with host.run_test(size=APP_WIDE) as pilot:
-        console = await _mounted_console(host, pilot)
-        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer = host.query_one(ConsoleComposerBar)
         draft = composer.query_one("#console-command-visible-text", Static)
         chip = composer.query_one("#console-voice-status", Static)
         await pilot.pause()
@@ -377,19 +377,23 @@ APP_INTERMEDIATE = (120, 40)
 async def test_chip_going_idle_restores_the_reason_strip_budget():
     """f2: dictation ending (idle) frees the chip's cells for the reason
     strip immediately -- not at some later unrelated sync."""
-    _, host = _ready_host()
+    host = ProductionCssComposerApp()
     async with host.run_test(size=(140, 40)) as pilot:
-        console = await _mounted_console(host, pilot)
-        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer = host.query_one(ConsoleComposerBar)
         strip = composer.query_one("#console-send-disabled-reason", Static)
+        composer.sync_action_state(
+            has_draft=False, run_active=False, can_save_chatbook=False
+        )
         await pilot.pause()
         await pilot.pause()
+        assert strip.display is True
 
         composer.set_voice_status("error", message=CHIP_MESSAGE)
         await pilot.pause()
         await pilot.pause()
         # At this width the chip (53 cells) leaves the reason strip below
         # its legibility floor: hidden while the chip has priority.
+        assert composer.query_one("#console-voice-status", Static).display is True
         assert strip.display is False
 
         composer.set_voice_status("idle")
@@ -402,6 +406,7 @@ async def test_chip_going_idle_restores_the_reason_strip_budget():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_preparing_renders_whole_in_the_intermediate_band():
     """f3: the busy/preparing action feedback is exempt from the ordinary
@@ -417,12 +422,13 @@ async def test_preparing_renders_whole_in_the_intermediate_band():
         # Sanity: this width really is in the intermediate band.
         assert 12 <= composer._voice_chip_width_cap() <= 52
 
-        composer.set_voice_status(
-            "preparing", message="Local transcription busy — dictation will run next."
-        )
+        console._dictation._set_console_dictation_state("starting")
+        message = "Local transcription busy — dictation will run next."
+        composer.set_voice_preparing_message(message)
         await pilot.pause()
         await pilot.pause()
         assert chip.display is True
+        assert message in str(chip.renderable)
         assert chip.region.width >= 51 + 2, (
             f"preparing copy truncated to {chip.region.width} cells in the "
             "intermediate band (the busy-parakeet contract wants it whole)"
