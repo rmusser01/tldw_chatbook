@@ -1476,7 +1476,8 @@ async def _show_production_approval_batch(
             card = cards.first()
             if card.display and len(card.query(".approval-row")) == expected_rows:
                 await pilot.pause()
-                return card
+                if card._information_ready:
+                    return card
         await pilot.pause(0.05)
     raise AssertionError("Production approval batch did not finish rendering")
 

@@ -235,13 +235,18 @@ def _terminal_subagent_run(
     return parent_id, run_id
 
 
-def _controller_rig(tmp_path, *, session_title="Research", ensure_run_hooks=None):
+def _controller_rig(
+    tmp_path, *, session_title="Research", ensure_run_hooks=None, execution_owner=None
+):
     """Controller + fake bridge + real runs DB + real marks DB + app stub."""
     chacha = CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="t")
     app = _AppStub(chacha)
     from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
     app.local_chat_conversation_service = ChatConversationService(chacha)
-    runs_db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
+    runs_options = {"client_id": "t"}
+    if execution_owner is not None:
+        runs_options["execution_owner"] = execution_owner
+    runs_db = owned_agent_runs_db(tmp_path / "runs.db", **runs_options)
     # Wire the real ChaChaNotes DB this rig already opens into the store, as
     # production does (`ConsoleRuntime.ensure_chat_store`). A bare store has
     # `persistence is None`, and since `a26cdafd8` a MANUAL or QUEUED send on a

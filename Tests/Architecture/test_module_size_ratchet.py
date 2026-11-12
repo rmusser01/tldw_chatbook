@@ -152,6 +152,9 @@ _BUDGETS: dict[str, int] = {
     # PR3345: explicit owner source-count waiver; exact measurements, no runtime changes.
     "tldw_chatbook/app_served.py": 150,
     "tldw_chatbook/Backup_Recovery/storage_admission.py": 4000,
+    # TASK-37173 report readers crossed the inventory threshold. Pin exact sizes.
+    "tldw_chatbook/DB/AgentRuns_DB.py": 4053,
+    "tldw_chatbook/Chat/console_trace_repository.py": 4046,
     # TASK-33011: the Library ingest queue moved verbatim out of app.py. At
     # 4,999 lines it is larger than two rows below, so it is born governed.
     # 2026-10-03 (PR #2993): TASK-20973's provenance block added 16 lines;

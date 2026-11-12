@@ -165,7 +165,8 @@ async def test_items_opened_beside_an_open_artifact_take_the_stage(
     async with artifact_library(tmp_path, size=size) as (screen, pilot):
         controller = screen._artifacts_controller
         controller.focus_items()
-        await pilot.pause()
+        rows = screen.query_one("#library-artifacts-list")
+        await _until(pilot, lambda: screen.focused is rows, "Items list focus")
         screen.action_focus_next_workbench_pane()
         await pilot.pause()
         body = screen.query_one("#library-artifacts-body")
