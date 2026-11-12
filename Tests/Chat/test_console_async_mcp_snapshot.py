@@ -186,9 +186,9 @@ async def test_queue_capture_reads_native_mcp_sources_off_caller_loop(snapshot_c
 @pytest.mark.asyncio
 @pytest.mark.parametrize("screen", [False, True])
 async def test_async_snapshot_joins_sources_and_composes_on_actual_loop(
-    snapshot_case, screen
+    snapshot_case, screen, request
 ):
-    case = snapshot_case
+    case = snapshot_case if screen else request.getfixturevalue("captured_snapshot_case")
     _, observed = _loop_projection(case)
     if screen:
         owner = ConsoleSessionController.__new__(ConsoleSessionController)
