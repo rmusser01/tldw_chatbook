@@ -4,6 +4,7 @@ title: 'Tests: the dev-red Notes pins wave 4 measured but did not own'
 status: To Do
 assignee: []
 created_date: '2026-09-14 22:47'
+updated_date: '2026-11-12 19:38'
 labels:
   - notes
   - rider
@@ -24,3 +25,7 @@ Wave 4 compared every branch against a detached origin/dev worktree by FAILED-na
 - [ ] #3 Real defects get their own task; load-sensitive ones are either stabilised or recorded with a measured flake ratio
 - [ ] #4 Tests/ is green on dev for these names, or each survivor has an owning task id
 <!-- AC:END -->
+
+## Implementation Notes
+
+**2026-11-12 (round-13 closeout).** The README pair is resolved by TASK-38974 (round 13): it reproduced both nodes red on dev (a stale `required_text0` expectation and a `mailto:` defect in the link checker), re-pinned the README entry at its d01daac8b4 wording, fixed the checker's `URL_SCHEME_RE` with a negative control, and Tests/Docs now runs in the `recovered-suites` lane (`RECOVERED_SUITES_TARGETS`). Both nodes pass on the round-13 stack (8b633d0101); they are green on dev only once round 13 merges. No criterion here can be ticked yet: each covers the footer-hint pins, the notes-reader pair, the geometry params and the Folder-files pair as well.

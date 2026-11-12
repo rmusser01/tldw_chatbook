@@ -3,6 +3,7 @@ id: TASK-38729
 title: "The UI app-string-lookup census pin is stale on dev"
 status: In Progress
 created_date: 2026-11-04 02:52
+updated_date: '2026-11-12 19:38'
 labels:
 - follow-up
 - architecture
@@ -36,3 +37,5 @@ Reason: This updates an existing test fixture to match the measured count.
 ## Implementation Notes
 
 PR #3487 (`8eddd77221`) removed the literal `_vllm_connection_owner` lookup from the Settings default-model handoff, leaving the UI pin one above the measured count. Lowered the UI row in `Tests/Architecture/app_lookup_census.tsv` from 1,262 to 1,261. The census still requires exact equality.
+
+**2026-11-12 (round-13 closeout).** Round 13's follow-up "UI app-string-lookup pin 1261 vs 1262 red on base ae9f9e8d21" is this task. ff3d2f0f5d (2026-11-11, on dev) lowered the pin to 1261, and the round-13 stack (8b633d0101) only moves app lookups within `tldw_chatbook/UI` (net zero, read from the diff). The PR Fast Lane (architecture-review tests) job is green in PR runs after ff3d2f0f5d (for example run 43248233114, 2026-11-12). AC#1 looks met; ticking it is left to this task's owner.

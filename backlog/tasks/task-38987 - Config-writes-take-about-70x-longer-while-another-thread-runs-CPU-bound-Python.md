@@ -1,11 +1,11 @@
 ---
 id: TASK-38987
 title: "Config writes take about 70x longer while another thread runs CPU-bound Python"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-06 01:42
-updated_date: 2026-11-08 00:37
+updated_date: 2026-11-10 16:30
 labels:
 - follow-up
 - performance
@@ -57,9 +57,9 @@ The entry points are `config.py:6455 save_setting_to_cli_config` and `config.py:
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 One config save on a worker thread, against a spinning Python thread at the default 5 ms switch interval, finishes in 1.0 s or less in 3 of 3 runs, with the load recorded (dev: 5.7-6.4 s)
-- [ ] #2 A save with an idle main thread stays at or under 0.10 s (dev: 0.084-0.091 s)
+- [x] #2 A save with an idle main thread stays at or under 0.10 s (dev: 0.084-0.091 s)
 - [x] #3 If the fix changes the switch interval, the previous interval is restored after the write, including when the write raises and when two writes overlap
-- [ ] #4 If the fix cuts the number of calls instead, a counter test pins the GIL-releasing syscalls per save below dev's 13,305 and fails if they come back
+- [x] #4 If the fix cuts the number of calls instead, a counter test pins the GIL-releasing syscalls per save below dev's 13,305 and fails if they come back (N/A — the fix took the switch-interval route, AC#3; the call count is unchanged by design)
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -110,3 +110,8 @@ Files: `tldw_chatbook/Utils/switch_interval.py` (new), `tldw_chatbook/config.py`
 **Low-load measurement (2026-11-07, load 14.6-17.0).** The machine reached the filing's range during this round, so base and head were measured back to back with the probe:
 - Spinner, 5 ms: base 7.28-11.98 s and 7.36-12.85 s (the convoy); head 0.60-0.64 s and 0.59-0.69 s. AC#1 holds at the load where base shows the 70x slowdown.
 - Idle: head 0.094-0.099 s (3 of 3 at or under 0.10 s), then 0.106-0.136 s and 0.093-0.136 s in two more rounds; base 0.104-0.105 s, 0.106-0.109 s and 0.105-0.138 s, above 0.10 s in every run at this load (the filing's 0.084-0.091 s was at load 10-13). AC#2 is left unticked for the owner: head shows no idle regression against base, but its absolute 0.10 s held in only one of three rounds.
+
+**Quiet-host measurement after merge (2026-11-10, load 5.1-10.3, 18 CPUs; AC#2).** The task's probe (`idle`, a new value per save, one warm-up) through run.sh, alternating head = dev ae9f9e8d21 (this task merged) and base = dev aa96a3f48c (just before it), 95 saves each over eight rounds:
+- Head: medians 0.058-0.065 s per round; 90 of 95 saves at or under 0.10 s, the rest 0.110-0.129 s.
+- Base: medians 0.056-0.075 s; 92 of 95 at or under 0.10 s, the rest up to 0.144 s.
+- Both sides show the same occasional host spike, and base's worst exceeds head's, so the tail is the machine, not the change. A save with an idle main thread runs at about 0.06 s, under the 0.10 s criterion and below the filing's 0.084-0.091 s. AC#2 ticked; AC#4 does not apply (switch-interval route).

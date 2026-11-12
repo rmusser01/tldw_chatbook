@@ -1,9 +1,10 @@
 ---
 id: TASK-2560
 title: Schedules destination visual-parity tests fail on a missing media DB
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-06'
+updated_date: '2026-11-12 19:38'
 labels:
   - tests
   - scheduling
@@ -25,11 +26,11 @@ as it did.
 
 ## Acceptance Criteria (the what)
 
-- [ ] The four schedules cases either provide the media DB the destination
+- [x] The four schedules cases either provide the media DB the destination
       genuinely needs, or are skipped with an explicit reason naming the
       dependency.
-- [ ] The whole file passes on dev.
-- [ ] If the failure reflects a real product requirement (a destination that
+- [x] The whole file passes on dev.
+- [x] If the failure reflects a real product requirement (a destination that
       cannot render without a media DB), that requirement is stated in the
       test rather than implied by a crash.
 
@@ -54,3 +55,10 @@ this test is NOT untracked -- task-2960 ("MCP forced-loading parity regression f
 the PR-1385 tall-section change", To Do) names this exact test and already covers
 it. Left untouched here regardless -- out of task-3200's scope to fix, and out of
 this task's stated scope (schedules/media-DB only) to adopt without widening the AC.
+
+## Implementation Notes
+
+**Closed 2026-11-12 (round-13 closeout): the failure no longer reproduces.** At the round-13 stack top 8b633d0101 the four Schedules cases pass (run.sh, `-n 4`, load ~9-11, together with TASK-2960's node: 6 passed): `test_operational_destinations_use_timing_or_procedure_workbench[schedules-...]`, `test_operational_empty_or_blocked_states_preserve_workbench_geometry[schedules-...]`, `test_operational_loading_states_preserve_workbench_geometry[schedules-...]` and `test_top_level_destinations_keep_primary_workbench_visible_at_compact_size[schedules]`.
+- AC#1: the cases need no media DB to pass; "Local media DB is required" is still logged from `_refresh_console_context` (`schedules_workbench.py:2142`), but nothing fails on it.
+- AC#2: TASK-39170 (round 13) gave the file its `bootstrap_profile` seam, fixed its reds, measured the whole file at 116 passed (`-n 4`) and laned it on the UI census (the four cases at `scripts/ui_pr_gate_census.txt:2840-2842` and `:2855`).
+- AC#3: no product requirement is involved: Schedules renders without a media DB, so there is nothing to state in the tests.

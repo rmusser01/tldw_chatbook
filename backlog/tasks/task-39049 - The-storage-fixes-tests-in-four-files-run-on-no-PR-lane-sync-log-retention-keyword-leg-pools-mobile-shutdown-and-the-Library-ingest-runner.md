@@ -1,10 +1,10 @@
 ---
 id: TASK-39049
 title: "The storage fixes' tests in four files run on no PR lane: sync-log retention, keyword-leg pools, mobile shutdown and the Library ingest runner"
-status: In Progress
+status: Done
 assignee: ['@claude']
 created_date: 2026-11-06 10:09
-updated_date: 2026-11-08 06:45
+updated_date: '2026-11-12 19:40'
 labels:
 - follow-up
 - ci
@@ -64,9 +64,9 @@ Found in round 10 of the 2026-10-23 burn-down; checked on dev b2c618185f, 2026-1
 <!-- AC:BEGIN -->
 - [x] #1 `Tests/DB/test_sync_log_retention.py` runs whole on a PR lane, appended at the end of the dreams-boundary step (never ahead of the storage-pausing tests pinned first); the lane pins in `Tests/CI` (`DREAMS_BOUNDARY_TARGETS`, the step argv pin in `test_response_rules_critical_gate.py`) are updated, and three timings of the step's exact command are recorded
 - [x] #2 `Tests/Web_Server/test_mobile_service.py` runs on a PR lane once TASK-38992 makes it green, with three timings of that lane's command recorded
-- [ ] #3 `Tests/RAG_Search/test_keyword_leg_db_resolution.py` runs on a PR lane; its evidence is a green CI run of that lane (locally every node hits TASK-38111), linked in the notes
+- [x] #3 `Tests/RAG_Search/test_keyword_leg_db_resolution.py` runs on a PR lane; its evidence is a green CI run of that lane (locally every node hits TASK-38111), linked in the notes
 - [x] #4 `Tests/Library/test_library_ingest_runner.py` either leaves no live lease (0 lease-guard errors under `--storage-lease-guard`, with the before count of 130 recorded) and joins the guarded step, or the owner places it on a lane without the guard; the decision is recorded
-- [ ] #5 Recent job times of every lane touched are quoted before and after; the fast PR contract is not used
+- [x] #5 Recent job times of every lane touched are quoted before and after; the fast PR contract is not used
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -145,4 +145,10 @@ CI after times need a PR run of this branch.
 **Files (round 12).** `Tests/Library/test_library_ingest_runner.py`, `Tests/RAG_Search/conftest.py`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, `Tests/CI/test_derived_artifacts_workflow.py`, ADR-103.
 **Review r12l-rev1 (2026-11-08).** The two bootstrap_profile Tests/UI files left the recovered-suites step for the UI census (the census does hold bootstrap_profile files: 512 entries already, and TASK-36478 restores the shared bootstrap config after each test; my earlier "may not hold" was wrong). TASK-39124's built-in pixel buddy file joined the step last. The final step, 13 targets, `jobstep.sh fu-r12-lanes "Run the recovered suites"`, 3 runs: 363.3 s (load 38 falling to 21), 742.9 s (load 21-50), 467.1 s (load 50-43); each 715 passed, 1 skipped, 2 failed (TASK-39140's pin, fixed on fu/r12-ctlr), no lease finding. The slowest run plus about 1.5 min of setup is about 13.9 min, 6.1 under the cap. Review r12l-rev1 also found that `_make_db`'s store list stayed populated all session when `Tests/integration/test_library_ingest_flow.py` imports `_make_db`; the list now exists only while this module's closing fixture runs.
 **After the round-12 restack (2026-11-08).** The step now has 20 targets (TASK-39124's pixel buddy file, TASK-39119's six reply-pin nodes and the goal recovery file joined it). `jobstep.sh fu-r12-lanes "Run the recovered suites"`, 3 runs: 534.7 s (load 22-33), 353.8 s (load 22-28), 312.5 s (load 20-28); each 733 passed, 1 skipped, nothing red (TASK-39140's pin is fixed in the stack) and no lease finding. The slowest run plus about 1.5 min of setup is about 10.4 of the job's 20 min.
+**AC#3, green CI run (round-13 closeout, 2026-11-12).** `Tests/RAG_Search/test_keyword_leg_db_resolution.py` ran 11 of 11 green in the `PR lane (recovered suites)` job of PR run 43248233114 (job 131298355582, 2026-11-12, branch codex/core-uat-fixes): the log line reads `Tests/RAG_Search/test_keyword_leg_db_resolution.py ........... [ 66%]`, and the step ends `733 passed, 1 skipped in 376.00s`. `Tests/Library/test_library_ingest_runner.py` passed in the same job. Of the 38 recovered-suites jobs in PR runs after round 12 merged, 37 were green; the red one (run 43085804799) was its branch's own change, and that branch's later runs passed.
+
+**AC#5, after times (read-only `gh`, derived-artifacts.yml PR runs; the before times are quoted above).**
+- **Dreams and Guardian boundary contracts** (this task's round-11 targets). After round 11 and before round 12, 72 PR runs (2026-11-08 15:04Z to 2026-11-10 15:11Z): job 9.87-16.75 min (median 13.15), step "Run Dreams and Guardian boundary contracts" 6.68-11.55 min (median 9.02). After round 12 merged, 38 PR runs (to 2026-11-12 17:03Z): job 11.07-16.17 min (median about 14.0), step 7.75-11.30 min (median about 9.9). The slowest job leaves about 3.3 min of the 20-min cap. The step itself failed once (run 43085804799, its branch's own change). Two other runs failed the job's separate admission-sensitive step on one Watchlists test (`test_a_rail_reopened_after_a_discarded_build_shows_the_landed_tree`, `NoMatches '#wl-tree'`), which is not this task's; TASK-40333 owns it.
+- **PR lane (recovered suites)** (this task's round-12 targets). New, so there is no before. After: 38 PR runs, job 5.08-7.78 min, step 4.38-6.88 min.
+- The fast PR contract was not used.
 <!-- SECTION:NOTES:END -->

@@ -4,7 +4,7 @@ title: "Re-pin the 86 Library test nodes in test_library_shell.py and test_libra
 status: In Progress
 assignee:
 - '@claude'
-updated_date: '2026-11-10 21:35'
+updated_date: '2026-11-12 19:38'
 created_date: 2026-11-08 06:54
 labels:
 - follow-up
@@ -105,3 +105,5 @@ Found in round 12 of the 2026-10-23 burn-down (TASK-39141 on round-12 branch fu/
   - `test_library_onboarding_unmount_flushes_latest_lifecycle` polled the unmount's revoke with `pilot.pause()`. A pause waits for the app to drain its messages, but the app was busy in the very unmount the test holds on its gated write. A pause taken before the revoke landed therefore blocked until the gate's 30 s timeout released the write, and by then the switch was done. Probes showed that: failing runs took 43 s, with the write already finished and the gate never released. It was red alone 4 of 10. It now polls with `asyncio.sleep` against a deadline. Negative control: an unmount that does not await the in-flight write (a temporary product edit, reverted) still fails it.
 
 **Files.** `Tests/UI/test_library_shell.py`, `Tests/integration/test_library_ingest_flow.py`.
+
+**2026-11-12 (round-13 closeout): owners of the product defects.** TASK-40293 (Media and Notes list entry focus, 4 nodes), TASK-40294 (compact Notes footer tier), TASK-40295 (focus after a conflict Reload), TASK-32503 (tree row age after a save and Back, already open), TASK-40296 (restored Media viewer, 2 nodes), TASK-40297 (Export quality strip and the ‹ Library bar), TASK-40298 (Starter rail and F6), TASK-40299 (compact Preview scroll across a breakpoint round trip) and TASK-34000.60 (blank-note GC race). At 8b633d0101 (run.sh, `-n 4`, load ~13) 11 of the 12 product-defect nodes failed with the failures recorded above; the TASK-34000.60 node passed once (it failed 2 of 3 in this task's runs). The two Preview-scroll nodes passed in that batch and 3 of 3 alone each at load 13-15, so that loss shows under load only; TASK-40299 decides product race or test race. `scripts/library_shell_push_deselect.txt` names each owner. The extra Media parse on Find (recorded above as debt) is TASK-40327.

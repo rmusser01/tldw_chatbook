@@ -3,6 +3,7 @@ id: TASK-40134
 title: "A backup captures Personal Context's repository database"
 status: To Do
 created_date: 2026-11-10 17:13
+updated_date: '2026-11-12 19:38'
 labels:
 - follow-up
 - backup
@@ -80,3 +81,7 @@ Filed in round 13 of the 2026-10-23 burn-down from TASK-39148's owner-approved d
 - [ ] #11 A detached source holding the repository is refused by name and never imported without its key
 - [ ] #12 The owner inventory doc's Personal Context rows and the Personal Context User Guide page's backup paragraph describe the new behaviour
 <!-- AC:END -->
+
+## Implementation Notes
+
+**2026-11-12 (round-13 closeout): ADR-203.** ADR-203's model-disclosure grants have not shipped: the ADR is "Accepted (design only)", and `tldw_chatbook/` has no grant code. Grants are "encrypted, peer-local and never synchronize/export" (ADR-203 :30), and "Recovery never imports local grant authority" (:85). When they ship, their storage must stay out of the captured repository database, or a restore must drop them, with a test that pins it.

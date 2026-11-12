@@ -1412,7 +1412,7 @@ jobs:
       # TASK-39153 appends the Library ingest flow file (bootstrap_profile, 13 tests).
       # test_closed_loop_pending_submit_is_emergency_detachment: deselected
       # 2026-11-12: red on dev e0186fa10a (console_send_diagnostic ContextVar
-      # token reset across contexts), follow-up filed; remove when fixed.
+      # token reset across contexts), owned by TASK-33621.36 AC#3; remove when fixed.
       - name: Run the recovered suites
         run: |
           pytest \
