@@ -400,7 +400,10 @@ The Appearance step lists themes by name with their tone ("Default dark",
 `NO_COLOR` is set or on the Linux console on a first run; a re-run keeps your
 saved choice),
 and names the current splash card
-with a pointer to Settings ▸ Splash Screen for choosing one. The Full track has
+with a pointer to Settings ▸ Splash Screen for choosing one. A splash length
+you set there keeps its seconds: the choice it falls under says so (for
+example **Full (15 s, as saved)**), leaving it chosen keeps that length, and
+the Summary names the same seconds. The Full track has
 no Notes step: notes folder sync is set up from Library ▸ Notes ▸ Add from
 files…, as the Summary says.
 

@@ -74,6 +74,7 @@ class AppearanceStep(SetupStep):
             self.wizard, "splash_screen", "appearance"
         )
         self._current_startup = look.startup_choice(sections["splash_screen"])
+        self._saved_splash = dict(sections["splash_screen"])
         self._current_reduce, self._current_ascii = look.read_comfort(
             sections["appearance"]
         )
@@ -109,7 +110,7 @@ class AppearanceStep(SetupStep):
             ):
                 for choice in look.STARTUP_CHOICES:
                     yield SetupRadioButton(
-                        look.startup_label(choice),
+                        look.startup_label(choice, self._saved_splash),
                         value=choice == self._current_startup,
                         id=f"setup-startup-{choice}",
                     )
