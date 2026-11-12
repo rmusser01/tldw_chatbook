@@ -2,7 +2,7 @@
 
 ## Goal policy in Console behavior
 
-**F9 → Console behavior → Goal runs** stages changes with the existing **Save**
+**F4 → Console Behavior → Goal runs** stages changes with the existing **Save**
 and **Revert** controls. Saving updates the `[agents]` section in the same atomic
 batch as the other Console settings. Named Agents and fleet wake controls keep
 their existing meaning.
@@ -54,11 +54,13 @@ you touch them; some are read-only and point you elsewhere.
 ## Getting there
 
 - **Press F4 from anywhere** — it works even while a text field has focus.
-  Settings is the thirteenth of fifteen destinations: the first ten get
-  **Ctrl+1 … Ctrl+0**, and the remaining five continue onto the function-key
-  row from its left end — **F2**, **F3**, **F4**, **F5**, then **F7** (F6 is
-  reserved for pane cycling) — the nav bar labels say so ("F2 Lab", "F3
-  Logs", "F4 Settings", "F5 Research", "F7 Meetings").
+  Settings is the eleventh of the fifteen nav bar destinations: the first
+  eight carry **Ctrl+digit** keys (Ctrl+6 and Ctrl+9 stay bound to Library ▸
+  Artifacts and Settings ▸ Tools & MCP, which have no nav label), and the
+  remaining seven continue onto the function-key row from its left end —
+  **F2**, **F3**, **F4**, **F5**, **F7**, **F8**, **F9** (F6 is reserved for
+  pane cycling) — the nav bar labels say so ("F2 Lab", "F3 Logs",
+  "F4 Settings", "F5 Research", "F7 Meetings", "F8 Plugins", "F9 Kanban").
 - **Click "F4 Settings" in the nav bar.** On a narrow window a "More ▾"
   button appears at the right edge and opens a menu listing every
   destination — pick "F4 Settings" there; when everything fits, no button

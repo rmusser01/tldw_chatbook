@@ -1367,7 +1367,8 @@ jobs:
 
       # TASK-39043: the Console config-sync lifetime and Home citation
       # retirement suites (~86 s serial each). TASK-38976: the prompt
-      # scope-service and batch suites. Then the bootstrap_profile suites:
+      # scope-service and batch suites. TASK-38974: the four Tests/Docs files
+      # (sandboxed, ~8 s serial). Then the bootstrap_profile suites:
       # TASK-39142's prompt-improvement and keyword-leg files, with TASK-39049's
       # keyword-leg pool retirement file beside them, and TASK-39049's Library
       # ingest runner. TASK-39124 appends the built-in pixel buddy file
@@ -1390,6 +1391,10 @@ jobs:
             Tests/Prompt_Management/test_prompt_scope_service.py \
             Tests/Prompt_Management/test_prompt_batch_models.py \
             Tests/Prompts_DB/test_prompts_db_batch_mutations.py \
+            Tests/Docs/test_console_library_controls_docs.py \
+            Tests/Docs/test_user_guide_contract.py \
+            Tests/Docs/test_user_guide_conflict_markers.py \
+            Tests/Docs/test_personas_qa_capture_script.py \
             Tests/Prompt_Management/test_prompt_improvement_service.py \
             Tests/RAG_Search/test_keyword_leg_chacha.py \
             Tests/RAG_Search/test_keyword_leg_db_resolution.py \

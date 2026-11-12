@@ -31,3 +31,18 @@ cases then failed at the intended raw-draft retention assertions with unchanged
 production source. The first three setup failures were excluded and both runs
 were retained separately. Check the resulting live control text before treating
 a failed race probe as product evidence.
+
+## A flow that passes on the factory app can stall on the real app
+
+**TASK-38970, 2026-11-10.** The User Guide driver re-ran the mounted Watchlists
+UAT's flow on a real `TldwCli` instead of `Tests/UI/app_factory._build_test_app`.
+It stalled three ways before completing. The real context meter called
+`cached_context_window` on the scripted gateway, which the factory app never
+did. Plain chat's light tool surface offered no Watchlists tools, so
+`load_tools` failed and an approved call came back "Tool not permitted"; the
+fix was `[tools] full_agent_tools_enabled = true`. An approval loop that marked
+a round done when it pressed **Allow once** stalled because the first press
+landed while the button was still disabled, and `Button.press()` on a disabled
+button does nothing. Before reusing a factory-app flow on the real app, list
+what the factory configures, and press a control only once `disabled` is
+False.

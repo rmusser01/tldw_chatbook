@@ -2,7 +2,8 @@
 """Regenerate Docs/User_Guide/images/console/approval-card.svg (task-32290).
 
 Mounts the real ``ChatApprovalCard`` with the real app stylesheets and one
-captured local file row, then exports the screenshot Rich/Textual produces.
+captured local file row, then exports the screenshot Rich/Textual produces,
+without its cdnjs font URLs (TASK-38969).
 
 Run it against the worktree holding the card you want pictured::
 
@@ -18,6 +19,7 @@ from pathlib import Path
 
 from textual.app import ComposeResult
 
+from scripts.capture_user_guide import write_guide_svg
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Chat.approval_presentation import (
@@ -96,7 +98,7 @@ def main() -> int:
             )
             await pilot.pause()
             await pilot.pause()
-            app.save_screenshot(str(out))
+            write_guide_svg(out, app.export_screenshot())
 
     asyncio.run(_run())
     print(f"wrote {out}")

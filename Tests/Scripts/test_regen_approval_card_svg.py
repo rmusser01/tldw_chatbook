@@ -46,15 +46,11 @@ def test_path_under_docs_accepted(monkeypatch):
         / "console"
         / "_test_regen_approval_card.svg"
     )
-    saved: list[str | None] = []
-    monkeypatch.setattr(
-        "textual.app.App.save_screenshot",
-        lambda self, filename=None, path=None, time_format=None: saved.append(filename)
-        or filename,
-    )
+    saved: list[object] = []
+    monkeypatch.setattr(mod, "write_guide_svg", lambda path, _svg: saved.append(path))
     monkeypatch.setattr("sys.argv", ["regen_approval_card_svg.py", str(dest)])
     assert mod.main() == 0
-    assert saved == [str(dest)]
+    assert saved == [dest]
     assert not dest.exists()
 
 
@@ -64,12 +60,7 @@ def test_artwork_shows_captured_action_target_scope_and_immediate_choices(monkey
 
     mod = _entry()
     rendered = []
-
-    def capture(app, filename=None, path=None, time_format=None):
-        rendered.append(app.export_screenshot())
-        return filename
-
-    monkeypatch.setattr("textual.app.App.save_screenshot", capture)
+    monkeypatch.setattr(mod, "write_guide_svg", lambda _path, svg: rendered.append(svg))
     target = mod._DOCS_ROOT / "User_Guide/images/console/_test_approval_capture.svg"
     monkeypatch.setattr("sys.argv", ["regen_approval_card_svg.py", str(target)])
     assert mod.main() == 0
@@ -110,12 +101,21 @@ def test_generator_supplies_theme_variables_without_test_runner_pins(monkeypatch
 
     monkeypatch.setattr(mod._CardApp, "__init__", use_bare_theme)
     saved = []
-    monkeypatch.setattr(
-        "textual.app.App.save_screenshot",
-        lambda app, filename=None, **kwargs: saved.append(filename),
-    )
+    monkeypatch.setattr(mod, "write_guide_svg", lambda path, _svg: saved.append(path))
     target = mod._DOCS_ROOT / "User_Guide/images/console/_test_approval_theme.svg"
     monkeypatch.setattr("sys.argv", ["regen_approval_card_svg.py", str(target)])
     assert mod.main() == 0
-    assert saved == [str(target)]
+    assert saved == [target]
     assert not target.exists()
+
+
+def test_written_card_loads_no_remote_fonts(tmp_path, monkeypatch):
+    """TASK-38969: the regenerated SVG carries no cdnjs font URL."""
+    mod = _entry()
+    monkeypatch.setattr(mod, "_DOCS_ROOT", tmp_path)
+    target = tmp_path / "approval-card.svg"
+    monkeypatch.setattr("sys.argv", ["regen_approval_card_svg.py", str(target)])
+    assert mod.main() == 0
+    svg = target.read_text(encoding="utf-8")
+    assert 'local("FiraCode-Regular")' in svg
+    assert "cdnjs.cloudflare.com" not in svg
