@@ -210,6 +210,12 @@ Hosted Architecture guard contracts reproduced the same line-budget failure in t
 
 The hosted Architecture guard passed on the subsequent PR head. Rebase onto dev `7775edb567` added seven upstream screen lines. The transcript module now owns the stock change-review preparation and the teardown checks around its await. Both architecture guards and the mounted badge regression passed on the rebased source. `ChatScreen` has 24,608 lines and 741 direct methods. [Hosted guard job](https://github.com/rmusser01/tldw_chatbook/actions/runs/42756307296/job/129675066630)
 
+### FULL configuration fixtures on rebased dev
+
+The rebase onto dev `e10ce63fe8` preserved the three badge-fix patches. The mounted badge regression and both architecture checks passed with 24,523 `ChatScreen` lines and 741 direct methods. The hosted FULL configuration tests exposed two fixtures missing the production run-status method and one inherited fixture that passed an async worker function directly to `create_task`. The exact dev base passed the first two cases and reproduced the worker failure.
+
+The FULL fixture now binds the existing run-status method to its real controller. The shared test scheduler accepts async functions and coroutine objects. All original assertions remain in place. The FULL file and both hosted tokenizer cases passed locally (9 cases), and independent review cleared the fixture changes. Two other failures in a broader local run reproduced at the same assertions on unmodified dev and are outside the affected hosted census. ADR-231 still applies. [Hosted UI shard](https://github.com/rmusser01/tldw_chatbook/actions/runs/43160188546/job/131064795228)
+
 ### Terminal transcript and composer settlement
 
 The Windows Edge validation on dev 3a6498ae14 captured two ordered frames with a Ready composer and the final assistant body under a Streaming badge. The saved message was already complete. A mounted regression reproduced the mismatch when the composer restored Send. A second reproduction forced an obsolete change-review marker read, which could leave the transcript stale while controls advanced.

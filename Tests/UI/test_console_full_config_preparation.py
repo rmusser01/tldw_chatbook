@@ -19,7 +19,7 @@ from tldw_chatbook.UI.Screens import chat_screen
 pytestmark = pytest.mark.bootstrap_profile
 
 
-def _full_screen(screen, monkeypatch):
+def _full_screen(screen, controller, monkeypatch):
     """Keep original FULL and rail/config entry; omit unrelated UI projections."""
     effects = []
 
@@ -31,6 +31,10 @@ def _full_screen(screen, monkeypatch):
 
     runtime = SimpleNamespace(view=screen, _attached_generation=1)
     screen._console_runtime = lambda: runtime
+    screen._console_chat_controller = controller
+    screen._current_console_run_status_value = MethodType(
+        chat_screen.ChatScreen._current_console_run_status_value, screen
+    )
     screen._console_attach_visit_generation = 1
     screen._current_console_attach_visit = lambda: ConsoleAttachVisit(
         runtime, screen, 1, screen._console_attach_visit_generation, True
@@ -102,9 +106,9 @@ def _full_screen(screen, monkeypatch):
 async def test_expired_original_full_awaits_config_without_main_native_entry(
     tmp_path, monkeypatch, record_property
 ):
-    database, _store, _controller, screen, tasks = _screen(tmp_path)
+    database, _store, controller, screen, tasks = _screen(tmp_path)
     try:
-        _full_screen(screen, monkeypatch)
+        _full_screen(screen, controller, monkeypatch)
         projection = await _warm(screen, tasks)
         # Let the real checked display expire; changing its proof clock would
         # select a different refusal route from ordinary resume.
@@ -177,10 +181,10 @@ async def _wait_for_read(entered, full):
 async def test_full_waits_responsively_and_rechecks_held_original_config(
     tmp_path, monkeypatch, change
 ):
-    database, store, _controller, screen, tasks = _screen(tmp_path)
+    database, store, controller, screen, tasks = _screen(tmp_path)
     full = None
     try:
-        effects = _full_screen(screen, monkeypatch)
+        effects = _full_screen(screen, controller, monkeypatch)
         store.create_session(session_id="other")
         store.active_session_id = "session-1"
         projection = await _warm(screen, tasks)
@@ -239,9 +243,9 @@ async def test_full_waits_responsively_and_rechecks_held_original_config(
 async def test_cancelled_full_keeps_original_config_read_owned_until_retirement(
     tmp_path, monkeypatch
 ):
-    database, _store, _controller, screen, tasks = _screen(tmp_path)
+    database, _store, controller, screen, tasks = _screen(tmp_path)
     try:
-        effects = _full_screen(screen, monkeypatch)
+        effects = _full_screen(screen, controller, monkeypatch)
         projection = await _warm(screen, tasks)
         await asyncio.sleep(projection.max_age + 0.02)
         with _held_original_config_read() as (entered, release, observed):

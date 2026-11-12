@@ -25,8 +25,8 @@ def _screen(tmp_path):
     )
     tasks = []
 
-    def schedule(coroutine, **_kwargs):
-        task = asyncio.create_task(coroutine)
+    def schedule(operation, **_kwargs):
+        task = asyncio.create_task(operation() if callable(operation) else operation)
         tasks.append(task)
         return task
 
