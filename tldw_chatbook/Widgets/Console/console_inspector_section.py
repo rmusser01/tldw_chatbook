@@ -568,9 +568,9 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
         """Reveal the actionable tail inside any enclosing capped scroll area."""
         if not self.is_mounted or not self.open:
             return
-        target = (
-            self.query_one(f"#{self._view_all_id}") if self.view_all_label else self
-        )
+        target = self
+        if self.view_all_label:
+            target = next(iter(self.query(f"#{self._view_all_id}")), self)
         target.scroll_visible(animate=False)
 
     def set_view_all_busy(self, busy: bool) -> None:

@@ -767,6 +767,27 @@ async def test_view_all_tail_posts_view_all_requested_for_this_section():
         assert app.view_all_events == ["agents"]
 
 
+@pytest.mark.asyncio
+async def test_expansion_survives_an_unmounted_view_all_tail():
+    section = ConsoleInspectorSection(
+        title="Agents",
+        section_id="agents",
+        rows=_rows(1),
+        open=False,
+        scroll_on_expand=True,
+        view_all_label="View all",
+    )
+    app = _SectionHarness(section)
+    async with app.run_test(size=(60, 20)) as pilot:
+        tail = section.query_one("#console-inspector-section-agents-view-all")
+        await tail.remove()
+
+        section.set_open(True)
+        await pilot.pause()
+
+        assert section.query_one("#console-inspector-section-agents-body").display
+
+
 # -- TASK-31662: row density ------------------------------------------------
 #
 # Measured on this branch 2026-09-05 (probe against the real Console at

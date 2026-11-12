@@ -142,6 +142,7 @@ async def test_unseen_mark_reaches_persisted_rows_without_a_session(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_opening_a_marked_conversation_delivers_without_a_keystroke(
     tmp_path,
