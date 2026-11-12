@@ -121,19 +121,29 @@ async def test_a_custom_server_that_refuses_streaming_answers_one_turn_once(prov
                 _USAGE["prompt_tokens"],
                 _USAGE["completion_tokens"],
             )
+            # Scoped to this turn's conversation: a bootstrap_profile test
+            # shares the process's one ChaChaNotes database, so the earlier
+            # case's identical reply is still on disk.
             persisted: list = []
             for _ in range(80):
-                persisted = (
-                    app.chachanotes_db.get_connection()
-                    .execute(
-                        "SELECT usage_json FROM messages "
-                        "WHERE content = ? AND deleted = 0",
-                        (_REPLY,),
+                conversation_id = next(
+                    session
+                    for session in store.sessions()
+                    if session.id == store.active_session_id
+                ).persisted_conversation_id
+                if conversation_id is not None:
+                    persisted = (
+                        app.chachanotes_db.get_connection()
+                        .execute(
+                            "SELECT usage_json FROM messages "
+                            "WHERE conversation_id = ? AND content = ? "
+                            "AND deleted = 0",
+                            (conversation_id, _REPLY),
+                        )
+                        .fetchall()
                     )
-                    .fetchall()
-                )
-                if persisted and persisted[0][0]:
-                    break
+                    if persisted and persisted[0][0]:
+                        break
                 await pilot.pause(0.05)
             assert len(persisted) == 1, persisted
             stored = ProviderUsage.from_json(persisted[0][0])
