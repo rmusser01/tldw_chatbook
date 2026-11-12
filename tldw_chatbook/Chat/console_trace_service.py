@@ -42,6 +42,7 @@ from tldw_chatbook.Chat.console_trace_final_values import (
     ProviderOverlayProvenance,
     ProviderRequestShadowBundle,
     SurfaceDeltaAdmission,
+    SurfaceReplacementLink,
     VerifiedSurfaceDelta,
     VerifiedSurfaceDeltaItem,
     VerifiedSurfaceReplacement,
@@ -50,6 +51,7 @@ from tldw_chatbook.Chat.console_trace_final_values import (
     build_verified_surface_delta,
 )
 from tldw_chatbook.Chat.console_trace_models import (
+    MAX_SURFACE_REPLACEMENT_CHAIN_LINKS,
     MAX_SURFACE_REPLACEMENT_SPAN,
     FrozenTracePolicy,
     SemanticRevisionRef,
@@ -197,6 +199,10 @@ class PersistedTraceRequest:
     appended_nodes: tuple[SurfaceNodeRecord, ...]
     replacement: SurfaceReplacementRecord | None = None
     checkpoint: object | None = None
+    # A chained replacement's placeholder nodes and links, before the final
+    # link held in ``replacement`` (ADR-337 amendment 2026-11-06).
+    chain_nodes: tuple[SurfaceNodeRecord, ...] = ()
+    chain_replacements: tuple[SurfaceReplacementRecord, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1621,12 +1627,16 @@ class ConsoleTraceService:
                     != persisted.header
                     or any(
                         self.repository.get_surface_node(cursor, node.node_id) != node
-                        for node in persisted.appended_nodes
+                        for node in (*persisted.chain_nodes, *persisted.appended_nodes)
                     )
                 ):
                     return "unknown"
-                if persisted.replacement is not None:
-                    expected = persisted.replacement
+                records = (
+                    ()
+                    if persisted.replacement is None
+                    else (*persisted.chain_replacements, persisted.replacement)
+                )
+                for index, expected in enumerate(records):
                     replacement = expected.replacement
                     row = cursor.execute(
                         """SELECT replacement_id, segment_id, predecessor_head_id,
@@ -1649,7 +1659,9 @@ class ConsoleTraceService:
                             replacement.end_sequence,
                             replacement.replacement_node_id,
                         )
-                        or replacement.predecessor_head_id
+                        # A chain's later links follow its own placeholders.
+                        or index == 0
+                        and replacement.predecessor_head_id
                         != surface_delta.predecessor_surface_head_id
                     ):
                         return "unknown"
@@ -1994,9 +2006,11 @@ class ConsoleTraceService:
 
         appended: list[SurfaceNodeRecord] = []
         stored_replacement: SurfaceReplacementRecord | None = None
+        chain_nodes: tuple[SurfaceNodeRecord, ...] = ()
+        chain_replacements: tuple[SurfaceReplacementRecord, ...] = ()
         if replacement is not None:
             span = replacement.end_sequence - replacement.start_sequence + 1
-            if span > MAX_SURFACE_REPLACEMENT_SPAN:
+            if span > MAX_SURFACE_REPLACEMENT_SPAN and not replacement.chain:
                 node = self._append_omission(
                     cursor,
                     segment_id=segment_id,
@@ -2007,7 +2021,7 @@ class ConsoleTraceService:
                 appended.append(node)
                 tail = node
             else:
-                tail, stored_replacement = self._replace_surface(
+                tail, records, chain_nodes = self._replace_surface(
                     cursor,
                     owner_id=owner_id,
                     segment_id=segment_id,
@@ -2017,6 +2031,7 @@ class ConsoleTraceService:
                     plan=replacement,
                     live_native=surface_delta.live_native,
                 )
+                chain_replacements, stored_replacement = records[:-1], records[-1]
                 appended.append(tail)
         if (
             replacement is None
@@ -2176,10 +2191,9 @@ class ConsoleTraceService:
             active_domains = dict(parent_state.active_domains)
             lineage_domains = dict(parent_state.lineage_domains)
             if stored_replacement is not None and replacement is not None:
-                for sequence in range(
-                    replacement.start_sequence, replacement.end_sequence + 1
-                ):
-                    active_domains.pop(sequence, None)
+                for start, end in _replaced_ranges(replacement):
+                    for sequence in range(start, end + 1):
+                        active_domains.pop(sequence, None)
             for node in appended:
                 domain = _surface_reference_domain(self._node_reference_key(node))
                 active_domains[node.sequence] = domain
@@ -2190,6 +2204,11 @@ class ConsoleTraceService:
                 lineage_domains[node.sequence] = _surface_reference_domain(
                     self._node_reference_key(node)
                 )
+        for node in chain_nodes:
+            # Placeholders stay in the lineage, as the cold reader counts them.
+            lineage_domains[node.sequence] = _surface_reference_domain(
+                self._node_reference_key(node)
+            )
         checkpoint = self._promote_surface_capability(
             owner_id=owner_id,
             segment_id=segment_id,
@@ -2240,6 +2259,8 @@ class ConsoleTraceService:
             appended_nodes=tuple(appended),
             replacement=stored_replacement,
             checkpoint=checkpoint,
+            chain_nodes=chain_nodes,
+            chain_replacements=chain_replacements,
         )
 
     @staticmethod
@@ -2712,6 +2733,12 @@ class ConsoleTraceService:
                         origin_head.sequence,
                     )
                 )
+            # A rewritten tail wider than one replacement is stored as a chain
+            # of links (ADR-337 amendment 2026-11-06). Dead sequences an earlier
+            # replacement left inside a link count toward its span.
+            links = _replacement_links(
+                sorted(sequence for _, sequence, _ in active[prefix:])
+            )
             rewritten = (
                 _rewritten_tails().build_rewritten_tail_witness(
                     cursor,
@@ -2725,11 +2752,7 @@ class ConsoleTraceService:
                 and route_identity in {"agent_first", "fresh"}
                 and suffix == 0
                 and incoming_changed >= 2
-                # Bound the stored range: an earlier replacement leaves dead
-                # sequences inside it, so live rows undercount its span.
-                and max(sequence for _, sequence, _ in active[prefix:])
-                - min(sequence for _, sequence, _ in active[prefix:])
-                < MAX_SURFACE_REPLACEMENT_SPAN
+                and len(links) <= MAX_SURFACE_REPLACEMENT_CHAIN_LINKS
                 and current_policy_id is not None
                 and domains[prefix:] == ("messages_payload",) * incoming_changed
                 and all(
@@ -2749,8 +2772,11 @@ class ConsoleTraceService:
                 # reconstruct provider order without rewriting the suffix.
                 admitted_to = prefix + incoming_changed
             elif (
-                incoming_changed != 1 and not compound and rewritten is None
-            ) or not 1 <= active_changed <= MAX_SURFACE_REPLACEMENT_SPAN:
+                (incoming_changed != 1 and not compound and rewritten is None)
+                or active_changed < 1
+                # A rewritten tail's links bound it instead.
+                or (rewritten is None and active_changed > MAX_SURFACE_REPLACEMENT_SPAN)
+            ):
                 record_refusal("count_or_span")
                 raise ValueError("unsupported_surface_change")
             else:
@@ -2778,6 +2804,19 @@ class ConsoleTraceService:
                 end = nodes_by_sequence.get(end_sequence)
                 if start is None or end is None or tail is None:
                     raise ValueError("surface_replacement_target_unavailable")
+                chain = (
+                    tuple(
+                        SurfaceReplacementLink(
+                            nodes_by_sequence[first].node_id,
+                            nodes_by_sequence[last].node_id,
+                            first,
+                            last,
+                        )
+                        for first, last in links
+                    )
+                    if rewritten is not None and len(links) > 1
+                    else ()
+                )
                 replacement_range = VerifiedSurfaceReplacementRange(
                     predecessor_head_id=tail.node_id,
                     start_node_id=start.node_id,
@@ -2791,6 +2830,7 @@ class ConsoleTraceService:
                     component_ordinal=sum(
                         domain == domains[prefix] for domain in domains[:prefix]
                     ),
+                    chain=chain,
                 )
                 admitted_to = prefix + (
                     incoming_changed if compound or rewritten else 1
@@ -3912,6 +3952,7 @@ class ConsoleTraceService:
                     end_sequence=replacement_range.end_sequence,
                     current_ordinal=replacement_range.current_ordinal,
                     item=replacement_item,
+                    chain=replacement_range.chain,
                 ),
                 descriptor_count=1,
             )
@@ -3931,9 +3972,10 @@ class ConsoleTraceService:
                 else admitted_domains[0]
             ) != replacement_range.component_name:
                 raise ValueError("replacement_component_domain")
-            for sequence in range(
-                replacement_range.start_sequence,
-                replacement_range.end_sequence + 1,
+            for sequence in (
+                sequence
+                for start, end in _replaced_ranges(replacement_range)
+                for sequence in range(start, end + 1)
             ):
                 if parent.lineage_domains.get(
                     sequence
@@ -3985,16 +4027,20 @@ class ConsoleTraceService:
                 )
                 for offset, item in enumerate(prepared_items)
             )
+        # A chain's placeholder links take the sequences before the new rows.
+        next_sequence = parent.next_sequence + (
+            0 if replacement_range is None else len(replacement_range.chain)
+        )
         if replacement_range is None:
             appended = tuple(
-                (parent.next_sequence + offset, descriptor)
+                (next_sequence + offset, descriptor)
                 for offset, descriptor in enumerate(admitted)
             )
             descriptor_root = _DescriptorRoot(
                 parent.descriptors,
                 appended=appended,
                 appended_domains=tuple(
-                    (parent.next_sequence + offset, domain)
+                    (next_sequence + offset, domain)
                     for offset, domain in enumerate(admitted_domains)
                 ),
             )
@@ -4006,7 +4052,7 @@ class ConsoleTraceService:
             descriptor_root = _DescriptorRoot(
                 parent.descriptors,
                 appended=tuple(
-                    (parent.next_sequence + offset, item)
+                    (next_sequence + offset, item)
                     for offset, item in enumerate(
                         (admitted[-1],) + admitted[:-1]
                         if admission.live_native is not None
@@ -4018,7 +4064,7 @@ class ConsoleTraceService:
                     int(getattr(replacement_range, "end_sequence")),
                 ),
                 appended_domains=tuple(
-                    (parent.next_sequence + offset, domain)
+                    (next_sequence + offset, domain)
                     for offset, domain in enumerate(
                         (admitted_domains[-1],) + admitted_domains[:-1]
                         if admission.live_native is not None
@@ -4106,7 +4152,7 @@ class ConsoleTraceService:
         if admission.live_native is not None:
             physical_pairs = (physical_pairs[-1],) + physical_pairs[:-1]
         projected_values = tuple(
-            (parent.next_sequence + offset, descriptor, value)
+            (next_sequence + offset, descriptor, value)
             for offset, (descriptor, value) in enumerate(physical_pairs)
         )
         replacement_span = (
@@ -4401,6 +4447,7 @@ class ConsoleTraceService:
                 end_sequence=replacement_range.end_sequence,
                 current_ordinal=replacement_range.current_ordinal,
                 item=expected_items[0],
+                chain=replacement_range.chain,
             )
         if items != expected_items or replacement != expected_replacement:
             raise ValueError("surface_prefix_mismatch")
@@ -4733,12 +4780,11 @@ class ConsoleTraceService:
                 result,
                 replacement,
             )
+            ranges = _replaced_ranges(replacement)
             result = [
                 entry
                 for entry in result
-                if not replacement.start_sequence
-                <= entry[0]
-                <= replacement.end_sequence
+                if not any(start <= entry[0] <= end for start, end in ranges)
             ]
             result.insert(insert_at, (node.sequence, key))
         return tuple(result)
@@ -5705,7 +5751,20 @@ class ConsoleTraceService:
         values: tuple[object, ...],
         plan: VerifiedSurfaceReplacement,
         live_native: LiveNativeContinuationWitness | None = None,
-    ) -> tuple[SurfaceNodeRecord, SurfaceReplacementRecord]:
+    ) -> tuple[
+        SurfaceNodeRecord,
+        tuple[SurfaceReplacementRecord, ...],
+        tuple[SurfaceNodeRecord, ...],
+    ]:
+        """Write one replacement, or a chain of links ending at the first new row.
+
+        Each chain link replaces its range with a content-free placeholder, and
+        the final link replaces the placeholders (ADR-337 amendment 2026-11-06).
+
+        Returns:
+            The replacement node, every replacement row written (the final one
+            last), and the chain's placeholder nodes.
+        """
         self._validate_replacement_range(
             cursor,
             segment_id=segment_id,
@@ -5714,6 +5773,49 @@ class ConsoleTraceService:
             descriptor_count=len(descriptors),
         )
         assert tail is not None
+        records: list[SurfaceReplacementRecord] = []
+
+        def record(
+            predecessor: SurfaceNodeRecord,
+            link: VerifiedSurfaceReplacement | SurfaceReplacementLink,
+            node: SurfaceNodeRecord,
+        ) -> None:
+            stored = self.repository.append_surface_replacement(
+                cursor,
+                segment_id=segment_id,
+                replacement=SurfaceReplacement(
+                    predecessor_head_id=predecessor.node_id,
+                    start_node_id=link.start_node_id,
+                    end_node_id=link.end_node_id,
+                    start_sequence=link.start_sequence,
+                    end_sequence=link.end_sequence,
+                    replacement_node_id=node.node_id,
+                ),
+            )
+            self._append_event(
+                cursor,
+                segment_id=segment_id,
+                event_type="surface_replace",
+                surface_replacement_id=stored.replacement_id,
+            )
+            records.append(stored)
+
+        placeholders: list[SurfaceNodeRecord] = []
+        for link in plan.chain:
+            placeholder = self.repository.append_surface_node(
+                cursor,
+                segment_id=segment_id,
+                sequence=tail.sequence + 1,
+                predecessor_node_id=tail.node_id,
+                component_kind="surface_replacement",
+                reference=TraceOmission(
+                    "surface_replacement",
+                    TraceOmissionReason.REPLACEMENT_CHAIN_LINK.value,
+                ),
+            )
+            record(tail, link, placeholder)
+            placeholders.append(placeholder)
+            tail = placeholder
         if live_native is None:
             replacement_node = self._append_descriptor(
                 cursor,
@@ -5751,25 +5853,19 @@ class ConsoleTraceService:
                 component_kind=CONTINUATION_DELTA_COMPONENT,
                 reference=TraceContentRef(artifact.artifact_id, "trace_artifact"),
             )
-        replacement = self.repository.append_surface_replacement(
-            cursor,
-            segment_id=segment_id,
-            replacement=SurfaceReplacement(
-                predecessor_head_id=plan.predecessor_head_id,
-                start_node_id=plan.start_node_id,
-                end_node_id=plan.end_node_id,
-                start_sequence=plan.start_sequence,
-                end_sequence=plan.end_sequence,
-                replacement_node_id=replacement_node.node_id,
-            ),
+        record(
+            tail,
+            SurfaceReplacementLink(
+                placeholders[0].node_id,
+                placeholders[-1].node_id,
+                placeholders[0].sequence,
+                placeholders[-1].sequence,
+            )
+            if placeholders
+            else plan,
+            replacement_node,
         )
-        self._append_event(
-            cursor,
-            segment_id=segment_id,
-            event_type="surface_replace",
-            surface_replacement_id=replacement.replacement_id,
-        )
-        return replacement_node, replacement
+        return replacement_node, tuple(records), tuple(placeholders)
 
     def _validate_replacement_range(
         self,
@@ -5780,7 +5876,11 @@ class ConsoleTraceService:
         plan: VerifiedSurfaceReplacement,
         descriptor_count: int,
     ) -> None:
-        """Validate the complete bounded range before any trace write."""
+        """Validate the complete bounded range, or each chain link, before writing.
+
+        A chain's links must also leave no live row between them, so removing
+        the whole range removes exactly what the links replace.
+        """
 
         if tail is None or tail.node_id != plan.predecessor_head_id:
             raise ValueError("replacement_predecessor_mismatch")
@@ -5788,28 +5888,44 @@ class ConsoleTraceService:
             raise ValueError("replacement_range_order")
         if descriptor_count != 1:
             raise ValueError("replacement_value")
-        nodes = self.repository.read_lineage_surface_nodes(
-            cursor,
-            segment_id=segment_id,
-            start_sequence=plan.start_sequence,
-            end_sequence=plan.end_sequence,
-        )
-        nodes_by_sequence = {node.sequence: node for node in nodes}
-        start = nodes_by_sequence.get(plan.start_sequence)
-        end = nodes_by_sequence.get(plan.end_sequence)
-        if (
-            start is None
-            or end is None
-            or start.node_id != plan.start_node_id
-            or end.node_id != plan.end_node_id
-            or start.sequence != plan.start_sequence
-            or end.sequence != plan.end_sequence
+        for link in plan.chain or (plan,):
+            nodes = self.repository.read_lineage_surface_nodes(
+                cursor,
+                segment_id=segment_id,
+                start_sequence=link.start_sequence,
+                end_sequence=link.end_sequence,
+            )
+            nodes_by_sequence = {node.sequence: node for node in nodes}
+            start = nodes_by_sequence.get(link.start_sequence)
+            end = nodes_by_sequence.get(link.end_sequence)
+            if (
+                start is None
+                or end is None
+                or start.node_id != link.start_node_id
+                or end.node_id != link.end_node_id
+                or start.sequence != link.start_sequence
+                or end.sequence != link.end_sequence
+            ):
+                raise ValueError("replacement_range_mismatch")
+            if len(nodes_by_sequence) != len(nodes) or (
+                len(nodes) != link.end_sequence - link.start_sequence + 1
+            ):
+                raise ValueError("replacement_range_noncontiguous")
+        if not plan.chain:
+            return
+        linked = {
+            sequence
+            for first, last in _replaced_ranges(plan)
+            for sequence in range(first, last + 1)
+        }
+        if any(
+            plan.start_sequence <= sequence <= plan.end_sequence
+            and sequence not in linked
+            for sequence, _key in self._surface_projection(
+                cursor, segment_id, tail
+            ).root.iter_entries()
         ):
-            raise ValueError("replacement_range_mismatch")
-        if len(nodes_by_sequence) != len(nodes) or (
-            len(nodes) != plan.end_sequence - plan.start_sequence + 1
-        ):
-            raise ValueError("replacement_range_noncontiguous")
+            raise ValueError("replacement_chain_gap")
 
     def _persist_header(
         self,
@@ -6364,6 +6480,29 @@ def _rewritten_tails():
     from tldw_chatbook.Chat import console_trace_rewritten_tail
 
     return console_trace_rewritten_tail
+
+
+def _replacement_links(sequences: Sequence[int]) -> list[tuple[int, int]]:
+    """Group sorted live sequences into ranges spanning at most 256 sequences.
+
+    A run of dead sequences between two ranges is not replaced again.
+    """
+    links: list[tuple[int, int]] = []
+    for sequence in sequences:
+        if links and sequence - links[-1][0] < MAX_SURFACE_REPLACEMENT_SPAN:
+            links[-1] = (links[-1][0], sequence)
+        else:
+            links.append((sequence, sequence))
+    return links
+
+
+def _replaced_ranges(
+    plan: VerifiedSurfaceReplacement | VerifiedSurfaceReplacementRange,
+) -> tuple[tuple[int, int], ...]:
+    """Return the stored ranges a replacement removes: its range or its links."""
+    return tuple(
+        (link.start_sequence, link.end_sequence) for link in plan.chain or (plan,)
+    )
 
 
 def _saved_descriptors(

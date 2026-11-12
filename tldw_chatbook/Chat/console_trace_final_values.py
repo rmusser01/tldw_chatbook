@@ -45,6 +45,7 @@ from tldw_chatbook.Chat.console_trace_redaction import (
     CredentialSanitizer,
 )
 from tldw_chatbook.Chat.console_trace_models import (
+    MAX_SURFACE_REPLACEMENT_CHAIN_LINKS,
     MAX_SURFACE_REPLACEMENT_SPAN,
     SemanticRevisionRef,
     new_opaque_id,
@@ -165,8 +166,68 @@ class VerifiedSurfaceDeltaItem:
 
 
 @dataclass(frozen=True, slots=True)
+class SurfaceReplacementLink:
+    """One link of a chained replacement: a range of at most 256 sequences.
+
+    ADR-337 amendment 2026-11-06 (TASK-38298). A rewritten tail wider than one
+    replacement is stored as one placeholder link per range, then a final link
+    that replaces the placeholders with the first new row.
+    """
+
+    start_node_id: str
+    end_node_id: str
+    start_sequence: int
+    end_sequence: int
+
+    def __post_init__(self) -> None:
+        if (
+            not self.start_node_id
+            or not self.end_node_id
+            or type(self.start_sequence) is not int
+            or type(self.end_sequence) is not int
+            or not 0 <= self.start_sequence <= self.end_sequence
+            or self.end_sequence - self.start_sequence >= MAX_SURFACE_REPLACEMENT_SPAN
+        ):
+            raise ValueError("surface_replacement_link")
+
+
+def validate_replacement_chain(
+    range_: VerifiedSurfaceReplacement | VerifiedSurfaceReplacementRange,
+) -> None:
+    """Check that a chain covers its range in order, two to 256 links.
+
+    Args:
+        range_: A replacement or replacement range carrying ``chain``.
+
+    Raises:
+        ValueError: ``surface_replacement_chain`` if the chain is malformed.
+    """
+    chain = range_.chain
+    if chain == ():
+        return
+    if (
+        type(chain) is not tuple
+        or not 2 <= len(chain) <= MAX_SURFACE_REPLACEMENT_CHAIN_LINKS
+        or any(type(link) is not SurfaceReplacementLink for link in chain)
+        or any(
+            later.start_sequence <= earlier.end_sequence
+            for earlier, later in zip(chain, chain[1:], strict=False)
+        )
+        or (chain[0].start_node_id, chain[0].start_sequence)
+        != (range_.start_node_id, range_.start_sequence)
+        or (chain[-1].end_node_id, chain[-1].end_sequence)
+        != (range_.end_node_id, range_.end_sequence)
+    ):
+        raise ValueError("surface_replacement_chain")
+
+
+@dataclass(frozen=True, slots=True)
 class VerifiedSurfaceReplacement:
-    """One bounded replacement whose structural slot is carried by the delta."""
+    """One bounded replacement whose structural slot is carried by the delta.
+
+    A non-empty ``chain`` stores the range as placeholder links (ADR-337
+    amendment 2026-11-06); the range then spans all of them.
+    """
 
     predecessor_head_id: str
     start_node_id: str
@@ -175,11 +236,19 @@ class VerifiedSurfaceReplacement:
     end_sequence: int
     current_ordinal: int
     item: VerifiedSurfaceDeltaItem = field(repr=False)
+    chain: tuple[SurfaceReplacementLink, ...] = ()
+
+    def __post_init__(self) -> None:
+        validate_replacement_chain(self)
 
 
 @dataclass(frozen=True, slots=True)
 class VerifiedSurfaceReplacementRange:
-    """Content-free range selected by preparation for one replacement."""
+    """Content-free range selected by preparation for one replacement.
+
+    A non-empty ``chain`` holds the links of a range wider than one
+    replacement (ADR-337 amendment 2026-11-06); only a rewritten tail has one.
+    """
 
     predecessor_head_id: str
     start_node_id: str
@@ -189,8 +258,10 @@ class VerifiedSurfaceReplacementRange:
     current_ordinal: int = 0
     component_name: str = "messages_payload"
     component_ordinal: int | None = None
+    chain: tuple[SurfaceReplacementLink, ...] = ()
 
     def __post_init__(self) -> None:
+        validate_replacement_chain(self)
         if (
             self.component_name not in {"messages_payload", "provider_continuations"}
             or type(self.current_ordinal) is not int
@@ -588,6 +659,12 @@ class SurfaceDeltaAdmission:
             ):
                 raise ValueError("surface_delta_shape")
         witness = _replacement_witness(self.completed_tool_turn, self.rewritten_tail)
+        if (
+            self.replacement_range is not None
+            and self.replacement_range.chain
+            and self.rewritten_tail is None
+        ):
+            raise ValueError("surface_delta_shape")
         if witness is not None:
             if (
                 self.replacement_range is None
@@ -657,6 +734,12 @@ class VerifiedSurfaceDelta:
             ):
                 raise ValueError("surface_delta_shape")
         witness = _replacement_witness(self.completed_tool_turn, self.rewritten_tail)
+        if (
+            self.replacement is not None
+            and self.replacement.chain
+            and self.rewritten_tail is None
+        ):
+            raise ValueError("surface_delta_shape")
         if witness is not None:
             replay_row_count = (
                 witness.replay_row_count
@@ -891,6 +974,7 @@ def build_verified_surface_delta(
             end_sequence=replacement_range.end_sequence,
             current_ordinal=replacement_range.current_ordinal,
             item=items[0],
+            chain=replacement_range.chain,
         )
         items = items[1:]
     child_binding = None
