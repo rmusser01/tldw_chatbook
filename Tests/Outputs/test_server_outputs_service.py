@@ -177,6 +177,7 @@ async def test_server_outputs_service_re_resolves_provider_without_service_local
 
 
 @pytest.mark.parametrize(("service_cls", "_module", "_exercise"), OUTPUTS_IMPORT_PATHS)
+@pytest.mark.bootstrap_profile
 def test_server_outputs_service_from_config_returns_provider_backed_service(
     service_cls,
     _module,

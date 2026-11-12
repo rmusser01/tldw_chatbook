@@ -120,6 +120,7 @@ def _results(n: int) -> List[SearchResult]:
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reasoning_raises_the_token_floor(monkeypatch):
     """The cloned-profile shape: reasoning on, `max_tokens = 100`. The budget
@@ -136,6 +137,7 @@ async def test_reasoning_raises_the_token_floor(monkeypatch):
     assert landings[0]["max_tokens"] >= REASONING_TOKEN_FLOOR
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_deliberate_large_max_tokens_is_untouched(monkeypatch):
     """It is a FLOOR, not an assignment. A user who deliberately set 4000
@@ -151,6 +153,7 @@ async def test_a_deliberate_large_max_tokens_is_untouched(monkeypatch):
     assert landings[0]["max_tokens"] == 4000
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_no_floor_without_reasoning(monkeypatch):
     """No reasoning, no floor: 100 tokens is ample for `{"score": 0.9}`, and
@@ -165,6 +168,7 @@ async def test_no_floor_without_reasoning(monkeypatch):
     assert landings[0]["max_tokens"] == 100
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_cloned_reasoning_profile_still_comes_back_scored(monkeypatch):
     """AC#2/AC#3 end to end: the saved-profile shape against a provider that

@@ -33,6 +33,7 @@ def _tiny_png_bytes() -> bytes:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_demo_screen_lists_backends_and_generates(monkeypatch):
     from tldw_chatbook.Image_Generation.adapters.base import ImageGenResult
     import tldw_chatbook.UI.Screens.image_gen_demo_screen as scr

@@ -104,6 +104,7 @@ async def _app_without_control_broker(server):
     return app
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_loopback_root_auto_issues_host_only_session_and_csrf_boot_data(
     tmp_path,
@@ -126,6 +127,7 @@ async def test_loopback_root_auto_issues_host_only_session_and_csrf_boot_data(
     assert body.index("chatbook-auth.js") < body.index("textual.js")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_loopback_auto_login_still_rejects_a_host_header_mismatch(
     tmp_path,
@@ -143,6 +145,7 @@ async def test_loopback_auto_login_still_rejects_a_host_header_mismatch(
     assert "Set-Cookie" not in response.headers
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cross_site_loopback_get_does_not_mint_a_session(tmp_path) -> None:
     policy = build_web_auth_policy(host="127.0.0.1", port=8000, access_token=None)
@@ -163,6 +166,7 @@ async def test_cross_site_loopback_get_does_not_mint_a_session(tmp_path) -> None
     assert "Set-Cookie" not in response.headers
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_loopback_root_replaces_a_stale_cookie_after_server_restart(
     tmp_path,
@@ -195,6 +199,7 @@ async def test_loopback_root_replaces_a_stale_cookie_after_server_restart(
     assert replacement.value != stale_cookie
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_remote_origin_redirects_to_manual_login_then_sets_secure_cookie(
     tmp_path,
@@ -239,6 +244,7 @@ async def test_remote_origin_redirects_to_manual_login_then_sets_secure_cookie(
     assert "remote-only-secret" not in repr(server)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("path", ["/", "/download/thing", "/ws"])
 async def test_every_authority_route_rejects_an_unauthenticated_remote_browser(
@@ -269,6 +275,7 @@ async def test_every_authority_route_rejects_an_unauthenticated_remote_browser(
     assert response.status in {303, 401}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_state_free_textual_runtime_is_public_but_not_dynamic_boot_data(
     tmp_path,
@@ -293,6 +300,7 @@ async def test_state_free_textual_runtime_is_public_but_not_dynamic_boot_data(
     assert body == "fixed-runtime"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_owned_websocket_bootstrap_uses_csrf_subprotocol_without_url_credentials(
     tmp_path,
@@ -314,6 +322,7 @@ async def test_owned_websocket_bootstrap_uses_csrf_subprotocol_without_url_crede
     assert "csrf=" not in source
 
 
+@pytest.mark.bootstrap_profile
 def test_create_server_resolves_only_dedicated_web_credential(monkeypatch) -> None:
     captured = {}
 

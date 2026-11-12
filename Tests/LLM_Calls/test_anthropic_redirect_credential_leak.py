@@ -173,6 +173,7 @@ def _install_redirecting_adapter(
     return redirect_close_calls
 
 
+@pytest.mark.bootstrap_profile
 def test_chat_with_anthropic_refuses_cross_origin_redirect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

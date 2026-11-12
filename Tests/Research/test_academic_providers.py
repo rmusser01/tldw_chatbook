@@ -263,6 +263,7 @@ _S2_PAYLOAD = (
 )
 
 
+@pytest.mark.bootstrap_profile
 def test_search_papers_queries_both_providers_and_dedups_by_doi(monkeypatch):
     monkeypatch.setattr(
         "tldw_chatbook.Research_Interop.academic_providers._sleep_backoff",
@@ -299,6 +300,7 @@ def test_search_papers_queries_both_providers_and_dedups_by_doi(monkeypatch):
     assert papers[0]["source"] == "arxiv"  # first provider wins the DOI
 
 
+@pytest.mark.bootstrap_profile
 def test_search_papers_degrades_when_one_provider_fails(monkeypatch):
     monkeypatch.setattr(
         "tldw_chatbook.Research_Interop.academic_providers._sleep_backoff",
@@ -327,6 +329,7 @@ def test_search_papers_degrades_when_one_provider_fails(monkeypatch):
     assert papers[0]["title"] == "S2 Paper"
 
 
+@pytest.mark.bootstrap_profile
 def test_search_papers_raises_only_when_all_providers_fail(monkeypatch):
     def boom(**kwargs):
         raise AcademicProviderError("down")
@@ -385,6 +388,7 @@ def test_arxiv_single_word_queries_stay_unquoted(monkeypatch):
     assert client.request.calls[0]["params"]["search_query"] == "all:transformers"
 
 
+@pytest.mark.bootstrap_profile
 def test_search_papers_runs_providers_concurrently(monkeypatch):
     import threading
     from tldw_chatbook.Research_Interop import academic_providers as ap

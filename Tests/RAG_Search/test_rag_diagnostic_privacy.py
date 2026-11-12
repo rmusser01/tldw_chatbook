@@ -205,6 +205,7 @@ def _install_fake_provider(monkeypatch, responder: Callable[[list], str]) -> Non
     monkeypatch.setattr(reranker_module, "chat_api_call", fake_chat_api_call)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reranker_parse_failure_reports_shape_not_model_reply(
     monkeypatch, captured_lines

@@ -157,6 +157,7 @@ async def test_server_web_clipper_service_re_resolves_provider_without_service_l
         assert all(value is not built_client for value in vars(service).values())
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("service_cls", "_module", "_exercise"), WEB_CLIPPER_IMPORT_PATHS
 )

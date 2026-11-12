@@ -40,6 +40,7 @@ def _configured_files(root: Path, precision: str) -> None:
         (root / filename).write_bytes(f"configured-{index}".encode())
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("precision", ("int8", "f32"))
 def test_configured_library_and_console_calls_share_exact_dispatch(
     tmp_path: Path,
@@ -169,6 +170,7 @@ def test_managed_library_and_console_calls_share_closure_identity(
     assert all(lease.closed for lease in leases)
 
 
+@pytest.mark.bootstrap_profile
 def test_verified_legacy_library_and_console_calls_share_snapshot_and_options(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -224,6 +226,7 @@ def test_verified_legacy_library_and_console_calls_share_snapshot_and_options(
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_resolver_never_loads_download_layers_and_fails_without_installed_artifact(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -293,6 +293,7 @@ async def test_connect_without_the_extra_names_the_extra(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_connect_below_the_version_floor_names_the_floor(monkeypatch):
     """websockets 12/13's legacy client takes `extra_headers`, so our call
     dies with a bare "unexpected keyword argument" that reads as an app
@@ -317,6 +318,7 @@ async def test_connect_below_the_version_floor_names_the_floor(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_connect_does_not_swallow_unrelated_type_errors(monkeypatch):
     """Only the signature mismatch is translated; anything else is a real
     bug and must keep its own traceback."""
