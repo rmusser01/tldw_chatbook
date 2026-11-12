@@ -944,6 +944,10 @@ MINIMUM_FILES = 1913
 # also written before the other round-12 branches' tail entries, which follow
 # theirs and are counted in both. The stacked census was then re-dealt over
 # 36 shards.
+# 2026-11-10 (TASK-38948, owner decision "Off the gate, reorder next"): the
+# two 100 ms Send-feedback entries leave the PR gate until the paint reorder
+# passes on CI. The floor is the measured entry count.
+MINIMUM_FILES = 1911
 
 
 def read_census(path: Path) -> list[str]:

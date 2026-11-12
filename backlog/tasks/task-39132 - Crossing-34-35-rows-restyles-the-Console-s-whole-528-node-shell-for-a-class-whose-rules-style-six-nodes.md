@@ -4,7 +4,7 @@ title: "Crossing 34/35 rows restyles the Console's whole 528-node shell for a cl
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-07 02:03
-updated_date: '2026-11-07 06:38'
+updated_date: '2026-11-10 22:38'
 labels:
 - follow-up
 - console
@@ -84,3 +84,10 @@ Reused TASK-38950's `apply_scoped_breakpoints` (`UI/Console_Modules/frame.py`); 
   - A mutant that also flips a class on the shell's largest child: red, `386 reaction nodes outside the approval card`. Without the card bound it restyled 409 of 540 nodes and passed.
 
 Files: `tldw_chatbook/UI/Console_Modules/frame.py`, `tldw_chatbook/UI/Screens/chat_screen.py`, `Tests/UI/test_console_projection_restyles.py`, `backlog/docs/lessons-textual.md` (the 38950 entry's "same shape elsewhere" line).
+
+**Hotfix after the round-12 merge (2026-11-10, base dev ae9f9e8d21).** PR #3484 merged without CI, and on dev `test_a_compact_flip_restyles_only_what_its_rules_style` failed every run: `40->34: restyled 28 of 540 shell nodes; the compact rules style 6`.
+- **Cause.** Bisected over dev's five first-parent commits between the round-12 base b590a15afd and the restack base 3a6498ae14, with this task's two commits cherry-picked onto each: green on 7e4a7efa88, red on b498bc3aec (PR #3036, Console approval UX). The 22 extra nodes are the hidden `ChatApprovalCard`'s subtree. `_adapt_console_shell_to_height` calls each card's `_sync_control_layout`, which derives `approval-compact` from the shell's `-console-compact` and sets it with `set_class`, a whole-subtree restyle. Before #3036 the hidden card's width was 0, so `width < 55` kept it compact and the class never flipped; #3036's `stacked = width > 0 and ...` lets it follow the shell, so every crossing restyled 22 nodes of a card with no approval pending. The CSS split in the same window (`_console_approvals.tcss`) is not involved. The test was right and is unchanged.
+- **Fix.** `_sync_control_layout` returns while the card is hidden (`not self.display`). Every path that shows it (`set_batch` sets `display = True`, then `_defer_decisions`' `ready()`) reflows it after mount. A visible card still flips at the crossing (`test_compact_approval_layout_journeys`).
+- **Pin.** `_verify_height_only_resize_reflows_existing_controls` (`Tests/UI/test_console_approval_compact_layout.py`) now hides the card, crosses to 24 rows, shows a new round and asserts `approval-compact`. Several show-time paths reflow the card (`ready()`, `_restore_presentation`'s options sync, `on_resize`, the Select change handler), so removing any one leaves it green. With all four removed it is red on that assertion (`assert (True and False)`, card shown but not compact).
+- **Evidence.** Red on dev before the fix (above). Green after: the restyle file, the compact layout file and `test_chat_approval_card.py` at `-n 4`, 55 passed (load 21). Approval and Console covering set (23 files) at `-n 4`: head 88 failed / 460 passed, dev 82 failed / 466 passed (load 21-37). The difference is flaky nodes red on dev too when re-run: `test_console_headless_approval.py` in 3 of 3 re-runs each side, and `test_reason_draft_survives_sync_and_is_cleared_for_a_new_round` 2 of 5 on head and 1 of 5 on dev. The rest are `RecoveryRequired` in plain files, on both sides. `test_timer_path_static_update_inventory.py` has the same 3 failures on dev. Preflight passes.
+- Files: `tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py`, `Tests/UI/test_console_approval_compact_layout.py`, `backlog/docs/lessons-textual.md` (a sub-bullet under the 38950 entry).
