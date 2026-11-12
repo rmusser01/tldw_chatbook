@@ -57,6 +57,7 @@ def test_the_production_credential_seam_resolves_to_no_os_store() -> None:
         build_default_server_credential_store()
 
 
+@pytest.mark.bootstrap_profile
 def test_a_constructed_app_records_the_store_as_unavailable() -> None:
     """The end state: app construction takes the documented fallback, not the OS.
 
