@@ -38,6 +38,12 @@ from tldw_chatbook.Library.library_notes_tree_paging import (
 )
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
+
+#: Worker groups whose landing re-syncs, and so rebuilds, the Notes canvases:
+#: the tree's paged reads (``library_notes_tree:<pager>``) and the Recently
+#: deleted read.
+NOTES_READ_GROUPS = ("library_notes_tree", "library_notes_trash")
 
 #: A behaviour wait: long enough for a slice load under CI contention, short
 #: enough that a RED arm names its reason in seconds.
@@ -243,12 +249,78 @@ def strip_text(host, screen) -> str:
     return painted_region(host, strips[0].region)
 
 
-def select_toggle_laid_out(screen) -> bool:
-    """Whether the Select toggle is mounted, enabled and has cells to click."""
-    return any(
-        toggle.region.width > 0 and not toggle.disabled
-        for toggle in screen.query("#library-notes-select-toggle").results(Button)
+def notes_settled(screen) -> bool:
+    """Whether a key or click sent now reaches the control it is aimed at.
+
+    PR #3423 CI (run 42429871004, three timeouts). A Notes canvas answers
+    every read that lands -- a tree slice, the Recently deleted read, a
+    release's busy-line clear -- by recomposing, and the recompose prunes the
+    focused control: focus parks on Textual's reset landing (a pane grip)
+    until the replay hands it back, and the new controls have no region
+    until the next layout. A key sent in that window reaches the grip; a
+    click lands where the control was, or at (0, 0), the Home tab. Either
+    way the step's own wait can never end. So a gesture waits until no Notes
+    read is still to land and no Notes canvas has a rebuild queued or
+    running (TASK-34789's ``_settled_canvas`` is the same rule for
+    ``press()``).
+    """
+    for worker in screen.app.workers:
+        group = worker.group or ""
+        if not worker.is_finished and group.startswith(NOTES_READ_GROUPS):
+            return False
+    return not any(
+        canvas._recompose_required
+        or not canvas._children_ready
+        or getattr(canvas, "recompose_in_flight", False)
+        for canvas in screen.query(LibraryNotesCanvas)
     )
+
+
+async def until_settled(pilot, screen, predicate, what) -> None:
+    """``until`` ``predicate`` holds on a settled Notes screen -- and still
+    holds after one full message flush, which runs any callback that was
+    about to queue another rebuild."""
+    for _ in range(2):
+        await until(pilot, lambda: predicate() and notes_settled(screen), what)
+        await pilot.pause()
+
+
+def laid_out(host, widget) -> bool:
+    """Whether ``widget`` is enabled and painted at its own region."""
+    region = widget.region
+    if widget.disabled or region.width <= 0 or region.height <= 0:
+        return False
+    try:
+        under, _ = host.screen.get_widget_at(region.x, region.y)
+    except Exception:  # noqa: BLE001 - nothing painted there yet
+        return False
+    return under is widget
+
+
+async def click_settled(host, pilot, screen, selector, what, *, region=None) -> None:
+    """Click ``selector`` once Notes is settled and the control is painted
+    where it is; fail at once if the click did not land on it.
+
+    Args:
+        region: The region the control must be back at first (after a
+            terminal resize round trip), or ``None``.
+    """
+
+    def ready() -> bool:
+        found = screen.query(selector)
+        if not found:
+            return False
+        target = found.first()
+        return laid_out(host, target) and (region is None or target.region == region)
+
+    await until_settled(
+        pilot,
+        screen,
+        ready,
+        lambda: f"{what} to be clickable on a settled screen: {painted(host)}",
+    )
+    landed = await pilot.click(selector)
+    assert landed, f"the click on {what} landed elsewhere: {painted(host)}"
 
 
 async def enter_select_mode(host, pilot, screen) -> None:
@@ -256,12 +328,9 @@ async def enter_select_mode(host, pilot, screen) -> None:
     # recompose (opening a note re-shapes the list pane) the toggle exists
     # with an empty region, and a click on it lands at (0, 0): the Home tab
     # (measured at load ~25, 2 runs in 6; focus ended on ``nav-home``).
-    await until(
-        pilot,
-        lambda: select_toggle_laid_out(screen),
-        lambda: f"the Select toggle to be laid out: {painted(host)}",
+    await click_settled(
+        host, pilot, screen, "#library-notes-select-toggle", "the Select toggle"
     )
-    await pilot.click("#library-notes-select-toggle")
     await until(
         pilot,
         lambda: screen._notes_state.select_mode
