@@ -62,6 +62,23 @@ not register. This requires no database migration.
 The future persistent PTY/ConPTY terminal is a separate backlog task. It is not
 part of this decision's first implementation phase.
 
+### Model workspace deletion guard (TASK-40281)
+
+Before approval and again before dispatch, model shell requests check every
+local folder binding of the chat's owning workspace. The executor checks the
+dispatched binding snapshot against the shell invocation it will launch.
+Recognizable deletion of a bound root, recursive deletion of an ancestor, and
+whole-root selections are refused before launch. A one-use approval or a
+session grant cannot override a refusal. A binding lookup or inspection failure
+that prevents the check also refuses the request. User-authored commands keep
+their existing authority.
+
+This guard recognizes a bounded set of literal Bash/sh, PowerShell, and cmd
+commands. Arbitrary scripts, dynamic expressions, external tools, and SSH
+bindings are outside its coverage. The check uses a prelaunch snapshot of the
+bindings and filesystem. Concurrent changes can race it, and the raw shell
+still runs with host authority under this ADR.
+
 ## Context
 
 ADR-302 chose a virtual CLI and rejected raw shell execution because a claim of
