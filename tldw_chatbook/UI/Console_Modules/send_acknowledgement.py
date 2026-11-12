@@ -79,6 +79,8 @@ from tldw_chatbook.Widgets.Console.console_composer_bar import (
 ACK_ATTRIBUTE = "_console_send_ack"
 #: Screen attribute holding the visible sends in flight (TASK-33620.15).
 FLIGHT_ATTRIBUTE = "_console_send_flight"
+#: Screen attribute holding the user row's deferred mount (TASK-38948).
+ROW_MOUNT_ATTRIBUTE = "_console_send_ack_row_mount"
 #: Run chip / hidden mode-bar copy while a send is acknowledged.
 SENDING_RUN_COPY = "Sending…"
 #: A press while the composer still shows a draft being sent (TASK-33620.15).
@@ -111,6 +113,9 @@ class _PendingSend:
     #: the first USER row outside this set.
     handoff_ids: frozenset[str] | None = None
     admitted: bool = False
+    #: TASK-38948: kept out of projections until "Sending…" is drawn, so a
+    #: whole sync running meanwhile cannot mount the row in the same frame.
+    held: bool = False
 
 
 @dataclass(frozen=True)
@@ -165,6 +170,30 @@ class ConsoleSendAcknowledgement:
         )
         self._pending[session_id] = _PendingSend(token, session_id, row)
         return token
+
+    def hold_row(self, session_id: str) -> None:
+        """Keep ``session_id``'s pending row out of projections (TASK-38948).
+
+        Args:
+            session_id: The session whose pending row waits for its frame.
+        """
+        if (pending := self._pending.get(session_id)) is not None:
+            pending.held = True
+
+    def show_row(self, session_id: str) -> bool:
+        """Let ``session_id``'s pending row into projections again.
+
+        Args:
+            session_id: The session whose pending row may now be shown.
+
+        Returns:
+            True when the row was held until now.
+        """
+        pending = self._pending.get(session_id)
+        if pending is None or not pending.held:
+            return False
+        pending.held = False
+        return True
 
     def active_for(self, session_id: str | None) -> bool:
         """Return whether ``session_id`` has an acknowledged send pending.
@@ -266,7 +295,8 @@ class ConsoleSendAcknowledgement:
                 else None
             )
             if echo is None:
-                return [*self._with_stand_in(session_id, rows), pending.row]
+                shown = self._with_stand_in(session_id, rows)
+                return shown if pending.held else [*shown, pending.row]
             # The echo is in this very projection: no resync is owed.
             del self._pending[pending.session_id]
             self._standing_in[session_id] = _StandIn(
@@ -475,6 +505,8 @@ def schedule_acknowledged_send(screen: Any, pending_send: Any) -> None:
     ack = acknowledgement_for(screen)
     text = _acknowledged_text(screen, pending_send.stash, session_id)
     token = ack.begin(session_id, text) if text is not None else None
+    if token is not None:
+        ack.hold_row(session_id)  # Its paint shows it a frame after "Sending…".
     # Only this acknowledged capture owns the height hold. A refused press
     # must not mark a newer draft while another turn is still preparing.
     if token is not None and (composer := screen._console_composer_or_none()) is not None:
@@ -498,6 +530,7 @@ def schedule_acknowledged_send(screen: Any, pending_send: Any) -> None:
     if token is None or not screen.call_later(
         _paint_then, screen, session_id, dispatch
     ):
+        ack.show_row(session_id)
         dispatch()
 
 
@@ -791,24 +824,42 @@ async def _paint_then(
             type(exc).__name__,
         )
     finally:
-        # TASK-38948: queued on the status line behind the row's mount (see
+        # TASK-38948: the hand-off waits for the row's deferred mount (see
         # ``paint_acknowledgement``), so the send never starts before the row.
-        hand_off = partial(_dispatch_once_laid_out, screen, session_id, dispatch, 0)
-        anchor = _row_anchor(screen)
-        if not (
-            (anchor is not None and anchor.call_after_refresh(hand_off))
-            or screen.call_after_refresh(hand_off)
-        ):
-            dispatch()
+        hand_off = partial(_hand_off, screen, session_id, dispatch)
+        mount = getattr(screen, ROW_MOUNT_ATTRIBUTE, None)
+        if isinstance(mount, _RowMount) and not mount.done:
+            mount.after.append(hand_off)
+        else:
+            # No mount owed (another tab is shown, or the paint failed): the
+            # row is not held back any longer; a whole sync shows it.
+            if acknowledgement_for(screen).show_row(session_id):
+                _request_resync(screen)
+            hand_off()
+
+
+def _hand_off(screen: Any, session_id: str, dispatch: Callable[[], None]) -> None:
+    if not screen.call_after_refresh(
+        _dispatch_once_laid_out, screen, session_id, dispatch, 0
+    ):
+        dispatch()
+
+
+@dataclass
+class _RowMount:
+    """A user row's mount, deferred until "Sending…" is drawn (TASK-38948)."""
+
+    #: Hand-offs to run once the row is mounted (or its mount failed).
+    after: list[Callable[[], None]] = field(default_factory=list)
+    done: bool = False
 
 
 def _row_anchor(screen: Any) -> Any | None:
-    """The status line the user row's mount and the hand-off queue behind.
+    """The status line whose "Sending…" repaint the row's mount follows.
 
-    TASK-38948: a callback the line posts runs only after the line's own
-    pending repaint has reached the screen, so it follows the "Sending…"
-    frame. A screen-level ``call_after_refresh`` can run before the child
-    widgets post their repaints, which painted the row in the same frame.
+    A callback the line posts reaches the screen only after the line's own
+    repaint does; a screen-level ``call_after_refresh`` could run before the
+    child widgets posted theirs, painting the row in the same frame.
     """
     try:
         return screen.query_one("#console-status-chips").query_one(
@@ -816,6 +867,77 @@ def _row_anchor(screen: Any) -> Any | None:
         )
     except NoMatches:
         return None
+
+
+def _sending_frame_pending(screen: Any, anchor: Any) -> bool:
+    """Whether the status line's "Sending…" repaint is not drawn yet.
+
+    Textual 8 runs the screen's after-refresh callbacks on an update tick
+    even while a batch (another task's ``batch_update``) holds the frame
+    back, so a callback alone does not prove the frame is out: in 2 of 24
+    received-intent sends the row still mounted first. The flags read here
+    are the ones Textual clears when it draws the widget.
+    """
+    return bool(
+        getattr(anchor, "_repaint_required", False)
+        or getattr(anchor, "_layout_required", False)
+        or anchor in getattr(screen, "_dirty_widgets", ())
+        or getattr(screen, "_layout_required", False)
+    )
+
+
+async def _mount_row(
+    screen: Any, session_id: str, widget: Any, mount: _RowMount, hops: int
+) -> None:
+    """Mount the user row once "Sending…" is drawn, then hand off the send.
+
+    Waits at most ``_PAINT_HOPS`` frame-length hops for the frame; past
+    that (a long batch elsewhere) the row mounts anyway, as it used to. The
+    row was held out of every projection until now, so neither this mount
+    nor a whole sync meanwhile could draw it with "Sending…".
+    """
+    anchor = _row_anchor(screen)
+    if (
+        hops < _PAINT_HOPS
+        and anchor is not None
+        and not _torn_down(screen)
+        and _sending_frame_pending(screen, anchor)
+    ):
+        try:
+            screen.set_timer(
+                _PAINT_HOP_SECONDS,
+                partial(_mount_row, screen, session_id, widget, mount, hops + 1),
+            )
+            return
+        except Exception:  # noqa: BLE001 -- a closing screen still mounts and sends
+            pass
+    ack = acknowledgement_for(screen)
+    try:
+        if not ack.show_row(session_id):
+            pass  # Released meanwhile, or never held: nothing new to show.
+        elif _torn_down(screen) or (
+            screen._console_chat_store.active_session_id != session_id
+        ):
+            _request_resync(screen)  # The shown tab's own sync derives its rows.
+        else:
+            rows = screen._change_review_projection.project(
+                screen._message._native_console_messages()
+            )
+            widget.set_messages(ack.project(session_id, rows), session_id=session_id)
+            screen._last_native_transcript_refresh_key = None
+            await widget.refresh_messages()
+    except Exception as exc:  # noqa: BLE001 -- the send must never depend on its paint
+        logger.warning(
+            "Console send acknowledgement row mount failed (exception_type={})",
+            type(exc).__name__,
+        )
+    finally:
+        mount.done = True
+        if getattr(screen, ROW_MOUNT_ATTRIBUTE, None) is mount:
+            setattr(screen, ROW_MOUNT_ATTRIBUTE, None)
+        after, mount.after = mount.after, []
+        for hand_off in after:
+            hand_off()
 
 
 def _dispatch_once_laid_out(
@@ -836,8 +958,8 @@ def _dispatch_once_laid_out(
     admission with one hop). The tabs are relabelled before the row mounts:
     relabelled last, a warm 80x24 send still lost the dot with these hops.
     Final build, live: 9 of 9 sends had the whole acknowledgement on screen
-    before admission. TASK-38948: this hand-off is queued behind the row's
-    mount (``_row_anchor``), which follows the "Sending…" frame.
+    before admission. TASK-38948: this hand-off runs only after the row's
+    deferred mount (``_mount_row``), which follows the "Sending…" frame.
     """
     if hops < _PAINT_HOPS and not _acknowledgement_laid_out(screen, session_id):
         try:
@@ -896,11 +1018,6 @@ async def paint_acknowledgement(screen: Any, session_id: str) -> None:
     if screen._console_chat_store.active_session_id != session_id:
         return
     widget = screen.query_one("#console-native-transcript")
-    ack = acknowledgement_for(screen)
-    rows = screen._change_review_projection.project(
-        screen._message._native_console_messages()
-    )
-    widget.set_messages(ack.project(session_id, rows), session_id=session_id)
     screen._last_native_transcript_refresh_key = None
     # Every lookup happens before the first await: the screen can be torn
     # down while one is pending (textual worker contract).
@@ -921,11 +1038,16 @@ async def paint_acknowledgement(screen: Any, session_id: str) -> None:
     # TASK-38948 (owner ruling 2026-11-10): "Sending…" leads the row by one
     # frame. Mounting the row with the rest made the Sending frame a full
     # first-message reflow and render (Sending loop CPU median 56 ms against
-    # 30 ms). The row mounts once the status line's repaint is out; the
-    # hand-off to the send is queued behind it on the same line.
+    # 30 ms). The row mounts once the status line's repaint is drawn, and the
+    # hand-off to the send waits for that mount (``_paint_then``).
+    mount = _RowMount()
     anchor = _row_anchor(screen)
-    if anchor is None or not anchor.call_after_refresh(widget.refresh_messages):
-        await widget.refresh_messages()
+    if anchor is not None and anchor.call_after_refresh(
+        _mount_row, screen, session_id, widget, mount, 0
+    ):
+        setattr(screen, ROW_MOUNT_ATTRIBUTE, mount)
+        return
+    await _mount_row(screen, session_id, widget, mount, _PAINT_HOPS)
 
 
 def _session_message_ids(screen: Any, session_id: str) -> tuple[str, ...]:

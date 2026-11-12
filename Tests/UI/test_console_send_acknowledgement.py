@@ -444,6 +444,43 @@ async def test_sending_paints_a_frame_before_the_row_and_the_send_waits_for_it(s
 
 
 @pytest.mark.asyncio
+async def test_a_whole_sync_before_the_rows_frame_does_not_mount_the_row(monkeypatch):
+    """TASK-38948: the row stays out of every projection until its own mount.
+
+    A whole sync that ran between the paint and the row's deferred mount
+    (2 of 24 received-intent sends) projected the pending row and mounted it
+    before "Sending…" was drawn, so both shared one frame again.
+    """
+    from tldw_chatbook.UI.Console_Modules import send_acknowledgement as module
+
+    mounted_by_sync: list[bool] = []
+    real_paint = module.paint_acknowledgement
+
+    async def paint_then_whole_sync(screen, session_id):
+        await real_paint(screen, session_id)
+        await screen._sync_native_console_chat_ui()
+        row_id = module.acknowledgement_for(screen).pending_row_id(session_id)
+        mounted_by_sync.append(
+            bool(row_id and list(screen.query(f"#console-message-{row_id}")))
+        )
+
+    monkeypatch.setattr(module, "paint_acknowledgement", paint_then_whole_sync)
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            try:
+                press(host, "enter", "\r")
+                await until(gateway.validation_started.is_set)
+            finally:
+                gateway.validation_release.set()
+            await until(lambda: gateway.stream_calls == 1)
+            await pilot.pause()
+            assert DRAFT in "\n".join(_painted_lines(host))
+    assert mounted_by_sync == [False]
+
+
+@pytest.mark.asyncio
 async def test_an_acknowledged_enter_dispatches_once_its_status_line_is_laid_out(
     monkeypatch,
 ):
