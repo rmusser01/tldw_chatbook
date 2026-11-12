@@ -1401,6 +1401,7 @@ async def _open_speech_tts_category(screen, pilot) -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_audio_cpp_consent_provision_recompose_and_detached_return(
     monkeypatch,
@@ -1620,6 +1621,7 @@ async def test_mounted_audio_cpp_consent_provision_recompose_and_detached_return
     app.set_default_model.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_worker_cancel_on_screen_unmount_drains_before_request_release(
     monkeypatch,
@@ -1705,6 +1707,7 @@ async def test_real_worker_cancel_on_screen_unmount_drains_before_request_releas
     assert executor_finished.is_set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_already_installed_audio_cpp_returns_exact_leased_root(
     monkeypatch,
@@ -1781,6 +1784,7 @@ async def test_mounted_already_installed_audio_cpp_returns_exact_leased_root(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_app_shutdown_drains_audio_cpp_owner_executor(
     monkeypatch,
@@ -1818,6 +1822,7 @@ async def test_real_app_shutdown_drains_audio_cpp_owner_executor(
     assert app.audio_cpp_model_install_owner.active_count == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_unmount_during_blocked_audio_preflight_drains_once(
     monkeypatch,
@@ -1924,6 +1929,7 @@ async def test_mounted_unmount_during_blocked_audio_preflight_drains_once(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_unmount_with_audio_consent_pending_invalidates_generation(
     monkeypatch,
@@ -2010,6 +2016,7 @@ async def test_mounted_unmount_with_audio_consent_pending_invalidates_generation
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rapid_away_back_reclaims_request_after_old_operation_drains(
     monkeypatch,
@@ -2113,6 +2120,7 @@ async def test_rapid_away_back_reclaims_request_after_old_operation_drains(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_audio_cpp_presentation_reveals_slow_load_once_and_keeps_error_retry(
     monkeypatch,
@@ -2293,6 +2301,7 @@ async def test_mounted_settings_snapshot_preserves_complete_speech_tts_draft(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_settings_stages_exact_request_after_collecting_widgets() -> None:
     """The explicit Library action captures the post-collection draft revision."""
@@ -2350,6 +2359,7 @@ async def test_mounted_settings_stages_exact_request_after_collecting_widgets() 
         assert await screen.flush_pending_work() is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_settings_navigation_preserves_detached_tts_draft_for_removal(
     monkeypatch: pytest.MonkeyPatch,
@@ -2429,6 +2439,7 @@ async def test_real_settings_navigation_preserves_detached_tts_draft_for_removal
         assert draft.state.defaults.model_mode == "first_available"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_settings_return_acknowledges_before_draft_remount(
     tmp_path: Path,
@@ -2695,6 +2706,7 @@ async def test_real_settings_return_acknowledges_before_draft_remount(
         assert realtime_sections["realtime"]["voice"] == "unrelated-draft-voice"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "failure",
@@ -2779,6 +2791,7 @@ async def test_model_library_route_token_is_cleared_when_dispatch_fails(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_route_cleanup_retries_after_foreign_request_claim_settles(
     monkeypatch: pytest.MonkeyPatch,
@@ -2831,6 +2844,7 @@ async def test_failed_route_cleanup_retries_after_foreign_request_claim_settles(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_route_cleanup_preserves_value_identical_newer_successor(
     monkeypatch: pytest.MonkeyPatch,
@@ -2881,6 +2895,7 @@ async def test_failed_route_cleanup_preserves_value_identical_newer_successor(
         assert successor.value.draft_revision == snapshot.draft_revision
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("unrelated_first", (True, False))
 async def test_model_library_leave_bypass_is_fifo_route_exclusive(
@@ -2943,6 +2958,7 @@ async def test_model_library_leave_bypass_is_fifo_route_exclusive(
         assert panel.confirm_leave.await_count == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_settings_reviews_and_merges_return_under_exact_lease(
     tmp_path: Path,
@@ -3115,6 +3131,7 @@ async def test_mounted_settings_reviews_and_merges_return_under_exact_lease(
     assert save_config.call_count == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_return_is_stale_after_edits_in_every_draft_family(
     tmp_path: Path,
@@ -3215,6 +3232,7 @@ async def test_mounted_return_is_stale_after_edits_in_every_draft_family(
         assert scanner.call_count == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_foreign_result_preserves_expected_request_for_later_exact_result(
     tmp_path: Path,
@@ -3288,6 +3306,7 @@ async def test_foreign_result_preserves_expected_request_for_later_exact_result(
         assert reviewed == [exact]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("ack_failure", ("false", "raise"))
 @pytest.mark.parametrize("release_failure", ("false", "raise"))
@@ -3401,6 +3420,7 @@ async def test_foreign_result_cleanup_retries_without_touching_current_request(
         assert screen._audio_cpp_result_cleanup is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_same_token_revision_mismatch_terminally_clears_expected_request(
     tmp_path: Path,
@@ -3460,6 +3480,7 @@ async def test_same_token_revision_mismatch_terminally_clears_expected_request(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "transaction_failure",
@@ -4218,6 +4239,7 @@ async def test_review_merge_undo_keeps_a_pipeline_voice_edit(
         assert panel.has_unsaved_changes()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ("restore", "release"))
 async def test_result_cleanup_retries_after_one_owner_failure(
@@ -4331,6 +4353,7 @@ async def test_result_cleanup_retries_after_one_owner_failure(
         assert screen._audio_cpp_result_cleanup is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_worker_call_from_thread_failure_retries_exact_cleanup(
     tmp_path: Path,
