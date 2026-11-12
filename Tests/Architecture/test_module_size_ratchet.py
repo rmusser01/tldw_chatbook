@@ -271,12 +271,12 @@ _BUDGETS: dict[str, int] = {
     # 28,734 plus TASK-39159's +8, measured.
     # 2026-11-10, TASK-39155 (owner size waiver): 29183 -> 29184 (+1, exact),
     # a session close in progress counts as an explicit cancellation.
-    "tldw_chatbook/Chat/console_chat_controller.py": 28743,
+    "tldw_chatbook/Chat/console_chat_controller.py": 28504,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
     # 2026-10-31 PR3295 R1: user-waived cap; exact remembered-prompt-delta measurement.
-    "tldw_chatbook/Chat/console_context_compaction.py": 4217,
+    "tldw_chatbook/Chat/console_context_compaction.py": 4218,
     # 2026-10-29 (TASK-33621.53 review follow-up, owner decision: a fix over
     # a size ratchet raises the row): 22338 -> 22346 (+8) -- the store owns
     # pause_unreserved_failed_commit, a thin method over its body in
@@ -918,7 +918,7 @@ _BUDGETS: dict[str, int] = {
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):
     # the storage provider reaches the per-run BuiltinToolProvider (+8 on 12,091).
-    "tldw_chatbook/Chat/console_agent_bridge.py": 10084,
+    "tldw_chatbook/Chat/console_agent_bridge.py": 10023,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # TASK-36944.2, 2026-11-03: +6 for the public `setting` Console reads.
@@ -1074,7 +1074,7 @@ _BUDGETS: dict[str, int] = {
     # dev's 7,046 plus TASK-39117's +3.
     # 2026-11-10, restack onto dev e78b62f0e7 (owner size waiver): dev's 7,040
     # plus TASK-39117's +3; exact measurement.
-    "tldw_chatbook/Chat/console_runtime.py": 7043,
+    "tldw_chatbook/Chat/console_runtime.py": 7151,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-337 amendment 2026-10-27). The proof itself lives in

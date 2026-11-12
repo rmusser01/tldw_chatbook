@@ -652,6 +652,45 @@ def test_unowned_or_unsafe_sqlite_sidecars_block_capture(
     assert after.scope_digest != before.scope_digest
 
 
+def test_agent_runs_execution_lock_is_local_and_unsafe_aliases_are_blocked(tmp_path):
+    from tldw_chatbook.Backup_Recovery.inventory import _sqlite_sidecars
+    from tldw_chatbook.Backup_Recovery.models import StorageItem
+    from tldw_chatbook.Backup_Recovery.sqlite_adapters import recovery_adapters
+    from tldw_chatbook.DB.console_execution_owner import ConsoleExecutionOwner
+
+    main = tmp_path / "agent_runs.db"
+    main.touch(mode=0o600)
+    item = StorageItem("db.agent_runs", "runs", main, "included", ())
+    lock = main.with_name(".agent_runs.db.execution.lock")
+
+    def recorded():
+        rows = _sqlite_sidecars((item,), recovery_adapters())
+        control, = (row for row in rows if row.path == lock)
+        return control
+
+    before = recorded()
+    with ConsoleExecutionOwner.acquire(main):
+        assert recorded() == before
+    assert before.owner == "recovery.control"
+    assert before.status == "intentionally_excluded"
+    assert before.dependencies == ("runs",)
+    legacy = StorageItem(
+        "db.agent_runs",
+        "profile:test:db.agent_runs:legacy-mobile-execution-lock",
+        lock,
+        "intentionally_excluded",
+        (),
+    )
+    assert not any(
+        row.path == lock for row in _sqlite_sidecars((item, legacy), recovery_adapters())
+    )
+    retained = lock.with_name("retained-execution-lock")
+    lock.rename(retained)
+    lock.symlink_to(retained)
+    assert recorded().status == "unsupported"
+    assert retained.is_file()
+
+
 def test_mixed_recovered_owner_does_not_claim_payload_sidecars(tmp_path):
     from tldw_chatbook.Backup_Recovery.inventory import _sqlite_sidecars
     from tldw_chatbook.Backup_Recovery.recovered_media import recovery_adapters

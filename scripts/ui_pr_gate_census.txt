@@ -2749,6 +2749,9 @@ Tests/UI/test_console_inspector_section.py
 # decision ("Off the gate, reorder next"): on CI runners the Sending frame's
 # event-loop CPU measured 112-119 ms against its 100 ms budget, so the gate
 # failed intermittently. They return once the paint reorder passes on CI.
+# PR #3345 retains both original checks at their reviewed positions.
+Tests/UI/test_console_received_intent_feedback.py::test_actual_send_paints_sending_and_accepts_input_within_100ms[enter]
+Tests/UI/test_console_received_intent_feedback.py::test_actual_send_paints_sending_and_accepts_input_within_100ms[send-button]
 # TASK-39133: the llama.cpp "Make default…" handoff reaches Settings on its own channel.
 Tests/UI/test_llamacpp_consumers.py::test_settings_acknowledges_llamacpp_even_when_fields_are_already_saved[False-False]
 Tests/UI/test_llamacpp_consumers.py::test_settings_acknowledges_llamacpp_even_when_fields_are_already_saved[True-False]

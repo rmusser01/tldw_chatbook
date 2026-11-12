@@ -19,10 +19,6 @@ from tldw_chatbook.Notes.notes_device_state_store import (
     NotesSyncBindingRecord,
     NotesSyncRootRecord,
 )
-from tldw_chatbook.Notes.notes_sync_filesystem import (
-    NotesSyncFilesystemError,
-    validate_sync_root_admission,
-)
 from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncBindingState,
     NotesSyncDirection,
@@ -366,6 +362,11 @@ def _root_evidence(
             ancestor_identity_digests=(),
             reason_code="root_invalid",
         )
+    from tldw_chatbook.Notes.notes_sync_filesystem import (
+        NotesSyncFilesystemError,
+        validate_sync_root_admission,
+    )
+
     try:
         canonical = validate_sync_root_admission(
             path,

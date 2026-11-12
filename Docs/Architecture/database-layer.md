@@ -66,7 +66,7 @@ The single write seam is `add_media_with_keywords`: URL/content-hash dedup with 
 - `Prompts_DB` — prompts + keywords, own migrations to v6, Python-side FTS, soft deletes, expected-version conflicts, and Prompt/Recipe/Mix-in discriminator. The v5-to-v6 file-backed rebuild preserves IDs, sequence, references, indexes, FTS and retained sync history; recovery accepts exact v4/v5 catalogs and migrates staged copies under its restricted authorizer.
 - `Evals_DB` — eval tasks/models/runs/results + FTS; version tracked via `PRAGMA user_version` (no version table).
 - `Subscriptions_DB` — watchlist/subscription state + briefing provenance; FTS-with-LIKE-fallback at the search boundary ("the search box must never raise into the reader").
-- `AgentRuns_DB` — agent run/step records, automatic-work accounting, private Goal history, and native workflow admission/history (schema v29).
+- `AgentRuns_DB` — agent run/step records, automatic-work accounting, private Goal history, and native workflow admission/history (schema v33).
 - `Library_Collections_DB` / `Library_Ingest_Jobs_DB` — collections and the durable ingest job queue.
 - `RAG_Indexing_DB` — incremental indexing state (see [rag.md](./rag.md)).
 - `Workspace_DB`, `VisualIdentity_DB`, `Chunking_Lab_DB` — workspace bindings, visual identity, chunking experiments.
@@ -211,7 +211,7 @@ admission, which continues to gate all native connections.
 
 ## Console remote command evidence (ADR-244)
 
-AgentRuns v26 executes `agent_runs_v25_to_v26_console_command_receipts.sql`
+AgentRuns v32 executes `agent_runs_v31_to_v32_console_command_receipts.sql`
 through the native owner and the exact backup migration registry. Its
 `command_receipts` repository uses the existing execution lease and SQLite
 transaction owner; read-only handles can query without migrating or sweeping.
@@ -233,7 +233,7 @@ Unresolved reads use bounded keyset pages, including receipts for closed chats.
 
 ## Imported history authority (ADR-244)
 
-The installed heads are ChaChaNotes87, Workspace11 and AgentRuns27. Their
+The installed heads are ChaChaNotes87, Workspace11 and AgentRuns33. Their
 file-backed `*_mobile_consolidation.sql` migrations add
 `mobile_consolidation_batches(operation_id, source_fingerprint, batch_key,
 mapping_json, committed_at)` with primary key `(operation_id, batch_key)`.

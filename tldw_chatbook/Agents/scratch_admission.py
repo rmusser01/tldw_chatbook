@@ -112,10 +112,12 @@ def _scratch_path(writer, snapshot, owner, path):
     return True
 
 
-def _check_selected(frame, guard):
-    frame.check()
-    state = guard.context.get()
-    if state is not frame.state or state.identity != execution_identity():
+def _selected_scope(guard, state):
+    if (
+        state is None
+        or guard.context.get() is not state
+        or state.identity != execution_identity()
+    ):
         _refuse()
     selected = bootstrap.effective_config_path()
     lease = state.leases.get(selected)
@@ -124,11 +126,10 @@ def _check_selected(frame, guard):
     root, names = lease.execution_context(selected)
     if selected != bootstrap.effective_config_path():
         _refuse()
-    for owner, path in frame.scratch_sources:
-        if not _scratch_path(
-            frame.writer, frame.snapshot, owner, path
-        ) or not _source_scope_admitted(root, names or (), path):
-            _refuse()
+    return selected, root, names
+
+
+def _check_activation(selected, root, names):
     if not all(
         activation_permission(
             owner,
@@ -142,6 +143,56 @@ def _check_selected(frame, guard):
         _refuse()
     if selected != bootstrap.effective_config_path():
         _refuse()
+
+
+def _check_selected(frame, guard):
+    frame.check()
+    selected, root, names = _selected_scope(guard, frame.state)
+    for owner, path in frame.scratch_sources:
+        if not _scratch_path(
+            frame.writer, frame.snapshot, owner, path
+        ) or not _source_scope_admitted(root, names or (), path):
+            _refuse()
+    _check_activation(selected, root, names)
+
+
+def native_prepared_scratch(manager, snapshot, session_id):
+    from tldw_chatbook.Backup_Recovery.participants import _methods_unchanged
+    from tldw_chatbook.Chat.console_scratch_space import (
+        _SCRATCH_ADMISSION_ORIGINAL,
+        ConsoleScratchSnapshot,
+    )
+
+    if type(snapshot) is not ConsoleScratchSnapshot or not _methods_unchanged(
+        manager, _SCRATCH_ADMISSION_ORIGINAL
+    ):
+        return False
+    manager._check_process()
+    with manager._condition:
+        record = manager._matching_record_locked(snapshot)
+        return (
+            record is not None
+            and record.snapshot is snapshot
+            and record.session_id == session_id
+            and record.leases > 0
+            and manager._identity_matches(snapshot)
+        )
+
+
+def check_prepared_scratch(manager, snapshot, session_id):
+    """Verify the already held native scratch before a log writer exists."""
+    from .activation import _guard
+
+    if not native_prepared_scratch(manager, snapshot, session_id):
+        _refuse()
+    state = _guard.context.get()
+    if state is None:
+        _refuse()
+    state.check(_guard.error)
+    selected, root, names = _selected_scope(_guard, state)
+    if not _source_scope_admitted(root, names or (), snapshot.root):
+        _refuse()
+    _check_activation(selected, root, names)
 
 
 @contextmanager

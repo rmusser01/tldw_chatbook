@@ -527,6 +527,10 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
             finally:
                 gateway.validation_release.set()
                 timer.resume()
+                await until(
+                    lambda: not console._console_runtime().has_custodied_turns(),
+                    timeout=30,
+                )
 
 
 @pytest.mark.asyncio
@@ -2088,8 +2092,11 @@ def test_fixed_core_release_does_not_shorten_the_full_backoff(monkeypatch, expli
         _console_config_handoffs={"core": SimpleNamespace(eligible=lambda: True)},
         _sync_native_console_chat_ui=lambda: "whole",
         set_timer=lambda delay, callback: timers.append((delay, callback)),
-        run_worker=lambda result, **_kwargs: full.append(result),
+        run_worker=lambda work, **kwargs: full.append((work, kwargs)),
     )
+    expected_full = [
+        (screen._sync_native_console_chat_ui, {"exclusive": True, "group": "console-sync"})
+    ]
     screen._request_console_control_bar_sync = lambda *, delayed=False: (
         config_sync.request_control_bar_sync(screen, delayed)
     )
@@ -2113,7 +2120,7 @@ def test_fixed_core_release_does_not_shorten_the_full_backoff(monkeypatch, expli
     now[0] += 0.2
     timers.pop(0)[1]()
     if explicit != "none":
-        assert full == ["whole"]
+        assert full == expected_full
         assert timers == []
         return
     assert core == [screen]
@@ -2123,7 +2130,7 @@ def test_fixed_core_release_does_not_shorten_the_full_backoff(monkeypatch, expli
     now[0] = 101.6
     timers.pop(0)[1]()
     assert core == [screen]
-    assert full == ["whole"]
+    assert full == expected_full
 
 
 def test_a_long_full_render_refusal_streak_stays_at_the_retry_cap():

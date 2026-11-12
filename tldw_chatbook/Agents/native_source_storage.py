@@ -195,6 +195,8 @@ class _AgentSources:
             )
 
     def prepare(self):
+        from .scratch_admission import native_prepared_scratch
+
         self.check_memory()
         if self.scratch is None:
             raise RuntimeError("original agent scratch source unavailable")
@@ -202,7 +204,11 @@ class _AgentSources:
             roots = self._allowed_roots()
             self.root = roots[1] if len(roots) > 1 else roots[0]
             self.root_identity = capture_directory_chain(self.root)
-            extra = [("agents.history", self.root)]
+            extra = []
+            if self.root != self.scratch.root or not native_prepared_scratch(
+                self.scratch_manager, self.scratch, self.session.id
+            ):
+                extra.append(("agents.history", self.root))
             if self.permission_path is not None:
                 extra.append(("mcp.permissions", Path(self.permission_path)))
             elif self.prospective_permission_path is not None:
@@ -229,6 +235,20 @@ class _AgentSources:
             if self.root_identity is not None:
                 if tree is None:
                     stack.enter_context(self.scratch_manager.lease(self.scratch))
+                if (
+                    self.root == self.scratch.root
+                    and ("agents.history", self.root) not in self.sources
+                ):
+                    from .scratch_admission import check_prepared_scratch
+
+                    if tree is not None and (
+                        tree.source is not self
+                        or tree.configuration.scratch_space is not self.scratch
+                    ):
+                        raise RuntimeError("original agent scratch source changed")
+                    check_prepared_scratch(
+                        self.scratch_manager, self.scratch, self.session.id
+                    )
                 self.check_storage()
             self.check_memory()
             yield

@@ -1851,7 +1851,9 @@ def _finish_execution(self, owner):
             ):
                 legacy[1].abandon_unstarted()
             tree.close_unused_events(owner)
-            tree.host_returned(owner)
+        # The durability read must own and return its SQLite handle itself.
+        tree.host_returned(owner)
+        with tree.source.activate():
             owner.finish_root()
         return
     owner.finish_root()

@@ -87,7 +87,7 @@ def test_actual_source_version_capture_identity_and_integrated_plan(
             ("legacy", "runs", version),
             ("canonical", "chat", 87),
             ("canonical", "workspaces", 11),
-            ("canonical", "runs", 27),
+            ("canonical", "runs", 33),
         )
         plan = reads.integrated_plan()
         connection = reads._connections["legacy", "runs"][0]

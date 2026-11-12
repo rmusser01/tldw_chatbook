@@ -77,7 +77,7 @@ Creation-intent ancestry validation uses the internal visitor of `native_files.p
 
 ## Native workflow history
 
-AgentRunsDB schema 29 includes immutable plans, decisions, task results, native
+AgentRunsDB schema 33 includes immutable plans, decisions, task results, native
 verifier checkpoints, change-window references, reservations and active-time
 accounting. Complete profile capture carries these required records through
 the existing exact-SQL owner catalogs. Optional agent logs may be absent.
@@ -234,7 +234,7 @@ referenced artifact digests. Preview itself creates neither source nor target
 parents. No mobile import, profile cutover or authority activation occurs here.
 
 
-Installed consolidation support qualifies exact Chat86/Workspace11/AgentRuns27
+Installed consolidation support qualifies exact Chat87/Workspace11/AgentRuns33
 catalogs and their file-backed native migrations. Read-only validation still
 accepts qualified Chat81–85/Workspace8–10/AgentRuns24 or25 sources, including every
 previously admitted AgentRuns25 physical layout; migration creates a separately
@@ -478,7 +478,7 @@ retain the normal pending refusal.
 Legacy source history/artifacts and complete canonical rollback are fixed native
 partitions captured under that same exclusive session, without intervening owner
 writes. This preserves the native archive's one-version-per-owner contract:
-legacy81–85/8–10/(24 or25) and canonical86/11/27 have the same actual owner IDs.
+legacy81–85/8–10/(24 or25) and canonical87/11/33 have the same actual owner IDs.
 Generic mixed owner versions still refuse. Each archive uses native encrypted publication and
 verification, with typed intended/staged/verified identities. Interrupted
 publication can finish only the durable verified ciphertext inode at its exact
@@ -633,7 +633,7 @@ terminal recovery remain separate B qualification gates.
 `mobile_captured_sqlite._CapturedSQLite` context from the actual live maintenance
 operation. It requalifies fixed native partition declarations and exact logical
 members, authenticates the encrypted captures, and extracts only Chat, Workspace
-and AgentRuns snapshots. Legacy 81–85/8–10/(24 or25) and canonical 86/11/27 remain
+and AgentRuns snapshots. Legacy 81–85/8–10/(24 or25) and canonical 87/11/33 remain
 distinct. Native installed catalog, version, integrity, foreign-key and domain checks run on
 restricted disposable descriptor-bound connections before row access; no live
 repository constructor, migration or destination connection participates.

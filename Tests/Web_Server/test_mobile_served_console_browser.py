@@ -824,6 +824,7 @@ def test_two_chats_workers_and_exact_phone_controls(tmp_path):
 
 async def _run_fleet(root):
     import shutil
+    import tomllib
 
     from playwright.async_api import async_playwright, expect
 
@@ -944,7 +945,7 @@ async def _run_fleet(root):
             )
             result["unrelated_before"] = original_a
 
-            async def unchanged_a(label):
+            async def unchanged_a(label, expected):
                 snapshot = await case.snapshot()
                 current = next(
                     row
@@ -961,7 +962,7 @@ async def _run_fleet(root):
                     "status",
                 )
                 assert {key: current[key] for key in keys} == {
-                    key: original_a[key] for key in keys
+                    key: expected[key] for key in keys
                 }, current
                 result.setdefault("unrelated_witnesses", []).append(
                     {"boundary": label, "chat": current}
@@ -987,8 +988,133 @@ async def _run_fleet(root):
                     "incarnation_id",
                 )
             }
-            await phone.locator("#chat-draft").fill("EXACT_FLEET_PARENT")
-            await phone.get_by_role("button", name="Send", exact=True).click()
+
+            def fleet_events():
+                return [
+                    json.loads(line)
+                    for line in (root / "fleet-lifecycle.jsonl")
+                    .read_text()
+                    .splitlines()
+                ]
+
+            def tree_retired(events, session_id):
+                return any(
+                    event["event"] == "OrdinaryTurn._retire_scratch.return"
+                    and event["identity"]["session_id"] == session_id
+                    and event["state"]["retired"]
+                    and event["pid"] == entry_a["pid"]
+                    for event in events
+                )
+
+            async def send_parent():
+                await phone.locator("#chat-draft").fill("EXACT_FLEET_PARENT")
+                async with phone.expect_response(
+                    lambda response: (
+                        response.url.endswith("/commands/tickets")
+                        and response.request.method == "POST"
+                    ),
+                    timeout=30000,
+                ) as issued:
+                    await phone.get_by_role("button", name="Send", exact=True).click()
+                response = await issued.value
+                assert response.status == 200, await response.text()
+                request = response.request.post_data_json
+                assert request["action"] == "send"
+                assert request["payload"]["text"] == "EXACT_FLEET_PARENT"
+                assert all(
+                    request["target"][key] == value for key, value in target_b.items()
+                )
+                return (await response.json())["command_id"]
+
+            refused_id = await send_parent()
+            await expect(phone.locator("#command-status")).to_contain_text(
+                "send: refused", timeout=30000
+            )
+            response = await phone.request.get(
+                stack.origin + "/api/v1/mobile/commands/" + refused_id
+            )
+            assert response.status == 200, await response.text()
+            refused = await response.json()
+            assert refused["command_id"] == refused_id and refused["action"] == "send"
+            assert refused["state"] == "refused", refused
+            assert all(
+                refused["target"][key] == value for key, value in target_b.items()
+            )
+            result["refused_fleet_send"] = refused
+            await unchanged_a("fleet-refused-while-desktop-streaming", original_a)
+            refused_terminal = await thread_state()
+            assert refused_terminal["session_id"] == terminal_a["session_id"]
+            assert refused_terminal["draft"] == "EXACT_DESKTOP_DRAFT"
+            assert (
+                refused_terminal["input_thread_object"]
+                == terminal_a["input_thread_object"]
+            )
+            assert not any(
+                event["event"] == "_ScriptedFleetConsoleGateway.stream_chat.call"
+                and "EXACT_FLEET_PARENT" in event["prompts"]
+                for event in fleet_events()
+            )
+            await case.release_agent()
+            target_a = {
+                key: original_a[key]
+                for key in (
+                    "server_epoch",
+                    "console_id",
+                    "session_id",
+                    "incarnation_id",
+                )
+            }
+            async with asyncio.timeout(30):
+                while True:
+                    response = await phone.request.get(
+                        stack.origin + "/api/v1/mobile/console/snapshot",
+                        params={
+                            "protocol_version": "1",
+                            "target": json.dumps(target_a),
+                        },
+                    )
+                    assert response.status == 200
+                    final_a = await response.json()
+                    row = final_a["chats"][0]
+                    events = fleet_events()
+                    retired_a = tree_retired(events, original_a["session_id"])
+                    # The cutover read refuses during the native config/binding write.
+                    first_send_saved = any(
+                        event["event"]
+                        == "ConsoleRuntime._persist_first_send_when_quiescent.return"
+                        and event["pid"] == entry_a["pid"]
+                        for event in events
+                    )
+                    if (
+                        not row["run_id"]
+                        and not row["turn_id"]
+                        and retired_a
+                        and first_send_saved
+                    ):
+                        config = tomllib.loads(
+                            Path(os.environ["TLDW_CONFIG_PATH"]).read_text()
+                        )
+                        assert (
+                            config["console"]["onboarding"]["first_send_completed"]
+                            is True
+                        )
+                        actual = [
+                            (message["role"], message["content"])
+                            for message in final_a["messages"]
+                            if message["role"] in {"user", "assistant"}
+                        ]
+                        assert actual == [
+                            ("user", "EXACT_UNRELATED_CHAT_A"),
+                            ("assistant", "EXACT_REPLY:EXACT_UNRELATED_CHAT_A"),
+                        ], actual
+                        completed_a = row
+                        result["unrelated_completed"] = final_a
+                        break
+                    await asyncio.sleep(0.05)
+
+            fleet_id = await send_parent()
+            assert fleet_id != refused_id
+            result["fresh_fleet_command_id"] = fleet_id
             await _wait_file(data / "fleet-entry-EXACT_FLEET_PARENT-0.json")
             csrf = await phone.locator('meta[name="chatbook-csrf"]').get_attribute(
                 "content"
@@ -1080,12 +1206,13 @@ async def _run_fleet(root):
             await _wait_file(data / "fleet-entry-EXACT_WORKER_A-0.json")
             await _wait_file(data / "fleet-entry-EXACT_WORKER_B-0.json")
             snapshot = await targeted()
+            assert snapshot["chats"][0]["turn_id"] == fleet_id, snapshot
             assert len(snapshot["fleet"]) == 2, snapshot
             result["workers_before"] = snapshot["fleet"]
             result["worker_threads_before"] = (await thread_state())["fleet_threads"]
             assert len(result["worker_threads_before"]) == 2
             assert all(row["alive"] for row in result["worker_threads_before"].values())
-            await unchanged_a("both-workers-started")
+            await unchanged_a("both-workers-started", completed_a)
             workers = sorted(
                 snapshot["fleet"],
                 key=lambda row: row.get("task", row.get("handle_id", "")),
@@ -1163,7 +1290,7 @@ async def _run_fleet(root):
                 if row["handle_id"] == worker_a["handle_id"]
             )["live"]
             result["worker_stop_requested"] = requested["fleet"]
-            await unchanged_a("worker-b-stop-requested")
+            await unchanged_a("worker-b-stop-requested", completed_a)
             (data / "fleet-release-EXACT_WORKER_B-0").touch()
             async with asyncio.timeout(30):
                 while True:
@@ -1194,7 +1321,7 @@ async def _run_fleet(root):
                         }
                         break
                     await asyncio.sleep(0.05)
-            await unchanged_a("worker-b-physically-retired")
+            await unchanged_a("worker-b-physically-retired", completed_a)
             # Another phone may render the same supported decision and disappear.
             second_context = await browser.new_context(
                 ignore_https_errors=True, viewport={"width": 390, "height": 844}
@@ -1244,7 +1371,7 @@ async def _run_fleet(root):
             run_target = dict(target_b, run_id=main["run_id"], turn_id=main["turn_id"])
             await command("steer", run_target, {"text": "EXACT_PARENT_STEER"})
             await command("redirect", run_target, {"text": "EXACT_PARENT_REDIRECT"})
-            await unchanged_a("main-corrections-queued")
+            await unchanged_a("main-corrections-queued", completed_a)
             (data / "fleet-release-parent-6").touch()
             corrections = json.loads(
                 await _wait_file(data / "fleet-entry-EXACT_FLEET_PARENT-7.json")
@@ -1257,7 +1384,7 @@ async def _run_fleet(root):
                 corrections
             )
             result["main_corrections_consumed"] = corrections
-            await unchanged_a("main-corrections-consumed")
+            await unchanged_a("main-corrections-consumed", completed_a)
             current = await targeted()
             stopped = next(
                 row
@@ -1292,7 +1419,7 @@ async def _run_fleet(root):
                         result["main_retired"] = main_after
                         break
                     await asyncio.sleep(0.05)
-            await unchanged_a("main-stopped-worker-a-still-live")
+            await unchanged_a("main-stopped-worker-a-still-live", completed_a)
             terminal_after = await thread_state()
             assert terminal_after["fleet_threads"][worker_a["run_id"]]["alive"]
             assert terminal_after["session_id"] == terminal_a["session_id"]
@@ -1319,7 +1446,9 @@ async def _run_fleet(root):
                         None,
                     )
                     threads = (await thread_state())["fleet_threads"]
-                    if not threads[worker_a["run_id"]]["alive"]:
+                    if not threads[worker_a["run_id"]]["alive"] and tree_retired(
+                        fleet_events(), target_b["session_id"]
+                    ):
                         assert finished_a is None or not finished_a["live"], finished_a
                         response = await phone.request.get(
                             stack.origin
@@ -1345,46 +1474,8 @@ async def _run_fleet(root):
                         }
                         break
                     await asyncio.sleep(0.05)
-            await unchanged_a("both-workers-physically-retired")
-            await case.release_agent()
-            target_a = {
-                key: original_a[key]
-                for key in (
-                    "server_epoch",
-                    "console_id",
-                    "session_id",
-                    "incarnation_id",
-                )
-            }
-            async with asyncio.timeout(30):
-                while True:
-                    response = await phone.request.get(
-                        stack.origin + "/api/v1/mobile/console/snapshot",
-                        params={
-                            "protocol_version": "1",
-                            "target": json.dumps(target_a),
-                        },
-                    )
-                    assert response.status == 200
-                    final_a = await response.json()
-                    row = final_a["chats"][0]
-                    if not row["run_id"] and not row["turn_id"]:
-                        actual = [
-                            (message["role"], message["content"])
-                            for message in final_a["messages"]
-                            if message["role"] in {"user", "assistant"}
-                        ]
-                        assert actual == [
-                            ("user", "EXACT_UNRELATED_CHAT_A"),
-                            ("assistant", "EXACT_REPLY:EXACT_UNRELATED_CHAT_A"),
-                        ], actual
-                        result["unrelated_completed"] = final_a
-                        break
-                    await asyncio.sleep(0.05)
-            events = [
-                json.loads(line)
-                for line in (root / "fleet-lifecycle.jsonl").read_text().splitlines()
-            ]
+            await unchanged_a("both-workers-physically-retired", completed_a)
+            events = fleet_events()
             unrelated_calls = [
                 row
                 for row in events
