@@ -150,13 +150,9 @@ def pick_installed_engine(configured: str, installed: tuple[str, ...]) -> str:
 
 def is_openai_endpoint(url: object) -> bool:
     """Whether a remote-whisper URL is OpenAI's own, over https."""
-    try:
-        parts = urlsplit(str(url or ""))
-    except ValueError:
-        return False
-    return parts.scheme.lower() == "https" and (
-        (parts.hostname or "").lower() == "api.openai.com"
-    )
+    from tldw_chatbook.Chat.console_provider_endpoints import is_openai_https_url
+
+    return is_openai_https_url(url)
 
 
 def remote_whisper_host(remote: Mapping[str, Any]) -> str:
@@ -237,7 +233,13 @@ def openai_key_configured(
     folded a legacy ``[API] openai_api_key`` into). The transcription path
     resolves the key it sends the same way, so Cloud is never offered on a
     key remote-whisper cannot send, nor on one the provider config excludes.
+    Pre-merge review (2026-11-12): nor when that table points the provider
+    at another host (``api_base_url`` or an alias) -- its key is then that
+    host's, and the transcription path withholds it from OpenAI alike.
     """
+    from tldw_chatbook.Chat.console_provider_endpoints import (
+        openai_settings_send_to_openai,
+    )
     from tldw_chatbook.Chat.provider_readiness import resolve_provider_credential
     from tldw_chatbook.config import ProviderSettingsError, provider_settings_for_key
     from tldw_chatbook.UI.Wizards.first_run_setup_state import full_config_sections
@@ -248,6 +250,8 @@ def openai_key_configured(
     try:
         table = provider_settings_for_key(sections["api_settings"], "openai")
     except ProviderSettingsError:
+        return False
+    if not openai_settings_send_to_openai(table):
         return False
     legacy = resolve_provider_api_key(sections["API"].get("openai_api_key"))
     if legacy is not None and resolve_provider_api_key(table.get("api_key")) is None:
