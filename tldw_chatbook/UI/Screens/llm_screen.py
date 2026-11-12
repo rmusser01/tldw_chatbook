@@ -4998,7 +4998,7 @@ class LLMScreen(LabScreen):
         claim = self._audio_cpp_model_request_claim
         if claim is not None:
             self._audio_cpp_presentation_worker = self.run_worker(
-                self._present_audio_cpp_request(claim),
+                partial(self._present_audio_cpp_request, claim),
                 group="audio_cpp_request_presentation",
                 exclusive=True,
                 exit_on_error=False,
