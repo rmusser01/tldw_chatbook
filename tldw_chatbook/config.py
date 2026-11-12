@@ -6349,6 +6349,125 @@ def apply_literal_settings_transaction_to_cli_config(
     )
 
 
+class ConfigTextInsertError(ValueError):
+    """config.toml cannot take one more line without rewriting the user's text.
+
+    For example ``tools = { ... }`` (an inline table) or a ``tools.x = ...``
+    dotted key: neither can take a new line or a second ``[tools]`` header.
+    Nothing was written.
+    """
+
+
+_BARE_TOML_KEY = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _text_with_inserted_key(
+    serialized: str, section: str, line: str, expected: Mapping[str, Any]
+) -> str:
+    """``serialized`` plus ``line`` in its ``[section]`` table, nothing else.
+
+    The line goes directly under a ``[section]`` header line, or, with no
+    header that takes it, a new ``[section]`` table is appended at the end.
+    Each candidate must parse to exactly ``expected``; that check also
+    rejects a header-looking line inside a multi-line string.
+
+    Raises:
+        ConfigTextInsertError: No candidate parses to ``expected``.
+    """
+    newline = "\r\n" if "\r\n" in serialized else "\n"
+    header = re.compile(
+        r"[ \t]*\[[ \t]*(?:%s|\"%s\"|'%s')[ \t]*\][ \t]*(?:#.*)?" % ((re.escape(section),) * 3)
+    )
+    lines = serialized.splitlines(keepends=True)
+    candidates = []
+    for index, text in enumerate(lines):
+        if header.fullmatch(text.rstrip("\r\n")):
+            ending = "" if text.endswith(("\r\n", "\n")) else newline
+            candidates.append(
+                "".join(lines[: index + 1]) + ending + line + newline
+                + "".join(lines[index + 1 :])
+            )
+    tail = serialized
+    if tail and not tail.endswith(("\r\n", "\n")):
+        tail += newline
+    candidates.append(
+        tail + (newline if tail else "") + f"[{section}]" + newline + line + newline
+    )
+    for candidate in candidates:
+        try:
+            if tomllib.loads(candidate) == expected:
+                return candidate
+        except tomllib.TOMLDecodeError:
+            continue
+    raise ConfigTextInsertError("config_text_insert_unsupported")
+
+
+def insert_absent_cli_config_bool(section: str, key: str, value: bool) -> bool:
+    """Add ``key = true|false`` to config.toml's ``[section]``, keeping its text.
+
+    TASK-34100.5.3.2 (review round 1, F1-10): an automatic write the user did
+    not ask for (the one-time Full agent tools upgrade) must not re-serialise
+    the file the way every settings save does, which drops comments and
+    reorders tables. This one adds a single line and keeps every other byte,
+    line endings included. The raw file is re-read under the config write
+    lock, so a value set meanwhile is never overwritten.
+
+    Args:
+        section: A bare top-level table name, e.g. ``"tools"``.
+        key: A bare key, e.g. ``"full_agent_tools_enabled"``.
+        value: The boolean to write.
+
+    Returns:
+        ``True`` when the line was written and the runtime config republished;
+        ``False`` when the raw file already sets the key (nothing written).
+
+    Raises:
+        ValueError: ``section`` or ``key`` is not a bare TOML key, or the
+            file's ``[section]`` is not a table.
+        ConfigTextInsertError: The file cannot take the line without a rewrite.
+        FileNotFoundError: There is no config file.
+        ConfigPostCommitError: The line was written but the runtime refresh
+            after it failed.
+        Exception: Any read, parse, lock or write failure; nothing written.
+    """
+    if not (_BARE_TOML_KEY.fullmatch(section) and _BARE_TOML_KEY.fullmatch(key)):
+        raise ValueError("config_text_insert_key_not_bare")
+    config_path = _get_effective_config_path()
+    with _config_write_lock(config_path):
+        serialized = _try_read_cli_config_serialized_unlocked(config_path)
+        if serialized is None:
+            raise FileNotFoundError("config_file_absent")
+        current = tomllib.loads(serialized)
+        table = current.get(section, {})
+        if not isinstance(table, dict):
+            raise ValueError("config_text_insert_section_not_a_table")
+        if key in table:
+            return False
+        expected = copy.deepcopy(current)
+        expected.setdefault(section, {})[key] = bool(value)
+        literal = "true" if value else "false"
+        replacement = _text_with_inserted_key(
+            serialized, section, f"{key} = {literal}", expected
+        )
+        _commit_serialized_cli_config_unlocked(
+            config_path, replacement, _prepare_config_parent(config_path)
+        )
+        logger.info(
+            "Added one config line, keeping the rest of the file: [{}] {}",
+            section,
+            key,
+        )
+        try:
+            _publish_runtime_config_unlocked(
+                raw_config=tomllib.loads(replacement), config_path=config_path
+            )
+        except Exception:  # The line is on disk; report that, not a failed write.
+            raise ConfigPostCommitError(
+                ConfigFileSnapshot(config_path, replacement), None
+            ) from None
+        return True
+
+
 def refresh_runtime_config_from_cli_config() -> LiteralConfigMutationResult:
     """Republish the existing on-disk config without writing the file."""
 

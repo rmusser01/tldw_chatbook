@@ -36,9 +36,10 @@ or the UI loop. In order:
    left exactly as it is; the marker is recorded.
 3. The signals are read cheaply and read-only (the runs database through the
    private SQLite seam, never created or migrated), under a time budget.
-4. Signals found: one literal config mutation sets the one key, re-checked
-   against the raw file under the config write lock. Then the marker.
-   No signal: only the marker.
+4. Signals found: one line, ``full_agent_tools_enabled = true``, is added
+   under ``[tools]``, re-checked against the raw file under the config write
+   lock; every other byte of config.toml (comments, table order, spacing) is
+   kept. Then the marker. No signal: only the marker.
 
 Any failure writes nothing and records no marker, so the profile stays on the
 light set for this launch and the next launch tries again. Logs name the
@@ -298,41 +299,25 @@ def _config_sets_key_explicitly() -> bool:
 
 
 def _write_full_agent_tools_on() -> bool:
-    """Set ``[tools] full_agent_tools_enabled = true`` and nothing else.
+    """Add the one line ``full_agent_tools_enabled = true`` under ``[tools]``.
 
-    The builder re-reads the raw file under the config write lock, so a value
-    the user set meanwhile (true or false) is never overwritten.
+    Every other byte of config.toml is kept: the user's comments, table
+    order and spacing (review round 1, F1-10 -- the settings writer
+    re-serialises the whole file). The raw file is re-read under the config
+    write lock, so a value the user set meanwhile (true or false) is never
+    overwritten.
 
     Returns:
         ``True`` when the key was written; ``False`` when the raw file already
         set it by the time the lock was held (nothing written).
 
     Raises:
-        RuntimeError: The write did not land.
+        Exception: The write did not land, or the file cannot take the line
+            without a rewrite (``ConfigTextInsertError``); nothing written.
     """
-    from tldw_chatbook.config import (
-        LiteralSettingsMutation,
-        apply_literal_settings_transaction_to_cli_config,
-    )
+    from tldw_chatbook.config import insert_absent_cli_config_bool
 
-    explicit_under_lock = False
-
-    def build(snapshot: Any) -> Any:
-        nonlocal explicit_under_lock
-        explicit_under_lock = _explicit_in(dict(snapshot.raw_values))
-        if explicit_under_lock:
-            return LiteralSettingsMutation(section_values={}, delete_keys={})
-        return LiteralSettingsMutation(
-            section_values={("tools",): {FULL_AGENT_TOOLS_GATE_KEY: True}},
-            delete_keys={},
-        )
-
-    result = apply_literal_settings_transaction_to_cli_config(build)
-    if explicit_under_lock:
-        return False
-    if not (result.file_replaced and result.caches_reloaded):
-        raise RuntimeError(f"config write did not land ({result.failure_phase})")
-    return True
+    return insert_absent_cli_config_bool("tools", FULL_AGENT_TOOLS_GATE_KEY, True)
 
 
 def run_full_agent_tools_upgrade(

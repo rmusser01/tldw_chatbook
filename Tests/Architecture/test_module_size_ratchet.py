@@ -900,6 +900,9 @@ _BUDGETS: dict[str, int] = {
     # DB/ChaChaNotes_DB, and config.py loads it lazily from there (types stay
     # under TYPE_CHECKING, per #3470); dev 4a9c4c1132 (#3480) shrank the file,
     # so this branch measures 8,837 (dev 8,835, +2); exact measurement.
+    # owner decision 2026-10-04 (expand limits): TASK-34100.5.3.2 +119 on
+    # dev's measured 8,835 (the one-line config writer that keeps the user's
+    # comments and layout, review round 1 F1-10): 8862 -> 8954.
     "tldw_chatbook/config.py": 8837,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.

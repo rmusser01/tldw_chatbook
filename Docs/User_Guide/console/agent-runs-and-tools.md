@@ -86,9 +86,10 @@ features:
 - an earlier Console reply that called a tool outside the light set (a
   workspace, web or Watchlists tool, a sub-agent, and so on).
 
-If it finds any of them, it turns **Full agent tools** on for you — it writes
-`full_agent_tools_enabled = true` under `[tools]` in config.toml and changes
-nothing else — so plain chat keeps the tools it had. A profile with none of
+If it finds any of them, it turns **Full agent tools** on for you, so plain
+chat keeps the tools it had. It adds one line, `full_agent_tools_enabled =
+true`, under `[tools]` in config.toml (or a new `[tools]` table at the end of
+the file), and keeps every other byte, your comments and layout included. A profile with none of
 them, and every new profile, stays on the light set, and its config.toml is
 left as it was. The check runs at most once per profile and never changes a
 value you set yourself, so switching Full agent tools off afterwards keeps
