@@ -26883,8 +26883,7 @@ class SettingsScreen(BaseAppScreen):
             ),
             "unknown",
         )
-        # task-1369: readable fallback when the preview counts have not
-        # loaded yet -- never interpolate "Loading"/"unknown" into the copy.
+        # task-1369: Keep placeholder counts out of confirmation copy.
         if pending_copy.strip().lower() in {"", "loading", "refreshing", "unknown"}:
             pending_line = "Sync will push all pending changes."
         else:
