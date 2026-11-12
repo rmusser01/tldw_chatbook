@@ -25413,3 +25413,44 @@ waited out the rest of the run in 3 of 3 runs). The gaps are still tiny: the loc
 - A gate at a commit boundary proves the lock is released there, not that
   anyone can get it. Also time a writer that arrives inside an item, and
   report both.
+
+## A Pilot key or click sent while a Notes canvas rebuilds is lost, and a race too rare to reproduce can still be forced (PR #3423 CI, 2026-11-12)
+
+**Incident.** CI run 42429871004 timed out three polish-1b UI pins, each in
+its own shard: "timed out waiting for Done", "timed out waiting for the export
+file dialog with its filename focused" and "timed out waiting for r to restore
+the note (deleted now 25)". Local 10-run loops under load ~50 reproduced only
+the first (5 failures in 17 runs); the other two passed 34 of 34. A probe
+plugin logged every `Screen.set_focus`, every canvas recompose request and
+every Pilot click and key. One mechanism explained all three. A Notes canvas
+recomposes whenever a read lands (a tree slice, the Trash read, a release's
+busy-line clear). Each recompose parks focus on a pane grip until its replay
+hands it back, and the new controls have no region until the next layout. The
+tests waited for "focus is on X" or "the text is painted". That holds between
+two rebuilds, so Enter and `r` went into the next rebuild and reached the grip.
+The click on Done took its coordinates from the layout before
+`resize_terminal` had settled. It hit the rail's All artifacts row and left
+Notes.
+
+Forcing made the two rare races deterministic. One scratch plugin delayed the
+Notes reads by 3 s. It held a key pressed while a read was outstanding until
+the next rebuild had pruned focus. Another delayed the screen's resize by
+0.2 s and delivered each click 0.3 s after taking its coordinates. Each
+original test went RED with its exact CI message, 2 of 2 runs each, and GREEN
+(3 of 3) once the tests waited for a settled screen.
+
+**What to do.**
+- Before a key or click in a Notes Pilot test, wait for `notes_settled`
+  (`Tests/UI/library_notes_bulk_support.py`, TASK-34789's `_settled_canvas`
+  rule). It holds when no `library_notes_tree*` or `library_notes_trash`
+  worker is unfinished and no `LibraryNotesCanvas` has a rebuild queued or
+  running. Confirm it again after one `pilot.pause()`.
+- Click through `click_settled`. It also checks that the control is painted
+  at its own region, and it asserts that the click landed. `pilot.click`
+  returns that answer, and these tests had been discarding it.
+- `pilot.resize_terminal` returns after one idle pause, before Textual's
+  resize timer and the layout it triggers. Wait for the target layout before
+  clicking; here, Done back at the region recorded before the round trip.
+- When a CI-only race will not reproduce locally, stretch its window rather
+  than looping more. Delay whatever lands late, and hold the gesture until
+  the state the race needs.
