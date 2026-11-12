@@ -7,6 +7,7 @@ import base64
 import hashlib
 import json
 import threading
+from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
 
@@ -466,8 +467,15 @@ def _keep_both_request(
     return request
 
 
+@pytest.fixture
+def keep_both_cleanup(tmp_path):
+    with ExitStack() as cleanup:
+        yield cleanup
+
+
 async def _prepare_real_keep_both(
     tmp_path: Path,
+    cleanup: ExitStack,
 ) -> tuple[
     Path,
     Path,
@@ -483,6 +491,7 @@ async def _prepare_real_keep_both(
     sync_root.mkdir()
     (sync_root / "note.md").write_bytes(b"file side")
     database = CharactersRAGDB(notes_path, client_id="before")
+    cleanup.callback(database.close_idle_connections)
     assert database.add_note("Title", "before", "note-1") == "note-1"
     for version in range(1, 4):
         assert database.update_note(
@@ -490,6 +499,7 @@ async def _prepare_real_keep_both(
         )
     authority = _real_keep_both_authority(database)
     store = NotesDeviceStateStore(state_path)
+    cleanup.callback(store.close)
     store.create_root(
         NotesSyncRootRecord(
             root_id="root-1",
@@ -688,6 +698,7 @@ async def test_keep_both_folders_checkpoint_actual_reused_ids_and_versions(
 @pytest.mark.parametrize("substitution", ("identity", "version"))
 async def test_keep_both_restart_rejects_checkpointed_folder_substitution_before_effect(
     tmp_path: Path,
+    keep_both_cleanup: ExitStack,
     monkeypatch: pytest.MonkeyPatch,
     substitution: str,
 ) -> None:
@@ -701,7 +712,7 @@ async def test_keep_both_restart_rejects_checkpointed_folder_substitution_before
         database,
         authority,
         request,
-    ) = await _prepare_real_keep_both(tmp_path)
+    ) = await _prepare_real_keep_both(tmp_path, keep_both_cleanup)
     repository = LocalNoteFolderRepository(database)
     parent = repository.create_folder(
         folder_id="actual-parent",
@@ -747,10 +758,13 @@ async def test_keep_both_restart_rejects_checkpointed_folder_substitution_before
                 "UPDATE note_folders SET version = version + 1 WHERE id = ?",
                 (parent.folder_id,),
             )
-    database.close_connection()
+    store.close()
+    assert database.close_idle_connections()
 
     reopened_database = CharactersRAGDB(notes_path, client_id="substitution")
+    keep_both_cleanup.callback(reopened_database.close_idle_connections)
     reopened_store = NotesDeviceStateStore(state_path)
+    keep_both_cleanup.callback(reopened_store.close)
     with PosixNotesSyncFilesystem(sync_root) as fresh_filesystem:
         fresh_executor = NotesSyncExecutor(
             reopened_store,
@@ -769,12 +783,13 @@ async def test_keep_both_restart_rejects_checkpointed_folder_substitution_before
         .fetchone()[0]
         == 1
     )
-    reopened_database.close_connection()
+    assert reopened_database.close_idle_connections()
 
 
 @pytest.mark.asyncio
 async def test_keep_both_restart_rejects_same_length_durable_payload_mutation(
     tmp_path: Path,
+    keep_both_cleanup: ExitStack,
 ) -> None:
     if not PosixNotesSyncFilesystem.supports_writes():
         pytest.skip("guarded POSIX replacement is unavailable")
@@ -786,7 +801,7 @@ async def test_keep_both_restart_rejects_same_length_durable_payload_mutation(
         database,
         authority,
         request,
-    ) = await _prepare_real_keep_both(tmp_path)
+    ) = await _prepare_real_keep_both(tmp_path, keep_both_cleanup)
 
     def crash_after_admission(stage: NotesSyncOperationState) -> None:
         if stage is NotesSyncOperationState.RECOVERY_ADMITTED:
@@ -806,10 +821,13 @@ async def test_keep_both_restart_rejects_same_length_durable_payload_mutation(
             "UPDATE notes_sync_recovery SET payload = ? WHERE recovery_id = ?",
             (b"alter!", request.recovery_id),
         )
-    database.close_connection()
+    store.close()
+    assert database.close_idle_connections()
 
     reopened_database = CharactersRAGDB(notes_path, client_id="payload-mutation")
+    keep_both_cleanup.callback(reopened_database.close_idle_connections)
     reopened_store = NotesDeviceStateStore(state_path)
+    keep_both_cleanup.callback(reopened_store.close)
     with PosixNotesSyncFilesystem(sync_root) as fresh_filesystem:
         fresh_executor = NotesSyncExecutor(
             reopened_store,
@@ -833,7 +851,7 @@ async def test_keep_both_restart_rejects_same_length_durable_payload_mutation(
         .fetchone()[0]
         == 0
     )
-    reopened_database.close_connection()
+    assert reopened_database.close_idle_connections()
 
 
 @pytest.mark.asyncio
@@ -841,6 +859,7 @@ async def test_keep_both_restart_rejects_same_length_durable_payload_mutation(
 @pytest.mark.parametrize("authority_mutation", ("root_direction", "binding"))
 async def test_keep_both_restart_refences_owner_before_any_later_effect(
     tmp_path: Path,
+    keep_both_cleanup: ExitStack,
     monkeypatch: pytest.MonkeyPatch,
     crash_substage: str,
     authority_mutation: str,
@@ -855,7 +874,7 @@ async def test_keep_both_restart_refences_owner_before_any_later_effect(
         database,
         authority,
         request,
-    ) = await _prepare_real_keep_both(tmp_path)
+    ) = await _prepare_real_keep_both(tmp_path, keep_both_cleanup)
     await _crash_real_keep_both_at_substage(
         store=store,
         authority=authority,
@@ -878,10 +897,13 @@ async def test_keep_both_restart_refences_owner_before_any_later_effect(
             )
     expected_binding = store.get_binding(request.binding_id)
     expected_effects = _keep_both_database_effects(database)
-    database.close_connection()
+    store.close()
+    assert database.close_idle_connections()
 
     reopened_store = NotesDeviceStateStore(state_path)
+    keep_both_cleanup.callback(reopened_store.close)
     reopened_database = CharactersRAGDB(notes_path, client_id="authority-mutation")
+    keep_both_cleanup.callback(reopened_database.close_idle_connections)
     fresh_authority = _BlockingKeepBothAuthority(
         _real_keep_both_authority(reopened_database),
         reopened_store,
@@ -913,7 +935,7 @@ async def test_keep_both_restart_refences_owner_before_any_later_effect(
     assert _keep_both_database_effects(reopened_database) == expected_effects
     recovery = reopened_store.load_operation_recovery(request.operation_id)
     assert json.loads(recovery.metadata)["conflict_substage"] == crash_substage
-    reopened_database.close_connection()
+    assert reopened_database.close_idle_connections()
 
 
 @pytest.mark.asyncio
@@ -924,6 +946,7 @@ async def test_keep_both_restart_refences_owner_before_any_later_effect(
 @pytest.mark.parametrize("freshness_drift", ("note", "file"))
 async def test_keep_both_restart_refences_reviewed_pair_before_early_artifacts(
     tmp_path: Path,
+    keep_both_cleanup: ExitStack,
     monkeypatch: pytest.MonkeyPatch,
     crash_substage: str,
     freshness_drift: str,
@@ -938,7 +961,7 @@ async def test_keep_both_restart_refences_reviewed_pair_before_early_artifacts(
         database,
         authority,
         request,
-    ) = await _prepare_real_keep_both(tmp_path)
+    ) = await _prepare_real_keep_both(tmp_path, keep_both_cleanup)
     await _crash_real_keep_both_at_substage(
         store=store,
         authority=authority,
@@ -947,10 +970,13 @@ async def test_keep_both_restart_refences_reviewed_pair_before_early_artifacts(
         crash_substage=crash_substage,
         monkeypatch=monkeypatch,
     )
-    database.close_connection()
+    store.close()
+    assert database.close_idle_connections()
 
     reopened_store = NotesDeviceStateStore(state_path)
+    keep_both_cleanup.callback(reopened_store.close)
     reopened_database = CharactersRAGDB(notes_path, client_id="freshness-drift")
+    keep_both_cleanup.callback(reopened_database.close_idle_connections)
     fresh_authority = _BlockingKeepBothAuthority(
         _real_keep_both_authority(reopened_database),
         reopened_store,
@@ -988,13 +1014,14 @@ async def test_keep_both_restart_refences_reviewed_pair_before_early_artifacts(
     assert (sync_root / "note.md").read_bytes() == (
         b"changed after reconstruction" if freshness_drift == "file" else b"file side"
     )
-    reopened_database.close_connection()
+    assert reopened_database.close_idle_connections()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("authority_mutation", ("copy_version", "placement_version"))
 async def test_keep_both_restart_rejects_changed_copy_or_placement_authority(
     tmp_path: Path,
+    keep_both_cleanup: ExitStack,
     monkeypatch: pytest.MonkeyPatch,
     authority_mutation: str,
 ) -> None:
@@ -1008,7 +1035,7 @@ async def test_keep_both_restart_rejects_changed_copy_or_placement_authority(
         database,
         authority,
         request,
-    ) = await _prepare_real_keep_both(tmp_path)
+    ) = await _prepare_real_keep_both(tmp_path, keep_both_cleanup)
     crash_substage = (
         "copy_created" if authority_mutation == "copy_version" else "placement_created"
     )
@@ -1053,10 +1080,13 @@ async def test_keep_both_restart_rejects_changed_copy_or_placement_authority(
         assert revived.membership_id == placement[0].membership_id
         assert revived.version == placement[0].version + 2
     expected_effects = _keep_both_database_effects(database)
-    database.close_connection()
+    store.close()
+    assert database.close_idle_connections()
 
     reopened_store = NotesDeviceStateStore(state_path)
+    keep_both_cleanup.callback(reopened_store.close)
     reopened_database = CharactersRAGDB(notes_path, client_id="effect-mutation")
+    keep_both_cleanup.callback(reopened_database.close_idle_connections)
     fresh_authority = _real_keep_both_authority(reopened_database)
     with PosixNotesSyncFilesystem(sync_root) as fresh_filesystem:
         executor = NotesSyncExecutor(
@@ -1078,7 +1108,7 @@ async def test_keep_both_restart_rejects_changed_copy_or_placement_authority(
     )
     assert reopened_database.get_note_by_id("note-1")["content"] == "before"
     assert _keep_both_database_effects(reopened_database) == expected_effects
-    reopened_database.close_connection()
+    assert reopened_database.close_idle_connections()
 
 
 @pytest.mark.asyncio
@@ -1095,6 +1125,7 @@ async def test_keep_both_restart_rejects_changed_copy_or_placement_authority(
 @pytest.mark.parametrize("authority_drift", ("copy_version", "placement_version"))
 async def test_keep_both_restart_verifies_conflict_pair_before_every_later_effect(
     tmp_path: Path,
+    keep_both_cleanup: ExitStack,
     monkeypatch: pytest.MonkeyPatch,
     crash_substage: str,
     authority_drift: str,
@@ -1109,7 +1140,7 @@ async def test_keep_both_restart_verifies_conflict_pair_before_every_later_effec
         database,
         authority,
         request,
-    ) = await _prepare_real_keep_both(tmp_path)
+    ) = await _prepare_real_keep_both(tmp_path, keep_both_cleanup)
     await _crash_real_keep_both_at_substage(
         store=store,
         authority=authority,
@@ -1152,10 +1183,13 @@ async def test_keep_both_restart_verifies_conflict_pair_before_every_later_effec
         assert revived.version == placement[0].version + 2
     expected_effects = _keep_both_database_effects(database)
     expected_binding = store.get_binding(request.binding_id)
-    database.close_connection()
+    store.close()
+    assert database.close_idle_connections()
 
     reopened_store = NotesDeviceStateStore(state_path)
+    keep_both_cleanup.callback(reopened_store.close)
     reopened_database = CharactersRAGDB(notes_path, client_id="pair-drift")
+    keep_both_cleanup.callback(reopened_database.close_idle_connections)
     fresh_authority = _BlockingKeepBothAuthority(
         _real_keep_both_authority(reopened_database),
         reopened_store,
@@ -1178,7 +1212,7 @@ async def test_keep_both_restart_verifies_conflict_pair_before_every_later_effec
     assert _keep_both_database_effects(reopened_database) == expected_effects
     recovery = reopened_store.load_operation_recovery(request.operation_id)
     assert json.loads(recovery.metadata)["conflict_substage"] == crash_substage
-    reopened_database.close_connection()
+    assert reopened_database.close_idle_connections()
 
 
 def test_keep_both_folders_checkpoint_records_authority_without_byte_growth(
@@ -1297,6 +1331,7 @@ async def test_keep_both_restart_reconstructs_all_private_authority_after_admiss
 @pytest.mark.parametrize("crash_substage", _CONFLICT_SUBSTAGES)
 async def test_keep_both_restart_reopens_every_durable_substage_with_real_authority(
     tmp_path: Path,
+    keep_both_cleanup: ExitStack,
     monkeypatch: pytest.MonkeyPatch,
     crash_substage: str,
 ) -> None:
@@ -1308,6 +1343,7 @@ async def test_keep_both_restart_reopens_every_durable_substage_with_real_author
     sync_root.mkdir()
     (sync_root / "note.md").write_bytes(b"file side")
     database = CharactersRAGDB(notes_path, client_id="restart-before")
+    keep_both_cleanup.callback(database.close_idle_connections)
     assert database.add_note("Title", "before", "note-1") == "note-1"
     for version in range(1, 4):
         assert database.update_note(
@@ -1315,6 +1351,7 @@ async def test_keep_both_restart_reopens_every_durable_substage_with_real_author
         )
     authority = _real_keep_both_authority(database)
     store = NotesDeviceStateStore(state_path)
+    keep_both_cleanup.callback(store.close)
     store.create_root(
         NotesSyncRootRecord(
             root_id="root-1",
@@ -1368,10 +1405,13 @@ async def test_keep_both_restart_reopens_every_durable_substage_with_real_author
                 recovery_capacity_bytes=65_536,
                 after_stage=crash_after_admission,
             ).execute(request)
-    database.close_connection()
+    store.close()
+    assert database.close_idle_connections()
 
     reopened_store = NotesDeviceStateStore(state_path)
+    keep_both_cleanup.callback(reopened_store.close)
     reopened_database = CharactersRAGDB(notes_path, client_id="restart-after")
+    keep_both_cleanup.callback(reopened_database.close_idle_connections)
     fresh_authority = _real_keep_both_authority(reopened_database)
     with PosixNotesSyncFilesystem(sync_root) as fresh_filesystem:
         fresh_executor = NotesSyncExecutor(
@@ -1402,7 +1442,7 @@ async def test_keep_both_restart_reopens_every_durable_substage_with_real_author
         ).fetchone()[0]
         == 1
     )
-    reopened_database.close_connection()
+    assert reopened_database.close_idle_connections()
 
 
 @pytest.mark.asyncio
@@ -1422,6 +1462,7 @@ async def test_keep_both_restart_reopens_every_durable_substage_with_real_author
 )
 async def test_keep_both_cancellation_joins_effect_and_checkpoint_then_fresh_resumes(
     tmp_path: Path,
+    keep_both_cleanup: ExitStack,
     monkeypatch: pytest.MonkeyPatch,
     cancel_target: str,
     following_substage: str,
@@ -1436,7 +1477,7 @@ async def test_keep_both_cancellation_joins_effect_and_checkpoint_then_fresh_res
         database,
         authority,
         request,
-    ) = await _prepare_real_keep_both(tmp_path)
+    ) = await _prepare_real_keep_both(tmp_path, keep_both_cleanup)
     blocking = _BlockingKeepBothAuthority(authority, store, cancel_target)
     if cancel_target in {"file_recheck", "binding_update", "final_verification"}:
         original_advance = store.advance_conflict_substage
@@ -1478,11 +1519,14 @@ async def test_keep_both_cancellation_joins_effect_and_checkpoint_then_fresh_res
 
     metadata = json.loads(store.load_operation_recovery("operation-1").metadata)
     assert metadata["conflict_substage"] == following_substage
-    database.close_connection()
+    store.close()
+    assert database.close_idle_connections()
 
     reopened_database = CharactersRAGDB(notes_path, client_id="after")
+    keep_both_cleanup.callback(reopened_database.close_idle_connections)
     fresh_authority = _real_keep_both_authority(reopened_database)
     reopened_store = NotesDeviceStateStore(state_path)
+    keep_both_cleanup.callback(reopened_store.close)
     with PosixNotesSyncFilesystem(sync_root) as fresh_filesystem:
         fresh_executor = NotesSyncExecutor(
             reopened_store,
@@ -1494,7 +1538,7 @@ async def test_keep_both_cancellation_joins_effect_and_checkpoint_then_fresh_res
         result = await fresh_executor.resume(reconstructed)
 
     assert result.state is NotesSyncOperationState.COMPLETED, result.reason_code
-    reopened_database.close_connection()
+    assert reopened_database.close_idle_connections()
 
 
 def test_keep_both_substage_cas_is_capacity_neutral_and_exactly_forward(
