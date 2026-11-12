@@ -627,7 +627,7 @@ def recovery_adapters() -> tuple[_schema.OwnerAdapter, ...]:
             None,
             "agent_runs.db",
             (18, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33),
-            _schema._AGENT_RUNS_SCHEMA,
+            (*_schema._AGENT_RUNS_SCHEMA, *_schema._LEGACY_WORKFLOW_SCHEMAS),
             ("db.chachanotes.primary",),
             optional_default=True,
         ),

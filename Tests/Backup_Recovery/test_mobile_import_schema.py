@@ -17,7 +17,7 @@ from tldw_chatbook.DB.recovery_operations import _AGENT_RUNS_SCHEMA, recovery_ad
     [
         ("chat.db", "db.chachanotes.primary", 81, 87),
         ("workspaces.db", "db.workspaces", 8, 11),
-        ("runs.db", "db.agent_runs", 25, 27),
+        ("runs.db", "db.agent_runs", 25, 33),
     ],
 )
 def test_real_legacy_source_heads_capture_and_migrate_exactly(
@@ -66,7 +66,7 @@ def test_real_legacy_source_heads_capture_and_migrate_exactly(
 @pytest.mark.parametrize(
     "catalog", [catalog for version, catalog in _AGENT_RUNS_SCHEMA if version == 25]
 )
-def test_every_qualified_v25_layout_migrates_to_exact_v27(tmp_path, catalog):
+def test_every_qualified_v25_layout_migrates_to_exact_v33(tmp_path, catalog):
     path = tmp_path / "agent_runs.db"
     with closing(sqlite3.connect(path)) as conn:
         for sql in sorted(catalog, key=lambda sql: not sql.startswith("CREATE TABLE")):
@@ -81,6 +81,49 @@ def test_every_qualified_v25_layout_migrates_to_exact_v27(tmp_path, catalog):
     assert validate_candidate(owner, path, Event(), migrate=False) == ()
     assert validate_candidate(owner, path, Event(), migrate=True) == ()
     assert validate_candidate(owner, path, Event(), migrate=False) == ()
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("version", [26, 28, 30])
+def test_populated_native_workflow_checkpoints_validate_before_mobile_upgrade(
+    tmp_path, version
+):
+    from Tests.Agents.workflow_support import make_workflow_request
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    path = tmp_path / "historical-runs.db"
+    catalog = next(sql for stamp, sql in _AGENT_RUNS_SCHEMA if stamp == version)
+    with closing(AgentRunsDB(":memory:")) as db:
+        created = db.workflow_runs.create(
+            make_workflow_request(tmp_path), launch_id="historical"
+        )
+        closed = db.workflow_runs.set_status(
+            created.id, status="closed", expected_control_revision=created.control_revision
+        )
+        db.workflow_runs.remove_payloads(
+            closed.id, expected_control_revision=closed.control_revision
+        )
+        with db.connection() as original, closing(sqlite3.connect(path)) as installed:
+            for sql in sorted(catalog, key=lambda sql: not sql.startswith("CREATE TABLE")):
+                if not sql.startswith("CREATE TABLE sqlite_sequence"):
+                    installed.execute(sql)
+            installed.execute("INSERT INTO schema_version VALUES (?)", (version,))
+            for table in ("automatic_work_chains", "workflow_runs"):
+                columns = tuple(row[1] for row in installed.execute(f"PRAGMA table_info({table})"))
+                names = ", ".join(columns)
+                values = original.execute(f"SELECT {names} FROM {table}").fetchone()
+                installed.execute(
+                    f"INSERT INTO {table} ({names}) VALUES ({', '.join('?' for _ in columns)})",
+                    tuple(values),
+                )
+            installed.commit()
+    path.chmod(0o600)
+    owner = next(item for item in recovery_adapters() if item.owner_id == "db.agent_runs")
+    assert validate_candidate(owner, path, Event(), migrate=False) == ()
+    assert validate_candidate(owner, path, Event(), migrate=True) == ()
+    with closing(sqlite3.connect(path)) as conn:
+        assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (33,)
+        assert conn.execute("SELECT id, status FROM workflow_runs").fetchall() == [(created.id, "removed")]
 
 
 def test_owner_migration_failure_rolls_back_new_tables_and_version(
@@ -108,7 +151,7 @@ def test_owner_migration_failure_rolls_back_new_tables_and_version(
         AgentRunsDB(path, execution_owner=owner)
     with closing(sqlite3.connect(path)) as conn:
         assert (
-            conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 26
+            conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 32
         )
         assert (
             conn.execute(
@@ -139,7 +182,7 @@ def test_all_registered_native_mobile_column_projections(tmp_path):
     )
     specs = {(s.family, s.table): s for s in _TABLES}
     schemas = [
-        ("runs", v, c, None) for v, c in _AGENT_RUNS_SCHEMA if v in (24, 25, 26, 27)
+        ("runs", v, c, None) for v, c in _AGENT_RUNS_SCHEMA if v in (24, 25, 32, 33)
     ]
     schemas += [
         ("workspaces", v, c, None)
@@ -173,7 +216,7 @@ def test_all_registered_native_mobile_column_projections(tmp_path):
     for family, version, catalog, subscriptions_version in schemas:
         shared = family == "shared_subscriptions"
         projected_family = "chat" if shared else family
-        target = {"chat": 87, "workspaces": 11, "runs": 27}[projected_family]
+        target = {"chat": 87, "workspaces": 11, "runs": 33}[projected_family]
         purpose = "canonical" if version == target else "legacy"
         with closing(sqlite3.connect(":memory:")) as conn:
             _install_canvas_revision_payload_validator(conn)
@@ -246,7 +289,7 @@ def test_all_registered_native_mobile_column_projections(tmp_path):
                         for row in metadata
                     ],
                     "disposition": "native_shared_backup_preserved_no_mobile_source_grant"
-                    if shared or (family, version) in {("runs", 26), ("chat", 86)}
+                    if shared or (family, version) in {("runs", 32), ("chat", 86)}
                     else (
                         "canonical_preserved"
                         if purpose == "canonical"
@@ -269,7 +312,7 @@ def test_all_registered_native_mobile_column_projections(tmp_path):
                     "version": version,
                     "subscriptions_version": subscriptions_version,
                     "mobile_member": "none"
-                    if shared or (family, version) in {("runs", 26), ("chat", 86)}
+                    if shared or (family, version) in {("runs", 32), ("chat", 86)}
                     else purpose,
                     "catalog_sha256": hashlib.sha256(
                         repr(catalog).encode()

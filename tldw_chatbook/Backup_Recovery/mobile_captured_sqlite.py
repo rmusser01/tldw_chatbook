@@ -27,7 +27,7 @@ from .storage_admission import MaintenanceSession, _CaptureFileDescriptors, _loc
 _FAMILIES = (
     ("chat", "db.chachanotes.primary", "chat.db", (81, 82, 83, 84, 85), 87),
     ("workspaces", "db.workspaces", "workspaces.db", (8, 9, 10), 11),
-    ("runs", "db.agent_runs", "runs.db", (24, 25), 27),
+    ("runs", "db.agent_runs", "runs.db", (24, 25), 33),
 )
 _PAGE_ROWS = 1000
 _PAGE_BYTES = 16 * 1024**2
@@ -160,6 +160,8 @@ _row_data_marker = ContextVar("mobile_plan_row_data", default=None)
 
 def _row_data(reads, budget=None):
     """Require agreement before a retained page or clone can be used."""
+    if type(reads) is _CapturedSQLite and reads.active is False:
+        raise ValueError("mobile_sqlite_inactive")
     if (
         type(reads) is not _CapturedSQLite
         or not reads.active
@@ -1541,7 +1543,7 @@ def _sqlite_reads(captured, *, password, cancel):
                     for row in connection.execute(
                         "SELECT name FROM sqlite_schema WHERE type='table'"
                     )
-                )
+                ).difference(restrictions.workflow_statistics)
                 _verify_candidate(scope, restrictions, candidate, payload.sha256)
                 scope._connections[purpose, family] = (
                     connection,

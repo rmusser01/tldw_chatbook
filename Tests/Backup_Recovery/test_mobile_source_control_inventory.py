@@ -367,9 +367,9 @@ def test_distinct_alias_capture_preserves_source_and_canonical_bytes(
                 ("legacy", "chat", 81),
                 ("legacy", "workspaces", 8),
                 ("legacy", "runs", 25),
-                ("canonical", "chat", 82),
-                ("canonical", "workspaces", 9),
-                ("canonical", "runs", 26),
+                ("canonical", "chat", 87),
+                ("canonical", "workspaces", 11),
+                ("canonical", "runs", 33),
             )
             columns, rows = reads.page("legacy", "chat", "messages")
             assert "private fixture prompt" in [
@@ -426,8 +426,8 @@ def test_distinct_alias_capture_preserves_native_optional_runs_absence(
                 password=b"test-private-mobile-rollback", cancel=Event()
             ) as reads,
         ):
-            assert ("canonical", "chat", 82) in reads.versions
-            assert ("canonical", "workspaces", 9) in reads.versions
+            assert ("canonical", "chat", 87) in reads.versions
+            assert ("canonical", "workspaces", 11) in reads.versions
             assert not any(row[:2] == ("canonical", "runs") for row in reads.versions)
             with pytest.raises(ValueError, match="member_absent"):
                 reads.page("canonical", "runs", "agent_runs")

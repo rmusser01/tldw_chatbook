@@ -434,14 +434,14 @@ input/output manifests. Other shell commands do not satisfy approved checks.
 Effectful workflow hooks and skill scripts remain refused where native notification
 or process/reader cleanup is not owned. Ordinary hook/script behavior is unchanged.
 
-AgentRuns v27 stores immutable checkpoints and inert resume-command history; v28
-stores bounded Change Review windows and normalized snapshot references; v29 stores
+AgentRuns v28 stores immutable checkpoints and inert resume-command history. V29
+stores bounded Change Review windows and normalized snapshot references. V30 stores
 repair-instruction digests. Windows distinguish unresolved ending publication from
 an exact zero-row ending. Each workflow allows at most 64 windows, 64 KiB per
 window, and 64 roots. Required references survive pruning until explicit permitted
 payload removal. Existing immutable plan/result/checkpoint JSON remains byte-stable.
 
-AgentRuns v30 adds one fixed-size `recovery_reviewed_revision` field. The additive
+AgentRuns v31 adds one fixed-size `recovery_reviewed_revision` field. The additive
 FULL migration, standalone SQL and installed backup catalog agree. Old histories
 upgrade with zero, never inferred review. A positive marker is immutable, belongs
 to a closed/removed workflow and cannot exceed its control revision. It consumes
@@ -563,7 +563,7 @@ is unsupported.
 
 ## Imported automatic authority (ADR-244)
 
-Persistent exact holds in AgentRuns27 exclude imported survivors from native
+Persistent exact holds in AgentRuns33 exclude imported survivors from native
 pending-result, launch and delivery projections. Automatic-work admission checks
 the held identity and shared allowance family before idempotent attempt or
 reservation returns, and before final acceptance. Recovery leaves held attempts,

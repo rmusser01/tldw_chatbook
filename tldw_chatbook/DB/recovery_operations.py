@@ -24,7 +24,7 @@ from tldw_chatbook.DB.recovery_sqlite import (
     _validate_sqlite,  # noqa: F401 - Live compatibility binding.
 )
 from tldw_chatbook.DB.recovery_workflow_schema import (
-    WORKFLOW_MIGRATION,
+    WORKFLOW_MIGRATION as WORKFLOW_MIGRATION,
     workflow_catalog,
 )
 

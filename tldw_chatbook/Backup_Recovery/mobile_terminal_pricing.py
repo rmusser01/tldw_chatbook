@@ -101,7 +101,7 @@ def _preprice_terminal(captured, *, native_inputs, receipts, history_location):
             )
     budget.container(3)
     targets = []
-    for target, version in zip(prepared.targets, (87, 11, 27), strict=True):
+    for target, version in zip(prepared.targets, (87, 11, 33), strict=True):
         budget.container(4)
         budget.container(len(target.witnesses))
         budget.container(len(target.sidecars))

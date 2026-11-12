@@ -440,7 +440,17 @@ async def test_canonical_settings_opens_global_rules_before_console_visit(tmp_pa
 
 @pytest.mark.asyncio
 async def test_active_run_copy_takes_priority_over_an_earlier_rule_verdict(tmp_path):
+    from tldw_chatbook.Chat.console_configuration_preparation import (
+        standard_console_configuration_sources,
+    )
+
     async with mounted_rules_console(tmp_path) as case:
+        # The seeded history skips the send that would prepare these sources.
+        trust = await case.app.ensure_local_skill_trust_service()
+        assert case.app.local_skills_service.trust_service is trust
+        assert standard_console_configuration_sources(
+            case.app, case.chats, case.controller, session_id=case.session_id
+        )
         seed_answer(case)
         learned = await case.rules.learn(case.session_id, "The answer omitted evidence")
         assert learned.state == "active", (learned.reason, case.failures)

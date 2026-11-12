@@ -10,6 +10,7 @@ import sqlite3
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 # Bind the selected profile and guards before importing application owners.
@@ -437,20 +438,22 @@ class _ScriptedConsoleGateway(_ScriptedCanvasGateway):
     def __init__(self, root):
         self.root = root
         self.calls = 0
+        self._call_lock = Lock()
 
     async def stream_chat(self, _resolution, messages, **_kwargs):
-        self.calls += 1
         prompt = next(
             str(row.get("content", ""))
             for row in reversed(messages)
             if row.get("role") == "user"
         )
         digest = hashlib.sha256(prompt.encode()).hexdigest()
-        _publish_owner_receipt(
-            self.root / f"console-entry-{digest}.json",
-            {"pid": os.getpid(), "call": self.calls, "prompt": prompt},
-        )
-        _publish_counter(self.root / "console-gateway-calls", self.calls)
+        with self._call_lock:
+            self.calls += 1
+            _publish_owner_receipt(
+                self.root / f"console-entry-{digest}.json",
+                {"pid": os.getpid(), "call": self.calls, "prompt": prompt},
+            )
+            _publish_counter(self.root / "console-gateway-calls", self.calls)
         if os.environ.get("TLDW_LIFECYCLE_BLOCK") == "1":
             import time
 
@@ -483,24 +486,25 @@ class _ScriptedFleetConsoleGateway(_ScriptedConsoleGateway):
             async for chunk in super().stream_chat(resolution, messages, **kwargs):
                 yield chunk
             return
-        phase = self.phases.get(prompt, 0)
-        self.phases[prompt] = phase + 1
-        self.calls += 1
-        _publish_counter(self.root / "console-gateway-calls", self.calls)
-        _publish_owner_receipt(
-            self.root / f"fleet-entry-{prompt}-{phase}.json",
-            {
-                "pid": os.getpid(),
-                "call": self.calls,
-                "phase": phase,
-                "prompt": prompt,
-                "received": [
-                    str(row.get("content", ""))
-                    for row in messages
-                    if row.get("role") in {"user", "tool"}
-                ],
-            },
-        )
+        with self._call_lock:
+            phase = self.phases.get(prompt, 0)
+            self.phases[prompt] = phase + 1
+            self.calls += 1
+            _publish_counter(self.root / "console-gateway-calls", self.calls)
+            _publish_owner_receipt(
+                self.root / f"fleet-entry-{prompt}-{phase}.json",
+                {
+                    "pid": os.getpid(),
+                    "call": self.calls,
+                    "phase": phase,
+                    "prompt": prompt,
+                    "received": [
+                        str(row.get("content", ""))
+                        for row in messages
+                        if row.get("role") in {"user", "tool"}
+                    ],
+                },
+            )
         if prompt.startswith("EXACT_WORKER_"):
             while not (self.root / f"fleet-release-{prompt}-{phase}").exists():
                 await asyncio.sleep(0.02)
@@ -569,9 +573,11 @@ def _observe_fleet_lifetimes():
 
     from tldw_chatbook.Agents.agent_service import AgentService
     from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
+    from tldw_chatbook.Agents.ordinary_tree import OrdinaryTurn
     from tldw_chatbook.Agents.run_context import current_run_id
     from tldw_chatbook.Agents.run_hooks import RunHooksEngine
     from tldw_chatbook.Agents.run_log import RunLogWriter
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
     from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 
     path = (
@@ -589,6 +595,8 @@ def _observe_fleet_lifetimes():
         (RunLogWriter, ("bind", "append", "close")),
         (AgentService, ("_run_one", "cancel_subagent")),
         (FleetCoordinator, ("finish",)),
+        (OrdinaryTurn, ("_retire_scratch",)),
+        (ConsoleRuntime, ("_persist_first_send_when_quiescent",)),
         (_ScriptedFleetConsoleGateway, ("stream_chat",)),
     ):
         for name in names:
@@ -653,6 +661,9 @@ def _observe_fleet_lifetimes():
             )
             if key in values
         }
+        if isinstance(owner, OrdinaryTurn):
+            identity["session_id"] = owner.session.id
+            state["retired"] = owner.retired.done()
         snapshot = values.get("snapshot")
         if snapshot is not None:
             identity["scratch_root"] = str(snapshot.root)
@@ -1138,25 +1149,36 @@ def main() -> None:
             async def observed_turn_return(record, **options):
                 session_id, turn_id = record.session_id, record.turn_id
                 result = await native_turn(record, **options)
-                from tldw_chatbook.Backup_Recovery.inventory import read_profile_config
 
-                persisted = read_profile_config(
-                    config_module._get_effective_config_path()
-                )
-                _publish_owner_receipt(
-                    data_root / ("console-turn-returned-" + session_id + ".json"),
-                    {
-                        "pid": os.getpid(),
-                        "session_id": session_id,
-                        "turn_id": turn_id,
-                        "turn_returned": True,
-                        "accepted": getattr(result, "accepted", False) is True,
-                        "first_send_persisted": persisted.get("console", {})
-                        .get("onboarding", {})
-                        .get("first_send_completed")
-                        is True,
-                    },
-                )
+                def publish(_completed=None):
+                    from tldw_chatbook.Backup_Recovery.inventory import (
+                        read_profile_config,
+                    )
+
+                    persisted = read_profile_config(
+                        config_module._get_effective_config_path()
+                    )
+                    _publish_owner_receipt(
+                        data_root / ("console-turn-returned-" + session_id + ".json"),
+                        {
+                            "pid": os.getpid(),
+                            "session_id": session_id,
+                            "turn_id": turn_id,
+                            "turn_returned": True,
+                            "accepted": getattr(result, "accepted", False) is True,
+                            "first_send_persisted": persisted.get("console", {})
+                            .get("onboarding", {})
+                            .get("first_send_completed")
+                            is True,
+                        },
+                    )
+
+                # Persistence waits for this turn's custody to return.
+                pending = runtime._first_send_task
+                if pending is None or pending.done():
+                    publish()
+                else:
+                    pending.add_done_callback(publish)
                 return result
 
             runtime._run_custodied_turn = observed_turn_return

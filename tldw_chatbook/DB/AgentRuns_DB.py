@@ -328,7 +328,11 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         if not self._read_only:
             self._require_execution_owner()
             reject_incompatible_preview(self.db_path_str)
-            self._initialize_schema()
+            try:
+                self._initialize_schema()
+            except BaseException:
+                self.close()
+                raise
         else:
             try:
                 with self.connection() as conn:

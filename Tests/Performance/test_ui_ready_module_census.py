@@ -215,6 +215,8 @@ ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
+    # Boot probes inspect configuration, not legacy migration roots.
+    "tldw_chatbook.Notes.notes_sync_filesystem",
     # Prompt Browse/Mix-ins is an explicit composer action, not mount work.
     "tldw_chatbook.Widgets.Console.console_prompts_modal",
     "tldw_chatbook.Widgets.Console.console_prompt_mixins_view",

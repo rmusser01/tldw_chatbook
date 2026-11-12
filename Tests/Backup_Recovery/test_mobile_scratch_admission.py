@@ -159,6 +159,18 @@ def _native_controls(service, manager, snapshot, writer, report):
         with activation.execution(candidate):
             raise AssertionError("refused entry yielded")
 
+    check_prepared = scratch_admission.check_prepared_scratch
+    session_id = "native-scratch-control"
+    with manager.lease(snapshot):
+        refused(lambda: check_prepared(manager, snapshot, session_id))
+    with activation.execution():
+        refused(lambda: check_prepared(manager, snapshot, session_id))
+        with manager.lease(snapshot):
+            check_prepared(manager, snapshot, session_id)
+            refused(lambda: check_prepared(manager, replace(snapshot), session_id))
+            refused(lambda: check_prepared(manager, snapshot, "other-session"))
+    checks.append("prepared_scratch_needs_original_held_session_and_profile")
+
     for label, access in (
         ("custom_access", lambda: nullcontext()),
         ("copied_snapshot", partial(manager.lease, replace(snapshot))),

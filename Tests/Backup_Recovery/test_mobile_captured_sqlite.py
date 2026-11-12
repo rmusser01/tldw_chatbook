@@ -137,9 +137,9 @@ def test_actual_captured_sqlite_reads_preserve_frozen_schemas_and_bytes(
                     ("legacy", "chat", 81),
                     ("legacy", "workspaces", 8),
                     ("legacy", "runs", 25),
-                    ("canonical", "chat", 82),
-                    ("canonical", "workspaces", 9),
-                    ("canonical", "runs", 26),
+                    ("canonical", "chat", 87),
+                    ("canonical", "workspaces", 11),
+                    ("canonical", "runs", 33),
                 )
                 columns, rows = reads.page("legacy", "chat", "messages", limit=100)
                 assert "content" in columns

@@ -1621,16 +1621,11 @@ def _assert_direct_backup_census(
             (module, symbol, ast.unparse(call.func.value))
             for symbol, call in visitor.calls
         )
-    # The wrapper reserves the source for the existing seam operation; it does
-    # not create a destination or grant another owner backup authority.
+    # Detached normalization uses the restricted candidate helper, which
+    # reaches _backup_pages. The wrapper only reserves its source.
     assert calls == Counter(
         {
             ("tldw_chatbook/DB/private_sqlite", "_backup_pages", "source"): 1,
-            (
-                "tldw_chatbook/Backup_Recovery/detached_layout",
-                "_normalize_sqlite",
-                "connection",
-            ): 1,
             (
                 "tldw_chatbook/DB/base_db",
                 "_QuiescentSQLiteConnection.backup",
@@ -1641,12 +1636,14 @@ def _assert_direct_backup_census(
 
 
 @pytest.mark.parametrize(
-    "mutation", ["extra", "duplicate", "moved", "receiver", "other_module"]
+    "mutation",
+    ["extra", "duplicate", "moved", "receiver", "other_module", "detached_direct"],
 )
 def test_direct_backup_census_rejects_unreviewed_calls(mutation: str) -> None:
     sources = {
         "tldw_chatbook/Backup_Recovery/detached_layout": (
-            "def _normalize_sqlite(connection, output):\n    connection.backup(output, pages=64, progress=progress, sleep=0)\n"
+            "def _normalize_sqlite(owner, main, destination, cancel):\n"
+            "    return normalize_detached_candidate(owner, main, destination, cancel)\n"
         ),
         "tldw_chatbook/DB/private_sqlite": (
             "def _backup_pages(source, target):\n    source.backup(target)\n"
@@ -1672,6 +1669,12 @@ def test_direct_backup_census_rejects_unreviewed_calls(mutation: str) -> None:
     elif mutation == "receiver":
         sources[module] = sources[module].replace(
             "super().backup", "self.source.backup"
+        )
+    elif mutation == "detached_direct":
+        detached = "tldw_chatbook/Backup_Recovery/detached_layout"
+        sources[detached] = sources[detached].replace(
+            "return normalize_detached_candidate(owner, main, destination, cancel)",
+            "connection.backup(destination, pages=64, progress=progress, sleep=0)",
         )
     else:
         sources["tldw_chatbook/DB/unregistered"] = sources.pop(module)

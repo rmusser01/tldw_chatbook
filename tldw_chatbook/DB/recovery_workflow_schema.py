@@ -265,10 +265,13 @@ def validate_workflow_rows(
                     row["id"],
                     status=row["status"],
                     chain_id=row["chain_id"],
+                    schema_version=schema_version,
                 )
             except ValueError:
                 return ("invalid_workflow_required_result",)
-            WorkflowRunsStore._capacity(connection, row["id"], 0)
+            WorkflowRunsStore._capacity(
+                connection, row["id"], 0, schema_version=schema_version
+            )
             plans = list(
                 connection.execute(
                     "SELECT * FROM workflow_plan_revisions WHERE workflow_id=? ORDER BY revision",
