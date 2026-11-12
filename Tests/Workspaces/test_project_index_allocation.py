@@ -11,7 +11,7 @@ import pytest
 
 from Tests.private_profile import private_profile_test
 
-from tldw_chatbook.Workspaces.project_index.allocation import (
+from tldw_chatbook.DB.project_index_allocation import (
     admit_connection,
     allocation_gate,
     retain_uncertain,

@@ -630,7 +630,7 @@ async def test_held_semantic_refuses_publication_after_binding_or_settings_chang
 
 @pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 def test_generation_pages_checkpoint_and_ready_survives_failed_rebuild(tmp_path):
-    from tldw_chatbook.Workspaces.project_index.semantic_vectors import encode_vector
+    from tldw_chatbook.DB.project_index_vectors import encode_vector
 
     store, scope, state, lease = populated_store(tmp_path)
     try:
@@ -769,7 +769,7 @@ def test_ready_zero_members_is_distinct_from_unavailable_semantics(tmp_path):
 @pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 def test_identical_text_keeps_vectors_in_its_own_binding(tmp_path):
     from tldw_chatbook.DB.Workspace_Project_Index_DB import WorkspaceProjectIndexDB
-    from tldw_chatbook.Workspaces.project_index.semantic_vectors import encode_vector
+    from tldw_chatbook.DB.project_index_vectors import encode_vector
 
     first, scope, state, first_lease = populated_store(tmp_path)
     other_key = replace(scope.key, binding_id="binding-2")
@@ -855,7 +855,7 @@ def test_identical_text_keeps_vectors_in_its_own_binding(tmp_path):
 
 @pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 def test_failed_rebuild_with_changed_artifact_cannot_project_prior_ready(tmp_path):
-    from tldw_chatbook.Workspaces.project_index.semantic_vectors import encode_vector
+    from tldw_chatbook.DB.project_index_vectors import encode_vector
 
     store, scope, state, lease = populated_store(tmp_path)
     try:
@@ -894,7 +894,7 @@ def test_failed_rebuild_with_changed_artifact_cannot_project_prior_ready(tmp_pat
 
 @pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 def test_generation_rejects_source_manifest_change_before_checkpoint(tmp_path):
-    from tldw_chatbook.Workspaces.project_index.semantic_vectors import encode_vector
+    from tldw_chatbook.DB.project_index_vectors import encode_vector
 
     store, scope, state, lease = populated_store(tmp_path)
     try:
@@ -926,7 +926,7 @@ def test_generation_rejects_source_manifest_change_before_checkpoint(tmp_path):
 def test_multipage_generation_refuses_changed_manifest_at_page_or_final_cas(
     tmp_path, mutation_point
 ):
-    from tldw_chatbook.Workspaces.project_index.semantic_vectors import encode_vector
+    from tldw_chatbook.DB.project_index_vectors import encode_vector
 
     store, scope, state, lease = populated_store(tmp_path)
     try:
@@ -1031,7 +1031,7 @@ def test_stale_semantic_failure_cannot_settle_new_claim_or_reconfigured_control(
 
 @pytest.mark.usefixtures("qualified_project_semantic_sqlite")
 def test_semantic_checkpoint_refuses_binding_allocation_quota(tmp_path, monkeypatch):
-    from tldw_chatbook.Workspaces.project_index.semantic_vectors import encode_vector
+    from tldw_chatbook.DB.project_index_vectors import encode_vector
     from tldw_chatbook.Workspaces.project_index.service import binding_bytes
     import importlib
 
@@ -1441,14 +1441,14 @@ async def test_retired_semantic_error_drops_traceback_but_keeps_live_join_record
 
 @pytest.mark.parametrize("vector", [[], [math.nan], [math.inf], [1e50]])
 def test_vector_codec_refuses_empty_nonfinite_and_float32_overflow(vector):
-    from tldw_chatbook.Workspaces.project_index.semantic_vectors import encode_vector
+    from tldw_chatbook.DB.project_index_vectors import encode_vector
 
     with pytest.raises(ValueError):
         encode_vector(vector)
 
 
 def test_vector_codec_round_trips_finite_float32_and_refuses_corrupt_bytes():
-    from tldw_chatbook.Workspaces.project_index.semantic_vectors import (
+    from tldw_chatbook.DB.project_index_vectors import (
         decode_vector,
         encode_vector,
     )
@@ -1858,7 +1858,7 @@ def test_partial_retained_sources_filter_before_text_and_complete_eligible_set(
     tmp_path, denied
 ):
     from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
-    from tldw_chatbook.Workspaces.project_index.semantic_vectors import encode_vector
+    from tldw_chatbook.DB.project_index_vectors import encode_vector
 
     store, scope, state, lease = populated_store(tmp_path)
     try:

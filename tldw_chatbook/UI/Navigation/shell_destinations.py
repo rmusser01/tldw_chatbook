@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Mapping
@@ -32,6 +33,22 @@ class ResolvedShellRoute:
     destination_id: str
     canonical_route: str
     requested_route: str
+
+
+def iter_navigation_palette_commands(
+    tab_ids: Iterable[str],
+    tab_command: Callable[[str], tuple[str, str, str]],
+    *,
+    is_web: bool,
+) -> Iterator[tuple[str, str, str]]:
+    """Yield navigation commands for the current application surface."""
+    yield from map(tab_command, tab_ids)
+    if not is_web:
+        yield (
+            "Open Local Files",
+            "local_files",
+            "Search and ask about files in an indexed Workspace folder",
+        )
 
 
 SHELL_DESTINATION_ORDER: tuple[ShellDestination, ...] = (

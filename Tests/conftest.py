@@ -2354,7 +2354,7 @@ def qualified_project_semantic_sqlite():
     from contextlib import closing
     import sqlite3
 
-    from tldw_chatbook.Workspaces.project_index.allocation import _SOURCE_ID
+    from tldw_chatbook.DB.project_index_allocation import _SOURCE_ID
 
     with closing(sqlite3.connect(":memory:")) as conn:
         source = conn.execute("SELECT sqlite_source_id()").fetchone()[0]

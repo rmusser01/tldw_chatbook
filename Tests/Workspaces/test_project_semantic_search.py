@@ -13,7 +13,7 @@ from Tests.Workspaces.test_project_semantic_settings import digest, settings
 from Tests.private_profile import private_profile_test
 from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
 from tldw_chatbook.Workspaces.project_index.lifetime import BindingLifetime
-from tldw_chatbook.Workspaces.project_index.semantic_vectors import encode_vector
+from tldw_chatbook.DB.project_index_vectors import encode_vector
 from tldw_chatbook.Workspaces.project_index.models import IndexCandidate
 
 

@@ -24342,22 +24342,9 @@ class SettingsScreen(BaseAppScreen):
         registered = CATEGORY_PANELS.get(category_value)
         if registered is not None and registered.navigate(self, context):
             return
-        if category_value == SettingsCategoryId.WORKSPACES.value:
-            self._clear_navigation_provider_context()
-            workspace_id = context.get("workspace_id")
-            binding_id = context.get("binding_id")
-            if isinstance(workspace_id, str) and isinstance(binding_id, str):
-                self._settings_selected_workspace_id = workspace_id
-                already_selected = self.active_category == category_value
-                self._select_category(category_value, restore_focus=True)
-                if already_selected:
-                    self._refresh_settings_workspaces_pane()
-                self._after_category_panes(self._focus_workspace_folder, binding_id)
-            else:
-                self._select_category(category_value, restore_focus=True)
-            return
-        self._clear_navigation_provider_context()
-        self._select_category(category_value, restore_focus=True)
+        from ..Settings_Modules.workspace_folder_bindings import navigate_settings_category
+
+        navigate_settings_category(self, category_value, context)
 
     def _route_to_provider_settings(self, context: Mapping[str, object]) -> None:
         """Providers & Models' share of ``apply_navigation_context``.
@@ -27145,17 +27132,6 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         self._domain_group_expanded = not self._domain_group_expanded
         self._apply_category_search_filter()
-
-    def _focus_workspace_folder(self, binding_id: str) -> None:
-        """Scroll to a mounted folder and focus its index controls."""
-        from ...Widgets.Settings_Widgets.project_index_binding_card import (
-            ProjectIndexBindingCard,
-        )
-
-        for card in self.query(ProjectIndexBindingCard):
-            if card.binding_id == binding_id:
-                card.query_one(".project-index-prefixes", Input).focus()
-                break
 
     @on(Button.Pressed, ".settings-workspace-row")
     def handle_workspace_row_pressed(self, event: Button.Pressed) -> None:

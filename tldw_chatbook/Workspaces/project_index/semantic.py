@@ -21,7 +21,7 @@ from tldw_chatbook.Workspaces.project_index.models import (
     ProjectIndexScope,
     ProjectSemanticSettings,
 )
-from .semantic_vectors import decode_vector, encode_vector
+from tldw_chatbook.DB.project_index_vectors import decode_vector, encode_vector
 
 
 def fuse_candidates(lexical, semantic):

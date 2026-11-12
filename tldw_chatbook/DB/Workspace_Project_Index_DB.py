@@ -17,7 +17,7 @@ from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 from tldw_chatbook.DB.store_kernel import SQLiteStoreKernel
 from tldw_chatbook.Utils.path_validation import fold_path_part
 from tldw_chatbook.Utils.timestamps import utc_now_iso
-from tldw_chatbook.Workspaces.project_index.allocation import (
+from tldw_chatbook.DB.project_index_allocation import (
     admit_connection,
     admit_keyword_connection,
     allocation_gate,
@@ -599,7 +599,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
 
     def bind_native_lifetime(self, lease) -> None:
         """Supply this operation's exact live binding capability for admission."""
-        from tldw_chatbook.Workspaces.project_index.lifetime import BindingLifetime
+        from tldw_chatbook.Utils.project_index_lifetime import BindingLifetime
 
         if (
             self._allocation_group is None
@@ -1083,7 +1083,7 @@ class WorkspaceProjectIndexDB(SQLiteStoreKernel):
             or any(type(vector) is not bytes for vector in vectors)  # noqa: E721
         ):
             raise ValueError("semantic_page_limit")
-        from tldw_chatbook.Workspaces.project_index.semantic_vectors import (
+        from tldw_chatbook.DB.project_index_vectors import (
             decode_vector,
         )
 

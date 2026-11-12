@@ -21,7 +21,11 @@ from tldw_chatbook.DB.Workspace_Project_Index_DB import (
     WorkspaceProjectIndexDB,
     _path_allowed,
 )
-from .allocation import allocation_gate, register_owned_lifetime, verify_settlement
+from tldw_chatbook.DB.project_index_allocation import (
+    allocation_gate,
+    register_owned_lifetime,
+    verify_settlement,
+)
 from tldw_chatbook.Utils.filesystem_identity import (
     capture_directory_chain,
     stat_identity_digest,
@@ -1416,7 +1420,7 @@ class ProjectIndexService:
             EmbeddingsServiceWrapper,
         )
         from . import semantic
-        from .semantic_vectors import encode_vector
+        from tldw_chatbook.DB.project_index_vectors import encode_vector
 
         carrier = semantic._issue_project_projection_scope(
             self, run.scope, run.state.settings, run.state.semantic_revision

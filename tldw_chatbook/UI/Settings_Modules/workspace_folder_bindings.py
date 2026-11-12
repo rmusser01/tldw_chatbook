@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Button, Input, Static
 
+from ...state.settings_config_models import SettingsCategoryId
 from ...Workspaces.models import RuntimeBindingStatus
 from ...Workspaces.registry_service import (
     LocalWorkspaceRegistryService,
@@ -16,6 +18,38 @@ from ...Workspaces.registry_service import (
 
 if TYPE_CHECKING:
     from ..Screens.settings_screen import SettingsScreen
+
+
+def navigate_settings_category(
+    screen: SettingsScreen, category: str, context: Mapping[str, object]
+) -> None:
+    """Open the category and focus an explicitly requested workspace folder."""
+    screen._clear_navigation_provider_context()
+    workspace_id = context.get("workspace_id")
+    binding_id = context.get("binding_id")
+    if (
+        category != SettingsCategoryId.WORKSPACES.value
+        or not isinstance(workspace_id, str)
+        or not isinstance(binding_id, str)
+    ):
+        screen._select_category(category, restore_focus=True)
+        return
+
+    screen._settings_selected_workspace_id = workspace_id
+    already_selected = screen.active_category == category
+    screen._select_category(category, restore_focus=True)
+    if already_selected:
+        screen._refresh_settings_workspaces_pane()
+    screen._after_category_panes(_focus_workspace_folder, screen, binding_id)
+
+
+def _focus_workspace_folder(screen: SettingsScreen, binding_id: str) -> None:
+    from ...Widgets.Settings_Widgets.project_index_binding_card import ProjectIndexBindingCard
+
+    for card in screen.query(ProjectIndexBindingCard):
+        if card.binding_id == binding_id:
+            card.query_one(".project-index-prefixes", Input).focus()
+            return
 
 
 def render_workspace_folder_bindings(

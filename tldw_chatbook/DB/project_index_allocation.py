@@ -11,8 +11,11 @@ import sqlite3
 import stat
 import threading
 
-from .lifetime import BindingLifetime, LifetimeBusy
-from .models import MAX_CACHE_BYTES, ProjectIndexRetirementUnproven
+from tldw_chatbook.Utils.project_index_lifetime import BindingLifetime, LifetimeBusy
+from tldw_chatbook.Workspaces.project_index.models import (
+    MAX_CACHE_BYTES,
+    ProjectIndexRetirementUnproven,
+)
 
 _SECTOR_UPPER_BOUND = 65536
 _CONTROL_GROWTH = 4096
