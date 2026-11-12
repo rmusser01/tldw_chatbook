@@ -15,7 +15,7 @@ references:
 - Tests/Architecture/app_private_attrs.txt
 - tldw_chatbook/UI/Screens/settings_screen.py
 dependencies: []
-updated_date: 2026-11-10 20:40
+updated_date: 2026-11-12 15:40
 ---
 
 ## Description
@@ -23,9 +23,9 @@ updated_date: 2026-11-10 20:40
 <!-- SECTION:DESCRIPTION:BEGIN -->
 TASK-36942.4 ratchets string-named attribute lookups on the app object and fails any new underscore-prefixed name that is not in a frozen allowance. It counts only lookups whose name is a string literal; lookups whose name comes from a variable, a constant or an expression are left out of both the count and the private-name rule, a gap its docstring records (45 such lookups at the time).
 
-That gap lets a change look like progress while moving a lookup out of view. Dev commit eced473b58 (TASK-39133) moved one literal lookup of `_vllm_connection_owner` in `settings_screen.py` behind a parameter, shared with the llama.cpp owner. The counted UI lookups fell from 1262 to 1261 with no check pointing at the cause; both owner names stay visible to the private-name rule only because other modules still look them up literally. The pin was not lowered, so the PR Fast Lane went red for every PR on dev (PR #3490 lowers the pin).
+That gap lets a change look like progress while moving a lookup out of view. Dev commit eced473b58 (TASK-39133) moved one literal lookup of `_vllm_connection_owner` in `settings_screen.py` behind a parameter, shared with the llama.cpp owner. The counted UI lookups fell from 1262 to 1261 with no check pointing at the cause; both owner names stay visible to the private-name rule only because other modules still look them up literally. The pin was not lowered, so the PR Fast Lane went red for every PR on dev until PR #3492 lowered it to 1261.
 
-The blind spot is already real: seven private app attributes are reached only through module constants, are not in the allowance, and so are invisible to the private-name rule today (`_console_fleet_unseen_revision`, `_console_pending_interrupts`, `_console_reaction_preview_coordinator`, `_library_last_export_directory`, `_rag_service_generation`, `_rag_service_stamp`, `_tldw_library_ingest_options_cache`). Measured on dev ae9f9e8d21 with the census's own receiver rule: 47 non-literal lookups (UI 24, Event_Handlers 9, Chat 6, Backup_Recovery 3, `<root>` 2, RAG_Search 2, Scheduling 1).
+The blind spot is already real: seven private app attributes are reached only through module constants, are not in the allowance, and so are invisible to the private-name rule today (`_console_fleet_unseen_revision`, `_console_pending_interrupts`, `_console_reaction_preview_coordinator`, `_library_last_export_directory`, `_rag_service_generation`, `_rag_service_stamp`, `_tldw_library_ingest_options_cache`). Measured on dev ae9f9e8d21 with the census's own receiver rule, and unchanged on 4a9c4c1132: 47 non-literal lookups (UI 24, Event_Handlers 9, Chat 6, Backup_Recovery 3, `<root>` 2, RAG_Search 2, Scheduling 1).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
