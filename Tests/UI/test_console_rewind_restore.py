@@ -1409,7 +1409,9 @@ async def test_rewind_with_args_keeps_restore_before_dispatch_behavior():
         await pilot.pause()
 
         assert isinstance(host.screen_stack[-1], ConsoleRewindModal)
-        assert composer.draft_text() == "/rewind anythingnext"
+        # The menu opened, so the command ran and its own text left; what was
+        # typed after the keypress stays (TASK-33628.20).
+        assert composer.draft_text() == "next"
 
 
 @pytest.mark.asyncio

@@ -2940,3 +2940,10 @@ Tests/UI/test_console_send_draft_snapshot.py::test_spoken_send_skill_read_ignore
 Tests/UI/test_console_command_rows_not_loss.py::test_ctrl_q_does_not_ask_when_a_command_row_is_all_that_is_unsaved[help]
 Tests/UI/test_console_command_rows_not_loss.py::test_tab_close_does_not_ask_when_a_command_row_is_all_that_is_unsaved[error_notice]
 Tests/UI/test_console_command_rows_not_loss.py::test_command_rows_beside_temporary_messages_are_left_out_of_the_count
+# TASK-33628.20 (2026-11-12, owner decision "Clear it after running"): a
+# command that ran leaves an empty composer, so Ctrl+Q right after /help quits
+# without a question; an unknown command keeps its text (~10 s each).
+# Appended at the tail.
+Tests/UI/test_console_command_clears_composer.py::test_a_command_that_ran_leaves_an_empty_composer[help]
+Tests/UI/test_console_command_clears_composer.py::test_a_refused_or_unknown_command_keeps_its_text[unknown_command]
+Tests/UI/test_console_command_clears_composer.py::test_ctrl_q_right_after_a_command_quits_without_asking[help]

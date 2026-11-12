@@ -171,6 +171,13 @@ async def test_actual_composer_refusal_preserves_draft_and_rules_is_native(tmp_p
                 await pilot.pause()
             assert composer.draft_text() == draft
             assert calls == []
+        # A refused /rules keeps its text to be corrected (TASK-33628.20).
+        composer.load_draft("/rules everywhere")
+        console.query_one("#console-send-message", Button).press()
+        for _ in range(12):
+            await pilot.pause()
+        assert host.screen is console
+        assert composer.draft_text() == "/rules everywhere"
         composer.load_draft("/rules")
         console.query_one("#console-send-message", Button).press()
         # TASK-39166: bounded waits on each step's state (the modal mounted,
@@ -183,6 +190,8 @@ async def test_actual_composer_refusal_preserves_draft_and_rules_is_native(tmp_p
         )
         assert host.screen.scope.kind == "chat"
         assert calls == []
+        # The manager opened, so /rules ran: its text left (TASK-33628.20).
+        assert composer.draft_text() == ""
         await pilot.press("escape")
         await _until(
             lambda: host.screen is console and host.focused is composer,

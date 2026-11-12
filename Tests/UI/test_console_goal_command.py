@@ -125,7 +125,8 @@ async def test_goal_completion_and_enter_open_review_then_persist_objective(
     assert saved.request.human_review_required
     assert saved.request.provider == ui.seed.request.provider
     assert saved.request.binding == ui.seed.request.binding
-    assert ui.composer.draft_text() == "/goal Repair fixture"
+    # Started, /goal has run: its text left the composer (TASK-33628.20).
+    await wait_until(ui.pilot, lambda: ui.composer.draft_text() == "")
 
 
 @pytest.mark.asyncio
