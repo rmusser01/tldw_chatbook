@@ -1201,8 +1201,10 @@ Two cases work differently for now:
 - **Older installs** are asked once. Chatbook writes its default settings
   into `config.toml` when a profile is first set up, so a profile set up
   before records were on by default can have `canonical_writes_enabled =
-  false` there. After the first reply in such a profile that used Library
-  evidence, Chatbook asks **Keep a record of which sources replies cite?**
+  false` there. A newer profile where you set it to `false` before any reply
+  kept a record is asked the same way. After the first reply in such a
+  profile that used Library evidence, Chatbook asks **Keep a record of
+  which sources replies cite?**
   **Keep records** turns records on from the next reply; **Don't keep**
   leaves them off. No button is selected when the question opens, so typing
   meant for the composer can't answer it. Escape closes it without an

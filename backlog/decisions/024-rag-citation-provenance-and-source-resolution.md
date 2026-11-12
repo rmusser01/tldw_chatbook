@@ -219,5 +219,5 @@ Owner decision 2026-10-30. First run writes the whole default config into a new 
 ### Consequences
 
 - A deliberate `false` written before the upgrade is indistinguishable from the shipped one; that profile is asked once (accepted by the owner).
-- A profile on the new default that is turned off in `config.toml` before it ever keeps a citation record is also asked once; one that has kept records is not. Pending owner sign-off (TASK-33620.8.3.1).
-- Users who answered **Keep** turn records off from the palette entry, not by editing `config.toml` (whose value is already `false`): after a saved Keep, that exact `false` no longer acts as the recovery switch. Pending owner sign-off (TASK-33620.8.3.1).
+- A profile on the new default that is turned off in `config.toml` before it ever keeps a citation record is also asked once; one that has kept records is not. Accepted by the owner 2026-11-12 (TASK-33620.8.3.1).
+- Users who answered **Keep** turn records off from the palette entry, not by editing `config.toml` (whose value is already `false`): after a saved Keep, that exact `false` no longer acts as the recovery switch. Accepted by the owner 2026-11-12 (TASK-33620.8.3.1); the User Guide (Console, Context and RAG: Older installs) says to choose **Don't keep** from the palette entry instead.
