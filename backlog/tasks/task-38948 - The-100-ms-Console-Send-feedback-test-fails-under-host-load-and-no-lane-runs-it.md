@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-05 21:35
-updated_date: 2026-11-12 15:09
+updated_date: 2026-11-12 16:18
 labels:
 - follow-up
 - console
@@ -225,4 +225,90 @@ before timing. This qualification applies to mounted-ready Send and does not cov
 Send overlapping cold mount discovery or a physical terminal flush.
 
 AC#1 is met on that tree. AC#4 remains open pending hosted qualification and re-enrollment.
+
+### Round 13, paint reorder (2026-11-10)
+
+**Owner decision (2026-11-10, AskUserQuestion), verbatim:** "Off the gate, reorder next (Recommended)": "Move it out of the required PR lane now (it keeps running in the dev-push job), and implement the paint reorder: 'Sending…' paints one frame before the user row, which measured Sending CPU median 56→30 ms. Re-gate it once it passes on CI."
+- **The evidence it rests on:** CI's round-12 PR runs failed the test at 112 ms of loop CPU (`[send-button]`, shard 16) and 119 ms (`[enter]`, shard 15).
+- **This supersedes the earlier "paint order unchanged" ruling.**
+- **AC#4 is unticked.** Dev e0186fa10a (#3500, the fu/hotfix-restyle hotfix) already took the two nodes off the PR census and unticked AC#4. This branch does not re-add them; re-gating waits for CI evidence.
+
+**Change** (`tldw_chatbook/UI/Console_Modules/send_acknowledgement.py`; commits 1b444d220f and d583254ddd).
+- **What paints when.** The status line, composer, header and tabs are pushed first and painted in a frame of their own. The user row mounts after that frame.
+- **The row is held back until then.** From `begin` until its own mount, the acknowledgement keeps the pending row out of every projection (`hold_row` / `show_row`), so nothing else can draw it earlier.
+- **The deferred mount** (`_mount_row`) is posted on the status line (`_row_anchor`). It re-checks that the line's "Sending…" repaint has been drawn, reading the flags Textual clears when it draws a widget (`console_transcript_fill._ready` already reads them the same way). It waits at most `_PAINT_HOPS` frame-length hops, then shows, projects and mounts the row.
+- **The hand-off to the send** (`_RowMount.after`) runs after that mount, and still waits until the row is laid out. The send never starts before the row is on screen.
+- **Fallback.** If no mount is owed (another tab is shown, or the paint failed), the row is shown again and a whole sync repaints it. With no status line, or a refused post, the row mounts at once, as before.
+- **Why each piece is needed.** These are first-frame coalescing rates: "Sending…" and the row drawn in the same frame.
+  - **Screen-level `call_after_refresh`:** 3 of 6 profiled cases. It can run before the child widgets post their repaints.
+  - **Anchored on the status line only:** 3 of 40 received-intent cases, with failures at 100-113 ms of loop CPU.
+    - A probe found the first mount of the row coming from a whole sync (`_sync_native_console_chat_ui`) that ran between the paint and the deferred mount, with 15-16 widgets still dirty.
+    - Separately, Textual 8's `_on_timer_update` runs the screen's after-refresh callbacks even while another task's `batch_update` holds the frame back.
+  - **Holding the row plus the frame check:** 0 of 40.
+- **New diagnostic.** One warning, "Console send acknowledgement row mount failed (exception_type={})", which logs the exception type only. The production diagnostic inventory was reviewed with `--statements` and rewritten.
+
+**TASK-33620.5's live ordering claims, re-checked. Both still hold, and no pin was weakened.**
+- **Tabs before the row:** the tabs sync stays in the first part.
+- **The whole acknowledgement on screen before admission:** `test_enter_paints_a_sending_row_before_admission_and_validation` (80x24) and the extended file's 160x45 and 235x52 variants pass unchanged, including their gap rule.
+- The one intended change, the row appearing a frame after "Sending…", is covered by the new tests below.
+
+**Red/green.** Both new tests are in `Tests/UI/test_console_send_acknowledgement.py`, a whole-file census entry, so they are already on the lane.
+- **`test_sending_paints_a_frame_before_the_row_and_the_send_waits_for_it[80x24|160x45]`** asserts:
+  - the first frame with the run segment and a running header comes strictly before the first frame with the user row;
+  - the composer still shows the draft in that frame, with no empty-draft reason;
+  - the row's frame comes before the send starts, and the frame on screen at the send has the row.
+
+  Red on cd7d3aa10e for both sizes ("Sending and the row painted in one frame"). Green in 15 of 15 runs (30 cases) at load 17-23.
+- **`test_a_whole_sync_before_the_rows_frame_does_not_mount_the_row`** runs `_sync_native_console_chat_ui` between the paint and the deferred mount and asserts the row is not mounted by it. Red on 1b444d220f (`[True] == [False]`). Green on d583254ddd.
+
+**Covering runs, `-n 4`, on d583254ddd.**
+- **Acknowledgement core, extended, resend guard and the received-intent file:** 64 passed and 1 failed, at load 31-39. The failure was the 100 ms node `[send-button]` in the file: 133 ms of loop CPU, 218 ms wall. That is the incidental tail described under the measurements below.
+- **The other 34 files that touch the acknowledgement:** 948 passed, 18 failed. They are the same 18 that fail with cd7d3aa10e's `send_acknowledgement.py`:
+  - canvas policy worker ×3;
+  - send draft snapshot ×4;
+  - tab switch binds composer ×8;
+  - Library pause recovery ×2;
+  - Library auto outcome ×1.
+- **Size and import budgets:** size ratchets 224 passed. Preimport payload budget and first-send preimport: 25 passed.
+- **Other checks:** the textual worker contract passes, and so does preflight.
+
+**Dev-push watch.** I took the simpler path: no workflow edit on this branch, because the `library-shell-dev` job is on fu/r13-lib, not dev. The step to add at restack, as the last step of `library-shell-dev`:
+
+```yaml
+      # TASK-38948 (owner decision 2026-11-10, "Off the gate, reorder next"):
+      # the 100 ms Send-feedback nodes left the required UI lane; they keep
+      # running here on every push to dev until CI shows them passing.
+      - name: Watch the 100 ms Send-feedback nodes
+        if: strategy.job-index == 0
+        run: |
+          pytest \
+            "Tests/UI/test_console_received_intent_feedback.py::test_actual_send_paints_sending_and_accepts_input_within_100ms[enter]" \
+            "Tests/UI/test_console_received_intent_feedback.py::test_actual_send_paints_sending_and_accepts_input_within_100ms[send-button]" \
+            --timeout=180 \
+            --durations=0 --durations-min=0 \
+            --tb=short
+```
+
+**Repeated runs on d583254ddd:** both new tests passed 8 of 8 runs (24 cases) at load 15-19.
+
+**Re-measured, before and after the reorder** (2026-11-12). These are paired runs of the 100 ms test: cd7d3aa10e's `send_acknowledgement.py` (base) against d583254ddd's (fix), alternated run by run. 10 runs alone and 10 in the file, `-n 4`, both routes, load 21-28 on 18 CPUs. Each cell is median / max in ms over 10 cases. "Row" is the wall time to the user row's frame, and "same frame" counts cases where "Sending…" and the row were drawn together.
+
+| Run | Route | Sending loop CPU | Sending wall | Row wall | Same frame |
+|---|---|---|---|---|---|
+| Alone, base | enter | 45 / 70 | 72 / 105 | 72 / 105 | 10 |
+| Alone, base | send button | 46 / 116 | 73 / 141 | 73 / 140 | 10 |
+| Alone, fix | enter | 32 / 123 | 49 / 162 | 103 / 210 | 0 |
+| Alone, fix | send button | 32 / 85 | 51 / 95 | 89 / 126 | 1 |
+| In file, base | enter | 44 / 132 | 69 / 170 | 69 / 169 | 9 |
+| In file, base | send button | 37 / 81 | 50 / 91 | 50 / 90 | 10 |
+| In file, fix | enter | 34 / 79 | 61 / 103 | 117 / 155 | 0 |
+| In file, fix | send button | 30 / 90 | 46 / 117 | 87 / 192 | 0 |
+
+- **Medians.** The Sending loop CPU median falls about 25-30%: alone 45-46 → 32 ms, in the file 37-44 → 30-34 ms. The Sending wall median falls by 8-24 ms in three of the four route rows (in-file `[enter]` goes 69 → 61 ms).
+- **The row now paints one frame later.** Its median wall is 87-117 ms, against 50-73 ms when it came with "Sending…".
+- **Failures: 2 of 40 on each side.**
+  - Base: 116 ms (alone, `[send-button]`) and 132 ms (in file, `[enter]`), both with "Sending…" and the row in one frame.
+  - Fix: 104 ms and 123 ms (alone, `[enter]`), both with "Sending…" alone in its frame. These are the incidental tail: settling work that lands in the window, outside the send path.
+- **The one coalesced fix case** read 62 ms and passed. It is the hop-bounded fallback: past `_PAINT_HOPS`, the row mounts anyway.
+- **AC#1 is not met.** Load was 21-28, and the fix still misses the 100 ms loop-CPU budget in some cases from the incidental tail. Re-gating waits for CI evidence, per the ruling.
 <!-- SECTION:NOTES:END -->
