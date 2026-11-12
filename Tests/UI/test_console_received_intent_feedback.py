@@ -547,6 +547,15 @@ async def test_actual_send_paints_sending_and_accepts_input_within_100ms(
 ):
     """Headless supplied frames qualify readiness, not physical terminal flush."""
     async with _received_console_case(monkeypatch, f"feedback-{route}") as case:
+        # Finish mount-only discovery before timing Send. This app factory's
+        # synthetic policy keeps that discovery on the compatibility path.
+        assert await _until(
+            lambda: not any(
+                worker.group == "console-skill-discovery" and not worker.is_finished
+                for worker in case.console.workers
+            ),
+            10,
+        )
         preparing = _NaturalPreparingFrame(case)
         typing = _TimedInputFrame(case.host, case.console, case.composer, case.probe)
         loop = asyncio.get_running_loop()
