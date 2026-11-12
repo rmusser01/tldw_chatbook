@@ -25,6 +25,26 @@ _STATISTICS = {
 }
 
 
+_CATALOG_LIMIT = 10_000
+_CATALOG_BYTES = 8 * 1024**2
+
+
+def _read_bounded_catalog(
+    connection, *, row_limit=_CATALOG_LIMIT, byte_limit=_CATALOG_BYTES
+):
+    """Read the exact ordered SQLite catalog under fixed materialization bounds."""
+    rows = []
+    size = 0
+    for row in connection.execute(
+        "SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name"
+    ):
+        size += sum(len(value.encode("utf-8")) for value in row if value is not None)
+        if len(rows) >= row_limit or size > byte_limit:
+            raise ValueError("sqlite_resource_limit")
+        rows.append(tuple(row))
+    return tuple(rows)
+
+
 def _split_statistics(rows):
     """Separate only SQLite's exact engine-produced statistics table forms."""
     stats = tuple(row for row in rows if row in _STATISTICS)

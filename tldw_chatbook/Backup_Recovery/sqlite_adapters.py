@@ -163,10 +163,12 @@ class _WorkspacesAdapter(_SQLiteDeclaration):
 
 class _AgentRunsAdapter(_SQLiteDeclaration):
     def _validate_connection(self, connection):
-        from .sqlite_validation import validate_goal_rows
+        from .sqlite_validation import _budgeted_legacy_catalog_reader, validate_goal_rows
         from tldw_chatbook.DB.recovery_workflow_schema import validate_workflow_rows
 
-        legacy = _schema._legacy_workflow_version(connection)
+        legacy = _schema._legacy_workflow_version(
+            connection, read_catalog=_budgeted_legacy_catalog_reader(connection)
+        )
         return validate_goal_rows(connection) + validate_workflow_rows(
             connection, schema_version=None if legacy is None else legacy + 1
         )
