@@ -743,7 +743,7 @@ def finish_center_swap(screen: Any) -> None:
     # The mounted transcript is new: its sync gate must not skip it.
     screen._console_transcript_sync_token = None
     screen.run_worker(
-        screen._sync_native_console_chat_ui(),
+        screen._sync_native_console_chat_ui,
         group="console-sync",
         exclusive=True,
     )

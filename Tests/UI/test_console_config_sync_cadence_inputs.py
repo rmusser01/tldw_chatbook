@@ -754,3 +754,25 @@ def test_late_tail_publication_is_a_new_input_and_refusal_remains_owed(
         assert _tick(screen) == 1
     assert cadence.values[9] == before + 1
     assert [_tick(screen) for _ in range(3)] == [0, 0, 0]
+
+
+@pytest.mark.asyncio
+async def test_idle_presentation_publication_defers_refresh_until_admission():
+    """An idle publication schedules the original callable for the worker."""
+    workers = []
+    entered = []
+
+    async def refresh():
+        entered.append(True)
+
+    screen = SimpleNamespace(
+        _sync_native_console_chat_ui=refresh,
+        run_worker=lambda work, **options: workers.append((work, options)),
+    )
+    config_sync.publish_console_presentation(screen, "console-context-publication")
+    assert workers == [
+        (refresh, {"exclusive": False, "group": "console-context-publication"})
+    ]
+    assert entered == []
+    await workers[0][0]()
+    assert entered == [True]

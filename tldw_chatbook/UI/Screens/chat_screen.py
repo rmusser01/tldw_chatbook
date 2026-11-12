@@ -14570,8 +14570,7 @@ class ChatScreen(BaseAppScreen):
             if workspace is None:
                 raise RuntimeError("terminal workspace opened before resolution")
             return workspace
-        # Display reads ensure only a missing controller: ensuring a live one
-        # re-reads config, which waits out a config rebuild (TASK-35444).
+        # Passive recovery reads use only the installed controller.
         return ConsoleTranscriptRegion(
             session_surface_builder=lambda: self._ensure_console_session_surface(),
             recovery_message_builder=(
@@ -16932,8 +16931,6 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             transcript = None
 
-        if region := self._console_transcript_region_or_none():
-            region.sync_recovery()
         # TASK-34958: cheap gate BEFORE the O(session) message pipeline
         # (snapshot materialization, projections, grouping, spec walks).
         # The store's display token covers transcript-visible mutations
@@ -16969,6 +16966,8 @@ class ChatScreen(BaseAppScreen):
                     _local, _global, effective_memory = memory_inputs
             except Exception:
                 logger.warning("Console effective-memory presentation selection failed")
+        if region := self._console_transcript_region_or_none():
+            region.sync_recovery()
         if store is not None:
             session_id = store.active_session_id
             try:
