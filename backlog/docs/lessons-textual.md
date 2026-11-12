@@ -2738,7 +2738,8 @@ nodes had been red for weeks; a `set_focus` wrapper with a short stack, plus a l
 the kind's read in the exclusive `personas-library-search` worker, which for
 Characters awaited the `roleplay-list-window` worker with `worker.wait()`.
 A second switch cancelled the first search worker, and the characters window
-worker, running in its own thread, was stopped with it. The follow-up
+worker was cancelled with it (a thread cannot be killed: its thread ran on
+and its result was discarded). The follow-up
 report recorded this as "through `worker.wait()`, the characters window
 worker (its thread finishes, its result is discarded)", and a test pinned it.
 Nobody had asked for that coupling.
