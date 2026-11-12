@@ -477,6 +477,7 @@ def _publish_root_canvas(
     return created, settlement
 
 
+@pytest.mark.bootstrap_profile
 def test_canvas_view_binding_builds_authority_on_first_publication_and_rebinds(
     tmp_path,
 ) -> None:
@@ -568,6 +569,7 @@ async def test_canvas_view_binding_cannot_build_authority_after_runtime_closes(
         await runtime.dispose()
 
 
+@pytest.mark.bootstrap_profile
 def test_canvas_view_rebind_registers_listener_on_rebuilt_controller() -> None:
     runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=None))
     first_store = runtime.ensure_chat_store()
@@ -600,6 +602,7 @@ def test_canvas_view_rebind_registers_listener_on_rebuilt_controller() -> None:
         asyncio.run(runtime.dispose())
 
 
+@pytest.mark.bootstrap_profile
 def test_concurrent_first_canvas_ensure_constructs_one_authority(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
