@@ -41,10 +41,35 @@ a 60-second syscall, or executor starvation. Admission serialization predates
 PR #3050; workspace availability already coalesces in-flight refreshes. A larger
 functional timeout did not resolve the failure and was reverted.
 
-No new product optimization is selected. All four image controls passed: two empty-selection cases and two actual
+A bounded preview-read correction is selected as OPT-101 below; further native-admission contraction remains deferred. All four image controls passed: two empty-selection cases and two actual
 current/detached native-read shutdown cases with physical native cleanup. Other sessions were
 running native work on the same host: these regression runs are not quiet timing
 comparisons and establish no new Send or physical-terminal latency result.
+
+
+### PR3496 Windows admission attribution (2026-11-11)
+
+Passive original-function attribution in `merge-windows-admission-20261111-2`
+found 54 admissions on the UI thread after Send; 38 belonged to the two light
+surface previews (26 before commit, 12 during history preflight). The older
+349-admission sample includes fixture startup and is not a per-Send file count.
+Four original held-permission-read controls reproduced blocked loop progress.
+The first owned-read candidate passed all 16 focused ownership, cancellation,
+kill-state and custom-callback controls, while existing headless controls exposed
+a compatibility defect retained in the review receipts.
+
+`merge-windows-preview-handoff-20261111-1` confirms the original switch read now
+runs in a preparation worker, but still misses the unchanged 15-second provider
+entry deadline. The failure stack is in native startup/witness checks while a
+character-context metadata worker also runs. This establishes neither a deadlock
+nor a throughput gain. Keep OPT-73/78/90/96/99 deferred; no cache, skipped native
+check, new scheduler or deadline increase is selected. Other sessions' native
+suites remain active, so these are not quiet timing comparisons.
+
+The separate cold input diagnostic `merge-windows-input-20261111-1` observed
+mutation at 8.1 ms and a supplied frame at 24.4 ms while the original configuration
+read stayed held. It predates the preview correction and is not a whole-Send,
+physical terminal flush or consistent 100 ms qualification claim.
 
 ## Latest bounded cleanup and quiet comparison (2026-10-08)
 
@@ -253,6 +278,7 @@ Source: `chat_screen.py` d221 lines 17507-17842, 18219, 20682-20743;
 | OPT-98 / Retained; qualified duplicate-stage removal | **Establish stock tool definitions once at existing composition.** Qualified owned capture omits initial policy/catalog/inventory reads; successful consumer publication freezes its IDs/hashes. | ADR-230 explicitly moves eligibility to each existing execution consumer; invocation authority stays fresh. 259 distinct targeted cases pass. Quiet ABBA warm3.031 to2.718s, cold4.885 to3.945s, with all12 turns saved/settled and source/no-overlap checks. Initial a1 excluded for detected external evidence-reader overlap, replaced before candidate runs. See composition-tool-ceiling plan; one-second and physical-feedback targets remain open. |
 | OPT-99 / Deferred; source invalidation owner missing | **Retain reusable versioned MCP definition metadata on LocalMCPStore.** This could amortize inventory reads across consumers. | Not implemented: hand edits, other processes, recovery and cold empty snapshots need a complete invalidation contract. OPT98 removes the duplicate initial stage using existing owners; no cross-attempt cache is needed for that gain. A shared mutable attempt ceiling is also unselected under OPT14 because hooks, previews and live runs have distinct lifetimes. |
 | OPT-100 / Deferred; startup config-lock consumer identified | **Review scheduler heartbeat default-path naming's full config admission within its existing finite worker.** The original failure-time trace identifies `default_heartbeat_path` holding both config RLocks through recovery metadata observation while Console FULL retries. Explicit `heartbeat_path` skips default naming, but no elapsed saving is measured. | Latency shrink is paused. The producer/default route pre-exists dev; no matched dev contention measurement proves unchanged cost or permits cached/constructor-path substitution. Heartbeat is already off-loop. Revisit only after establishing live profile/source currentness and a compatible existing destination owner; preserve selected-root changes, cold establishment/refusal, native recovery/pause evidence, atomic durable heartbeat write and awaited shutdown retirement. Any chosen change needs causal correctness and separate timing evidence; no geometry, timer, executor, TTL or budget shortcut. See archived `pr3050-closeout/geometry-readiness-consumer-evidence/evidence-note.md` (SHA17358203) and `final-geometry-consumer-evidence-2`. |
+| OPT-101 / Selected; final qualification pending | **Prepare the stock light-preview kill-switch observation off the input loop.** Capacity and history preflights currently perform real permission admission synchronously despite the preview's former no-I/O description. | Reuse the existing finite preparation owner and one-pass result, preserve fresh kill-state representation, original custom callback routes, source/session checks and physical retirement. This is distinct from OPT-98's composition ceiling. Initial original-body RED and candidate ownership controls are retained above; no reduction in admission work or whole-Send latency is claimed. |
 
 ## Architecture alternatives retained with their decision
 

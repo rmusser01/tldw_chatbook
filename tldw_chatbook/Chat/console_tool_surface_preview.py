@@ -46,6 +46,7 @@ from tldw_chatbook.Agents.agent_models import (
     ToolCatalogEntry,
     ToolSchema,
 )
+from tldw_chatbook.Agents.plain_chat_tool_surface import tool_kill_switch_engaged
 
 #: Sessions whose last send the meter remembers (oldest dropped first).
 MAX_REMEMBERED_SESSIONS = 32
@@ -105,6 +106,352 @@ class ToolSurfacePreview:
             else []
         )
         return [*session_system, *rows[1:]]
+
+
+def tool_surface_preview_prefix(bridge, messages, turn_skill_bindings, session_id):
+    """Keep the preview's branch and callback order on its original loop."""
+    native = (
+        True
+        if bridge._native_tools_enabled is None
+        else bool(bridge._native_tools_enabled())
+    )
+    prompt, conversation = split_session_prompt(messages)
+    memory = bridge._surface_memory()
+    light = bridge.light_surface_for(turn_skill_bindings, session_id=session_id)
+    return native, prompt, conversation, memory, light
+
+
+def preview_tool_surface(
+    bridge, resolution, *, session_id, messages, turn_skill_bindings, _prepared=None
+):
+    """Run the original planner over this synchronous or owned observation."""
+    from . import console_agent_bridge as owner
+
+    prefix, available = (
+        _prepared
+        if _prepared is not None
+        else (
+            tool_surface_preview_prefix(
+                bridge, messages, turn_skill_bindings, session_id
+            ),
+            None,
+        )
+    )
+    native, session_prompt, conversation, memory, light = prefix
+    if light:
+        inputs = light_surface_plan_inputs(
+            memory.light_sources(session_id),
+            local_tools_available=(
+                bridge.light_surface_local_tools_available()
+                if available is None
+                else available
+            ),
+            session_system_prompt=session_prompt,
+            previous_config=memory.light_config(session_id),
+        )
+    else:
+        inputs = memory.full_inputs(session_id) or shared_registry_plan_inputs(
+            bridge._registry, bridge._allowed_tools, owner.console_run_budget()
+        )
+    return inputs.preview(
+        resolution,
+        native_tools=native,
+        messages=conversation,
+        session_system_prompt=session_prompt,
+        turn_skill_bindings=turn_skill_bindings,
+    )
+
+
+async def owned_preflight_tool_surface(
+    controller,
+    resolution,
+    *,
+    session_id,
+    messages,
+    agent_tools_enabled,
+    turn_skill_bindings=(),
+    _capacity_assessor=None,
+    _gateway=None,
+    _prepare=None,
+):
+    """Retain only the stock switch read; all planning stays on the caller loop."""
+    from functools import partial
+    import inspect
+
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.MCP import console_snapshot
+    from .console_agent_bridge import (
+        _CONSOLE_TOOL_PREVIEW_METHODS,
+        _CONSOLE_PREVIEW_KILL_SOURCE,
+    )
+    from .console_change_review_read import _function_current
+    from .console_received_dispatch import (
+        preparation_native_runner,
+        stock_native_methods,
+    )
+
+    if _capacity_assessor is not None and not stock_capacity_assessor(
+        controller, _capacity_assessor
+    ):
+        return None
+    bridge = controller._agent_bridge if agent_tools_enabled else None
+    kwargs = dict(
+        session_id=session_id,
+        messages=messages,
+        turn_skill_bindings=turn_skill_bindings,
+    )
+    if bridge is None:
+        return preflight_tool_surface(bridge, resolution, **kwargs)
+    callback = getattr(bridge, "_tool_kill_switch", None)
+    app = controller.app
+    try:
+        app_sources = vars(app)
+    except TypeError:
+        return preflight_tool_surface(bridge, resolution, **kwargs)
+    service = app_sources.get("unified_mcp_service")
+    if not (
+        bridge is not None
+        and stock_native_methods(bridge, _CONSOLE_TOOL_PREVIEW_METHODS)
+        and type(callback) is partial
+        and callback.func is tool_kill_switch_engaged
+        and callback.func is _CONSOLE_PREVIEW_KILL_SOURCE[0]
+        and _function_current(_CONSOLE_PREVIEW_KILL_SOURCE)
+        and len(callback.args) == 1
+        and callback.args[0] is app
+        and not callback.keywords
+        and console_snapshot.controller_precheck_pipeline_current()
+        and console_snapshot.standard_console_sources(service)
+    ):
+        return preflight_tool_surface(bridge, resolution, **kwargs)
+    try:
+        prefix = tool_surface_preview_prefix(
+            bridge, messages, turn_skill_bindings, session_id
+        )
+    except Exception:  # noqa: BLE001 - preserve the optional estimate's failure policy.
+        return ToolSurfacePreview()
+    available = None
+    if prefix[-1]:
+        captured = console_snapshot._CapturedSources(service)
+        revision = controller.store.session_settings_revision(session_id)
+        gateway = controller.provider_gateway if _gateway is None else _gateway
+        prepare = (
+            getattr(gateway, "prepare_chat_request", None)
+            if _prepare is None
+            else _prepare
+        )
+        prepare_slot = inspect.getattr_static(gateway, "prepare_chat_request", None)
+
+        def current():
+            if (
+                controller._agent_bridge is not bridge
+                or bridge._tool_kill_switch is not callback
+                or callback.func is not _CONSOLE_PREVIEW_KILL_SOURCE[0]
+                or callback.args != (app,)
+                or callback.keywords
+                or not _function_current(_CONSOLE_PREVIEW_KILL_SOURCE)
+                or vars(app).get("unified_mcp_service") is not service
+                or controller.provider_gateway is not gateway
+                or inspect.getattr_static(gateway, "prepare_chat_request", None)
+                is not prepare_slot
+                or (
+                    _capacity_assessor is not None
+                    and not stock_capacity_assessor(controller, _capacity_assessor)
+                )
+                or controller.store.session_settings_revision(session_id) != revision
+                or not stock_native_methods(bridge, _CONSOLE_TOOL_PREVIEW_METHODS)
+                or not console_snapshot.controller_precheck_pipeline_current()
+            ):
+                raise RecoveryRequired("console_snapshot_owner_changed")
+            captured.require_current()
+
+        if not console_snapshot._same_callback(
+            getattr(gateway, "prepare_chat_request", None), prepare
+        ):
+            raise RecoveryRequired("console_snapshot_owner_changed")
+
+        def read():
+            try:
+                with service._producer_lifetime.operation():
+                    captured.permission_owner()
+                    return not bool(service.get_kill_switch())
+            except Exception:  # noqa: BLE001 - the original switch reader treats failure as engaged.
+                return False
+
+        available = await preparation_native_runner(
+            controller,
+            session_id,
+            require_current=current,
+        )(read)
+    try:
+        return bridge.preview_tool_surface(
+            resolution, **kwargs, _prepared=(prefix, available)
+        )
+    except Exception:  # noqa: BLE001 - an unavailable estimate never breaks a send.
+        return ToolSurfacePreview()
+
+
+def stock_capacity_assessor(controller, callback):
+    """Only the original synchronous assessor accepts the private surface."""
+    from .console_chat_controller import _CONTEXT_CAPACITY_CALLBACKS
+    from .console_received_dispatch import stock_native_methods
+
+    methods = tuple(
+        (name, function, code)
+        for name, function, code, *_ in _CONTEXT_CAPACITY_CALLBACKS
+    )
+    return bool(
+        methods
+        and getattr(callback, "__self__", None) is controller
+        and getattr(callback, "__func__", None) is methods[0][1]
+        and stock_native_methods(controller, methods)
+    )
+
+
+def context_overflow_cause(decision, resolved, capacity, *, non_compactable):
+    """Name why compacting cannot make an over-limit send fit (TASK-34350).
+
+    Args:
+        decision: The preflight's compaction decision.
+        resolved: The request's ``ResolvedConsoleContextPolicy``.
+        capacity: The prepared request's ``ConsoleRequestCapacity``.
+        non_compactable: The calling owner's live decision token.
+
+    Returns:
+        The cause, or ``None`` when the window itself is unknown.
+    """
+    from .console_context_budget_copy import ContextOverflowCause
+
+    window = capacity.context_window_tokens
+    if (
+        window is not None
+        and window - capacity.effective_response_tokens - capacity.safety_margin_tokens
+        <= 0
+    ):
+        return ContextOverflowCause.NO_INPUT_CAPACITY
+    if resolved.available_conversation_capacity_tokens == 0:
+        return ContextOverflowCause.MANDATORY_EXCEEDS
+    if decision is non_compactable:
+        return ContextOverflowCause.NOTHING_TO_COMPACT
+    return None
+
+
+def context_overflow_alert(
+    self, decision, resolved, capacity, prepared_before, resolution
+):
+    """Share stream/precommit overflow copy through the delegate's live readers."""
+    if decision not in {
+        self.read_global_CompactionDecision().UNKNOWN_WINDOW,
+        self.read_global_CompactionDecision().NON_COMPACTABLE,
+    }:
+        return None
+    if not prepared_before.known_overflow:
+        return None
+    if (
+        resolved.policy.failure_behavior
+        is self.read_global_CompactionFailureBehavior().OMIT_OLDER_CONTEXT
+    ):
+        return None
+    from .console_context_budget_copy import (
+        MODEL_WINDOW_SETTING,
+        context_overflow_alert_copy,
+    )
+
+    cause = self.read_global__context_overflow_cause()(decision, resolved, capacity)
+    if cause is not None:
+        return context_overflow_alert_copy(
+            cause,
+            model=resolution.model or "the selected model",
+            window_tokens=capacity.context_window_tokens,
+            window_estimated=capacity.limit_source == "estimated",
+            response_tokens=capacity.effective_response_tokens,
+            input_ceiling_tokens=capacity.effective_input_ceiling_tokens,
+        )
+    limiting_reason = (
+        resolved.validation_errors[0]
+        if resolved.validation_errors
+        else "The effective model input ceiling is unavailable."
+    )
+    return (
+        "This request cannot fit the selected model. "
+        f"{limiting_reason} Summarizing older turns cannot make "
+        "enough room. Set the model's context window in "
+        f"{MODEL_WINDOW_SETTING}, or reduce mandatory context or "
+        "the response maximum."
+    )
+
+
+def assess_request_capacity_only(
+    self,
+    *,
+    session_id,
+    owner,
+    resolution,
+    provider_messages,
+    prepare,
+    agent_tools_enabled,
+    assessment_sink,
+    turn_skill_bindings=(),
+    surface=None,
+):
+    """Original capacity calculation with the delegate's live collaborators."""
+    if surface is None:
+        surface = preflight_tool_surface(
+            self.read_controller__agent_bridge() if agent_tools_enabled else None,
+            resolution,
+            session_id=session_id,
+            messages=provider_messages,
+            turn_skill_bindings=turn_skill_bindings,
+        )
+    prepared = prepare(
+        resolution,
+        surface.request_messages(provider_messages),
+        tools=list(surface.tools),
+        apply_safety_window=False,
+    )
+    capacity = prepared.capacity
+    try:
+        global_overrides = self.read_controller__global_context_policy_overrides()()
+    except Exception:
+        global_overrides = None
+    resolved = self.read_global_resolve_context_policy()(
+        capacity=self.read_global_ConsoleContextCapacity()(
+            model_context_window_tokens=capacity.context_window_tokens,
+            model_window_verified=capacity.safety_verified,
+            provider_input_cap_tokens=capacity.provider_input_cap_tokens,
+            response_reservation_tokens=capacity.effective_response_tokens,
+            safety_margin_tokens=capacity.safety_margin_tokens,
+            mandatory_input_tokens=(
+                prepared.accounting.non_compactable_tokens
+                - prepared.accounting.memory_tokens
+            ),
+        ),
+        global_overrides=global_overrides,
+        conversation_overrides=owner.context_policy_overrides,
+    )
+    decision = self.read_global_decide_compaction()(
+        resolved,
+        conversation_tokens=(
+            prepared.accounting.memory_tokens + prepared.accounting.compactable_tokens
+        ),
+        compactable_units=0,
+    )
+    budget = resolved.effective_conversation_budget_tokens or 0
+    assessment_sink(
+        self.read_global_ContextCompactionHold()(
+            session_id=session_id,
+            used_tokens=(
+                prepared.accounting.memory_tokens
+                + prepared.accounting.compactable_tokens
+            ),
+            trigger_tokens=int(budget * resolved.policy.trigger_ratio),
+            budget_tokens=budget,
+            estimated=False,
+        ),
+        decision,
+        self.read_controller__context_overflow_alert()(
+            decision, resolved, capacity, prepared, resolution
+        ),
+    )
 
 
 def preflight_tool_surface(
