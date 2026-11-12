@@ -1116,7 +1116,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py": 4278,
     "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": 4174,
     "tldw_chatbook/Dreams/track_service.py": 4061,
-    "tldw_chatbook/DB/private_sqlite.py": 4030,
+    # 2026-11-12, restack onto dev e0186fa10a (owner size waiver): dev's
+    # 4,030 plus TASK-40132's +5 (the plugin registry owner), measured.
+    "tldw_chatbook/DB/private_sqlite.py": 4035,
 }
 
 #: Same tolerance as the Library controller ratchet: loose enough that
