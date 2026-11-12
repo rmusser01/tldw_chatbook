@@ -310,11 +310,13 @@ files ask before they run." — and is the place in setup to turn more on:
 - Each **built-in** row (Read file, List directory, Write file, Create note,
   Update note, Find files, Search in files, Expand document) turns on just
   that tool, and plain chat offers it on the next send without the full
-  agent surface. Each row's line says where it reaches and how often it asks,
-  in the approval card's own words — file tools reach only your Workspace
-  folders and the chat's scratch area, and every tool "Asks before each use
-  unless you pick This session" — and one hint under the file rows says where
-  to add a Workspace folder (Settings ▸ Workspaces). The ones that write are
+  agent surface. Each row's line says where it reaches and how often it asks
+  — file tools reach only your local Workspace folders (never a Workspace's
+  SSH folders; Write file only the read-write ones) and the chat's scratch
+  area, and every tool "Asks before running unless you approve a longer
+  scope", which on the approval card is **Until Chatbook exits** — and one
+  hint under the file rows says where to add a local folder (Settings ▸
+  Workspaces). The ones that write are
   marked with ⚠, and each name ends with when a change takes effect
   ("(next chat)"), the same label the Tool gates pane shows.
 

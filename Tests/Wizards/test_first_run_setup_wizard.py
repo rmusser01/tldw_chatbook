@@ -11903,12 +11903,14 @@ async def test_tools_step_rows_are_described_and_do_not_overlap():
 
 
 def test_read_class_tool_copy_mentions_per_call_approval():
-    """task-32289 AC#2, then TASK-34100.13: every row says it asks before each
-    use and names the card's own session option; file tools say where they
-    reach (Workspace folders and the chat scratch area)."""
+    """task-32289 AC#2, then TASK-34100.13: every row says it asks before it
+    runs unless a longer scope is approved (the card's "Until Chatbook
+    exits"; Tests/Agents/test_gateable_builtin_tools.py ties the sentence to
+    the review hook); file tools say where they reach (local Workspace
+    folders and the chat scratch area)."""
     from tldw_chatbook.Agents.tool_catalog import gateable_builtin_tools
 
-    sentence = "Asks before each use unless you pick This session."
+    sentence = "Asks before running unless you approve a longer scope."
     blurbs = {t.tool_name: t.blurb for t in gateable_builtin_tools()}
 
     for tool_name, desc in blurbs.items():
@@ -11916,7 +11918,7 @@ def test_read_class_tool_copy_mentions_per_call_approval():
     for tool_name in ("write_file", "create_note", "update_note"):
         assert "⚠" in blurbs[tool_name], tool_name
     for tool_name in ("read_file", "list_directory", "write_file", "glob_files", "grep_files"):
-        assert "Workspace folders" in blurbs[tool_name], tool_name
+        assert "local Workspace folders" in blurbs[tool_name], tool_name
 
 
 @pytest.mark.asyncio

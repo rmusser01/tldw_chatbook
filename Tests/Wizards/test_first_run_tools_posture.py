@@ -374,19 +374,27 @@ def test_a_note_with_nothing_at_its_default_has_no_defaults_clause() -> None:
 # -- AC#2/#4: blurbs on the shared gate rows -----------------------------------
 
 
-def _card_session_label() -> str:
+#: Rebase onto dev 4b90eb860b: dev's card calls the session choice "Until
+#: Chatbook exits" (no "This session" label), so the rows keep task-32284's
+#: sentence. TEF-5 in Tests/Agents/test_gateable_builtin_tools.py drives the
+#: real review hook to show the card offers that longer scope.
+_ASKS_SENTENCE = "Asks before running unless you approve a longer scope."
+
+
+def _card_labels() -> set[str]:
     from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
         _DECISION_OPTIONS,
     )
 
-    return next(label for label, value in _DECISION_OPTIONS if value == "approve_session")
+    return {label for label, _value in _DECISION_OPTIONS}
 
 
 @pytest.mark.parametrize("entry", _GATEABLE_BUILTINS, ids=lambda e: e.tool_name)
 def test_every_blurb_agrees_with_the_approval_card(entry) -> None:
-    assert "longer scope" not in entry.blurb
-    assert "Asks before each use" in entry.blurb
-    assert _card_session_label() in entry.blurb
+    assert entry.blurb.endswith(f" {_ASKS_SENTENCE}")
+    # The blurb names no card control the card does not show.
+    assert "This session" not in _card_labels()
+    assert "This session" not in entry.blurb
 
 
 @pytest.mark.parametrize(
@@ -395,7 +403,8 @@ def test_every_blurb_agrees_with_the_approval_card(entry) -> None:
     ids=lambda e: e.tool_name,
 )
 def test_file_tool_blurbs_name_workspace_folders_and_the_scratch_area(entry) -> None:
-    assert "Workspace folders" in entry.blurb
+    # "local": these tools never reach a Workspace's SSH folders.
+    assert "local Workspace folders" in entry.blurb
     assert "chat scratch area" in entry.blurb
 
 
@@ -414,7 +423,7 @@ def test_mcp_gate_pane_gets_the_same_blurbs() -> None:
 )
 def test_the_mcp_gate_pane_says_where_file_tools_reach(entry) -> None:
     gates = {gate.key: gate for gate in all_tool_gates(config={"tools": {}, "console": {}})}
-    assert "Workspace folders" in gates[entry.gate_key].description
+    assert "local Workspace folders" in gates[entry.gate_key].description
     assert "chat scratch area" in gates[entry.gate_key].description
 
 
@@ -432,6 +441,7 @@ async def test_one_static_workspace_hint_sits_under_the_file_rows() -> None:
             for name in posture_mod.FILE_TOOL_NAMES
         ]
     assert "Settings ▸ Workspaces" in text
+    assert "local folders" in text  # never a Workspace's SSH folders
     assert hint_y > max(file_rows_y)
 
 
