@@ -167,14 +167,31 @@ def _loop_projection(case):
 
 
 @pytest.mark.asyncio
-async def test_queue_capture_reads_native_mcp_sources_off_caller_loop(snapshot_case):
-    case = snapshot_case
+async def test_queue_capture_reads_native_mcp_sources_off_caller_loop(
+    captured_snapshot_case,
+):
+    case = captured_snapshot_case
     _loop_projection(case)
+    session_id = case.session.id
+    reservation = case.controller.prompt_queue_registry.begin_chain(
+        session_id,
+        context_epoch=case.store.conversation_context_epoch(session_id),
+        expected_revision=0,
+    )
+    assert reservation.applied
     probe = _MaximumProbe(case.source, case.permissions)
     with probe.installed():
-        await case.controller.queue_prompt(
-            case.session.id, text="queued message", expected_revision=0
+        configuration = await case.controller.capture_turn_configuration_snapshot(
+            session_id
         )
+        queued = await case.controller.queue_prompt(
+            session_id,
+            text="queued message",
+            expected_revision=reservation.snapshot.revision,
+            configuration=configuration,
+        )
+    assert queued.applied
+    assert queued.snapshot.entries[0].preview == "queued message"
     assert probe.read_threads and probe.permission_threads
     assert all(
         thread is not threading.current_thread()
