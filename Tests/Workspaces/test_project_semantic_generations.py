@@ -19,6 +19,7 @@ from Tests.Workspaces.project_index_support import (
     open_semantic_store,
 )
 from Tests.Workspaces.test_project_semantic_settings import digest, settings
+from tldw_chatbook.Utils.optional_deps import embeddings_rag_deps_installed
 from tldw_chatbook.Workspaces.project_index.lifetime import (
     BindingLifetime,
     LifetimeBusy,
@@ -1592,6 +1593,9 @@ async def test_actual_cached_local_model_builds_async_generation_offline(
 
 
 @pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+@pytest.mark.skipif(
+    not embeddings_rag_deps_installed(), reason="embeddings_rag deps not installed"
+)
 @pytest.mark.loopback_network
 @private_profile_test
 async def test_actual_http_provider_wait_allows_keyword_lookup(

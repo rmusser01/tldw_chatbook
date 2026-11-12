@@ -12,6 +12,7 @@ from Tests.Workspaces.test_project_semantic_generations import populated_store
 from Tests.Workspaces.test_project_semantic_settings import digest, settings
 from Tests.private_profile import private_profile_test
 from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+from tldw_chatbook.Utils.optional_deps import embeddings_rag_deps_installed
 from tldw_chatbook.Workspaces.project_index.lifetime import BindingLifetime
 from tldw_chatbook.DB.project_index_vectors import encode_vector
 from tldw_chatbook.Workspaces.project_index.models import IndexCandidate
@@ -646,6 +647,9 @@ async def test_incompatible_ready_artifact_skips_query_model(
 
 
 @pytest.mark.usefixtures("qualified_project_semantic_sqlite")
+@pytest.mark.skipif(
+    not embeddings_rag_deps_installed(), reason="embeddings_rag deps not installed"
+)
 @pytest.mark.loopback_network
 @private_profile_test
 async def test_cancelled_query_tool_observers_keep_native_close_owner(
