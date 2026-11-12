@@ -19,29 +19,39 @@ import threading
 import time
 import uuid
 from collections.abc import Mapping
+from concurrent import futures as _futures
+from concurrent.futures import Future as Future
 from datetime import datetime, timezone
+from types import MappingProxyType as MappingProxyType
 from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol, cast
 from uuid import uuid4
 
 from loguru import logger
 
 from .activation import (
-    AgentActivationRequired,
+    AgentActivationRequired as AgentActivationRequired,
     guarded,
     history_execution,
     standard_history_resolver,
     worker_guard,
 )
 
+FutureTimeoutError = _futures.TimeoutError
+
+
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
+    from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
+    from tldw_chatbook.Workspaces.worktree_activity import WorktreeActivityClaim
 
-    from .execution_capacity import ExecutionOwner, RuntimeCapacity
     from .agent_worktree import AgentWorktree
+    from .execution_capacity import ExecutionOwner, RuntimeCapacity
     from .fleet_coordinator import PeerMessenger
     from .fleet_messages import MessageInbox, MessageReader, MessageSender
-    from .run_log import RunLogWriter
     from .local_tool_provider import RunAdmittedWorkspaceRoot
+    from .run_log import RunLogWriter
+    from .workflow_models import WorkflowTaskSpec
+    from .workflow_task_scope import WorkflowTaskAuthorization
 
 from tldw_chatbook.Chat.console_history_budget import (
     StaleImageSettings,
@@ -58,7 +68,10 @@ from tldw_chatbook.Chat.custom_endpoint_registry import (
 from tldw_chatbook.Chat.console_provider_support import GENERATION_FIELD_REQUEST_KEYS  # noqa: F401 - lazy request helper compatibility seam
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.trajectory import contains_local_path, redact_local_paths
-from tldw_chatbook.Provider_Contract.sampling_params import params_to_dict, params_to_tuple
+from tldw_chatbook.Provider_Contract.sampling_params import (
+    params_to_dict as params_to_dict,
+    params_to_tuple,
+)
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Utils.token_counter import (
     count_tokens_messages,
@@ -71,7 +84,7 @@ from tldw_chatbook.Chat.console_history_budget import count_console_messages_tok
 
 from .agent_models import (
     WorkOrigin,
-    check_host_context,  # noqa: F401 - lazy request helper compatibility seam
+    check_host_context as check_host_context,
     PluginContextText,
     MESSAGE_TOOL_NAMES,
     AGENT_LIFECYCLE_INDEX_BASE,
@@ -98,11 +111,11 @@ from .agent_models import (
     STEP_AGENT_RUN_RESUMED,
     STEP_AGENT_RUN_STARTED,
     STEP_AGENT_RUN_SUPERSEDED,
-    STEP_SPAWN,
+    STEP_SPAWN as STEP_SPAWN,
     STEP_TOOL_CALL,
     FENCE_TOOL_RESULT_PREFIX,
-    FIND_TOOLS_NAME,  # noqa: F401 - read as runtime.FIND_TOOLS_NAME by agent_request_execution
-    LOAD_TOOLS_NAME,  # noqa: F401 - read as runtime.LOAD_TOOLS_NAME by agent_request_execution
+    FIND_TOOLS_NAME as FIND_TOOLS_NAME,
+    LOAD_TOOLS_NAME as LOAD_TOOLS_NAME,
     TOOL_OUTCOME_CANCELLED,
     TOOL_OUTCOME_TIMEOUT,
     TERMINAL_RUN_STATUSES,
@@ -111,7 +124,7 @@ from .agent_models import (
     FirstRequestSchemaPlan,
     AgentStep,
     ContinuationEventContext,
-    ModelTurn,  # noqa: F401 - lazy request helper compatibility seam
+    ModelTurn as ModelTurn,
     ProviderContinuationEvent,
     RunOutcome,
     RunBudget,
@@ -125,17 +138,10 @@ from .agent_models import (
     ToolReviewValue,
     ToolCatalogEntry,
     ToolSchema,
-    clamp_child_budget,
+    clamp_child_budget as clamp_child_budget,
     contain_child_budget,
     definition_from_row,
     normalize_tool_review,
-    # Aliased: `_run_one` below has its own `definition_fingerprint: str |
-    # None` keyword parameter (the audit value to persist), and that
-    # parameter shadows this module-level function for the rest of
-    # `_run_one`'s body -- including nested closures like `spawn`, which
-    # closes over `_run_one`'s local scope, not the module global. Calling
-    # the FUNCTION under a distinct local name avoids `spawn` accidentally
-    # invoking the parameter's value (None/str) instead.
     definition_fingerprint as compute_definition_fingerprint,
 )
 from tldw_chatbook.Provider_Contract.provider_continuation import (
@@ -718,6 +724,113 @@ def _append_workspace_context_note(system_content: str, note: str) -> str:
     return f"{system_content}\n\n{note}" if note else system_content
 
 
+_UNCAPTURED_INSTRUCTIONS = object()
+
+
+class WorkflowChildWait(PermissionError):
+    """Typed no-dispatch wait; retry only the original prepared authorization."""
+
+    def __init__(
+        self, reason: Literal["worktree_activity", "fleet_capacity"], message: str
+    ):
+        super().__init__(message)
+        self.reason = reason
+
+
+class _FleetAdmissionWait(SpawnAdmissionRefusal):
+    """No fleet handle was reserved; original workflow preparation may retry."""
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class WorkflowChildReceipt:
+    """Native launch identity and physical owner; never execution authority."""
+
+    attempt_id: str
+    run_id: str
+    handle_id: str
+    owner: ExecutionOwner = dataclasses.field(repr=False)
+    activity_claim: WorktreeActivityClaim = dataclasses.field(repr=False)
+    failure: Literal["thread_start", "setup", "no_run", "unknown"] | None = None
+
+
+class _WorkflowChildLaunchFailed(PermissionError):
+    """Terminal native launch failure retaining its original physical receipt."""
+
+    def __init__(
+        self,
+        receipt: WorkflowChildReceipt,
+        message: str = "workflow child launch already claimed",
+    ) -> None:
+        super().__init__(message)
+        self.receipt = receipt
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _NativeWorkflowReturn:
+    receipt: WorkflowChildReceipt
+    error: BaseException = dataclasses.field(repr=False)
+    known: bool
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _WorkflowLaunchEntry:
+    service: Any = dataclasses.field(repr=False)
+    authorization: Any = dataclasses.field(repr=False)
+    native: Any = dataclasses.field(repr=False)
+    preparation: Any = dataclasses.field(repr=False)
+    wave: Any = dataclasses.field(repr=False)
+    mode: str
+    lock: Any = dataclasses.field(repr=False)
+    marker: list = dataclasses.field(repr=False)
+    native_list: list = dataclasses.field(repr=False)
+    bridge_list: list = dataclasses.field(repr=False)
+    waits: list = dataclasses.field(repr=False)
+    capacity_lock: Any = dataclasses.field(repr=False)
+    pending: list = dataclasses.field(default_factory=list, repr=False)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class WorkflowLaunchReturn:
+    entry: _WorkflowLaunchEntry = dataclasses.field(repr=False)
+    owner: Any = dataclasses.field(default=None, repr=False)
+    claim: Any = dataclasses.field(default=None, repr=False)
+    operation: Any = dataclasses.field(default=None, repr=False)
+    receipt: WorkflowChildReceipt | None = None
+    error: BaseException | None = dataclasses.field(default=None, repr=False)
+    wait: bool = False
+    known: bool = True
+    duplicate: bool = False
+
+
+_WorkflowChildWait = WorkflowChildWait
+_WorkflowLaunchReturn = WorkflowLaunchReturn
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _PreparedWorkflowChild:
+    service: Any = dataclasses.field(repr=False)
+    phase: Any = dataclasses.field(repr=False)
+    kwargs: Mapping[str, Any] = dataclasses.field(repr=False)
+    messages_json: str = dataclasses.field(repr=False)
+    fleet: FleetCoordinator = dataclasses.field(repr=False)
+    parent_run_id: str | None
+    roster: tuple = dataclasses.field(repr=False)
+    target_ref: Any = dataclasses.field(repr=False)
+    handle_ids: list[str] = dataclasses.field(default_factory=list, repr=False)
+    durable_ids: dict[str, str] = dataclasses.field(default_factory=dict, repr=False)
+    cancels: dict = dataclasses.field(default_factory=dict, repr=False)
+    threads: dict = dataclasses.field(default_factory=dict, repr=False)
+    activity_claims: list = dataclasses.field(default_factory=list, repr=False)
+    log_finalized: list = dataclasses.field(default_factory=list, repr=False)
+    wait_return: list = dataclasses.field(default_factory=list, repr=False)
+    uncertain_start: list = dataclasses.field(default_factory=list, repr=False)
+    launch_entry: list = dataclasses.field(default_factory=list, repr=False)
+    source_observation: tuple | None = dataclasses.field(default=None, repr=False)
+
+
+WorkflowChildPreparation = _PreparedWorkflowChild
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class ModelRequest:
     """Exact bounded provider request used by budgeting and dispatch."""
@@ -733,6 +846,35 @@ class RunLogRequestPlan:
     requested: bool
     eviction_enabled: bool
     min_recent_rounds: int
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ConsoleFirstRequestPlan:
+    """Pure, disposable inputs for the Console agent's first model request."""
+
+    registry: ToolCatalogRegistry
+    allowed_tools: tuple[str, ...]
+    builtin_names: tuple[str, ...]
+    local_names: tuple[str, ...]
+    skill_names: frozenset[str]
+    config: AgentConfig
+    schemas: FirstRequestSchemaPlan
+    run_log: RunLogRequestPlan
+    messages: list[dict]
+    api_endpoint: str
+    profile_context_snapshot: ProfileContextSnapshot
+    # Raw selection id before family flattening (``custom-ep:<slug>`` when
+    # the session's provider names a registry endpoint; otherwise equals
+    # ``api_endpoint``). Spawn resolution uses it as ``parent_provider`` so
+    # an inheriting child snapshots the endpoint, not the execution family.
+    selected_provider: str = ""
+    # TASK-34100.5.3 (review round 1): the planner inputs the context meter
+    # re-runs against another resolution (``console_tool_surface_preview``).
+    # A factory, so only a live send pays for copying the catalog.
+    tool_surface_inputs: Callable[[], Any] | None = None
+    # Light surface only: the names from the user's own sources (Library,
+    # MCP servers they added, an armed shell) that the plan kept.
+    user_source_names: tuple[str, ...] = ()
 
 
 def _chat_create_runtime_schemas(
@@ -2001,6 +2143,8 @@ def _call_with_timeout(
     execution_owner: AgentService | None = None,
     clamped_by_wall_budget: bool = False,
     owner: ExecutionOwner | None = None,
+    raw_cli_call=None,
+    ssh_call=None,
 ) -> ToolResult:
     """Run ``fn`` on a daemon thread, bounded by ``seconds`` of EXECUTION time.
 
@@ -2071,38 +2215,182 @@ def _call_with_timeout(
             else None,
         )
     box: dict = {"dispatch_state": "not_started"}
+    ordinary = getattr(execution_owner, "_ordinary_tree", None)
+    from .workflow_task_scope import current_task_authorization
+
+    workflow = current_task_authorization()
+    from .run_context import current_planning_preparation
+
+    workflow_prepared = current_planning_preparation()
+    planning_prepared = workflow_prepared
+    if workflow is not None:
+        if (
+            not workflow._binding_state
+            or workflow._binding_state[0][0] is not owner
+        ):
+            if operation is not None:
+                operation.finish()
+            return ToolResult.blocked("workflow tool owner is not an original member")
+        if workflow._bridge_preparation:
+            workflow_prepared = workflow._bridge_preparation[0]
+    source_scope = (
+        ordinary.source.activate
+        if ordinary is not None
+        else workflow_prepared.activate_source
+        if workflow_prepared is not None
+        else None
+    )
+    goal = automatic_work.goal if automatic_work is not None else None
+    ordinary_goal = ordinary is not None and workflow_prepared is None and goal is not None
+    retained_source = None
+    if ordinary is not None:
+        if owner not in ordinary.members or owner.capacity is not ordinary.capacity:
+            if operation is not None:
+                operation.finish()
+            return ToolResult.blocked("ordinary tool owner is not an original member")
+        retained_source = ordinary.retain_source_scope()
+        retained_source.__enter__()
+
+    def retain_unknown_return():
+        if operation is not None:
+            operation.mark_stopping()
+            operation.owner.mark_cleanup_unproven()
+        threading.Event().wait()
 
     @worker_guard(execution_owner)
-    def _admitted_call() -> ToolResult:
-        box["dispatch_state"] = "settled"
-        return fn()
+    def _admitted_call() -> None:
+        from .execution_capacity import bind_ordinary_tree
+
+        with (
+            bind_ordinary_tree(ordinary),
+            owner.activate() if source_scope is not None else contextlib.nullcontext(),
+        ):
+            if source_scope is not None:
+                try:
+                    (ordinary or workflow_prepared).check_local_sources()
+                except (RuntimeError, PermissionError) as error:
+                    # No original provider/source scope was attempted. Retire
+                    # this unused operation under its captured worker storage.
+                    box["result"] = ToolResult.blocked(str(error))
+                    if planning_prepared is None:
+                        operation.finish()
+                    return
+            try:
+                with (  # noqa: SIM117 - source and owner scopes have distinct custody
+                    source_scope()
+                    if source_scope is not None
+                    else contextlib.nullcontext()
+                ):
+                    from .activation import owned_goal_storage
+
+                    # Goal borrows the admitted source's handles until its own
+                    # storage scope returns, before the source verifies return.
+                    with (
+                        owner.activate()
+                        if source_scope is not None
+                        else contextlib.nullcontext(),
+                        owned_goal_storage(goal._coordinator.service)
+                        if ordinary_goal
+                        else contextlib.nullcontext(),
+                    ):
+                        try:
+                            box["dispatch_state"] = "settled"
+                            with (
+                                ssh_call.activate(operation)
+                                if ssh_call
+                                else contextlib.nullcontext(),
+                                raw_cli_call.activate(operation)
+                                if raw_cli_call
+                                else contextlib.nullcontext(),
+                            ):
+                                result = fn()
+                                box["result"] = (
+                                    dataclasses.replace(
+                                        result, dispatch_state="settled"
+                                    )
+                                    if isinstance(result, ToolResult)
+                                    and result.dispatch_state is None
+                                    else result
+                                )
+                        except BaseException as error:
+                            box["call_error"] = error
+                            raise
+            except BaseException as error:
+                if source_scope is not None and error is not box.get("call_error"):
+                    # An attempted source entry/unwind did not return. The
+                    # original hold is not proof of that cleanup completing.
+                    retain_unknown_return()
+                raise
+            finally:
+                if (
+                    source_scope is not None
+                    and planning_prepared is None
+                    and (ssh_call is None or not ssh_call.finished)
+                ):
+                    try:
+                        operation.finish()
+                    except BaseException:  # noqa: BLE001 - preserve unknown finish return
+                        retain_unknown_return()
 
     def _runner() -> None:
+        from .goal_storage_lifetime import owned_goal_storage
+
         try:
             with (
-                automatic_work.scope() if automatic_work else contextlib.nullcontext(),
+                planning_prepared._planning_storage_return()
+                if planning_prepared is not None
+                else contextlib.nullcontext(),
+                owned_goal_storage(workflow_prepared.service)
+                if workflow_prepared is not None
+                else contextlib.nullcontext(),
+                automatic_work._bound_scope()
+                if ordinary_goal
+                else automatic_work.scope()
+                if automatic_work
+                else contextlib.nullcontext(),
+                workflow.scope() if workflow is not None else contextlib.nullcontext(),
+                owner.activate() if workflow is not None else contextlib.nullcontext(),
                 bind_tool_output_sink(output_sink),
             ):
                 if automatic_work is not None:
                     automatic_work.check()
-                result = _admitted_call()
-                box["result"] = (
-                    dataclasses.replace(result, dispatch_state="settled")
-                    if isinstance(result, ToolResult) and result.dispatch_state is None
-                    else result
-                )
+                _admitted_call()
+            if planning_prepared is not None:
+                operation.finish()
         except BaseException as exc:  # noqa: BLE001 — surfaced as a failed ToolResult, never propagated to the worker's exit
             box["error"] = exc
+            if planning_prepared is not None:
+                # Only the original callback error can cross a positively returned
+                # storage/source scope. A changed unwind keeps the same operation.
+                if exc is box.get("call_error"):
+                    try:
+                        operation.finish()
+                    except BaseException:  # noqa: BLE001 - retain original uncertainty or inspect exact native failure.
+                        retain_unknown_return()
+                else:
+                    retain_unknown_return()
+            if source_scope is not None and exc is not box.get("call_error"):
+                retain_unknown_return()
         finally:
-            if operation is not None:
+            if (
+                source_scope is None
+                and operation is not None
+                and (ssh_call is None or not ssh_call.finished)
+            ):
                 operation.finish()
+            if retained_source is not None:
+                retained_source.__exit__(None, None, None)
 
     try:
         worker = threading.Thread(target=_runner, name=f"tool-{tool_name}", daemon=True)
         worker.start()
+        if workflow_prepared is not None:
+            workflow_prepared._tool_workers.append(worker)
     except BaseException as exc:  # noqa: BLE001 -- failed tool starts return a ToolResult
         if operation is not None:
             operation.finish()
+        if retained_source is not None:
+            retained_source.__exit__(None, None, None)
         return ToolResult(
             ok=False,
             error=f"tool worker could not start: {exc}",
@@ -2333,6 +2621,8 @@ class AgentService:
         self.runtime_capacity = runtime_capacity or RuntimeCapacity.from_settings()
         # asyncio.to_thread carries the accepted caller context here; raw child
         # and tool threads below must explicitly bind the same immutable owner.
+        self._workflow_preparation_lock = threading.Lock()
+        self._workflow_authorization = None
         self._automatic_work = current_automatic_work()
         self.work_origin = WorkOrigin.AUTOMATIC if self._automatic_work else work_origin
         self._work_chain_id = (
@@ -2762,6 +3052,9 @@ class AgentService:
                 reasoning_replay=config.reasoning_replay,
             ),
         )
+        planning = getattr(self, "_workflow_planning_preparation", None)
+        if planning is not None:
+            planning.require_seed_in_payload(payload)
         return ModelRequest(
             messages=tuple(dict(message) for message in payload),
             tools=tuple(tools),
@@ -3871,9 +4164,11 @@ class AgentService:
             sensitivity="diagnostic",
         )
         try:
-            self.db.insert_steps_at_indices(
-                run_id, [(index, _safe_agent_step_record(run_id, step))]
-            )
+            record = _safe_agent_step_record(run_id, step)
+            tree = getattr(self, "_ordinary_tree", None)
+            if tree is not None:
+                tree.required_steps(run_id, [(index, record)])
+            self.db.insert_steps_at_indices(run_id, [(index, record)])
         except Exception as exc:  # noqa: BLE001 — capture is best effort
             logger.warning(
                 "could not persist agent run lifecycle run_id={} kind={} error_type={}",
@@ -4013,6 +4308,10 @@ class AgentService:
                     _safe_exception_type(status_exc),
                 )
                 return False
+        tree = getattr(self, "_ordinary_tree", None)
+        if tree is not None:
+            tree.required_steps(run_id, [(index, record)])
+            tree.required_terminal(run_id, status, result, budget_tokens)
         for attempt in range(2):
             try:
                 persisted = self.db.set_terminal_with_step(
@@ -4211,7 +4510,6 @@ class AgentService:
                     )
 
             execution_owner.on_drained(persist_actual_drain)
-
             def cleanup_unproven() -> None:
                 execution_owner.mark_cleanup_unproven()
                 try:
@@ -4349,6 +4647,9 @@ class AgentService:
                     )
                 )
         except Exception as exc:  # noqa: BLE001 — trace capture is best-effort
+            tree = getattr(self, "_ordinary_tree", None)
+            if tree is not None:
+                tree.required_steps(run_id, None)
             step_dicts = []
             logger.warning(
                 "could not persist terminal agent steps run_id={} error_type={}",
@@ -4356,6 +4657,9 @@ class AgentService:
                 _safe_exception_type(exc),
             )
         else:
+            tree = getattr(self, "_ordinary_tree", None)
+            if tree is not None:
+                tree.required_steps(run_id, step_dicts)
             try:
                 self.db.insert_steps_at_indices(run_id, step_dicts)
             except Exception as exc:  # noqa: BLE001 — best-effort capture
@@ -4465,29 +4769,305 @@ class AgentService:
         *,
         close_capture: bool = True,
     ) -> None:
-        """Close only an actually associated attempt; never raises (see helper)."""
-        from .agent_request_execution import settle_review_capture
+        from . import agent_native_execution
 
-        settle_review_capture(
-            self, service, run_id, receipt_id, close_capture=close_capture
+        return agent_native_execution._settle_review_capture(
+            self,
+            service,
+            run_id,
+            receipt_id,
+            close_capture=close_capture,
         )
 
     def _fork_review_child(
         self, service, *, actor, max_tool_result_chars: int, grant=None
     ) -> AgentService:
-        """Retain execution owners, with private actor/catalog state for this run."""
-        from copy import copy
+        from . import agent_native_execution
 
-        fork = copy(self)
-        # Request construction writes this cache; keep child schemas private and
-        # independent of a later primary turn clearing its own protocol cache.
-        fork._tool_protocol_cache = {}
-        fork.registry = self.registry.for_review_child(
-            service.for_run(
-                actor, grant=grant, max_tool_result_chars=max_tool_result_chars
-            )
+        return agent_native_execution._fork_review_child(
+            self,
+            service,
+            actor=actor,
+            max_tool_result_chars=max_tool_result_chars,
+            grant=grant,
         )
-        return fork
+
+    def _check_workflow_launch_authorization(self, authorization):
+        from . import agent_native_execution
+
+        return agent_native_execution._check_workflow_launch_authorization(
+            self,
+            authorization,
+        )
+
+    @guarded
+    def _prepare_workflow_child(
+        self,
+        *,
+        authorization,
+        first_request_plan,
+        target_ref,
+        parent_owner: ExecutionOwner | None = None,
+        startup_instruction_snapshot: InstructionSnapshot | None = None,
+        continuation_durability: Literal["persistent", "ephemeral"] = "persistent",
+    ) -> None:
+        from . import agent_native_execution
+
+        return agent_native_execution._prepare_workflow_child(
+            self,
+            authorization=authorization,
+            first_request_plan=first_request_plan,
+            target_ref=target_ref,
+            parent_owner=parent_owner,
+            startup_instruction_snapshot=startup_instruction_snapshot,
+            continuation_durability=continuation_durability,
+        )
+
+    def launch_workflow_task(
+        self,
+        task: WorkflowTaskSpec,
+        *,
+        authorization: WorkflowTaskAuthorization,
+        should_cancel: Callable[[], bool],
+    ) -> WorkflowChildReceipt:
+        from . import agent_native_execution
+
+        return agent_native_execution.launch_workflow_task(
+            self,
+            task,
+            authorization=authorization,
+            should_cancel=should_cancel,
+        )
+
+    def _workflow_launch_result(
+        self, task, *, authorization, should_cancel, _wave=None
+    ):
+        from . import agent_native_execution
+
+        return agent_native_execution._workflow_launch_result(
+            self,
+            task,
+            authorization=authorization,
+            should_cancel=should_cancel,
+            _wave=_wave,
+        )
+
+    def _finish_workflow_launch(self, result):
+        from . import agent_native_execution
+
+        return agent_native_execution._finish_workflow_launch(
+            self,
+            result,
+        )
+
+    def _finalize_workflow_child_log(
+        self, authorization, *, status: str, total_tokens: int = 0
+    ) -> None:
+        from . import agent_native_execution
+
+        return agent_native_execution._finalize_workflow_child_log(
+            self,
+            authorization,
+            status=status,
+            total_tokens=total_tokens,
+        )
+
+    @staticmethod
+    def _finalize_run_log(
+        writer,
+        *,
+        run_id,
+        config,
+        api_endpoint,
+        status,
+        total_tokens,
+        superseded_run_id="",
+    ) -> None:
+        from . import agent_native_execution
+
+        return agent_native_execution._finalize_run_log(
+            writer,
+            run_id=run_id,
+            config=config,
+            api_endpoint=api_endpoint,
+            status=status,
+            total_tokens=total_tokens,
+            superseded_run_id=superseded_run_id,
+        )
+
+    def _compose_native_child(
+        self,
+        spawn_task,
+        *,
+        config,
+        api_endpoint,
+        parent_raw_provider,
+        fleet,
+        inline,
+        started,
+        resolved,
+        target,
+        fallback_targets,
+        child_execution_provider,
+        allowed_tools,
+        isolation,
+        run_id,
+        conversation_id,
+        continuation_durability,
+        chain_id,
+        writer,
+        spawn_step_index,
+        child_sequence,
+        startup_instruction_snapshot,
+        review_claim=None,
+    ):
+        from . import agent_native_execution
+
+        return agent_native_execution._compose_native_child(
+            self,
+            spawn_task,
+            config=config,
+            api_endpoint=api_endpoint,
+            parent_raw_provider=parent_raw_provider,
+            fleet=fleet,
+            inline=inline,
+            started=started,
+            resolved=resolved,
+            target=target,
+            fallback_targets=fallback_targets,
+            child_execution_provider=child_execution_provider,
+            allowed_tools=allowed_tools,
+            isolation=isolation,
+            run_id=run_id,
+            conversation_id=conversation_id,
+            continuation_durability=continuation_durability,
+            chain_id=chain_id,
+            writer=writer,
+            spawn_step_index=spawn_step_index,
+            child_sequence=child_sequence,
+            startup_instruction_snapshot=startup_instruction_snapshot,
+            review_claim=review_claim,
+        )
+
+    def _launch_prepared_child(
+        self,
+        spawn_task,
+        agent_name,
+        child_kwargs,
+        isolation=None,
+        *,
+        fleet,
+        run_id,
+        message_chain_id,
+        hook_run,
+        should_cancel,
+        my_handle_ids,
+        durable_handle_ids,
+        fleet_cancels,
+        fleet_threads,
+        child_owner,
+        child_reservation,
+        definition_wall_seconds=None,
+        resumed_managed=None,
+        managed_resume_ceiling=None,
+        child_outlives_turn=None,
+        _workflow_entry=None,
+    ):
+        from . import agent_native_execution
+
+        return agent_native_execution._launch_prepared_child(
+            self,
+            spawn_task,
+            agent_name,
+            child_kwargs,
+            isolation,
+            fleet=fleet,
+            run_id=run_id,
+            message_chain_id=message_chain_id,
+            hook_run=hook_run,
+            should_cancel=should_cancel,
+            my_handle_ids=my_handle_ids,
+            durable_handle_ids=durable_handle_ids,
+            fleet_cancels=fleet_cancels,
+            fleet_threads=fleet_threads,
+            child_owner=child_owner,
+            child_reservation=child_reservation,
+            definition_wall_seconds=definition_wall_seconds,
+            resumed_managed=resumed_managed,
+            managed_resume_ceiling=managed_resume_ceiling,
+            child_outlives_turn=child_outlives_turn,
+            _workflow_entry=_workflow_entry,
+        )
+
+    def _launch_prepared_child_result(
+        self,
+        spawn_task,
+        agent_name,
+        child_kwargs,
+        isolation=None,
+        *,
+        fleet,
+        run_id,
+        message_chain_id,
+        hook_run,
+        should_cancel,
+        my_handle_ids,
+        durable_handle_ids,
+        fleet_cancels,
+        fleet_threads,
+        child_owner,
+        child_reservation,
+        definition_wall_seconds=None,
+        resumed_managed=None,
+        managed_resume_ceiling=None,
+        child_outlives_turn=None,
+        _workflow_entry=None,
+    ):
+        from . import agent_native_execution
+
+        return agent_native_execution._launch_prepared_child_result(
+            self,
+            spawn_task,
+            agent_name,
+            child_kwargs,
+            isolation,
+            fleet=fleet,
+            run_id=run_id,
+            message_chain_id=message_chain_id,
+            hook_run=hook_run,
+            should_cancel=should_cancel,
+            my_handle_ids=my_handle_ids,
+            durable_handle_ids=durable_handle_ids,
+            fleet_cancels=fleet_cancels,
+            fleet_threads=fleet_threads,
+            child_owner=child_owner,
+            child_reservation=child_reservation,
+            definition_wall_seconds=definition_wall_seconds,
+            resumed_managed=resumed_managed,
+            managed_resume_ceiling=managed_resume_ceiling,
+            child_outlives_turn=child_outlives_turn,
+            _workflow_entry=_workflow_entry,
+        )
+
+
+    def _install_child_stop(self, child_id, status, parent_id, should_cancel):
+        from . import agent_native_execution
+
+        return agent_native_execution._install_child_stop(
+            self,
+            child_id,
+            status,
+            parent_id,
+            should_cancel,
+        )
+
+    def _finish_execution(self, owner):
+        from . import agent_native_execution
+
+        return agent_native_execution._finish_execution(
+            self,
+            owner,
+        )
 
     def _run_owned(
         self,
@@ -4496,72 +5076,22 @@ class AgentService:
         fleet_child: bool = False,
         finish_root: bool = True,
         automatic_child_reservation: str | None = None,
+        workflow_task_authorization: Any = None,
+        workflow_activity_claim: Any = None,
         **kwargs: Any,
     ) -> tuple[str, RunOutcome]:
-        """Keep the execution owned through its run and child-driver cleanup."""
-        from .automatic_work_budget import AutomaticWorkLimits, AutomaticWorkRefused
+        from . import agent_native_execution
 
-        owner = execution_owner or self.runtime_capacity.begin_execution(
-            origin=self.work_origin,
-            conversation_id=kwargs["conversation_id"],
-            child=kwargs["agent_kind"] != AGENT_KIND_PRIMARY,
+        return agent_native_execution._run_owned(
+            self,
+            execution_owner=execution_owner,
+            fleet_child=fleet_child,
+            finish_root=finish_root,
+            automatic_child_reservation=automatic_child_reservation,
+            workflow_task_authorization=workflow_task_authorization,
+            workflow_activity_claim=workflow_activity_claim,
+            **kwargs,
         )
-        automatic_work = self._automatic_work
-        try:
-            if self.work_origin is WorkOrigin.AUTOMATIC and automatic_work is None:
-                raise AutomaticWorkRefused("acceptance_required")
-            with (
-                owner.activate(),
-                automatic_work.scope() if automatic_work else contextlib.nullcontext(),
-            ):
-                if automatic_work is not None:
-                    automatic_work.check()
-                    if (
-                        automatic_child_reservation is not None
-                        and not automatic_work.ledger.commit(
-                            automatic_child_reservation,
-                            owner_id=automatic_work.owner_id,
-                            limits=AutomaticWorkLimits.from_settings(
-                                automatic_work.policy_kind()
-                            ),
-                        )
-                    ):
-                        raise AutomaticWorkRefused("child_already_launched")
-                    # A survivor drops its parent's Stop probe, but keeps this
-                    # chain deadline and kill switch for its entire lifetime.
-                    run_cancel = kwargs["should_cancel"]
-                    kwargs["should_cancel"] = lambda: (
-                        run_cancel() or automatic_work.should_cancel()
-                    )
-                if fleet_child:
-                    scope = self._child_model_scope()
-                elif kwargs["agent_kind"] != AGENT_KIND_PRIMARY:
-                    scope = self._inline_child_model_scope()
-                else:
-                    scope = contextlib.nullcontext()
-                with scope:
-                    return self._run_one(**kwargs)
-        finally:
-            try:
-                if (
-                    kwargs["agent_kind"] == AGENT_KIND_PRIMARY
-                    and self._archive_recovery_provider is not None
-                ):
-                    self._archive_recovery_provider.finish()
-            finally:
-                try:
-                    if (
-                        automatic_work is not None
-                        and automatic_child_reservation is not None
-                    ):
-                        # Only uncommitted work can refund; preserve owned driver cleanup.
-                        automatic_work.ledger.release(
-                            automatic_child_reservation,
-                            owner_id=automatic_work.owner_id,
-                        )
-                finally:
-                    if finish_root:
-                        owner.finish_root()
 
     @guarded
     def _run_one(
@@ -4591,6 +5121,7 @@ class AgentService:
         spawn_parent_event_id: str | None = None,
         requested_run_id: str | None = None,
         precreated_run_id: str | None = None,
+        workflow_activity_claim: Any = None,
         lifecycle_owner_seq_start: int | None = None,
         on_run_id: Callable[[str], None] | None = None,
         hook_tool_ids: frozenset[str] | None = None,
@@ -4619,6 +5150,7 @@ class AgentService:
         continuation_owner_key: str | None = None,
         chain_id: str = "primary",
         first_request_schema_plan: FirstRequestSchemaPlan | None = None,
+        startup_instruction_snapshot: Any = _UNCAPTURED_INSTRUCTIONS,
         # TASK-28238 phase 2 Task 5: the run-entry approval surface for
         # merge_agent_worktree/discard_agent_worktree. Only ever meaningful
         # for the PRIMARY call (run_turn passes it through; child calls at
@@ -4686,6 +5218,10 @@ class AgentService:
             "subagent" if agent_kind == AGENT_KIND_SUBAGENT else "primary"
         )
         if precreated_run_id is None:
+            requested_run_id = requested_run_id or uuid.uuid4().hex
+            tree = getattr(self, "_ordinary_tree", None)
+            if tree is not None:
+                tree.row_started(current_execution_owner(), requested_run_id)
             run_id = self.db.create_run(
                 conversation_id=conversation_id,
                 agent_kind=agent_kind,
@@ -4769,6 +5305,24 @@ class AgentService:
             )
             progress_sender_factory = peer_messenger_factory = None
             drain_mailbox = drain_mailbox_with_causes = None
+        from .workflow_task_scope import (
+            check_current_task_call,
+            current_task_authorization,
+        )
+
+        task_authorization = current_task_authorization()
+        if task_authorization is not None:
+            task_authorization.bind_native(
+                owner=owner, activity_claim=workflow_activity_claim
+            )
+            config = dataclasses.replace(
+                config,
+                allowed_tools=tuple(
+                    name
+                    for name in config.allowed_tools
+                    if task_authorization.permits_name(name)
+                ),
+            )
         # PR2a Task 6: a threaded child's run id does not exist until this
         # line, and its spawning parent has long since returned a handle to
         # the model. This hook is how the id gets back to the coordinator
@@ -4782,7 +5336,14 @@ class AgentService:
                 logger.warning("on_run_id hook raised; continuing")
         # Two-phase: the writer was constructed before any run id existed.
         # Only the PRIMARY run binds; a child finds it already bound.
-        if agent_kind == AGENT_KIND_PRIMARY:
+        if agent_kind == AGENT_KIND_PRIMARY or (
+            task_authorization is not None
+            and parent_run_id is None
+            and writer is not None
+        ):
+            from .native_source_storage import console_writer_source
+
+            console_writer_source(writer)
             writer.bind(run_id)
         started = self.clock()
         if config.review_binding is not None:
@@ -5007,6 +5568,33 @@ class AgentService:
         # Task 7: reused verbatim (not re-derived) as the gate on whether the
         # system prompt's RUN_LOG_PROMPT_SECTION gets appended below, so the
         # prompt can never mention a tool this run didn't actually disclose.
+        from .workflow_task_scope import current_planning_authorization
+
+        planning_authorization = current_planning_authorization()
+        if planning_authorization is not None:
+            active = [
+                schema
+                for schema in active
+                if planning_authorization.permits_name(schema.name)
+            ]
+            disclosed_names = {schema.name for schema in active}
+            runtime_schemas = [
+                schema
+                for schema in runtime_schemas
+                if planning_authorization.permits_name(schema.name)
+            ]
+        if task_authorization is not None:
+            active = [
+                schema
+                for schema in active
+                if task_authorization.permits_name(schema.name)
+            ]
+            disclosed_names = {schema.name for schema in active}
+            runtime_schemas = [
+                schema
+                for schema in runtime_schemas
+                if task_authorization.permits_name(schema.name)
+            ]
         if self._automatic_work is not None and self._automatic_work.goal is not None:
             goal = self._automatic_work.goal
             active = [
@@ -5081,7 +5669,11 @@ class AgentService:
             self._startup_instruction_snapshot = snapshot
             chain_delivery = snapshot.primary_delivery
 
-        snapshot = self._startup_instruction_snapshot
+        snapshot = (
+            self._startup_instruction_snapshot
+            if startup_instruction_snapshot is _UNCAPTURED_INSTRUCTIONS
+            else startup_instruction_snapshot
+        )
         legacy_delivery_enabled = (
             agent_kind != AGENT_KIND_SUBAGENT or project_context is None
         )
@@ -5269,6 +5861,7 @@ class AgentService:
             disclosed_names.clear()
             disclosed_names.update(names)
 
+        parent_instruction_snapshot = snapshot
         sub_agent_spawns = 0
         child_started = False  # this spawn call left a possibly-run child charged
         review_owner = self.registry.resolve_owner_for_name("code_review_prepare")
@@ -5296,12 +5889,13 @@ class AgentService:
             fleet.durable_handle_map() if fleet is not None else {}
         )
 
-        def _reserve_child_execution() -> tuple[
+        def _reserve_child_execution(child_kwargs) -> tuple[
             ExecutionOwner | None, str | None, ToolResult | None
         ]:
             nonlocal sub_agent_spawns
             automatic_work = self._automatic_work
             reservation_id = None
+            child_owner = None
             try:
                 if automatic_work is not None:
                     automatic_work.check()
@@ -5315,15 +5909,41 @@ class AgentService:
                             automatic_work.policy_kind()
                         ),
                     ).id
-                return (
-                    self.runtime_capacity.begin_execution(
-                        origin=self.work_origin,
-                        conversation_id=conversation_id,
-                        child=True,
-                    ),
-                    reservation_id,
-                    None,
+                child_owner = self.runtime_capacity.begin_execution(
+                    origin=self.work_origin,
+                    conversation_id=conversation_id,
+                    child=True,
                 )
+                tree = getattr(self, "_ordinary_tree", None)
+                if tree is not None:
+                    try:
+                        tree.attach(child_owner)
+                        child_id = child_kwargs.setdefault(
+                            "requested_run_id", uuid.uuid4().hex
+                        )
+                        keys = self.__dict__.setdefault("_ordinary_child_keys", {})
+                        keys[child_owner] = child_id
+                        with child_owner.activate():
+                            prepare_legacy = getattr(
+                                self, "_prepare_child_notification", None
+                            )
+                            if prepare_legacy is not None and fleet is not None:
+                                prepare_legacy(child_id)
+                            if hook_run is not None:
+                                event = self._hooks_v2_lifecycle.event(
+                                    "SubagentStop",
+                                    run_id=run_id,
+                                    data={"child_run_id": child_id},
+                                    initiator="child",
+                                )
+                                scope = self._hooks_v2_engine.prehold_event(event)
+                                self.__dict__.setdefault("_ordinary_child_stops", {})[
+                                    child_id
+                                ] = (event, scope)
+                    except BaseException:
+                        self._finish_execution(child_owner)
+                        raise
+                return child_owner, reservation_id, None
             except Exception as exc:
                 if reservation_id is not None:
                     automatic_work.ledger.release(
@@ -5358,540 +5978,46 @@ class AgentService:
         # owns its independent scope or the parent finishes refused-launch cleanup.
         @core_operation(self.db)
         def _launch_fleet_child(
-            spawn_task: str,
-            agent_name: "str | None",
-            child_kwargs: dict,
-            isolation: "str | None" = None,
+            spawn_task,
+            agent_name,
+            child_kwargs,
+            isolation=None,
             *,
-            definition_wall_seconds: float | None = None,
-            resumed_managed: RetainedTranscript | None = None,
+            definition_wall_seconds=None,
+            resumed_managed=None,
             managed_resume_ceiling=None,
-        ) -> "tuple[FleetHandle | None, ToolResult | None]":
-            """spawn's reserve -> Event -> thread -> handle tail, shared.
-
-            PR3b Task 4: extracted MECHANICALLY from `spawn`'s fleet path
-            (every moved line verbatim, including its comments) so the
-            continuation path launches a resumed child through the exact
-            same machinery -- reserve/cap refusal (with the spawn-slot
-            unwind), cancel Event, drain-mailbox wiring, `run_child`'s
-            settle chain, thread start with full failure unwind. Returns
-            `(handle, None)` on success; `(None, refusal)` on a cap or
-            thread-start failure, with the slot already unwound. The
-            SUCCESS copy stays with each caller: spawn's "started ...",
-            the continuation's "resumed ...".
-            """
+        ):
             nonlocal sub_agent_spawns
-            child_owner, child_reservation, failure = _reserve_child_execution()
+            child_owner, child_reservation, failure = _reserve_child_execution(child_kwargs)
             if failure is not None:
                 return None, failure
             launched = False
             try:
-                # -- FLEET path: register, launch, return a handle.
-                handle = fleet.reserve(
-                    task=spawn_task,
-                    agent=agent_name,
-                    isolation=isolation,
+                handle, failure = self._launch_prepared_child(
+                    spawn_task,
+                    agent_name,
+                    child_kwargs,
+                    isolation,
+                    fleet=fleet,
+                    run_id=run_id,
+                    message_chain_id=message_chain_id,
+                    hook_run=hook_run,
+                    should_cancel=should_cancel,
+                    my_handle_ids=my_handle_ids,
+                    durable_handle_ids=durable_handle_ids,
+                    fleet_cancels=self._fleet_cancels,
+                    fleet_threads=self._fleet_threads,
+                    child_owner=child_owner,
+                    child_reservation=child_reservation,
                     definition_wall_seconds=definition_wall_seconds,
-                    # Live metadata follows the active frozen config. The
-                    # resolved_* kwargs remain the original persisted audit.
-                    resolved_provider=child_kwargs["config"].provider,
-                    resolved_model=child_kwargs["config"].model,
+                    resumed_managed=resumed_managed,
+                    managed_resume_ceiling=managed_resume_ceiling,
                 )
-                if handle is None:
-                    # At the live cap. Unlike a budget refusal this is
-                    # RETRYABLE -- collecting a finished child frees a slot --
-                    # so it must not consume a spawn from the per-turn
-                    # ceiling, exactly like the unknown-agent refusal above
-                    # ("a typo costs no sub-agent slot"). The check/increment
-                    # itself stays where it has always been; only this one
-                    # no-child-was-created path unwinds it.
-                    return None, SpawnAdmissionRefusal(
-                        ok=False,
-                        error=(
-                            f"live sub-agent limit reached ({fleet.live_count()} "
-                            "already running); call wait_agents to collect a "
-                            "finished sub-agent before starting another"
-                        ),
-                    )
-                fleet.set_managed_custody(
-                    handle.handle_id,
-                    required=self.managed_child_required
-                    or bool(resumed_managed and resumed_managed.managed_required),
-                    resume_ceiling=managed_resume_ceiling,
-                    resume_pin=resumed_managed.managed_pin if resumed_managed else None,
-                    resume_run_id=resumed_managed.run_id if resumed_managed else None,
-                    resume_handle_id=(
-                        resumed_managed.handle_id if resumed_managed else None
-                    ),
-                )
-                child_run_id = uuid.uuid4().hex
-                try:
-                    self.db.create_run(
-                        run_id=child_run_id,
-                        conversation_id=child_kwargs["conversation_id"],
-                        agent_kind=child_kwargs["agent_kind"],
-                        task=_safe_agent_task_summary(child_kwargs.get("task")),
-                        parent_run_id=child_kwargs.get("parent_run_id"),
-                        budget=dataclasses.asdict(child_kwargs["config"].budget),
-                        agent_definition=child_kwargs.get("agent_definition"),
-                        definition_fingerprint=child_kwargs.get(
-                            "definition_fingerprint"
-                        ),
-                        resumed_from_run_id=child_kwargs.get("resumed_from_run_id"),
-                        spawn_event_id=child_kwargs.get("spawn_event_id"),
-                        work_chain_id=self._work_chain_id,
-                        resolved_provider=child_kwargs.get("resolved_provider"),
-                        resolved_model=child_kwargs.get("resolved_model"),
-                        resolved_base_url=child_kwargs.get("resolved_base_url"),
-                        resolved_params_json=child_kwargs.get("resolved_params_json"),
-                        fallback_targets_json=child_kwargs.get("fallback_targets_json"),
-                        active_fallback_index=child_kwargs.get(
-                            "active_fallback_index", 0
-                        ),
-                    )
-                except Exception as exc:  # noqa: BLE001 — spawn refusal, never parent abort
-                    fleet.finish(
-                        handle.handle_id,
-                        RUN_ERROR,
-                        error="could not create durable sub-agent run",
-                    )
-                    logger.warning(
-                        "could not precreate sub-agent run error_type={}",
-                        _safe_exception_type(exc),
-                    )
-                    return None, SpawnAdmissionRefusal(
-                        ok=False, error="could not create durable sub-agent run"
-                    )
-                if child_kwargs.get("review_launch") is not None:
-                    from .agent_request_execution import attach_review_launch
-                    from .code_review_models import ReviewRefused
-
-                    try:
-                        attach_review_launch(
-                            child_kwargs["review_service"],
-                            child_kwargs["review_launch"],
-                            child_run_id,
-                        )
-                    except ReviewRefused as exc:
-                        # No worker was started. Settle the precreated native
-                        # state before the existing admission-refusal unwind.
-                        fleet.finish(handle.handle_id, RUN_ERROR, error=exc.reason)
-                        self._set_terminal_status(
-                            child_run_id, RUN_ERROR, result=exc.reason
-                        )
-                        return None, SpawnAdmissionRefusal(ok=False, error=exc.reason)
-                owner_seq, lifecycle_event_id = self._append_run_lifecycle(
-                    child_run_id,
-                    STEP_AGENT_RUN_RESERVED,
-                    "reserved",
-                    owner_seq=0,
-                    parent_event_id=child_kwargs.get("spawn_parent_event_id"),
-                )
-                owner_seq, lifecycle_event_id = self._append_run_lifecycle(
-                    child_run_id,
-                    STEP_AGENT_RUN_CREATED,
-                    "created",
-                    owner_seq=owner_seq,
-                    parent_event_id=lifecycle_event_id,
-                )
-                resumed_from = child_kwargs.get("resumed_from_run_id")
-                if resumed_from:
-                    owner_seq, lifecycle_event_id = self._append_run_lifecycle(
-                        child_run_id,
-                        STEP_AGENT_RUN_RESUMED,
-                        "resumed",
-                        owner_seq=owner_seq,
-                        parent_event_id=lifecycle_event_id,
-                        source_event_id=f"agent-run:{resumed_from}",
-                    )
-                child_kwargs["precreated_run_id"] = child_run_id
-                if isolation == "worktree":
-                    refusal = self._admit_agent_worktree(
-                        handle, child_run_id, child_owner
-                    )
-                    if refusal is not None:
-                        # I1 (TASK-28238 P2 T7 final fix wave): `db.create_run`
-                        # above already wrote this row as "running" --
-                        # attach_run (below) never happens on this path, so
-                        # nothing else ever marks it terminal. Matches the
-                        # sibling thread-start-failure path's try/except shape
-                        # exactly (round 2, item 4).
-                        try:
-                            fleet.finish(handle.handle_id, RUN_ERROR, error=refusal)
-                            self._set_terminal_status(
-                                child_run_id, RUN_ERROR, result=refusal
-                            )
-                        except Exception:  # noqa: BLE001 — refusal must reach parent
-                            logger.warning("could not persist failed sub-agent launch")
-                        return None, SpawnAdmissionRefusal(ok=False, error=refusal)
-                child_kwargs["lifecycle_owner_seq_start"] = owner_seq
-                fleet.attach_run(handle.handle_id, child_run_id)
-                durable_handle_ids[handle.handle_id] = child_run_id
-                # Cooperative cancellation for THIS child specifically, on top
-                # of the run-wide `should_cancel` it also honours. wait_agents
-                # and the end-of-turn settle both set it to unwind stragglers
-                # without cancelling the parent.
-                child_cancel = threading.Event()
-                child_kwargs["continuation_agent_kind"] = "fleet"
-                child_kwargs["progress_sender_factory"] = lambda: (
-                    fleet.bind_progress_sender(
-                        handle.handle_id,
-                        parent_run_id=run_id,
-                        chain_id=message_chain_id,
-                    )
-                )
-                child_kwargs["peer_messenger_factory"] = lambda: (
-                    fleet.bind_peer_messenger(
-                        handle.handle_id,
-                        parent_run_id=run_id,
-                        chain_id=message_chain_id,
-                    )
-                )
-                # PR3b Task 1: THIS child's steering drain -- a closure over
-                # its own mailbox on the conversation-lifetime coordinator,
-                # reachable from the UI thread and any turn's supervisor while
-                # the child runs on its own thread. handle_id is default-bound
-                # (the run_child style) so the closure can never pick up a
-                # later spawn's handle.
-                child_kwargs["drain_mailbox_with_causes"] = (
-                    lambda handle_id=handle.handle_id: fleet.drain_steering_with_causes(
-                        handle_id
-                    )
-                )
-                child_kwargs["drain_mailbox"] = lambda handle_id=handle.handle_id: (
-                    fleet.drain_steering(handle_id)
-                )
-                self._fleet_cancels[handle.handle_id] = child_cancel
-                my_handle_ids.append(handle.handle_id)
-
-                # PR3b Task 5 (spec Sec 8, Stop-semantics decoupling): with
-                # `subagents_outlive_turn` ON, a child's cancellation is ITS
-                # OWN Event only -- the parent's run-wide probe stays out of
-                # its poll, so a user Stop (which flips that probe and leaves
-                # it flipped forever) no longer kills background work at the
-                # child's next loop boundary. Every path that must still stop
-                # a child sets the Event (`_cancel_fleet_handles`: the
-                # end-of-turn settle for non-survivors, `wait_agents`' budget
-                # branch, per-row Cancel, and "Cancel all agents"). Read ONCE,
-                # at spawn: a child's Stop-coupling contract is fixed when it
-                # launches, not flappable mid-run by a config write --
-                # `_surviving_handles` still reads the key at settle time, so
-                # flipping the switch OFF mid-run still lets the very next
-                # settle cancel the child through its Event. With the key OFF
-                # the closure is the pre-Task-5 line, byte-identical.
-                child_outlives_turn = _coerce_subagents_outlive_turn(
-                    _setting(SUBAGENTS_OUTLIVE_TURN_KEY, DEFAULT_SUBAGENTS_OUTLIVE_TURN)
-                )
-                if child_outlives_turn:
-
-                    def child_should_cancel() -> bool:
-                        return child_cancel.is_set()
-
-                else:
-
-                    def child_should_cancel() -> bool:
-                        return should_cancel() or child_cancel.is_set()
-
-                admission_decided = threading.Event()
-                admission_refused = False
-
-                def run_child(
-                    handle: FleetHandle = handle,
-                    child_kwargs: dict = child_kwargs,
-                    child_should_cancel=child_should_cancel,
-                    *,
-                    admission_refused: bool = False,
-                ) -> None:
-                    """Run one child to completion, then release its handle.
-
-                    Deliberately NOT wrapped in the parent's
-                    `review_state_scope`, which the inline path above still
-                    takes. That scope snapshots and RESTORES the parent's
-                    verdict slice, which is sound only for a strictly nested
-                    (LIFO) inline child: with siblings running concurrently,
-                    one child's exit would roll the parent's slice back to a
-                    snapshot taken before another child -- or before the
-                    parent's own later turn -- had stamped anything, wiping
-                    live verdicts. PR2a Task 5 made per-run keying the
-                    load-bearing protection precisely so this scope is not
-                    needed here: the child stamps `(child_run_id, tool)` and
-                    cannot reach the parent's keys at all.
-                    """
-                    if not admission_refused:
-                        # The independent worker guard is now held; the parent
-                        # can release its launch operation without waiting for
-                        # the model, tools, or terminal callback.
-                        admission_decided.set()
-                    status = RUN_ERROR
-                    result_text = ""
-                    error_text = ""
-                    # PR2b Task 5 (cost rollup): only ever set from a
-                    # SUCCESSFULLY-returned `child_outcome` below -- a child
-                    # that raised before `_run_one` returned has no measured
-                    # spend to report, so this stays 0 (never a fabricated or
-                    # partial figure) exactly like `result_text`/`error_text`
-                    # staying at their own "nothing to report" defaults on that
-                    # path.
-                    total_tokens_spent = 0
-                    # PR3b Task 4: the coherent transcript, retained by
-                    # `fleet.finish` below ATOMICALLY with the terminal
-                    # transition. Stays None on the raise path -- a child that
-                    # died before the loop returned has no coherent transcript
-                    # to retain, and retention honestly refuses None.
-                    final_messages = None
-                    try:
-                        if admission_refused:
-                            # The worker guard refused before _run_owned could
-                            # own/refund this reservation. Run only the shared
-                            # error teardown below; no child execution starts.
-                            if child_reservation is not None:
-                                self._automatic_work.ledger.release(
-                                    child_reservation,
-                                    owner_id=self._automatic_work.owner_id,
-                                )
-                            raise AgentActivationRequired()
-                        # PR3a-1 Task 1: this child's own model-call lifeline,
-                        # entered HERE -- on the child's thread, before its run
-                        # starts -- and exited when the run ends, so it lives
-                        # exactly as long as the child does rather than as long
-                        # as the turn that spawned it. See
-                        # `self._child_model_scope`.
-                        _child_id, child_outcome = self._run_owned(
-                            fleet_child=True,
-                            execution_owner=child_owner,
-                            automatic_child_reservation=child_reservation,
-                            finish_root=False,
-                            should_cancel=child_should_cancel,
-                            on_run_id=(
-                                lambda rid: fleet.attach_run(handle.handle_id, rid)
-                            ),
-                            **child_kwargs,
-                        )
-                        status = child_outcome.status
-                        result_text = child_outcome.final_text
-                        if child_kwargs.get("review_launch") is not None:
-                            claim = child_kwargs["review_launch"]
-                            result_text = f"review {claim.review_id}; slot {claim.slot.slot_id}; read originals with code_review_read"
-                        total_tokens_spent = child_outcome.total_tokens
-                        final_messages = child_outcome.final_messages
-                        if status != RUN_DONE:
-                            error_text = f"sub-agent {status}"
-                    except BaseException as exc:  # noqa: BLE001 — see below
-                        # EVERY exception, including BaseException: this runs
-                        # on a daemon thread whose exception would otherwise
-                        # go to the default excepthook and leave the handle
-                        # live forever -- stranding the parent's end-of-turn
-                        # join until its own timeout, every time, for what may
-                        # be a trivial bug. Same containment rule as
-                        # `_call_with_timeout._runner`.
-                        error_text = f"sub-agent failed: {exc}"
-                        logger.warning("sub-agent thread raised")
-                    finally:
-                        # PR3b Task 4: `transcript=` makes retention atomic
-                        # with the terminal transition -- ONE coordinator
-                        # critical section, so a send_to_agent continuation
-                        # racing this teardown can never observe a retainable
-                        # child terminal-but-unretained (the Qodo race finding
-                        # on plan PR #1773; the plan's original
-                        # retain-after-finish two-step had that window).
-                        # First-writer-wins covers retention too: if a
-                        # settle-cancel already finished this handle, this
-                        # whole call -- transcript included -- is ignored, so
-                        # a user-cancelled child is never retained.
-                        settled_id = child_owner.run_id
-                        if hook_run is not None and settled_id:
-                            self._set_terminal_status(settled_id, status)
-                            self._hooks_v2_lifecycle.install(
-                                self._hooks_v2_lifecycle.event(
-                                    "SubagentStop",
-                                    run_id=run_id,
-                                    data={"child_run_id": settled_id, "status": status},
-                                    initiator="child",
-                                ),
-                                run_id,
-                                current=lambda: not should_cancel(),
-                            )
-                        fleet.finish(
-                            handle.handle_id,
-                            status,
-                            result=result_text,
-                            error=error_text,
-                            total_tokens=total_tokens_spent,
-                            transcript=final_messages,
-                        )
-                        # Review fix (PR2a final review): `_persist` -- called
-                        # from INSIDE `_run_one`'s own try/except -- is
-                        # normally the only thing that writes this child's
-                        # terminal DB status. But `_run_one`'s try/except
-                        # wraps ONLY the `run_agent_loop(...)` call; an
-                        # exception raised between `create_run()` and that
-                        # try block (e.g. `initial_disclosure` recursing into
-                        # the tool catalog's RLock and raising RecursionError)
-                        # unwinds `_run_one` entirely, past `_persist`, and
-                        # lands in the `except BaseException` above instead --
-                        # leaving the DB row `running` for the life of the
-                        # process, violating "DB is truth" (spec Sec 3
-                        # invariant 3). `attach_run` has already fired by the
-                        # time any post-`create_run` exception can, so
-                        # `fleet.get()` (re-fetched, not the possibly-stale
-                        # `handle` closed over above) reliably has the run id.
-                        # `set_status` is first-writer-wins (AgentRunsDB), so
-                        # this call is a safe no-op on the normal path where
-                        # `_persist` already wrote a terminal status -- it
-                        # only matters on the setup-phase-exception path,
-                        # where it is the only writer. Same defensive shape as
-                        # `_settle_fleet`'s abandonment path: a DB failure
-                        # here must not take down a turn that has already
-                        # produced its answer.
-                        try:
-                            self._retire_agent_worktree(
-                                child_kwargs.get("precreated_run_id"),
-                                handle.handle_id,
-                                discard=admission_refused,
-                            )
-                        except Exception:
-                            logger.opt(exception=True).warning(
-                                "could not retire agent worktree routing for handle {}",
-                                handle.handle_id,
-                            )
-                        current = fleet.get(handle.handle_id)
-                        child_run_id = current.run_id if current is not None else None
-                        if child_run_id:
-                            try:
-                                self._set_terminal_status(child_run_id, status)
-                            except Exception:  # noqa: BLE001
-                                logger.warning(
-                                    "could not persist terminal status for sub-agent run"
-                                )
-                        if (
-                            child_run_id
-                            and child_kwargs.get("review_service") is not None
-                        ):
-                            self._settle_review_capture(
-                                child_kwargs["review_service"], child_run_id
-                            )
-                        # PR3a-2 Task 2: the settle signal, LAST -- after
-                        # `fleet.finish` and after the terminal-status
-                        # fallback, so at fire time the row is terminal on
-                        # the happy path (`_persist` wrote it) AND on the
-                        # setup-exception path (`set_status` just did). See
-                        # `on_child_settled`'s __init__ comment for why no
-                        # earlier point can offer that. Wrapped never-raise:
-                        # this is a daemon thread's teardown, and a notifier
-                        # bug must not kill it (same containment rule as the
-                        # `except BaseException` above).
-                        if self._on_child_settled is not None:
-                            try:
-                                self._on_child_settled(child_run_id, status)
-                            except Exception as exc:  # noqa: BLE001
-                                logger.warning(
-                                    "on_child_settled consumer raised (exception_type={})",
-                                    type(exc).__name__,
-                                )
-
-                admitted_child = worker_guard(self)(run_child)
-
-                def run_child_owned() -> None:
-                    nonlocal admission_refused
-                    try:
-                        admitted_child()
-                    except AgentActivationRequired:
-                        # No child work began. Return teardown to the parent,
-                        # whose exact AgentRuns operation owns the reservation
-                        # and precreated row even if local storage just paused.
-                        admission_refused = True
-                    finally:
-                        try:
-                            if not admission_refused:
-                                child_owner.finish_root()
-                        finally:
-                            admission_decided.set()
-
-                thread = None
-                try:
-                    thread = threading.Thread(
-                        target=run_child_owned,
-                        name=f"fleet-{handle.handle_id[:8]}",
-                        daemon=True,
-                    )
-                    thread.start()
-                except Exception as exc:  # noqa: BLE001 — thread exhaustion
-                    if (
-                        child_kwargs.get("review_launch") is not None
-                        and thread is not None
-                        and thread.ident is not None
-                    ):
-                        # An exception after native start is not a non-start proof.
-                        # Keep its charge/association and use normal worker settlement.
-                        logger.warning(
-                            "review child start raised after worker admission"
-                        )
-                    else:
-                        # `Thread.start()` raises RuntimeError ("can't start new
-                        # thread") when the process is out of thread slots. Every
-                        # piece of state this spawn reserved has to be unwound
-                        # here, because NOTHING else will: `run_child` never runs,
-                        # so the handle would stay live forever -- making the
-                        # end-of-turn settle burn the ENTIRE remaining wall-clock
-                        # waiting for a child that does not exist. Registering the
-                        # thread only AFTER a successful start is the other half:
-                        # `_settle_fleet` joins every registered thread, and
-                        # joining an unstarted one raises RuntimeError out of
-                        # `run_turn`, skipping `write_manifest()` and
-                        # `run_log_writer.close()` (leaking a file descriptor).
-                        fleet.finish(
-                            handle.handle_id,
-                            RUN_ERROR,
-                            error=f"could not start sub-agent thread: {exc}",
-                        )
-                        try:
-                            self._set_terminal_status(child_run_id, RUN_ERROR)
-                        finally:
-                            try:
-                                self._retire_agent_worktree(
-                                    child_run_id, handle.handle_id, discard=True
-                                )
-                            except Exception:
-                                logger.opt(exception=True).warning(
-                                    "could not retire agent worktree routing for handle {}",
-                                    handle.handle_id,
-                                )
-                        self._fleet_cancels.pop(handle.handle_id, None)
-                        if my_handle_ids and my_handle_ids[-1] == handle.handle_id:
-                            my_handle_ids.pop()
-                        # No child was created, so this spawn costs no slot --
-                        # same rule as the cap refusal above.
-                        if child_kwargs.get("review_launch") is not None:
-                            with contextlib.suppress(ReviewRefused):
-                                child_kwargs["review_service"].retire_unstarted_launch(
-                                    child_kwargs["review_launch"], child_run_id
-                                )
-                        logger.warning("could not start sub-agent thread")
-                        return None, SpawnAdmissionRefusal(
-                            ok=False,
-                            error=f"could not start sub-agent: {exc}",
-                        )
-                admission_decided.wait()
-                if admission_refused:
-                    try:
-                        run_child(admission_refused=True)
-                    finally:
-                        child_owner.finish_root()
-                launched = True
-                self._fleet_threads[handle.handle_id] = thread
-                return handle, None
-
+                launched = handle is not None
+                return handle, failure
             finally:
                 if not launched:
                     sub_agent_spawns -= 1
-                    try:
-                        if child_reservation is not None:
-                            self._automatic_work.ledger.release(
-                                child_reservation,
-                                owner_id=self._automatic_work.owner_id,
-                            )
-                    finally:
-                        child_owner.finish_root()
 
         def initialize_child_hooks(child_kwargs, child_task, *, inline=False):
             nonlocal sub_agent_spawns
@@ -5962,6 +6088,7 @@ class AgentService:
                 )
                 child_kwargs["config"] = child_config
                 child_kwargs["hook_tool_ids"] = selected_ids
+                self._hooks_v2_lifecycle.context.refresh_sources(child_scope)
                 child_kwargs["messages"] += list(
                     self._hooks_v2_lifecycle.context.blocks(child_scope, "child")
                 )
@@ -6206,274 +6333,19 @@ class AgentService:
                     dispatch_state="settled",
                 )
             sub_agent_spawns += 1
-            # PR3a-1 Task 5 -- CORRECTED after review caught Defect 1: the
-            # ceiling must branch on whether THIS child is turn-scoped or
-            # a threaded survivor CANDIDATE, evaluated with the exact same
-            # predicate the dispatch branch below tests (`fleet is None or
-            # inline`) -- computed here because the budget has to be built
-            # before that branch runs.
-            #
-            # An INLINE child (no fleet at all, OR an explicit
-            # `inline=True` skill call even WITH a live fleet -- see the
-            # dispatch below) blocks the parent inside THIS call and has
-            # no `_settle_fleet` to bound it externally: nothing else in
-            # the system stops it, so it MUST keep the pre-Task-5
-            # parent-remainder clamp (`clamp_child_budget`) exactly as
-            # before -- "Turn-scoped behaviour must stay byte-identical
-            # when no child outlives its turn" (plan Global Constraint).
-            # The first version of this task applied `contain_child_
-            # budget`'s independent ceiling unconditionally, which gave
-            # an inline child up to DEFAULT_CHILD_MAX_WALL_SECONDS
-            # regardless of the parent's own remaining budget -- at
-            # Console defaults that is parent-elapsed + up to
-            # max_subagents * 1800s of blocking with NO reply returned,
-            # not merely a threaded child outliving an already-returned
-            # turn. Caught by execution, not review-by-reading: a child
-            # with a 30s ceiling ran 1.5s past a parent whose own ceiling
-            # was 1.0s and returned RUN_DONE; reverting to the clamp for
-            # this branch makes it correctly go `stuck` instead.
-            #
-            # Only a THREADED, non-inline child -- the one kind that can
-            # actually survive past `_settle_fleet` (PR3a-1 Task 2) --
-            # gets `contain_child_budget`'s independent ceiling.
-            turn_scoped = fleet is None or inline
-            if turn_scoped:
-                child_budget = clamp_child_budget(
-                    config.budget,
-                    parent_remaining_seconds=(
-                        config.budget.max_wall_seconds - (self.clock() - started)
-                    ),
-                )
-            else:
-                child_max_wall_seconds = _coerce_child_max_wall_seconds(
-                    _setting(CHILD_MAX_WALL_SECONDS_KEY, DEFAULT_CHILD_MAX_WALL_SECONDS)
-                )
-                child_budget = contain_child_budget(
-                    config.budget, child_max_wall_seconds
-                )
-            if resolved is not None and resolved.max_wall_seconds is not None:
-                child_budget = dataclasses.replace(
-                    child_budget,
-                    max_wall_seconds=min(
-                        child_budget.max_wall_seconds, resolved.max_wall_seconds
-                    ),
-                )
-            # Q6/Task-12: an explicit override (a skill's own narrowed
-            # allow-list -- builtins + local tool names, intersect-only so
-            # a skill narrows but never grants; see SkillRunner.run)
-            # replaces the default entirely; the default itself preserves
-            # the shipped
-            # behavior (spawn_subagent's child inherits the parent's
-            # allow-list minus the spawn tool itself, so a depth-1 child
-            # never re-offers spawn_subagent) -- MINUS any skill-tool names
-            # too (pre-merge review MINOR 3). An ordinary native-spawn
-            # child can never actually run a skill (max_subagents is
-            # always clamped to 0 for every child, one-deep-only by
-            # construction), so a skill name surviving into its allow-list
-            # only meant a call to it fell through to that numeric
-            # budget-exhausted refusal below instead of the permission
-            # gate every other disallowed tool hits -- fragile (an
-            # incidental side effect of the budget clamp, not a modeled
-            # boundary) and inconsistent with the skill-driven child's own
-            # explicit narrowed allow-list. Excluding skill names
-            # here too means a child can neither discover (find_tools/
-            # disclosure) nor invoke one; a stray direct call still gets a
-            # graceful "Tool not permitted" ToolResult from invoke_tool's
-            # skill branch, never reaching skill_runner.run.
-            child_allowed_tools = (
-                allowed_tools
-                if allowed_tools is not None
-                else tuple(
-                    n
-                    for n in config.allowed_tools
-                    if n != SPAWN_TOOL_NAME
-                    and not (
-                        self.skill_runner is not None
-                        and self.skill_runner.is_skill_tool(n)
-                    )
-                )
-            )
-            if isolation == "worktree":
-                # Finding 6 (Qodo round, TASK-28238 P2 T7): worktree
-                # routing only ever covers `_PATH_AUTHORITY_LOCAL_NAMES`
-                # -- `shell_exec` and `virtual_cli` execute against the
-                # ORIGINAL workspace root regardless (virtual CLI binds
-                # its `WorkspaceToolExecutor` at compose time; raw shell
-                # runs real commands there too). Applied AFTER the
-                # override branch above, not only inside the default
-                # composition, so an explicit `allowed_tools=` override
-                # can never reintroduce either name for an isolated
-                # child -- the exclusion is unconditional whenever
-                # isolation is requested.
-                from .raw_shell_tool_provider import RAW_SHELL_TOOL_NAME
-                from .virtual_cli_provider import VIRTUAL_CLI_TOOL_NAME
-
-                child_allowed_tools = tuple(
-                    n
-                    for n in child_allowed_tools
-                    if n not in (RAW_SHELL_TOOL_NAME, VIRTUAL_CLI_TOOL_NAME)
-                )
-            child_system_prompt = get_internal_prompt("agents.subagent_system")
-            # The resolver owns model/provider selection now (ADR-344): the
-            # legacy inline `if resolved.model: child_model = ...` preset
-            # override lives INSIDE resolve_spawn_target, so a preset model
-            # with no provider keeps its same-endpoint behavior there.
-            child_model = target.model or config.model
-            plugin_instructions = ()
-            if resolved is not None:
-                from .agent_models import compose_agent_instructions
-
-                child_system_prompt, child_allowed_tools, plugin_instructions = (
-                    compose_agent_instructions(
-                        resolved, child_system_prompt, child_allowed_tools
-                    )
-                )
-            if review_claim is not None:
-                child_allowed_tools = tuple(
-                    name
-                    for name in child_allowed_tools
-                    if name in {"code_review_read", "code_review_submit"}
-                )
-                plugin_instructions = ()
-            child_config = AgentConfig(
-                review_binding=review_claim.binding if review_claim else None,
-                model=child_model,
-                # Children report provider-level faults against the same
-                # provider the parent is using (review minor, 2026-08-31 --
-                # previously they reported "unknown provider").
-                provider=target.provider,
-                execution_provider=child_execution_provider,
-                preset_fallback_targets=fallback_targets,
-                system_prompt=child_system_prompt,
-                allowed_tools=child_allowed_tools,
-                budget=child_budget,
-                native_tools=config.native_tools,
-                reasoning_replay=(
-                    config.reasoning_replay
-                    if child_model == config.model
-                    and target.provider == (parent_raw_provider or api_endpoint)
-                    else None
-                ),
-                # A sub-agent operates on the same workspace roots as its
-                # parent, so it inherits the same environment note verbatim
-                # (appended to its own prompt in call_model, after its identity
-                # prefix). Empty for the default workspace, so no change there.
-                workspace_context_note=""
-                if review_claim
-                else config.workspace_context_note,
-                personal_context_block=""
-                if review_claim
-                else config.personal_context_block,
-                response_reserve_tokens=config.response_reserve_tokens,
-                # The resolved target's own endpoint override and sampling
-                # params (ADR-344) -- empty/None on the plain inherit path's
-                # built-in providers, populated for routed children.
-                base_url=target.base_url,
-                sampling_params=target.params,
-            )
-            spawn_event_id = (
-                self._resolved_control_event_id(run_id, spawn_step_index, STEP_SPAWN)
-                or self._resolved_control_event_id(
-                    run_id, spawn_step_index, STEP_TOOL_CALL
-                )
-                if spawn_step_index is not None
-                else None
-            )
-            # C1: snapshot/restore whatever review_state_scope owns (see
-            # __init__'s own comment) around the ENTIRE nested run -- the
-            # child's own turns must never be able to leave the parent's
-            # per-turn review state (e.g. MCPToolProvider._stamped_
-            # decisions) mutated once control returns here. A no-op
-            # contextlib.nullcontext() when no scope was wired (every
-            # non-MCP run, and every caller before this task).
-            #
-            # PR2a Task 5: scoped to THIS (the PARENT's) run id -- it is
-            # the parent's own already-decided verdicts a nested run must
-            # not disturb, and the child's id does not exist yet here
-            # anyway (`_run_one` mints it). No longer the load-bearing
-            # protection: both gates key verdicts by run, so the child
-            # writes to its own slice and cannot reach this one. Retained
-            # as belt-and-braces for the inline path.
-            child_kwargs = dict(
+            child_kwargs, child_budget = self._compose_native_child(
+                spawn_task, config=config, api_endpoint=api_endpoint,
+                parent_raw_provider=parent_raw_provider, fleet=fleet, inline=inline,
+                started=started, resolved=resolved, target=target,
+                fallback_targets=fallback_targets,
+                child_execution_provider=child_execution_provider,
+                allowed_tools=allowed_tools, isolation=isolation, run_id=run_id,
                 conversation_id=conversation_id,
-                messages=[
-                    *plugin_instructions,
-                    {"role": "user", "content": spawn_task},
-                ],
-                config=child_config,
-                api_endpoint=target.provider,
-                # ADR-344 snapshot (schema v21): the resolved target frozen
-                # onto the child run row so resume/continuation (Task 8)
-                # reuses IT rather than live re-resolution. Params persist
-                # as JSON only when the resolver produced any.
-                fallback_targets_json=(
-                    json.dumps(
-                        [
-                            {
-                                "provider": target.provider,
-                                "model": child_model,
-                                "base_url": target.base_url,
-                                "params_json": json.dumps(
-                                    params_to_dict(target.params)
-                                ),
-                                "execution_provider": child_execution_provider,
-                            },
-                            *[
-                                {
-                                    "provider": candidate.provider,
-                                    "model": candidate.model,
-                                    "base_url": candidate.target.base_url
-                                    if candidate.target
-                                    else None,
-                                    "params_json": json.dumps(
-                                        params_to_dict(candidate.target.params)
-                                    )
-                                    if candidate.target
-                                    else "{}",
-                                    "execution_provider": candidate.target.execution_provider
-                                    if candidate.target
-                                    else "",
-                                    "ready": candidate.ready,
-                                    "skip_reason": candidate.skip_reason,
-                                }
-                                for candidate in fallback_targets
-                            ],
-                        ]
-                    )
-                    if fallback_targets
-                    else None
-                ),
-                resolved_provider=target.provider,
-                resolved_model=child_model,
-                resolved_base_url=target.base_url,
-                resolved_params_json=(
-                    json.dumps(params_to_dict(target.params)) if target.params else None
-                ),
-                agent_kind=AGENT_KIND_SUBAGENT,
-                task=f"Review {review_id} slot {review_slot_id}"
-                if review_claim
-                else spawn_task,
-                parent_run_id=run_id,
-                spawn_event_id=spawn_event_id,
-                spawn_parent_event_id=spawn_event_id or f"agent-run:{run_id}",
-                agent_definition=(resolved.name if resolved else None),
-                definition_fingerprint=(
-                    compute_definition_fingerprint(resolved) if resolved else None
-                ),
                 continuation_durability=continuation_durability,
-                chain_id=f"{chain_id}:child-{sub_agent_spawns}",
-                # PR3a-1 Task 3: THIS run tree's writer, captured here on
-                # the PARENT's thread rather than looked up later from the
-                # child's. A child that outlives the turn (Task 2) may not
-                # even reach `_run_one` until `run_turn` has replaced
-                # `self.run_log_writer` for the next turn; resolving it at
-                # spawn removes that race entirely, and the child then
-                # records into its own tree for its whole life. Sharing the
-                # parent's writer is not "reusing a writer across trees"
-                # (which `bind()`'s permanent latch forbids) -- parent and
-                # child ARE one tree, and one writer per tree is what keeps
-                # record numbers unique across it.
-                run_log_writer=writer,
+                chain_id=chain_id, writer=writer, spawn_step_index=spawn_step_index,
+                child_sequence=sub_agent_spawns,
+                startup_instruction_snapshot=parent_instruction_snapshot,
+                review_claim=review_claim,
             )
             if review_claim is not None:
                 child_kwargs.update(
@@ -6522,7 +6394,6 @@ class AgentService:
             )
             if failure is not None:
                 return failure
-            child_config = child_kwargs["config"]
             if fleet is None or inline:
                 # -- INLINE path: byte-identical to every release before
                 # PR2a. Kept, not merely tolerated: with no fleet there is
@@ -6549,7 +6420,7 @@ class AgentService:
                 # a child while the parent keeps running and stamping, so
                 # Task 6 dropped it there. Writing it down because the two
                 # branches now differ deliberately, not accidentally.
-                child_owner, child_reservation, failure = _reserve_child_execution()
+                child_owner, child_reservation, failure = _reserve_child_execution(child_kwargs)
                 if failure is not None:
                     return failure
                 try:
@@ -6563,9 +6434,12 @@ class AgentService:
                         _child_id, child_outcome = self._run_owned(
                             execution_owner=child_owner,
                             automatic_child_reservation=child_reservation,
+                            finish_root=False,
                             should_cancel=should_cancel,
                             **child_kwargs,
                         )
+                    if hook_run is not None:
+                        self._install_child_stop(_child_id, child_outcome.status, run_id, should_cancel)
                 except Exception as exc:
                     from .code_review_models import ReviewRefused
 
@@ -6600,21 +6474,7 @@ class AgentService:
                                 owner_id=self._automatic_work.owner_id,
                             )
                     finally:
-                        child_owner.finish_root()
-                if hook_run is not None:
-                    self._hooks_v2_lifecycle.install(
-                        self._hooks_v2_lifecycle.event(
-                            "SubagentStop",
-                            run_id=run_id,
-                            data={
-                                "child_run_id": _child_id,
-                                "status": child_outcome.status,
-                            },
-                            initiator="child",
-                        ),
-                        run_id,
-                        current=lambda: not should_cancel(),
-                    )
+                        self._finish_execution(child_owner)
                 text = child_outcome.final_text
                 cap = config.budget.max_subagent_result_chars
                 if len(text) > cap:
@@ -7257,6 +7117,7 @@ class AgentService:
                 ),
                 continuation_durability=continuation_durability,
                 run_log_writer=writer,
+                startup_instruction_snapshot=parent_instruction_snapshot,
                 resumed_from_run_id=retained.run_id,
                 seeded_steering_with_causes=(
                     *retained_steering,
@@ -7635,6 +7496,10 @@ class AgentService:
             trace_step_index: int | None = None,
             dispatch_call_id: str = "",
         ) -> ToolResult:
+            try:
+                check_current_task_call(call, registry=self.registry)
+            except Exception:  # noqa: BLE001 - authority failures must refuse
+                return ToolResult.blocked("workflow task scope refused")
             if self.skill_runner is not None and self.skill_runner.is_skill_tool(
                 call.name
             ):
@@ -8240,6 +8105,9 @@ class AgentService:
             )
             durable_content = _replace_process_handles(safe_content, durable_handle_ids)
             altered = altered or durable_content != safe_content
+            from .native_source_storage import console_writer_source
+
+            console_writer_source(writer)
             record_number = writer.append(
                 run_id=run_id,
                 kind=agent_kind,
@@ -8669,6 +8537,8 @@ class AgentService:
         def read_agent_messages(args: dict) -> ToolResult:
             from .fleet_message_tools import (
                 collect as collect_progress,
+            )
+            from .fleet_message_tools import (
                 refused as refuse_progress,
             )
 
@@ -8840,6 +8710,9 @@ class AgentService:
                 )
 
         deps = LoopDeps(
+            validate_tool_call=functools.partial(
+                check_current_task_call, registry=self.registry
+            ),
             prepare_hook_call=prepare_hook_call if hook_run else None,
             accept_hook_preparation=hook_run.validate_dispatch if hook_run else None,
             validate_hook_dispatch=(
@@ -9239,6 +9112,7 @@ class AgentService:
                 )
             if (
                 parent_run_id is None
+                and task_authorization is None
                 and self._on_primary_budget_settled is not None
                 and "outcome" in locals()
             ):
@@ -9401,6 +9275,8 @@ class AgentService:
             not a barrier -- it fsyncs the final segment and leaves the
             writer active, so a survivor's later appends still land.
         """
+        if self._workflow_authorization is not None:
+            raise PermissionError("workflow-prepared service cannot start another turn")
         if requested_run_id is not None and (
             not isinstance(requested_run_id, str)
             or not requested_run_id
@@ -9476,7 +9352,10 @@ class AgentService:
         # _run_one, since they never call run_turn themselves. The catalog
         # is listed fresh at this point, so skill CRUD since the last run
         # is always picked up with no separate invalidation signal needed.
-        self.registry.reset_catalog_cache()
+        from .run_context import current_planning_preparation
+
+        if current_planning_preparation() is None:
+            self.registry.reset_catalog_cache()
         # Fleet spec §4: definitions load ONCE per turn — the roster the
         # model sees in the spawn schema is exactly what resolves at spawn
         # time; Settings edits affect the NEXT turn, never an in-flight one.
@@ -9594,19 +9473,15 @@ class AgentService:
         # Manifest needs run-level metadata the writer itself does not have
         # (including supersession), so it is written once the whole run
         # tree finishes, here rather than inside _run_one.
-        self.run_log_writer.write_manifest(
-            {
-                "run_id": run_id,
-                "model": config.model,
-                "api_endpoint": api_endpoint,
-                "allowed_tools": list(config.allowed_tools),
-                "budget": dataclasses.asdict(config.budget),
-                "status": outcome.status,
-                "superseded_run_id": supersede_run_id or "",
-                "total_tokens": outcome.total_tokens,
-            }
+        self._finalize_run_log(
+            self.run_log_writer,
+            run_id=run_id,
+            config=config,
+            api_endpoint=api_endpoint,
+            status=outcome.status,
+            superseded_run_id=supersede_run_id or "",
+            total_tokens=outcome.total_tokens,
         )
-        self.run_log_writer.close()
         trace_call_error = self._primary_trace_call_persistence_error
         self._primary_trace_call_persistence_error = None
         if trace_call_error is not None:
@@ -9718,3 +9593,119 @@ class AgentService:
             return False
         self._cancel_fleet_handles([handle_id])
         return True
+
+
+# These are the existing task-scope records, captured before live dispatch.
+
+
+def _workflow_native_sources(service):
+    """Validate the native service, without authenticating its implementation."""
+    if not isinstance(service, AgentService):
+        raise PermissionError("native workflow service required")
+
+
+def _workflow_launch_sources(service):
+    """Validate runtime ownership; task/revision checks remain at admission."""
+    from .execution_capacity import require_workflow_capacity
+
+    _workflow_native_sources(service)
+    require_workflow_capacity(service.runtime_capacity)
+
+
+def _workflow_launch_locked(entry):
+    """Primitive same-original associations; caller holds the original auth lock."""
+    auth, native, prepared = entry.authorization, entry.native, entry.preparation
+    if prepared is not None and (prepared._closed or prepared._closing):
+        raise PermissionError("workflow native preparation retired")
+    if (
+        type(entry) is not _WorkflowLaunchEntry
+        or auth._lock is not entry.lock
+        or entry.service.runtime_capacity._lock is not entry.capacity_lock
+        or auth._native_launch is not entry.marker
+        or auth._native_preparation is not entry.native_list
+        or len(entry.native_list) != 1
+        or entry.native_list[0] is not native
+        or auth._bridge_preparation is not entry.bridge_list
+        or native.wait_return is not entry.waits
+        or native.service is not entry.service
+        or native.phase is not auth.phase
+        or prepared is None
+        and entry.bridge_list
+        or prepared is not None
+        and (
+            len(entry.bridge_list) != 1
+            or entry.bridge_list[0] is not prepared
+            or prepared.authorization is not auth
+            or prepared.phase is not auth.phase
+            or prepared.runtime is not auth._runtime
+            or prepared.native.service is not entry.service
+            or prepared._wave is not entry.wave
+            or prepared._closed
+            or prepared._closing
+        )
+    ):
+        raise PermissionError("original workflow launch association changed")
+
+
+def _workflow_launch_current(entry):
+    _workflow_launch_sources(entry.service)
+    with entry.lock:
+        _workflow_launch_locked(entry)
+    prepared = entry.preparation
+    if prepared is not None:
+        prepared._execution_return_source()
+        if (
+            entry.native.source_observation
+            is not prepared._configured_storage_sources()
+        ):
+            raise PermissionError("workflow storage observation changed")
+    elif entry.native.source_observation is not None:
+        raise PermissionError("unexpected workflow storage observation")
+    if entry.mode == "W":
+        if (
+            entry.wave not in prepared.runtime._workflow_waves
+            or entry.wave.phase is not entry.authorization.phase
+            or not any(item is prepared for item in entry.wave.prepared)
+        ):
+            raise PermissionError("registered workflow wave required")
+    elif entry.mode == "D" and (
+        prepared.bridge.change_tracking_enabled
+        or any(
+            any(member is prepared for member in wave.prepared)
+            for wave in prepared.runtime._workflow_waves
+        )
+    ):
+        raise PermissionError("workflow capture wave required")
+    elif entry.mode not in {"N", "D"}:
+        raise PermissionError("workflow launch kind required")
+
+
+def _workflow_capacity_wait(entry, error, owner, returned, operations=None):
+    """Accept a native capacity refusal only before any task operation escaped."""
+    from .execution_capacity import CapacityRefused, require_workflow_capacity
+
+    _workflow_launch_current(entry)
+    capacity = entry.service.runtime_capacity
+    require_workflow_capacity(capacity, owner)
+    expected = (
+        {"child_capacity", "automatic_child_capacity"}
+        if owner is None
+        else {"tool_capacity", "automatic_tool_capacity"}
+    )
+    if (
+        not isinstance(error, CapacityRefused)
+        or len(error.args) != 1
+        or error.args[0] not in expected
+    ):
+        return False
+    with capacity._lock:
+        if capacity._closed:
+            return False
+        if owner is not None and (
+            capacity._owners.get(owner.execution_id) is not owner
+            or owner._operations is not operations
+            or len(operations) != sum(op is not None for op in returned)
+            or any(not any(op is value for value in returned) for op in operations)
+        ):
+            return False
+    return True

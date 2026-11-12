@@ -2896,7 +2896,7 @@ class ConsoleMessageController:
                     target_content=result.text,
                 )
                 self.run_worker(
-                    self._sync_native_console_chat_ui(),
+                    self._sync_native_console_chat_ui,
                     exclusive=True,
                     group="console-sync",
                 )
@@ -3011,7 +3011,7 @@ class ConsoleMessageController:
                 target_content=result.text,
             )
             self.run_worker(
-                self._sync_native_console_chat_ui(),
+                self._sync_native_console_chat_ui,
                 exclusive=True,
                 group="console-sync",
             )

@@ -109,7 +109,11 @@ def chat_call_impl(
     transport_messages = bridge._serialize_project_instruction_rows_for_transport(
         messages_payload, native_tools=self._native_tools
     )
-    is_subagent = self._is_subagent(transport_messages)
+    is_subagent = (
+        attributed[1] == bridge.AGENT_KIND_SUBAGENT
+        if attributed is not None
+        else self._is_subagent(transport_messages)
+    )
     # Resolve sidecars after the trace factory has built the neutral request.
     # The reserved canonical key is valid only once its groups are attached.
     # This temporary scalar also keeps mandatory continuation ownership separate.
@@ -228,8 +232,7 @@ def chat_call_impl(
         call_signals = aggregate_signals.new_usage_call()
         gateway_signals = call_signals
 
-    @bridge.agent_async_worker_guard(self)
-    async def _consume() -> None:
+    async def _consume_body() -> None:
         nonlocal \
             any_streamed, \
             terminal_metadata, \
@@ -457,7 +460,7 @@ def chat_call_impl(
 
         if isinstance(self._gateway, bridge.ConsoleProviderGateway):
             stream_kwargs["emission_observer"] = observe_emission
-        owner_session_id = self._store.session_id_for_message(
+        owner_session_id = self._session_id or self._store.session_id_for_message(
             self._assistant_message_id
         )
         bridge.require_thinking_persistence_support(
@@ -643,8 +646,28 @@ def chat_call_impl(
     # timeout above was the last line of defence against.
     from tldw_chatbook.Chat.stream_stall_watchdog import StreamStallError
 
+    from .console_preparation_reads import current_workflow_preparation
+
+    workflow_preparation = current_workflow_preparation()
+
+    @bridge.agent_async_worker_guard(self)
+    async def _consume():
+        from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
+
+        if workflow_preparation is None:
+            await _consume_body()
+        else:
+            with (
+                workflow_preparation._planning_storage_return()
+                if workflow_preparation.phase.attempt.purpose == "planning"
+                else bridge.contextlib.nullcontext(),
+                owned_goal_storage(workflow_preparation.service),
+                workflow_preparation.activate_source(),
+            ):
+                await _consume_body()
+
     future = bridge.asyncio.run_coroutine_threadsafe(_consume(), self._submit_loop)
-    _stall_session_id = self._store.session_id_for_message(self._assistant_message_id)
+    _stall_session_id = self._session_id or self._store.session_id_for_message(self._assistant_message_id)
     try:
         future.result(timeout=bridge._CHAT_CALL_TIMEOUT_SECONDS)
     except bridge.FuturesTimeoutError:

@@ -110,7 +110,7 @@ the host-owned validation reason; it must not turn a rejected HTTP-200 body into
 a retryable 502. Response values and tool arguments are not included in errors.
 DeepSeek `length`/`content_filter` turns may have no final text; their finish state
 and usage survive normalization. They cannot carry executable tool calls, and an
-empty turn does not itself complete or seal an agent review (TASK-39147).
+empty turn does not itself complete or seal an agent review (TASK-40127).
 Whole-response DeepSeek tool calls may also include `index`. The adapter opts
 into the existing named-tool-metadata allowance through `hosted_chat_request`;
 normalization drops that field while retaining validated IDs, order, function

@@ -848,6 +848,7 @@ def test_live_cap_refuses_beyond_max_live_subagents(db):
     assert len(coordinator.snapshot()) == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_live_cap_refusal_does_not_burn_the_per_turn_spawn_budget(db):
     """A cap refusal is retryable, so it must not consume a spawn slot.
 
@@ -3091,6 +3092,7 @@ class _SpyRunLogWriter:
         self.closed += 1
 
 
+@pytest.mark.bootstrap_profile
 def test_thread_start_failure_is_contained_and_the_turn_still_finalizes(
     db, monkeypatch
 ):
@@ -3198,6 +3200,7 @@ def test_thread_start_failure_is_contained_and_the_turn_still_finalizes(
     assert waits and "answer two" in waits[0]
 
 
+@pytest.mark.bootstrap_profile
 def test_thread_start_and_transient_terminal_status_failure_are_both_contained(
     db, monkeypatch
 ):
@@ -3250,6 +3253,7 @@ def test_thread_start_and_transient_terminal_status_failure_are_both_contained(
     assert any(step["kind"] == "agent_run_failed" for step in child["steps"])
 
 
+@pytest.mark.bootstrap_profile
 def test_thread_start_and_persistent_terminal_failure_reconciles_on_reopen(
     db, monkeypatch
 ):
@@ -3261,11 +3265,11 @@ def test_thread_start_and_persistent_terminal_failure_reconciles_on_reopen(
             raise RuntimeError("can't start new thread")
         return real_start(self)
 
-    def fail_child_terminal(run_id, status, result, terminal_step):
+    def fail_child_terminal(run_id, status, result, terminal_step, **kwargs):
         row = db.get_run(run_id)
         if row and row["agent_kind"] == "subagent" and status == RUN_ERROR:
             raise RuntimeError("persistent terminal write failure")
-        return real_terminal(run_id, status, result, terminal_step)
+        return real_terminal(run_id, status, result, terminal_step, **kwargs)
 
     monkeypatch.setattr(threading.Thread, "start", fail_fleet_start)
     monkeypatch.setattr(db, "set_terminal_with_step", fail_child_terminal)
@@ -3306,6 +3310,7 @@ def test_thread_start_and_persistent_terminal_failure_reconciles_on_reopen(
     reopened.close()
 
 
+@pytest.mark.bootstrap_profile
 def test_thread_start_refusal_survives_atomic_and_status_fallback_failure(
     db, monkeypatch
 ):
@@ -3318,17 +3323,17 @@ def test_thread_start_refusal_survives_atomic_and_status_fallback_failure(
             raise RuntimeError("can't start new thread")
         return real_start(self)
 
-    def fail_child_terminal(run_id, status, result, terminal_step):
+    def fail_child_terminal(run_id, status, result, terminal_step, **kwargs):
         row = db.get_run(run_id)
         if row and row["agent_kind"] == "subagent" and status == RUN_ERROR:
             raise RuntimeError("persistent atomic failure")
-        return real_terminal(run_id, status, result, terminal_step)
+        return real_terminal(run_id, status, result, terminal_step, **kwargs)
 
-    def fail_child_status(run_id, status, result=None):
+    def fail_child_status(run_id, status, result=None, **kwargs):
         row = db.get_run(run_id)
         if row and row["agent_kind"] == "subagent" and status == RUN_ERROR:
             raise RuntimeError("persistent status fallback failure")
-        return real_status(run_id, status, result)
+        return real_status(run_id, status, result, **kwargs)
 
     monkeypatch.setattr(threading.Thread, "start", fail_fleet_start)
     monkeypatch.setattr(db, "set_terminal_with_step", fail_child_terminal)
@@ -4154,7 +4159,9 @@ def test_isolated_child_writes_only_to_selected_repository_worktree(
             api_endpoint="llama_cpp",
         )
         join_fleet_children(service)
-        assert outcome.status == RUN_DONE
+        assert outcome.status == RUN_DONE, [
+            (step.kind, step.summary, step.result) for step in outcome.steps
+        ]
         created = next(iter(service._agent_worktrees.values()))
         assert (created.worktree_path / "child.txt").read_text() == "child work"
         assert not (git_repo / "child.txt").exists()
@@ -4457,7 +4464,9 @@ def test_real_child_creation_is_durable_before_its_first_write(db, reopen_db, gi
             config=ISO_CFG,
             api_endpoint="llama_cpp",
         )
-        assert outcome.status == RUN_DONE
+        assert outcome.status == RUN_DONE, [
+            (step.kind, step.summary, step.result) for step in outcome.steps
+        ]
         child = _child_row(db)
         reopened = reopen_db(client_id="reopened-gated")
         repository = AgentWorktreeRepository(reopened)
@@ -5062,3 +5071,59 @@ def test_worktree_service_propagates_malformed_run_id_without_creation(
         assert not provider._agent_roots
     finally:
         owner.finish_root()
+
+
+@pytest.mark.bootstrap_profile
+def test_shared_child_launcher_binds_one_native_owner_row_and_lifecycle(
+    db, monkeypatch
+):
+    """The extracted tail keeps ordinary fleet capacity and row ownership once."""
+    from contextlib import contextmanager
+
+    from tldw_chatbook.Agents.execution_capacity import current_execution_owner
+
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "one child"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "parent done",
+        ],
+        {"one child": ["child done"]},
+    )
+    owners, scope_events = [], []
+    begin = service.runtime_capacity.begin_execution
+
+    def reserve(**kwargs):
+        owner = begin(**kwargs)
+        if kwargs.get("child"):
+            owners.append(owner)
+        return owner
+
+    @contextmanager
+    def child_scope():
+        owner = current_execution_owner()
+        scope_events.append(("open", owner))
+        try:
+            yield
+        finally:
+            scope_events.append(("close", owner))
+
+    monkeypatch.setattr(service.runtime_capacity, "begin_execution", reserve)
+    service._child_model_scope = child_scope
+    _, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+    join_fleet_children(service)
+    assert outcome.status == RUN_DONE
+    children = [row for row in db.list_runs("c") if row["agent_kind"] == "subagent"]
+    assert len(owners) == len(children) == 1
+    assert owners[0].run_id == children[0]["id"]
+    assert scope_events == [("open", owners[0]), ("close", owners[0])]
+    kinds = Counter(step["kind"] for step in children[0]["steps"])
+    assert kinds["agent_run_reserved"] == kinds["agent_run_created"] == 1
+    assert service.runtime_capacity.snapshot().child_executions == 0
+    assert coordinator.live_count() == 0

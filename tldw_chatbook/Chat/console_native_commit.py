@@ -878,6 +878,9 @@ async def _controller_accept_durable_turn(
                 return self._block(
                     session.id, "Hook continuation is no longer current."
                 )
+            from tldw_chatbook.Agents.run_hooks import prompt_handed_off
+
+            prompt_handed_off(required_write_ok=False)
             # TASK-22251: the user-facing copy stays deliberately generic, but
             # something must record WHICH failure occurred. `commit_durable_turn`
             # is a multi-step transaction -- conversation create, Library-policy
@@ -945,6 +948,8 @@ async def _controller_accept_durable_turn(
             if citation_repair_contract is not None
             else None
         )
+        from tldw_chatbook.Agents.run_hooks import pending_prompt_handoff
+
         continuation = _source_controller._DurablePostcommitContinuation(
             preparation_id=preparation.preparation_id,
             fingerprint=fingerprint,
@@ -974,18 +979,18 @@ async def _controller_accept_durable_turn(
                 session.id,
                 origin,
                 frozen_capture_enabled=(
-                    preparation.capture_mode is _source_controller.ConsoleTraceCaptureMode.CAPTURE_ON
+                    preparation.capture_mode
+                    is _source_controller.ConsoleTraceCaptureMode.CAPTURE_ON
                 ),
                 frozen_pii_redaction_enabled=preparation.pii_redaction_enabled,
-                frozen_pii_ruleset_revision_id=(
-                    preparation.pii_ruleset_revision_id
-                ),
+                frozen_pii_ruleset_revision_id=(preparation.pii_ruleset_revision_id),
                 frozen_next_trace_privacy_revision=(
                     preparation.next_trace_privacy_revision
                 ),
             ),
             terminal_citation_finalizer=terminal_citation_finalizer,
             hook_context=hook_context,
+            hook_handoff=pending_prompt_handoff(),
         )
         with self.store.durable_preparation_lock:
             self.store.validate_durable_acceptance_fingerprint(fingerprint)
@@ -997,6 +1002,8 @@ async def _controller_accept_durable_turn(
             self._durable_postcommit_continuations[preparation.preparation_id] = (
                 continuation
             )
+            if continuation.hook_handoff is not None:
+                continuation.hook_handoff.deferred = True
         try:
             trace_request = self._build_durable_trace_request(
                 preparation=preparation,

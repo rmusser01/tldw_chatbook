@@ -2848,6 +2848,10 @@ class LocalSkillsService:
             # only place a script's artifacts can survive, and it stays owned by
             # this offloaded callable so a cancelled caller can never make
             # cleanup race a still-live child (see this function's docstring).
+            from tldw_chatbook.Agents.agent_models import ToolCall
+            from tldw_chatbook.Agents.workflow_task_scope import check_current_task_call
+
+            check_current_task_call(ToolCall("run_skill_script", {}))
             retained_output_root = (
                 explicit_output_root
                 if explicit_output_root is not None

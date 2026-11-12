@@ -1,22 +1,9 @@
-"""TldwCli's service composition: ``ServiceWiringMixin`` and its helpers.
+"""TldwCli service composition through ServiceWiringMixin.
 
-Moved verbatim from ``app.py`` (TASK-33011, PR-D): the lazy service
-properties and builders (cluster C), the ``_wire_*`` service composition that
-``TldwCli.__init__`` runs (cluster E), and the misc wiring (cluster O: the
-Notes-sync start observer, the watchlists command service, the briefing
-schedules and the llama.cpp snapshot service), plus the module-level
-Notes-sync and Collections-capture composition helpers they call.
-``TldwCli`` mixes the class in before ``App``, and ``tldw_chatbook.app``
-re-exports the helpers callers import from it.
-
-Patch the names this code reads (``get_cli_setting``, ``get_user_data_dir``,
-the ``get_*_db_path`` helpers, the service classes and so on) HERE: the bodies
-resolve free names through this module's globals, so a patch on
-``tldw_chatbook.app`` alone no longer reaches them. Where ``app.py`` still
-reads the same name, patch both modules.
-``Tests/Architecture/test_app_extracted_patch_targets.py`` fails on an
-app-module patch that can only have been meant for code that moved out.
-"""
+Service builders, lazy properties and wiring resolve names in this module.
+Patch defining helpers and service classes here; patch app.py too when it reads
+the same name. TldwCli mixes this class before App and re-exports public helpers.
+Tests/Architecture/test_app_extracted_patch_targets.py guards moved patch targets."""
 
 from . import app_skill_wiring as _skill_wiring
 from . import app_collections_wiring as _collections_wiring
@@ -1398,7 +1385,10 @@ class ServiceWiringMixin(
     def local_skill_trust_service(self) -> Any:
         """Local skill trust service, built on first access (TASK-21111(b))."""
         if self._local_skill_trust_service is None:
-            self._local_skill_trust_service = self._build_local_skill_trust_service()
+            candidate = self._build_local_skill_trust_service()
+            self._local_skill_trust_service = candidate
+            if _skill_wiring._skill_trust_publisher.get() is not None:
+                _skill_wiring.record_native_skill_trust_candidate(self, candidate)
         return self._local_skill_trust_service
 
     @local_skill_trust_service.setter
@@ -2202,6 +2192,9 @@ class ServiceWiringMixin(
                 self.workspace_registry_service
             )
             self.workspace_registry_service.attach_change_review_consent_service(
+                self.change_review_consent_service
+            )
+            self.console_runtime.bind_change_review_consent_service(
                 self.change_review_consent_service
             )
         except Exception:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from pathlib import Path
 from types import MethodType, SimpleNamespace
 from typing import Any
@@ -485,6 +486,9 @@ class _Composer:
     def restore_stashed_draft(self, stash: ConsoleDraftStash | None) -> None:
         self.restored.append(stash)
 
+    def capture_draft_for_send(self):
+        return _stash(self.text, trusted=False)
+
     def stash_raw_cli_draft_for_send(self) -> ConsoleDraftStash | None:
         return None
 
@@ -512,6 +516,9 @@ def test_refusal_restore_requires_active_and_visible_origin_ownership() -> None:
 
 
 def _bind_visible_send_contract(screen, stash=None):
+    screen._console_runtime = lambda: SimpleNamespace(
+        _first_send_source_scope=nullcontext
+    )
     screen._ui_responsiveness_monitor = lambda: None
     screen._answer_pending_question_with_draft = lambda _draft: False
     screen._send_console_message_from_visible_action_observed = MethodType(
@@ -853,3 +860,50 @@ async def test_direct_refusal_and_banked_restore_after_dispose_are_fenced(
     composer.load_draft("later draft")
     assert controller.restore_banked_stashes("session-1", composer) == 0
     assert composer.draft_text() == "later draft"
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize("captured", [False, True])
+async def test_raw_publication_refusal_keeps_original_live_draft(captured):
+    composer = ConsoleComposerBar()
+    assert composer.handle_console_key(Key("exclamation_mark", "!"))
+    assert composer.handle_console_key(Key("space", " "))
+    composer.insert_pasted_text("printf preserved")
+    original = composer.capture_draft_for_send()
+    screen, _, raw_calls, parsed, dispatched = _route_screen(original)
+    _bind_visible_send_contract(screen, original if captured else None)
+    screen._console_composer_or_none = lambda: composer
+    runtime = ConsoleRuntime(None)
+    runtime._first_send_publishing = True
+    screen._console_runtime = lambda: runtime
+    notices = []
+    screen.app_instance = SimpleNamespace(
+        notify=lambda *args, **kwargs: notices.append(args)
+    )
+    revision = composer.edit_serial
+
+    assert await _send_visible_action(screen) is False
+    assert composer.draft_text() == original.text
+    assert composer.edit_serial == revision
+    retained = composer.capture_draft_for_send()
+    assert retained.raw_cli_prefix_typed and retained.segments == original.segments
+    assert not raw_calls and not parsed and not dispatched
+    assert runtime._first_send_sources == 0
+    assert len(notices) == 1 and "being saved" in notices[0][0]
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize("draft", ["/help", "/unknown", r"\! escaped", "ordinary"])
+async def test_nonraw_routes_do_not_enter_raw_publication_gate(draft):
+    screen, _, raw_calls, parsed, dispatched = _route_screen(
+        _stash(draft, trusted=False)
+    )
+
+    def forbidden():
+        raise AssertionError("nonraw route entered raw publication gate")
+
+    screen._console_runtime = forbidden
+    assert await _send_visible_action(screen) is True
+    assert not raw_calls and parsed and dispatched

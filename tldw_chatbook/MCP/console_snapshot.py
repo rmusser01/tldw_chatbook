@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from contextlib import asynccontextmanager, nullcontext
+from dataclasses import dataclass
+from inspect import getattr_static
 from pathlib import Path
 from types import FunctionType, MappingProxyType, MethodType
 from typing import Any
@@ -221,7 +224,7 @@ def standard_local_catalog_sources(local: Any, store: Any) -> bool:
     return True
 
 
-def standard_console_sources(service: Any) -> bool:
+def standard_console_sources(service: Any, *, _include_log: bool = True) -> bool:
     """Select only the concrete source route, without granting file authority."""
     if type(service) is not UnifiedMCPControlPlaneService:
         return False
@@ -250,10 +253,10 @@ def standard_console_sources(service: Any) -> bool:
     permission = service._permission_store
     log = service._execution_log
     # Absent lazy receivers must qualify before construction and publication too.
-    for receiver, owner, names in (
-        (permission, MCPPermissionStore, _PERMISSION_METHODS),
-        (log, MCPExecutionLog, ("append",)),
-    ):
+    receivers = [(permission, MCPPermissionStore, _PERMISSION_METHODS)]
+    if _include_log:
+        receivers.append((log, MCPExecutionLog, ("append",)))
+    for receiver, owner, names in receivers:
         if receiver is not None and type(receiver) is not owner:
             return False
         if not all(
@@ -270,10 +273,10 @@ def standard_console_sources(service: Any) -> bool:
     return True
 
 
-def standard_console_catalog_sources(service: Any) -> bool:
+def standard_console_catalog_sources(service: Any, *, _include_log: bool = True) -> bool:
     """Preserve explicit custom catalog callbacks' late receiver contract."""
     return (
-        standard_console_sources(service)
+        standard_console_sources(service, _include_log=_include_log)
         and _original_class_member(
             UnifiedMCPControlPlaneService, "local_external_catalog"
         )
@@ -357,18 +360,24 @@ class _CapturedLocalCatalog:
         return bundle
 
 
+class _McpPermissionPublicationBusy(RecoveryRequired):
+    # The existing opaque owner retains the unpublished permission slot.
+    pass
+
 class _CapturedSources:
     """Ephemeral exact receivers for one accepted finite preparation."""
 
-    def __init__(self, service, *, capture_catalog: bool = False):
+    def __init__(self, service, *, capture_catalog: bool = False, bounded_policy=None):
         self.service = service
         self._capture_catalog = capture_catalog
+        self.bounded_policy = bounded_policy
         if capture_catalog and not standard_console_catalog_sources(service):
             raise RecoveryRequired("mcp_source_selection_changed")
         self.local = service.local_service
         self.store = self.local.store
         self.permission = service._permission_store
-        self.log = service._execution_log
+        self.native_permission_publication = None
+        self.log = service._execution_log if bounded_policy is None else None
         self.store_identity = _source_identity(self.store)
         self.permission_identity = (
             _source_identity(self.permission) if self.permission is not None else None
@@ -421,13 +430,17 @@ class _CapturedSources:
         }
 
     def require_current(self):
+        include_log = self.bounded_policy is None
         # Refuse replaced class descriptors before any dynamic getter lookup.
         qualifier = (
             standard_console_catalog_sources
             if self._capture_catalog
             else standard_console_sources
         )
-        if not qualifier(self.service):
+        if not qualifier(self.service, _include_log=include_log) or (
+            self.bounded_policy is not None
+            and not _bounded_policy_current(self.service, self.bounded_policy)
+        ):
             raise RecoveryRequired("mcp_source_selection_changed")
         current_bindings = self._method_bindings()
         if not (
@@ -449,18 +462,24 @@ class _CapturedSources:
                 or sources._BINDINGS.get(self.permission) is self.permission_binding
             )
             and (
-                self.log is None or sources._BINDINGS.get(self.log) is self.log_binding
+                not include_log
+                or self.log is None
+                or sources._BINDINGS.get(self.log) is self.log_binding
             )
             and self.service.local_service is self.local
             and self.local.store is self.store
             and self.service._permission_store is self.permission
-            and self.service._execution_log is self.log
+            and (not include_log or self.service._execution_log is self.log)
             and _source_identity(self.store) == self.store_identity
             and (
                 self.permission is None
                 or _source_identity(self.permission) == self.permission_identity
             )
-            and (self.log is None or _source_identity(self.log) == self.log_identity)
+            and (
+                not include_log
+                or self.log is None
+                or _source_identity(self.log) == self.log_identity
+            )
         ):
             raise RecoveryRequired("mcp_source_selection_changed")
 
@@ -478,16 +497,80 @@ class _CapturedSources:
                 "permission.kill": candidate.get_kill_switch,
             }
             identity = _source_identity(candidate)
-            with self.service._execution_log_init_lock:
-                self.require_current()
-                if not all(
-                    _original_method(
-                        callbacks[key], candidate, name, MCPPermissionStore
+            if not all(
+                _original_method(callbacks[key], candidate, name, MCPPermissionStore)
+                for key, name in (
+                    ("permission.load", "load"),
+                    ("permission.mark", "mark_config_changed"),
+                    ("permission.kill", "get_kill_switch"),
+                )
+            ):
+                raise RecoveryRequired("mcp_source_selection_changed")
+            from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
+
+            tree = current_ordinary_tree()
+            ordinary = tree.source if tree is not None else None
+            if ordinary is None:
+                from tldw_chatbook.Chat.console_workflow_preparation import (
+                    current_workflow_preparation,
+                )
+
+                preparation = current_workflow_preparation()
+                if preparation is not None:
+                    preparation.borrow_preparation(preparation.runtime)
+                    ordinary = preparation.source
+            if ordinary is not None:
+                ordinary.check_memory()
+                if (
+                    ordinary.mcp is not self.service
+                    or ordinary.permission is not None
+                    or ordinary.prospective_mcp_store is not self.store
+                    or ordinary.prospective_mcp_identity != _source_identity(self.store)
+                    or ordinary.prospective_permission_path != identity[2]
+                ):
+                    raise RecoveryRequired("mcp_source_selection_changed")
+            self.require_current()
+            method_codes = tuple(
+                (name, callbacks[key].__func__, callbacks[key].__func__.__code__)
+                for key, name in (
+                    ("permission.load", "load"),
+                    ("permission.mark", "mark_config_changed"),
+                    ("permission.kill", "get_kill_switch"),
+                )
+            )
+            publication_guard = (
+                self.bounded_policy[3]._mcp_permission_publication()
+                if self.bounded_policy is not None
+                else nullcontext(True)
+            )
+            with self.service._execution_log_init_lock, publication_guard as may_publish:
+                if not may_publish:
+                    raise _McpPermissionPublicationBusy("worktree_activity_busy")
+                if (
+                    vars(self.service).get("_permission_store") is not None
+                    or self.permission is not None
+                    or vars(self.service).get("local_service") is not self.local
+                    or self.bounded_policy is None
+                    and vars(self.service).get("_execution_log") is not self.log
+                    or vars(self.local).get("store") is not self.store
+                    or vars(self.local).get("manifest_provider")
+                    is not self.manifest_provider
+                    or vars(self.local).get("policy_enforcer")
+                    is not self.policy_enforcer
+                    or vars(self.store).get("path") != self.store_identity[2]
+                    or vars(candidate).get("path") != identity[2]
+                    or any(
+                        vars(MCPPermissionStore).get(name) is not function
+                        or function.__code__ is not code
+                        for name, function, code in method_codes
                     )
-                    for key, name in (
-                        ("permission.load", "load"),
-                        ("permission.mark", "mark_config_changed"),
-                        ("permission.kill", "get_kill_switch"),
+                    or sources._BINDINGS.get(self.store) is not self.store_binding
+                    or sources._BINDINGS.get(candidate) is not identity[3]
+                    or ordinary is not None
+                    and (
+                        ordinary.permission is not None
+                        or ordinary.mcp is not self.service
+                        or ordinary.prospective_mcp_store is not self.store
                     )
                 ):
                     raise RecoveryRequired("mcp_source_selection_changed")
@@ -497,7 +580,21 @@ class _CapturedSources:
                 self.permission_reader = callbacks["permission.load"]
                 self.permission_binding = identity[3]
                 self.method_bindings = {**self.method_bindings, **callbacks}
-                self.require_current()
+                publication = (
+                    self.service,
+                    self.store,
+                    candidate,
+                    identity[3],
+                    identity[2],
+                )
+                self.native_permission_publication = publication
+                if ordinary is not None:
+                    ordinary.permission = candidate
+                    ordinary.permission_path = identity[2]
+                    ordinary.native_permission_publication = publication
+                elif tree is not None:
+                    tree.retain_mcp_permission_publication(publication)
+            self.require_current()
         return self.permission
 
     def read_permission_payload(self):
@@ -616,14 +713,201 @@ async def capture_console_effective_states(
         return states
 
 
+@dataclass(frozen=True, slots=True)
+class _DefinitionSelection:
+    """Detached fields from one original metadata capture, without authority."""
+
+    definitions: Mapping[str, str]
+    sources: tuple[tuple[str, str, str, str], ...]
+    complete: bool = True
+    pending: bool = False
+
+
+def _stock_manifest_is_loaded(service):
+    """Recognize the already loaded, original metadata manifest."""
+    if type(service) is not UnifiedMCPControlPlaneService:
+        return False
+    local = getattr_static(service, "local_service", None)
+    if type(local) is not LocalMCPControlService:
+        return False
+    if getattr_static(local, "manifest_provider", None) is not _default_manifest_provider:
+        return False
+    server = sys.modules.get("tldw_chatbook.MCP.server")
+    records = vars(server).get("_CONSOLE_ORDINARY_MANIFEST_SOURCE") if server else None
+    return bool(records) and all(
+        vars(server).get(name) is function and function.__code__ is code
+        for name, function, code in records
+    )
+
+
+def _mcp_metadata_is_closed(service):
+    """Keep the original synchronous and fallback eligibility check."""
+    local = getattr_static(service, "local_service", None)
+    return (
+        getattr_static(local, "policy_enforcer", None) is None
+        and _stock_manifest_is_loaded(service)
+    )
+
+
+def _bounded_policy_source(app, service):
+    from tldw_chatbook.runtime_policy.enforcement import _console_local_listing_source
+
+    local = getattr_static(service, "local_service", None)
+    if not (
+        _stock_manifest_is_loaded(service)
+        and getattr_static(app, "unified_mcp_service", None) is service
+        and getattr_static(local, "_require_allowed", None)
+        is _ORIGINAL_METHODS[(LocalMCPControlService, "_require_allowed")]
+        and _original_class_member(LocalMCPControlService, "_require_allowed")
+        and _original_catalog_body_current(LocalMCPControlService, "manifest_provider")
+        and LocalMCPControlService._require_allowed.__globals__.get("RuntimeSourceState")
+        is sys.modules["tldw_chatbook.runtime_policy.types"].RuntimeSourceState
+    ):
+        return None
+    enforcer = getattr_static(local, "policy_enforcer", None)
+    if enforcer is not getattr_static(app, "service_policy_enforcer", None):
+        return None
+    return _console_local_listing_source(enforcer, _LISTING_ACTIONS)
+
+
+def _bounded_policy_current(service, bounded_policy):
+    app, original, runtime, activity = bounded_policy
+    current = _bounded_policy_source(app, service)
+    return (
+        getattr_static(app, "console_runtime", None) is runtime
+        and runtime._worktree_activity is activity
+        and current is not None
+        and current[0] is original[0]
+        and current[1] is original[1]
+        and current[2] is original[2]
+        and all(
+            now[0] is before[0] and now[1:] == before[1:]
+            for now, before in zip(current[3], original[3], strict=True)
+        )
+    )
+
+
+@asynccontextmanager
+async def _bounded_console_metadata(app, service, runtime):
+    """Join only stock app metadata on the caller's finite preparation owner."""
+    from threading import get_ident
+
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.Workspaces.worktree_activity import WorktreeActivity
+
+    policy = _bounded_policy_source(app, service)
+    lock = getattr_static(service, "_console_metadata_lock", None)
+    if (
+        policy is None
+        or type(runtime) is not ConsoleRuntime
+        or getattr_static(app, "console_runtime", None) is not runtime
+        or runtime._receipt_owner_thread_id != get_ident()
+        or type(lock) is not asyncio.Lock
+        or not standard_console_catalog_sources(service)
+    ):
+        yield None
+        return
+    loop = asyncio.get_running_loop()
+    if service._console_metadata_loop is None:
+        service._console_metadata_loop = loop
+    if service._console_metadata_loop is not loop:
+        yield None
+        return
+    activity = runtime.worktree_activity
+    if type(activity) is not WorktreeActivity:
+        yield None
+        return
+    source = (app, policy, runtime, activity)
+    async with lock:
+        if not (
+            _bounded_policy_current(service, source)
+            and standard_console_catalog_sources(service)
+        ):
+            yield None
+            return
+        yield _CapturedSources(
+            service, capture_catalog=True, bounded_policy=source
+        )
+
+
+def _project_definition_selection(tools, states, exclusions, persona_policy_rules):
+    from tldw_chatbook.Agents.persona_policy import (
+        evaluate_tool_policy,
+        parse_persona_policy_from_rules,
+    )
+
+    from .tool_naming import dedupe_names, llm_tool_name
+
+    persona = parse_persona_policy_from_rules(persona_policy_rules)
+    eligible = [
+        tool
+        for tool in tools
+        if not (tool.server_key == "builtin:tldw_chatbook" and tool.name in exclusions)
+        and states[(tool.server_key, tool.name)].state != "deny"
+        and evaluate_tool_policy(
+            persona, rule_kind="mcp_tool", tool_name=tool.name
+        ).advertised
+    ]
+    identities = [tool.tool_id for tool in eligible]
+    if len(identities) != len(set(identities)):
+        raise ValueError("ambiguous MCP definition identity")
+    names = dedupe_names(
+        [llm_tool_name(tool.server_key, tool.name) for tool in eligible]
+    )
+    return _DefinitionSelection(
+        MappingProxyType(
+            {
+                tool.tool_id: definition_hash(tool.description, tool.input_schema)
+                for tool in eligible
+            }
+        ),
+        tuple(
+            (tool.tool_id, tool.server_key, tool.name, name)
+            for tool, name in zip(eligible, names, strict=True)
+        ),
+    )
+
+
 async def capture_console_definition_maximum(
     service: UnifiedMCPControlPlaneService,
     exclusions: frozenset[str],
     *,
     _run_native=None,
+    profile_id="default",
+    persona_policy_rules=(),
 ) -> dict[str, str]:
+    """Preserve the public hash-only view of the same original capture."""
+    result = await _capture_console_definition_selection(
+        service,
+        exclusions,
+        _run_native=_run_native,
+        profile_id=profile_id,
+        persona_policy_rules=persona_policy_rules,
+        _admitted=True,
+    )
+    return dict(result.definitions)
+
+
+async def _capture_console_definition_selection(
+    service: UnifiedMCPControlPlaneService,
+    exclusions: frozenset[str],
+    *,
+    _run_native=None,
+    profile_id="default",
+    persona_policy_rules=(),
+    _admitted=False,
+    _bounded_sources=None,
+) -> _DefinitionSelection:
     """Prepare one narrowing maximum; dispatch still uses its fresh live gates."""
-    captured = _CapturedSources(service)
+    if _bounded_sources is not None:
+        if _run_native is None or _bounded_sources.service is not service:
+            raise RecoveryRequired("mcp_source_selection_changed")
+        captured = _bounded_sources
+        captured.require_current()
+    else:
+        if not _admitted and not _mcp_metadata_is_closed(service):
+            return _DefinitionSelection(MappingProxyType({}), (), False, True)
+        captured = _CapturedSources(service)
     run_native = _owned_worker if _run_native is None else _run_native
 
     def read_sources():
@@ -643,11 +927,14 @@ async def capture_console_definition_maximum(
     # the existing empty-maximum behavior, without suppressing cancellation.
     with service._producer_lifetime.operation():
         try:
-            captured.local._require_allowed("mcp.external_profiles.list.local")
+            if _bounded_sources is not None:
+                _require_listing(captured.local)
+            else:
+                captured.local._require_allowed("mcp.external_profiles.list.local")
             payload, bundle = await run_native(read_sources)
             captured.require_current()
             if bool(payload.get("kill_switch", False)):
-                return {}
+                return _DefinitionSelection(MappingProxyType({}), ())
             captured.local._require_allowed("mcp.external_profiles.list.local")
             tools = []
             for profile in bundle["profiles"]:
@@ -661,12 +948,16 @@ async def capture_console_definition_maximum(
                         }
                     )
                 )
-            inventory = captured.inventory_reader()
+            inventory = (
+                await run_native(captured.inventory_reader)
+                if _bounded_sources is not None
+                else captured.inventory_reader()
+            )
             if isinstance(inventory, dict):
                 tools.extend(builtin_tools_from_inventory(inventory))
             states = {
                 (tool.server_key, tool.name): resolve_effective_state(
-                    payload, tool, profile_id="default"
+                    payload, tool, profile_id=profile_id
                 )
                 for tool in tools
             }
@@ -676,6 +967,9 @@ async def capture_console_definition_maximum(
                 if states[(tool.server_key, tool.name)].config_changed
             ]
             if changed:
+                # Preserve the original admitted downgrade and audit owner.
+                if _bounded_sources is not None:
+                    return _DefinitionSelection(MappingProxyType({}), (), False, True)
 
                 def audit_changes():
                     for tool in changed:
@@ -683,29 +977,26 @@ async def capture_console_definition_maximum(
                         captured.audit_writer(
                             captured.permission,
                             tool,
-                            profile_id="default",
+                            profile_id=profile_id,
                             _captured_execution_log=captured.log_owner,
                         )
 
                 await run_native(audit_changes)
             captured.require_current()
-            return {
-                tool.tool_id: definition_hash(tool.description, tool.input_schema)
-                for tool in tools
-                if not (
-                    tool.server_key == "builtin:tldw_chatbook"
-                    and tool.name in exclusions
-                )
-                and states[(tool.server_key, tool.name)].state != "deny"
-            }
+            return _project_definition_selection(
+                tools, states, exclusions, persona_policy_rules
+            )
+
         except asyncio.CancelledError:
             raise
+        except _McpPermissionPublicationBusy:
+            return _DefinitionSelection(MappingProxyType({}), (), False, True)
         except Exception as exc:  # noqa: BLE001 - preserve optional maximum-capture refusal.
             logger.debug(
                 "Console MCP maximum capture unavailable (exception_type={})",
                 type(exc).__name__,
             )
-            return {}
+            return _DefinitionSelection(MappingProxyType({}), (), False)
 
 
 #: The stock readers a run-start catalog fingerprint calls (TASK-33620.15.38).

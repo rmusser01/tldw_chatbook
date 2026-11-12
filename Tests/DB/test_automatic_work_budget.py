@@ -381,3 +381,42 @@ def test_descendant_resources_spend_the_same_root_balance(db, kind, limit_name):
         assert snapshot.used[kind] == 2
         assert snapshot.available[kind] == 0
         assert snapshot.pause_reason == f"{kind}_budget"
+
+
+def test_native_workflow_ledger_uses_only_installed_proof_validators(db):
+    from tldw_chatbook.Agents.workflow_phase import (
+        workflow_dispatch_identity,
+        workflow_fence_connection,
+    )
+    from tldw_chatbook.Chat.console_workflow_runs import (
+        _quiescence_evidence,
+        _quiescence_receiving,
+    )
+    from tldw_chatbook.DB.automatic_work import AutomaticWorkRefused
+
+    ledger = db.automatic_work
+    invalid = object()
+    with pytest.raises(AutomaticWorkRefused, match="workflow_native_fence_changed"):
+        with ledger.transaction(_native=invalid):
+            pytest.fail("unregistered proof reached a transaction")
+    with pytest.raises(PermissionError, match="original workflow accounting record"):
+        ledger._receive_workflow_quiescence(invalid, "resume")
+
+    for _ in range(2):
+        ledger._install_workflow_phase_validators(
+            workflow_fence_connection, workflow_dispatch_identity
+        )
+        ledger._install_workflow_accounting_validators(
+            _quiescence_receiving, _quiescence_evidence
+        )
+
+    def unexpected(*_args, **_kwargs):
+        pytest.fail("a replacement validator was invoked")
+
+    with pytest.raises(AutomaticWorkRefused, match="workflow_authority_changed"):
+        ledger._install_workflow_phase_validators(unexpected, workflow_dispatch_identity)
+    with pytest.raises(AutomaticWorkRefused, match="workflow_authority_changed"):
+        ledger._install_workflow_accounting_validators(_quiescence_receiving, unexpected)
+    with pytest.raises(AutomaticWorkRefused, match="workflow_native_fence_changed"):
+        with ledger.transaction(_native=invalid):
+            pytest.fail("unissued proof reached a transaction")

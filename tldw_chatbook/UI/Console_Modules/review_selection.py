@@ -10,9 +10,11 @@ explicit late-bound callables.
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -314,6 +316,205 @@ def _build_trajectory_snapshot(
         retrieval_runs=retrieval_runs,
         diagnostic_events=diagnostic_events,
     )
+
+
+class ConsoleTurnUndoUnavailableError(RuntimeError):
+    """A card-level Undo All cannot proceed without touching disk."""
+
+
+class ConsoleTurnUndoAmbiguousError(ConsoleTurnUndoUnavailableError):
+    """One run has multiple snapshot windows for the same canonical root."""
+
+
+class ConsoleTurnUndoStalePreflightError(ConsoleTurnUndoUnavailableError):
+    """New edited-since files appeared after the user saw the confirmation."""
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleTurnUndoPlan:
+    """Exact rows, paths, and warnings behind one card confirmation."""
+
+    rows_paths: tuple[tuple[dict, tuple[str, ...]], ...]
+    root_labels: tuple[str, ...]
+    edited_since: tuple[str, ...]
+    edited_keys: frozenset[tuple[str, str]]
+    disk_state: tuple[tuple[str, str, str], ...]
+    total_files: int
+
+
+def _console_turn_undo_run_active(provider: Any, roots: tuple[str, ...]) -> bool:
+    """Read the provider's root-aware run probe with legacy fallback."""
+    root_probe = getattr(provider, "run_active_for_root", None)
+    if callable(root_probe):
+        return any(bool(root_probe(root)) for root in roots)
+    probe = getattr(provider, "run_active", None)
+    return bool(probe()) if callable(probe) else False
+
+
+def prepare_console_turn_undo(provider: Any, run_id: str) -> ConsoleTurnUndoPlan:
+    """Build one safe whole-turn revert plan.
+
+    This synchronous function performs provider/git reads and is therefore
+    called only through ``asyncio.to_thread`` by the mounted screen.
+    Duplicate-root windows are refused before any diff or preflight read: the
+    compact card does not expose enough baseline ordering to consent safely.
+    """
+    turn = provider.turn_for_run(run_id)
+    if turn is None or not turn.rows:
+        raise ConsoleTurnUndoUnavailableError(
+            "Undo All is unavailable because this turn has no change snapshots."
+        )
+
+    seen_roots: set[str] = set()
+    for row in turn.rows:
+        root = str(row.get("root") or "")
+        if not root:
+            raise ConsoleTurnUndoUnavailableError(
+                "Undo All is unavailable because a change snapshot has no workspace."
+            )
+        canonical = os.path.normcase(os.path.normpath(root))
+        if canonical in seen_roots:
+            raise ConsoleTurnUndoAmbiguousError(
+                "This turn has multiple change windows for the same workspace."
+            )
+        seen_roots.add(canonical)
+    roots = tuple(str(row["root"]) for row in turn.rows)
+    if _console_turn_undo_run_active(provider, roots):
+        raise ConsoleTurnUndoUnavailableError(
+            "A run is active on this workspace — finish or stop the run first."
+        )
+
+    rows_paths: list[tuple[dict, tuple[str, ...]]] = []
+    for row in turn.rows:
+        tracking_error = str(row.get("tracking_error") or "").strip()
+        if tracking_error:
+            raise ConsoleTurnUndoUnavailableError(
+                f"Undo All is unavailable: {tracking_error}"
+            )
+        changes = provider.changed_files(row)
+        paths = tuple(dict.fromkeys(str(change.path) for change in changes))
+        if paths:
+            rows_paths.append((row, paths))
+    if not rows_paths:
+        raise ConsoleTurnUndoUnavailableError(
+            "Undo All is unavailable because no changed files can be restored."
+        )
+
+    multi_root = len(rows_paths) > 1
+    leaf_labels = [
+        Path(str(row["root"])).name or str(row["root"]) for row, _ in rows_paths
+    ]
+    root_labels = tuple(
+        str(row["root"]) if leaf_labels.count(label) > 1 else label
+        for (row, _paths), label in zip(rows_paths, leaf_labels, strict=False)
+    )
+    edited_keys: set[tuple[str, str]] = set()
+    edited_labels: list[str] = []
+    disk_state: list[tuple[str, str, str]] = []
+    for (row, paths), root_label in zip(rows_paths, root_labels, strict=False):
+        root = str(row["root"])
+        preflight = provider.preflight_revert(row, list(paths))
+        disk_state.extend(
+            (root, str(path), str(fingerprint))
+            for path, fingerprint in preflight.disk_state.items()
+        )
+        for path in preflight.edited_since:
+            key = (root, str(path))
+            if key in edited_keys:
+                continue
+            edited_keys.add(key)
+            edited_labels.append(f"{root_label}/{path}" if multi_root else str(path))
+    return ConsoleTurnUndoPlan(
+        rows_paths=tuple(rows_paths),
+        root_labels=root_labels,
+        edited_since=tuple(edited_labels),
+        edited_keys=frozenset(edited_keys),
+        disk_state=tuple(disk_state),
+        total_files=sum(len(paths) for _row, paths in rows_paths),
+    )
+
+
+def apply_console_turn_undo(provider: Any, plan: ConsoleTurnUndoPlan) -> list:
+    """Revalidate a confirmed plan, then invoke the existing revert engine."""
+    from tldw_chatbook.Workspaces.change_revert import RevertOutcome
+
+    roots = tuple(str(row["root"]) for row, _paths in plan.rows_paths)
+    if _console_turn_undo_run_active(provider, roots):
+        raise ConsoleTurnUndoUnavailableError(
+            "A run is active on this workspace — finish or stop the run first."
+        )
+
+    current_edited: set[tuple[str, str]] = set()
+    current_disk_state: list[tuple[str, str, str]] = []
+    for row, paths in plan.rows_paths:
+        root = str(row["root"])
+        preflight = provider.preflight_revert(row, list(paths))
+        current_edited.update((root, str(path)) for path in preflight.edited_since)
+        current_disk_state.extend(
+            (root, str(path), str(fingerprint))
+            for path, fingerprint in preflight.disk_state.items()
+        )
+    if (
+        current_edited - plan.edited_keys
+        or tuple(current_disk_state) != plan.disk_state
+    ):
+        raise ConsoleTurnUndoStalePreflightError(
+            "Files changed while the confirmation was open. Open Review and try again."
+        )
+
+    outcomes: list = []
+    multi_root = len(plan.rows_paths) > 1
+    for index, ((row, paths), root_label) in enumerate(
+        zip(plan.rows_paths, plan.root_labels, strict=False)
+    ):
+        try:
+            row_outcomes = provider.revert(row, list(paths))
+        except Exception as exc:  # noqa: BLE001 - retain earlier disk outcomes
+            error = f"not processed: {str(exc)[:240]}"
+            for (_pending_row, pending_paths), pending_label in zip(
+                plan.rows_paths[index:], plan.root_labels[index:], strict=False
+            ):
+                outcomes.extend(
+                    RevertOutcome(
+                        path=(f"{pending_label}/{path}" if multi_root else str(path)),
+                        ok=False,
+                        error=error,
+                    )
+                    for path in pending_paths
+                )
+            break
+        outcomes.extend(
+            replace(outcome, path=f"{root_label}/{outcome.path}")
+            if multi_root
+            else outcome
+            for outcome in row_outcomes
+        )
+    return outcomes
+
+
+async def run_console_turn_undo(
+    provider: Any,
+    plan: ConsoleTurnUndoPlan,
+    undo: Any,
+    *,
+    marshal: Callable[..., Any],
+    current: Callable[[], bool],
+    publish: Callable[[Any, Exception | None], None],
+) -> None:
+    """Apply off-thread and accept the original result before native retirement."""
+    try:
+        if undo is not None:
+            await undo.apply(
+                lambda: apply_console_turn_undo(provider, plan),
+                marshal=marshal,
+                current=current,
+                publish=publish,
+            )
+        else:
+            outcomes = await asyncio.to_thread(apply_console_turn_undo, provider, plan)
+            publish(outcomes, None)
+    except Exception as exc:  # noqa: BLE001 -- original feature outcome must reach its host
+        publish(None, exc)
 
 
 class ConsoleReviewSelectionController:

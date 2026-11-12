@@ -10,6 +10,11 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleSubmissionOrigin
 
 
 def resolve_automatic_authorization(controller, origin, session_id, wake, goal):
+    if origin is ConsoleSubmissionOrigin.WORKFLOW_PHASE:
+        # Task 8 owns positive native dispatch; never fall through to wake/manual.
+        raise PermissionError(
+            "Workflow dispatch requires its runtime phase coordinator."
+        )
     if origin is not ConsoleSubmissionOrigin.GOAL_ITERATION:
         return controller._fleet_wake, wake
     coordinator = getattr(controller, "_goal_coordinator", None)
@@ -77,7 +82,15 @@ def capture_execution_roots(
     remote_session_key,
 ):
     """Capture workspace authority, then apply the goal's frozen narrowing."""
+    from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
+
     from .console_chat_controller import capture_run_admitted_workspace_roots
+
+    automatic = current_automatic_work()
+    if automatic is not None and automatic.goal is not None:
+        return automatic.goal.execution_roots(
+            project_selection, project_authority_guard
+        )
 
     run_admitted_roots = capture_run_admitted_workspace_roots(
         session=next(
@@ -89,19 +102,17 @@ def capture_execution_roots(
         project_authority_guard=project_authority_guard,
         remote_session_key=remote_session_key,
     )
-    from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
-
-    automatic = current_automatic_work()
-    if automatic is not None and automatic.goal is not None:
-        run_admitted_roots, project_selection, project_authority_guard = (
-            automatic.goal.execution_roots(project_selection, project_authority_guard)
-        )
     return run_admitted_roots, project_selection, project_authority_guard
 
 
 def submission_scope(controller, origin, session_id):
     """Manual sends pause their goal and reset inherited automatic context."""
-    from contextlib import nullcontext
+    from contextlib import contextmanager, nullcontext
+
+    if origin is ConsoleSubmissionOrigin.WORKFLOW_PHASE:
+        raise PermissionError(
+            "Workflow dispatch requires its runtime phase coordinator."
+        )
 
     from tldw_chatbook.Agents.automatic_work_runtime import manual_work_scope
 
@@ -117,6 +128,14 @@ def submission_scope(controller, origin, session_id):
         )
         if goals is not None and target is not None:
             goals.manual_send(target.persisted_conversation_id)
+
+    @contextmanager
+    def manual_submission():
+        from tldw_chatbook.Agents.run_hooks import prompt_handoff
+
+        with manual_work_scope(), prompt_handoff(controller):
+            yield
+
     return (
         nullcontext()
         if origin
@@ -125,7 +144,7 @@ def submission_scope(controller, origin, session_id):
             ConsoleSubmissionOrigin.GOAL_ITERATION,
             ConsoleSubmissionOrigin.AGENT_CHAT_START,
         }
-        else manual_work_scope()
+        else manual_submission()
     )
 
 
@@ -247,17 +266,20 @@ async def prepare_submission_hooks(
             and getattr(hook_runtime.prepare_hooks_v2, "__func__", None)
             is ConsoleRuntime.prepare_hooks_v2 else {})
         try:
-            lifecycle = await hook_runtime.prepare_hooks_v2(
-                session_id,
-                configuration=configuration,
-                reason="resume" if session.persisted_conversation_id else "startup",
-                initiator=(
-                    "manual"
-                    if origin is ConsoleSubmissionOrigin.MANUAL
-                    else "scheduled"
-                ),
-                **shared,
-            )
+            from .console_hook_preparation import submission_origin
+
+            with submission_origin(controller, session, configuration, origin):
+                lifecycle = await hook_runtime.prepare_hooks_v2(
+                    session_id,
+                    configuration=configuration,
+                    reason="resume" if session.persisted_conversation_id else "startup",
+                    initiator=(
+                        "manual"
+                        if origin is ConsoleSubmissionOrigin.MANUAL
+                        else "scheduled"
+                    ),
+                    **shared,
+                )
             if lifecycle is not None:
                 scope = lifecycle.turn_scope or lifecycle.open_scope()
                 lifecycle.turn_scope = scope
@@ -294,11 +316,15 @@ async def submission_hook_input(
     )
     if hook_owner is None or hook_owner[0] is None:
         return []
-    lifecycle, scope, _session_key = hook_owner
+    lifecycle, scope, session_key = hook_owner
     if origin is ConsoleSubmissionOrigin.MANUAL:
-        await lifecycle.fire(
-            lifecycle.event("UserPromptSubmit", data={"prompt": draft}), scope
-        )
+        from .console_hook_preparation import submission_origin
+
+        session = controller.store._sessions[session_key]
+        with submission_origin(controller, session, None, origin):
+            await lifecycle.fire(
+                lifecycle.event("UserPromptSubmit", data={"prompt": draft}), scope
+            )
     await lifecycle.wait(scope)
     rows = lifecycle.context.blocks(scope, "model")
     from tldw_chatbook.Agents.agent_models import check_host_context
@@ -345,12 +371,17 @@ async def legacy_submission_hook_input(controller, draft, session_id, hook_read=
         )
         if authority is not None:
             shared["authority_read"] = authority
-    return await hooks_engine.fire_async(
+    outcome = await hooks_engine.fire_async(
         "UserPromptSubmit",
         session_id=session_id,
         data={"prompt": truncate_hook_text(draft)},
         **shared,
     )
+    if outcome is None or not (outcome.blocked or outcome.context):
+        from tldw_chatbook.Agents.run_hooks import prompt_handed_off
+
+        prompt_handed_off()
+    return outcome
 
 
 #: TASK-38751: the chat, runtime or permission owner moved during a hook

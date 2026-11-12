@@ -207,8 +207,8 @@ def _character_screen(monkeypatch, card: dict) -> ChatScreen:
     app.character_persona_scope_service = SimpleNamespace(
         get_character=AsyncMock(return_value=card)
     )
+    app.console_runtime.set_chat_store(ConsoleChatStore())
     screen = ChatScreen(app)
-    screen._console_chat_store = ConsoleChatStore()
     monkeypatch.setattr(
         ChatScreen,
         "app",

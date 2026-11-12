@@ -86,9 +86,17 @@ async def _seed_console(app, pilot):
     store = console._console_chat_store
     session_id = store.active_session_id
     assert session_id
-    outcome = await controller.submit_draft(
-        "Seed this conversation.", session_id=session_id
+    from tldw_chatbook.UI.Console_Modules.wiring import (
+        _admit_console_turn_to_runtime,
+        _precapture_turn_authority,
     )
+
+    preparation = await _precapture_turn_authority(console, session_id)
+    with preparation():
+        turn_id = _admit_console_turn_to_runtime(
+            console, "Seed this conversation.", session_id
+        )
+    outcome = await console._console_runtime().wait_for_turn(turn_id)
     assert outcome.accepted
     assert next(
         row for row in store.sessions() if row.id == session_id

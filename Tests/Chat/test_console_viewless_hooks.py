@@ -741,6 +741,22 @@ def _pre_tool_use_hook() -> dict:
     return {"event": "PreToolUse", "command": [sys.executable, "-c", "pass"]}
 
 
+def test_hook_custody_attaches_when_runtime_is_published(hook_file):
+    app = _HooksApp(None)
+    runtime = ConsoleRuntime(app)
+    engine = runtime.ensure_run_hooks()
+    try:
+        assert runtime._legacy_hooks_source is None
+        app.console_runtime = runtime
+        assert runtime.ensure_run_hooks() is engine
+        source = runtime._legacy_hooks_source
+        assert source.runtime is runtime and source.engine is engine
+        assert source.permissions is runtime.ensure_hook_permissions()
+        assert engine._native_source is source
+    finally:
+        engine.close()
+
+
 def test_same_engine_detects_saved_hooks_added_mid_session(hook_file):
     hook_file.write_text(toml.dumps({"hooks": {"hook": []}}))
     runtime = ConsoleRuntime(app=_HooksApp(None))

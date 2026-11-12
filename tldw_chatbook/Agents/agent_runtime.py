@@ -467,6 +467,9 @@ class LoopDeps:
     )
     # Restriction-only guard runs before approval exemptions; exceptions deny.
     guard_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None
+    # Repeatable restriction: before preparation, after mutation and at dispatch.
+    # Keep this separate from batch guards that execute effectful hooks.
+    validate_tool_call: Callable[[ToolCall], None] = lambda call: None
     # Required v2 effects are load-bearing; legacy observers remain optional.
     # A typed blocked/not-started result refuses before any hook executes (ADR-252).
     prepare_hook_call: Callable[[ToolCall], ToolCall | ToolResult] | None = None
@@ -2400,15 +2403,23 @@ def run_agent_loop(
             )
         load_call_count = sum(call.name == LOAD_TOOLS_NAME for call in calls)
         load_batch_exclusive = load_call_count == 1 and len(calls) == 1
+        scope_refusals: dict[int, str] = {}
+        scoped_calls = []
+        for call in calls:
+            try:
+                deps.validate_tool_call(call)
+                scoped_calls.append(call)
+            except Exception:  # noqa: BLE001 - authority failures must refuse
+                scope_refusals[id(call)] = "workflow task scope refused"
 
-        if deps.prepare_tool_calls is not None and calls:
+        if deps.prepare_tool_calls is not None and scoped_calls:
             preparation = ToolBatchPreparation("proceed")
             try:
                 if deps.project_instruction_payload_state is not None:
                     deps.project_instruction_payload_state.capture(
                         messages, tuple(active), calls
                     )
-                preparation = deps.prepare_tool_calls(list(calls))
+                preparation = deps.prepare_tool_calls(scoped_calls)
                 if not isinstance(preparation, ToolBatchPreparation):
                     raise TypeError("invalid tool batch preparation")
             except Exception:  # noqa: BLE001 - content-free fail-open boundary
@@ -2450,12 +2461,24 @@ def run_agent_loop(
         # makes every `.get(name, "proceed")` lookup below resolve to
         # "proceed" -- the exact same dispatch path as before this hook
         # existed, so absent-hook behavior stays byte-identical.
-        hook_preparation_refusals: dict[int, str] = {}
+        hook_preparation_refusals: dict[int, str] = dict(scope_refusals)
+
+        for call in calls:
+            try:
+                deps.validate_tool_call(call)
+            except Exception:  # noqa: BLE001 - authority failures must refuse
+                hook_preparation_refusals[id(call)] = "workflow task scope refused"
         if deps.prepare_hook_call is not None:
             prepared_calls = []
             for call in calls:
+                if id(call) in hook_preparation_refusals:
+                    prepared_calls.append(call)
+                    continue
                 try:
+                    deps.validate_tool_call(call)
                     prepared = deps.prepare_hook_call(call)
+                    if not isinstance(prepared, ToolResult):
+                        deps.validate_tool_call(prepared)
                     if isinstance(prepared, ToolResult):
                         if (
                             prepared.ok
@@ -2527,10 +2550,13 @@ def run_agent_loop(
             for call, review in zip(calls, review_calls)
             if id(call) in hook_preparation_refusals
         }
-        if deps.guard_tool_calls is not None:
+        guard_calls = [
+            call for call in review_calls if call.call_id not in guard_refusals
+        ]
+        if deps.guard_tool_calls is not None and guard_calls:
             try:
-                guarded = deps.guard_tool_calls(review_calls)
-                for call in review_calls:
+                guarded = deps.guard_tool_calls(guard_calls)
+                for call in guard_calls:
                     verdict = _effective_review_verdict(call, guarded)
                     if not isinstance(verdict, str):
                         raise ValueError("invalid guard verdict")
@@ -2538,10 +2564,18 @@ def run_agent_loop(
                         guard_refusals[call.call_id] = verdict
             except Exception:  # noqa: BLE001 -- a broken restriction must deny
                 logger.warning("tool guard failed; refusing batch")
-                guard_refusals = {
-                    call.call_id: "hook: tool guard failed; failing closed"
-                    for call in review_calls
-                }
+                guard_refusals.update(
+                    {
+                        call.call_id: "hook: tool guard failed; failing closed"
+                        for call in guard_calls
+                    }
+                )
+
+        for call in review_calls:
+            try:
+                deps.validate_tool_call(call)
+            except Exception:  # noqa: BLE001 - authority failures must refuse
+                guard_refusals[call.call_id] = "workflow task scope refused"
 
         if deps.accept_hook_preparation is not None:
             for call, review_call in zip(calls, review_calls):
@@ -2937,11 +2971,13 @@ def run_agent_loop(
                     publish_output if deps.on_tool_activity is not None else None
                 )
                 dispatch_refused = False
-                if deps.validate_hook_dispatch is not None:
-                    try:
+                try:
+                    deps.validate_tool_call(call)
+                    if deps.validate_hook_dispatch is not None:
                         deps.validate_hook_dispatch(call)
-                    except Exception:  # noqa: BLE001 -- fail closed
-                        dispatch_refused = True
+                        deps.validate_tool_call(call)
+                except Exception:  # noqa: BLE001 - authority failures must refuse
+                    dispatch_refused = True
                 if dispatch_refused:
                     result = ToolResult.blocked("hook: final dispatch identity refused")
                 elif config.review_binding is not None and call.name not in {

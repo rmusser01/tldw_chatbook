@@ -1,19 +1,11 @@
 """Workspace and conversation-browser ownership for the Console.
 
-`ConsoleWorkspaceController` owns 57 non-DOM methods covering Workspace
-policy and lifecycle, scope selection, persisted-conversation resume, the
-named-workspace Tree projection, and the flat Default/unassigned browser.
-Workspaces and Conversations own independent search attempts; page generations
-are scoped per workspace. Legacy Workspace row and scalar names are
-compatibility aliases over the flat lane.
-
-The Textual screen retains only framework and DOM edges. Its bounded search
-handler extracts plain query/disabled values and delegates the transition;
-the Clear button delegates the complete clear transition. Browser services
-and sibling-owned data enter through explicit late-bound constructor
-callables so replacements remain observable and moved methods never query the
-DOM or reach through sibling controllers.
-"""
+ConsoleWorkspaceController owns policy, scope selection, saved-conversation
+resume, the Workspace Tree and the flat Default/unassigned browser. Independent
+search attempts and page generations retain their workspace scope; legacy row
+and scalar names remain compatibility aliases over the flat lane.
+The screen owns framework and DOM edges. It passes plain query/disabled values
+and late-bound dependencies; moved methods never query DOM or sibling controllers."""
 
 from __future__ import annotations
 
@@ -2124,8 +2116,10 @@ class ConsoleWorkspaceController:
         self._sync_console_chat_core_state()
         self._activate_console_session_for_workspace(target)
         self._sync_console_workspace_context()
-        native_sync = self._sync_native_console_chat_ui()
-        if inspect.isawaitable(native_sync):
+        native_sync = self._sync_native_console_chat_ui
+        if not inspect.iscoroutinefunction(native_sync):
+            native_sync = native_sync()
+        if inspect.iscoroutinefunction(native_sync) or inspect.isawaitable(native_sync):
             self.run_worker(
                 native_sync,
                 exclusive=True,
@@ -5063,7 +5057,7 @@ class ConsoleWorkspaceController:
                 if not _current():
                     return
                 self.run_worker(
-                    self._sync_native_console_chat_ui(),
+                    self._sync_native_console_chat_ui,
                     exclusive=True,
                     group="console-sync",
                 )
@@ -5163,7 +5157,7 @@ class ConsoleWorkspaceController:
             self._sync_console_chat_core_state()
             self._sync_console_workspace_context()
             self.run_worker(
-                self._sync_native_console_chat_ui(),
+                self._sync_native_console_chat_ui,
                 exclusive=True,
                 group="console-sync",
             )
@@ -5371,7 +5365,7 @@ class ConsoleWorkspaceController:
                         callback=_recovery,
                     )
                     self.run_worker(
-                        self._sync_native_console_chat_ui(),
+                        self._sync_native_console_chat_ui,
                         exclusive=True,
                         group="console-sync",
                     )
@@ -5500,7 +5494,7 @@ class ConsoleWorkspaceController:
         self._activate_console_session_for_workspace(result.workspace_id)
         self._sync_console_workspace_context()
         self.run_worker(
-            self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
+            self._sync_native_console_chat_ui, exclusive=True, group="console-sync"
         )
         # TASK-713: the whole sequence is invisible when the Workspace status
         # row is scrolled out of view -- keep the toast even with the modal.
@@ -6067,7 +6061,7 @@ class ConsoleWorkspaceController:
             self._activate_console_session_for_workspace(active.workspace_id)
         self._sync_console_workspace_context()
         self.run_worker(
-            self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
+            self._sync_native_console_chat_ui, exclusive=True, group="console-sync"
         )
 
     def _console_workspace_session_title(self, workspace_id: str) -> str:
@@ -8580,8 +8574,7 @@ class ConsoleWorkspaceController:
                     return
                 except Exception as exc:  # noqa: BLE001 - surfaced to the user
                     logger.error(
-                        "Console conversation rename failed: exception_type={}",
-                        type(exc).__name__,
+                        f"Console conversation rename failed: exception_type={type(exc).__name__}"
                     )
                     if cancelled:
                         raise asyncio.CancelledError
@@ -8707,8 +8700,7 @@ class ConsoleWorkspaceController:
                 return
             except Exception as exc:  # noqa: BLE001 - surfaced to the user
                 logger.error(
-                    "Console conversation delete failed: exception_type={}",
-                    type(exc).__name__,
+                    f"Console conversation delete failed: exception_type={type(exc).__name__}"
                 )
                 self.app_instance.notify(f"Could not delete {label}.", severity="error")
                 return

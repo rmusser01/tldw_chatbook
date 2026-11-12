@@ -372,13 +372,22 @@ def canonicalize_locator(
     """
     argv = [ssh_bin, *build_ssh_argv(loc, ["-G"], [])]
     try:
-        completed = subprocess.run(
-            argv,
-            capture_output=True,
-            text=True,
-            errors="replace",
-            timeout=_SSH_G_TIMEOUT_SECONDS,
-            check=False,
+        from tldw_chatbook.Tools.workspace_tool_executor import current_ssh_call
+
+        native = current_ssh_call()
+        completed = (
+            native.finite_helper(
+                argv, timeout=_SSH_G_TIMEOUT_SECONDS, text=True, errors="replace"
+            )
+            if native is not None
+            else subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                errors="replace",
+                timeout=_SSH_G_TIMEOUT_SECONDS,
+                check=False,
+            )
         )
     except subprocess.TimeoutExpired as exc:
         raise RemoteLocatorError(
@@ -438,3 +447,6 @@ def canonical_fingerprint(target: CanonicalTarget, path: PurePosixPath) -> str:
     return sha256_fingerprint(
         target.user, target.hostname.lower(), target.port, path
     )
+
+
+_NATIVE_CANONICALIZE = canonicalize_locator

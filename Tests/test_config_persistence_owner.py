@@ -474,7 +474,9 @@ def test_a_preparation_read_ending_inside_a_config_write_still_restores(
     """The scopes overlap without nesting: the read began first, ends first."""
     import threading
 
-    from tldw_chatbook.Chat.console_preparation_reads import _preparation_handoffs
+    from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
+        _preparation_handoffs,
+    )
 
     module = _fresh_config(tmp_path, monkeypatch)
     in_write, release = threading.Event(), threading.Event()

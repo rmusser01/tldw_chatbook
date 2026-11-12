@@ -1,0 +1,18 @@
+{
+  "bound": 360,
+  "cmd": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-media-diagnostic.py",
+    "/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-jp4_gyzp",
+    "inspect"
+  ],
+  "deltas": [],
+  "finished": 1793853721.054246,
+  "pgid": 768,
+  "pid": 768,
+  "primary": 0,
+  "root": "/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-jp4_gyzp",
+  "signals": [],
+  "started": 1793853712.555645,
+  "wait": 0
+}

@@ -74,6 +74,20 @@ Creation-intent ancestry validation uses the internal visitor of `native_files.p
 | Fresh-install securing failure | `~/.tldw_cli-data` fallback (ADR-127) with a plain-language diagnostic |
 | `run_finite_local_worker` cancel | Only that worker's file-backed caches retire; in-transaction/foreign handles survive |
 
+## Native workflow history
+
+AgentRunsDB schema 29 includes immutable plans, decisions, task results, native
+verifier checkpoints, change-window references, reservations and active-time
+accounting. Complete profile capture carries these required records through
+the existing exact-SQL owner catalogs. Optional agent logs may be absent.
+Restored history requires current profile activation and explicit Resume
+through the current app owner. The original startup audit projects stopped,
+drained and uncertain attempts conservatively. A restored approval supplies
+history only. Unknown active intervals keep their charge.
+
+The [workflow qualification receipts](../superpowers/qa/2026-11-01-native-phased-agent-workflows/README.md)
+identify actual process boundaries, archives and source versions.
+
 ## Governing decisions
 
 ADR-126 (`126-complete-local-backup-and-recovery.md`, rev 4 with amendments), ADR-127 (`127-fresh-install-private-data-root-recovery.md`), ADR-125 (`125-lock-safe-private-sqlite-validation.md`). Specs/plans: the `2026-09-07-complete-local-backup-restore*` series, `2026-09-15-selectable-backup-groups*`, `2026-09-12-python-backup-encryption*` (under `Docs/superpowers/{specs,plans}/`). Tests: `Tests/Backup_Recovery/` (331 files).

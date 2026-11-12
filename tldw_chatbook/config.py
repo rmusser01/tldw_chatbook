@@ -8767,39 +8767,9 @@ _CONSOLE_PENDING_FACTS_IDENTITY_SOURCE = (
 )
 
 
-
-# Original callbacks eligible for finite deferred Collections setup only.
-def _record_collections_setup_source(entries):
-    from types import FunctionType
-
-    rows = []
-    for owner, name in entries:
-        original = owner[name] if type(owner) is dict else getattr(owner, name)  # exact stock compatibility boundary
-        function = getattr(original, "__func__", original)
-        records = []
-        while type(function) is FunctionType:
-            records.append(
-                (
-                    function,
-                    function.__code__,
-                    function.__globals__,
-                    function.__defaults__,
-                    function.__kwdefaults__,
-                    tuple((function.__kwdefaults__ or {}).items()),
-                    function.__closure__,
-                    tuple(
-                        (cell, cell.cell_contents)
-                        for cell in function.__closure__ or ()
-                    ),
-                    vars(function).get("__wrapped__"),
-                )
-            )
-            function = vars(function).get("__wrapped__")
-        rows.append((owner, name, original, tuple(records)))
-    return globals(), tuple(rows)
-
-
-_COLLECTIONS_SETUP_SOURCE = _record_collections_setup_source(
+# Capture original config producers for deferred Collections and first Send.
+_COLLECTIONS_SETUP_SOURCE = _config_participants.record_config_sources(
+    globals(),
     (
         (globals(), "current_config_identity"),
         (globals(), "get_library_collections_db_path"),
@@ -8808,7 +8778,10 @@ _COLLECTIONS_SETUP_SOURCE = _record_collections_setup_source(
         (globals(), "_get_effective_config_path"),
     )
 )
-del _record_collections_setup_source
+_FIRST_SEND_PERSISTENCE_SOURCE = _config_participants.record_first_send_sources(globals())
+
+
+first_send_persistence_source_current = _config_participants.first_send_persistence_source_current
 
 
 # --- Moved policy (TASK-36945.2): old import paths resolve lazily ----------

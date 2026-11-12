@@ -49,7 +49,9 @@ The Console bridge composes a fresh registry per `run_reply`, in a fixed order: 
 
 Tool results that exceed budgets spill into the chat's private scratch space (`tool-spill`, per-result cap 32 KiB, aggregate inline budget 256 KiB, 0600 files in a 0700 dir); the preview names the read-back path so `fs_read` can page it back with no new grant. The opaque absolute scratch locator is stripped from every model/log-bound result via the redaction-root seam.
 
-`fs_write` is CAS-capable (`expected_sha256`/`expected_absent`, portalocker inode lock, `O_NOFOLLOW` descriptor writes) and the provider injects stale-write guards from the per-run ReadLedger — a write to a file the run has not (re)read refuses with "Re-read the file and retry".
+`fs_write` is CAS-capable (`expected_sha256`/`expected_absent`, portalocker inode lock, `O_NOFOLLOW` descriptor writes). The provider injects stale-write guards from the per-run ReadLedger; ordinary callers retain explicit-CAS and blind-write compatibility. A checked private `AutomaticWorkContext` of kind `workflow_phase` requires that run's observed digest (including its own settled writes), or an explicit atomic absent-file precondition. Missing/evicted observations cannot become blind writes, and supplied digests cannot override an observed stamp. Dry-run previews do not create observations. The separate repository-instruction promotion path retains its private proposal/snapshot revalidation and exact CAS matching; workflow task scope is an additional narrowing boundary (ADR-285).
+
+`fs_edit` and modify patches hash the actual newline-preserving UTF-8 read and carry that digest into the same `_atomic_write_target` used by `fs_write`, in both local and generated remote workers. This detects replacement/disappearance between read and mutation. Create patches retain atomic absence checks. A later patch failure names the failed target and earlier completed targets; their bytes remain written. Worker admitted/failure and cleanup receipts retain their existing meanings: neither partial effects nor arbitrary external editors become an all-or-nothing patch guarantee.
 
 ## CLI adapters
 
@@ -75,6 +77,27 @@ and file handles. CAS reads reuse the locked target handle; replacing that open
 target uses explicit native POSIX rename semantics while retaining the lock.
 Windows creations/replacements use the facade's private DACL policy, whereas
 POSIX writes retain existing mode preservation. No authority checks are relaxed.
+
+`Agents/workflow_task_scope.py` adds private workflow task restrictions around
+those existing owners. Preparation uses the original accepted phase, its saved
+task definition and selected admitted-root object. Native binding verifies the
+same child reservation, run row, ExecutionOwner and original runtime activity
+claim. Preparation alone cannot invoke tools. Context-local custody is carried
+into the loop and tool threads, so shared providers never store a current task.
+Discovery, pre-review, runtime callbacks and post-wait provider effects enforce
+the same captured tools, provider definitions, binding and footprint. Path hints
+do not grant access: actual filesystem resolution, exclusions and permissions
+still apply. Whole-root glob/grep/Git discovery needs the corresponding read
+scope. Alternate builtin file writers and recursive skills/chat spawning refuse.
+
+Exclusive tasks require the runtime-wide opaque claim and retain normal shell
+arming/MCP permissions. A task explicitly allowing `shell_exec` uses the original
+Console raw-shell factory at finite native task entry, with its captured binding,
+current session and matching approval hook. Original source identity, arm,
+permission, session grant or exact call approval and invocation checks still
+govern the effect. The opaque claim coordinates admission across the runtime. Effectful hooks and
+skill scripts currently refuse workflow preparation/dispatch because their
+physical lifetime or typed cleanup proof is not yet sufficient (ADR-285).
 
 ## Skills as tools
 

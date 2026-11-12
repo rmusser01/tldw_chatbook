@@ -31,10 +31,13 @@ with stale-lock takeover so a crashed process cannot starve snapshots.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import locale
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -112,6 +115,10 @@ class ChangeTrackingError(Exception):
     never as a reason to block an agent run (spec §2 failure posture)."""
 
 
+class RevertRefusedError(ChangeTrackingError):
+    """The revert was refused before touching anything (active run)."""
+
+
 class ChangeTrackingUnavailableError(ChangeTrackingError):
     """No usable ``git`` binary — the feature is absent, honestly."""
 
@@ -150,6 +157,224 @@ _REPO_LOCKS_GUARD = threading.Lock()
 def _in_process_lock(key: str) -> threading.Lock:
     with _REPO_LOCKS_GUARD:
         return _REPO_LOCKS.setdefault(key, threading.Lock())
+
+
+class _NativeReviewResources:
+    """Pin the original runtime resources without invoking cold getters."""
+
+    def __init__(self, runtime):
+        self.runtime = runtime
+        self._capacity = runtime._execution_capacity
+        self._activity = runtime._worktree_activity
+
+    @property
+    def capacity(self):
+        if self._capacity is None:
+            self._capacity = self.runtime.execution_capacity
+        elif self.runtime._execution_capacity is not self._capacity:
+            raise ValueError("native change-review capacity changed")
+        return self._capacity
+
+    @property
+    def activity(self):
+        if self._activity is None:
+            self._activity = self.runtime.worktree_activity
+        elif self.runtime._worktree_activity is not self._activity:
+            raise ValueError("native change-review activity changed")
+        return self._activity
+
+
+class NativeUndoIssuer:
+    """Runtime-owned observations of issued work, without another work queue."""
+
+    def __init__(self, runtime):
+        self.runtime = runtime
+        self.capacity = runtime._execution_capacity
+        self.activity = runtime._worktree_activity
+        self.pending = set()
+        self.closed = False
+
+    def begin_close(self):
+        with self.runtime._execution_capacity_lock:
+            self.closed = True
+            calls = tuple(self.pending)
+        for call in calls:
+            call.prevent_start()
+
+    async def drain(self):
+        self.begin_close()
+        with self.runtime._execution_capacity_lock:
+            pending = tuple(self.pending)
+        if not pending:
+            return False
+        task = asyncio.create_task(
+            asyncio.to_thread(lambda: [call.retired.wait() for call in pending])
+        )
+        cancelled = False
+        while True:
+            try:
+                await asyncio.shield(task)
+                return cancelled
+            except asyncio.CancelledError:
+                cancelled = True
+
+
+class _NativeSnapshotIssuer(_NativeReviewResources):
+    """One runtime's issuer; execution stays in the existing coordinator."""
+
+    def __init__(self, runtime):
+        super().__init__(runtime)
+        self.coordinator = None
+
+    def capture(
+        self,
+        bridge,
+        *,
+        session_id,
+        conversation_id,
+        origin,
+        roots,
+        owner=None,
+        claim=None,
+        workflow_wave=None,
+    ):
+        from tldw_chatbook.Agents.activation import _guard
+        from tldw_chatbook.Agents.execution_capacity import WorkOrigin
+        from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+
+        from .change_review_ownership import _SnapshotSource
+
+        if (
+            self.runtime._agent_bridge is not bridge
+            or self.runtime._change_review_coordinator is not self.coordinator
+            or bridge._change_finalization_coordinator is not self.coordinator
+            or self.runtime._disposed
+            or not isinstance(origin, WorkOrigin)
+            or (owner is None) != (claim is None)
+        ):
+            raise ValueError("native change-review source unavailable")
+        # Observe resources created since issuer construction without loading them.
+        if self._capacity is None:
+            self._capacity = self.runtime._execution_capacity
+        if self._activity is None:
+            self._activity = self.runtime._worktree_activity
+        session = next(
+            (s for s in bridge._store.sessions() if s.id == session_id), None
+        )
+        if session is None:
+            raise ValueError("native change-review session unavailable")
+        chains = tuple(capture_directory_chain(Path(root)) for root in roots)
+        if tuple(str(c.canonical_root) for c in chains) != tuple(map(str, roots)):
+            raise ValueError("native change-review root changed")
+        persistence = getattr(bridge._store, "persistence", None)
+        registry = getattr(persistence, "workspace_registry", None)
+        databases = tuple(
+            db
+            for db in (
+                bridge._db,
+                getattr(persistence, "db", None),
+                getattr(registry, "db", None),
+            )
+            if db is not None
+        )
+        from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
+
+        tree = current_ordinary_tree()
+        if tree is not None:
+            owner, claim = tree.borrow(self.runtime), tree.claim
+        source = _SnapshotSource(
+            self,
+            bridge,
+            self.runtime._chat_controller,
+            bridge._store,
+            session,
+            conversation_id,
+            origin,
+            chains,
+            _guard.captured_sources(bridge),
+            databases,
+            owner,
+            claim,
+            tree,
+            workflow_wave=workflow_wave,
+        )
+        if tree is not None:
+            source.prepare_ordinary()
+            tree.snapshot_sources.append(source)
+        return source
+
+
+class _NativeInitializationIssuer(_NativeReviewResources):
+    """Original consent feature source; never impersonates a Chat or bridge."""
+
+    def __init__(self, runtime, service, registry):
+        super().__init__(runtime)
+        self.app, self.service, self.registry = runtime._app, service, registry
+        self.database = registry.db
+        self.database_path = Path(registry.db.db_path)
+        self.initializer = service._initialize_root
+        self.capability_reader = service._capability_reader
+
+    def identity_current(self) -> bool:
+        """Compare only original object references, safe under the consent lock."""
+        return (
+            self.runtime._app is self.app
+            and self.app.console_runtime is self.runtime
+            and self.runtime._change_review_consent_service is self.service
+            and self.app.change_review_consent_service is self.service
+            and self.app.workspace_registry_service is self.registry
+            and self.registry.db is self.database
+            and self.registry._change_review_binding_owner is self.service
+            and self.service._registry is self.registry
+            and self.service._native is self
+            and self.service._initialize_root is self.initializer
+            and self.service._capability_reader is self.capability_reader
+        )
+
+    def check(self):
+        if (
+            not self.identity_current()
+            or Path(self.database.db_path) != self.database_path
+        ):
+            raise ValueError("native initialization source changed")
+
+    def capture(self, work):
+        from tldw_chatbook.Backup_Recovery import bootstrap, profile_paths
+        from tldw_chatbook.Backup_Recovery.activation import execution_scope
+        from tldw_chatbook.Chat.console_ordinary_tree import current_ordinary_tree
+        from tldw_chatbook.config import load_settings
+        from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+
+        from .change_review_ownership import _InitializationSource
+
+        self.check()
+        if self.runtime._disposed:
+            raise ValueError("native initialization is closed")
+        if self._capacity is None:
+            self._capacity = self.runtime._execution_capacity
+        if self._activity is None:
+            self._activity = self.runtime._worktree_activity
+        selector = bootstrap.effective_config_path()
+        with execution_scope(("config",), selector) as allowed:
+            if not allowed:
+                raise ValueError("native initialization source unavailable")
+            data = profile_paths.user_data_dir(load_settings())
+        # Explicit metadata selection avoids get_user_data_dir's mkdir/hardening.
+        shadow = ShadowRepoService(data_dir=data / "change_review")
+        chain = capture_directory_chain(Path(work.root))
+        if str(chain.canonical_root) != work.root:
+            raise ValueError("native initialization root changed")
+        return _InitializationSource(
+            self,
+            work,
+            selector,
+            data,
+            shadow,
+            chain,
+            self.initializer,
+            shadow._git,
+            current_ordinary_tree(),
+        )
 
 
 class ShadowRepoService:
@@ -204,6 +429,18 @@ class ShadowRepoService:
                 "change tracking needs git — install git to enable"
             )
         canonical = Path(root).expanduser().resolve()
+        from tldw_chatbook.Workspaces.change_review_ownership import (
+            native_snapshot_source,
+        )
+
+        source = native_snapshot_source()
+        if source is not None:
+            source.validate_root(canonical)
+        from .change_revert_ownership import native_undo_call
+
+        undo = native_undo_call()
+        if undo is not None:
+            undo.validate_root(canonical)
         if not canonical.is_dir():
             # Roots come from the workspace registry, not from agent input,
             # so this is a sanity guard rather than a security boundary --
@@ -278,22 +515,37 @@ class ShadowRepo:
                 str(self.root),
                 *args,
             ]
+            from tldw_chatbook.Workspaces.change_review_ownership import (
+                native_snapshot_source,
+            )
+
+            source = native_snapshot_source()
+            from .change_revert_ownership import native_undo_call
+
+            undo = native_undo_call()
+            if undo is not None:
+                undo.validate_root(self.root)
+            env = self._env()
+            if source is not None:
+                source.validate_root(self.root)
+                cmd = self._native_command(args, env)
             try:
-                proc = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    env=self._env(),
-                    input=input_data,
-                    timeout=_GIT_TIMEOUT_SECONDS,
-                    text=not binary,
-                )
+                proc = self._run_process(cmd, env, input_data=input_data, binary=binary)
             except subprocess.TimeoutExpired as exc:
                 raise ChangeTrackingError(
                     f"git {args[0]} timed out after {_GIT_TIMEOUT_SECONDS:.0f}s"
                 ) from exc
             except OSError as exc:
+                if source is not None:
+                    raise ChangeTrackingUnavailableError(
+                        "native change-review Git unavailable"
+                    ) from exc
                 raise ChangeTrackingUnavailableError(str(exc)) from exc
             if check and proc.returncode != 0:
+                if source is not None:
+                    raise ChangeTrackingError(
+                        "native change-review Git operation failed"
+                    )
                 stderr = (
                     proc.stderr
                     if isinstance(proc.stderr, str)
@@ -304,6 +556,75 @@ class ShadowRepo:
                     f"{stderr.strip()[:_TRACKING_ERROR_MAX_CHARS]}"
                 )
             return proc
+
+    def _run_process(self, cmd, env, *, input_data=None, binary=False):
+        from tldw_chatbook.Agents.execution_capacity import current_execution_owner
+        from tldw_chatbook.Workspaces.change_review_ownership import (
+            native_snapshot_source,
+            native_snapshot_ticket,
+        )
+
+        source = native_snapshot_source()
+        from .change_revert_ownership import native_undo_call
+
+        undo = native_undo_call()
+        if source is None and undo is None:
+            return subprocess.run(
+                cmd,
+                capture_output=True,
+                env=env,
+                input=input_data,
+                timeout=_GIT_TIMEOUT_SECONDS,
+                text=not binary,
+                check=False,
+            )
+        ticket = undo if undo is not None else native_snapshot_ticket()
+        if (
+            ticket is None
+            or undo is None
+            and ticket.source is not source
+            or current_execution_owner() is not ticket.owner
+        ):
+            raise ChangeTrackingUnavailableError(
+                "native change-review Git custody unavailable"
+            )
+        encoding = "utf-8" if sys.flags.utf8_mode else locale.getencoding()
+        payload = (
+            input_data.encode(encoding) if isinstance(input_data, str) else input_data
+        )
+        # Only process transport enters this loop; guarded storage stays synchronous.
+        from .native_git import run_native_git
+
+        with asyncio.Runner() as runner:
+            returncode, stdout, stderr = runner.run(
+                run_native_git(
+                    ticket,
+                    cmd,
+                    env,
+                    payload,
+                    cwd=os.getcwd(),
+                    timeout_seconds=_GIT_TIMEOUT_SECONDS,
+                )
+            )
+        if not binary:
+            stdout, stderr = (
+                data.decode(encoding).replace("\r\n", "\n").replace("\r", "\n")
+                for data in (stdout, stderr)
+            )
+        return subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
+
+    def _native_command(self, args, env):
+        """Apply the shared native policy to this actual shadow repository."""
+        from .native_git import qualified_git_command
+
+        return qualified_git_command(
+            self._git,
+            ["--git-dir", str(self.git_dir), "--work-tree", str(self.root)],
+            args,
+            env,
+            self._run_process,
+            ChangeTrackingUnavailableError,
+        )
 
     def _locked(self):
         """Context manager: in-process lock + portable cross-process lockdir."""

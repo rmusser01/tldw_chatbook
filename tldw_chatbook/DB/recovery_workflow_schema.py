@@ -1,0 +1,570 @@
+"""Frozen v26 workflow catalog and private staging validation (ADR-285)."""
+
+import sqlite3
+from contextlib import closing
+
+
+def open_installed_schema() -> sqlite3.Connection:
+    """Open the checked in-memory reference for installed schema DDL."""
+    from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+    return connect_private_sqlite("recovery.validation_schema", ":memory:")
+
+
+def _migrate_installed_catalog(catalog, migration):
+    """Replay fixed installed DDL to derive the exact SQLite catalog."""
+    with closing(open_installed_schema()) as connection:
+        for sql in sorted(catalog, key=lambda sql: not sql.startswith("CREATE TABLE")):
+            if not sql.startswith("CREATE TABLE sqlite_sequence"):
+                connection.execute(sql)
+        for sql in migration:
+            connection.execute(sql)
+        return tuple(
+            row[0]
+            for row in connection.execute(
+                "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type,name"
+            )
+        )
+
+
+WORKFLOW_OBJECTS = (
+    "CREATE INDEX idx_workflow_conversation ON workflow_runs(conversation_id, created_at DESC, id)",
+    "CREATE TABLE workflow_active_intervals (\n    id TEXT PRIMARY KEY,\n    workflow_id TEXT NOT NULL REFERENCES workflow_runs(id),\n    owner_id TEXT NOT NULL,\n    started_at REAL NOT NULL CHECK(started_at>=0),\n    ended_at REAL CHECK(ended_at>=started_at),\n    charged_seconds REAL NOT NULL DEFAULT 0 CHECK(charged_seconds>=0)\n)",
+    "CREATE TABLE workflow_decisions (\n    id TEXT PRIMARY KEY,\n    workflow_id TEXT NOT NULL,\n    plan_revision INTEGER NOT NULL,\n    phase_id TEXT NOT NULL,\n    control_revision INTEGER NOT NULL CHECK(control_revision>0),\n    payload_json TEXT NOT NULL CHECK(length(CAST(payload_json AS BLOB)) <= 131072),\n    UNIQUE(workflow_id, control_revision),\n    FOREIGN KEY(workflow_id, plan_revision, phase_id) REFERENCES workflow_phases(workflow_id, plan_revision, phase_id)\n)",
+    "CREATE TABLE workflow_payload_reservations (\n    attempt_id TEXT PRIMARY KEY,\n    workflow_id TEXT NOT NULL,\n    bytes INTEGER NOT NULL CHECK(typeof(bytes)='integer' AND bytes BETWEEN 1 AND 131072),\n    state TEXT NOT NULL CHECK(state IN ('reserved','published','removed')),\n    FOREIGN KEY(attempt_id, workflow_id) REFERENCES workflow_task_attempts(id, workflow_id)\n)",
+    "CREATE TABLE workflow_phase_attempts (\n    id TEXT PRIMARY KEY,\n    workflow_id TEXT NOT NULL,\n    plan_revision INTEGER NOT NULL,\n    phase_id TEXT NOT NULL,\n    ordinal INTEGER NOT NULL CHECK(typeof(ordinal)='integer' AND ordinal>0),\n    native_attempt_id TEXT UNIQUE REFERENCES automatic_wake_attempts(id),\n    status TEXT NOT NULL CHECK(status IN ('prepared','accepted','completed','failed','uncertain','closed')),\n    retirement TEXT NOT NULL DEFAULT 'pending' CHECK(retirement IN ('pending','drained','unknown')),\n    UNIQUE(workflow_id, plan_revision, phase_id, ordinal),\n    FOREIGN KEY(workflow_id, plan_revision, phase_id) REFERENCES workflow_phases(workflow_id, plan_revision, phase_id)\n)",
+    "CREATE TABLE workflow_phases (\n    workflow_id TEXT NOT NULL,\n    plan_revision INTEGER NOT NULL,\n    phase_id TEXT NOT NULL,\n    ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 1 AND 6),\n    PRIMARY KEY(workflow_id, plan_revision, phase_id),\n    UNIQUE(workflow_id, plan_revision, ordinal),\n    FOREIGN KEY(workflow_id, plan_revision) REFERENCES workflow_plan_revisions(workflow_id, revision)\n)",
+    "CREATE TABLE workflow_plan_revisions (\n    workflow_id TEXT NOT NULL REFERENCES workflow_runs(id),\n    revision INTEGER NOT NULL CHECK(typeof(revision)='integer' AND revision>0),\n    payload_hash TEXT NOT NULL,\n    payload_json TEXT NOT NULL CHECK(length(CAST(payload_json AS BLOB)) <= 131072),\n    PRIMARY KEY(workflow_id, revision)\n)",
+    "CREATE TABLE workflow_results (\n    attempt_id TEXT PRIMARY KEY REFERENCES workflow_payload_reservations(attempt_id),\n    workflow_id TEXT NOT NULL,\n    payload_hash TEXT NOT NULL,\n    payload_json TEXT NOT NULL CHECK(length(CAST(payload_json AS BLOB)) <= 131072),\n    FOREIGN KEY(attempt_id, workflow_id) REFERENCES workflow_task_attempts(id, workflow_id)\n)",
+    "CREATE TABLE workflow_runs (\n    id TEXT PRIMARY KEY,\n    launch_id TEXT NOT NULL UNIQUE,\n    payload_hash TEXT NOT NULL,\n    request_json TEXT NOT NULL CHECK(length(CAST(request_json AS BLOB)) <= 131072),\n    conversation_id TEXT NOT NULL,\n    chain_id TEXT NOT NULL UNIQUE REFERENCES automatic_work_chains(id),\n    control_revision INTEGER NOT NULL DEFAULT 1 CHECK(typeof(control_revision)='integer' AND control_revision>0),\n    progress_cursor INTEGER NOT NULL DEFAULT 0 CHECK(typeof(progress_cursor)='integer' AND progress_cursor>=0),\n    status TEXT NOT NULL DEFAULT 'awaiting_plan' CHECK(status IN ('awaiting_plan','awaiting_approval','running','paused','stopped','completed','closed','recovery_required','removed','awaiting_resume')),\n    created_at REAL NOT NULL,\n    updated_at REAL NOT NULL\n)",
+    "CREATE TABLE workflow_task_attempts (\n    id TEXT PRIMARY KEY,\n    workflow_id TEXT NOT NULL,\n    plan_revision INTEGER NOT NULL,\n    phase_id TEXT NOT NULL,\n    task_id TEXT NOT NULL,\n    ordinal INTEGER NOT NULL CHECK(typeof(ordinal)='integer' AND ordinal>0),\n    run_id TEXT UNIQUE REFERENCES agent_runs(id),\n    native_attempt_id TEXT UNIQUE REFERENCES automatic_wake_attempts(id),\n    status TEXT NOT NULL CHECK(status IN ('prepared','accepted','completed','failed','uncertain','closed')),\n    retirement TEXT NOT NULL DEFAULT 'pending' CHECK(retirement IN ('pending','drained','unknown')),\n    UNIQUE(id, workflow_id),\n    UNIQUE(workflow_id, plan_revision, task_id, ordinal),\n    FOREIGN KEY(workflow_id, plan_revision, phase_id, task_id) REFERENCES workflow_tasks(workflow_id, plan_revision, phase_id, task_id)\n)",
+    "CREATE TABLE workflow_tasks (\n    workflow_id TEXT NOT NULL,\n    plan_revision INTEGER NOT NULL,\n    phase_id TEXT NOT NULL,\n    task_id TEXT NOT NULL,\n    ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 1 AND 12),\n    PRIMARY KEY(workflow_id, plan_revision, phase_id, task_id),\n    UNIQUE(workflow_id, plan_revision, task_id),\n    FOREIGN KEY(workflow_id, plan_revision, phase_id) REFERENCES workflow_phases(workflow_id, plan_revision, phase_id)\n)",
+    "CREATE TRIGGER workflow_decision_immutable\nBEFORE UPDATE ON workflow_decisions\nBEGIN SELECT RAISE(ABORT, 'workflow decision is immutable'); END",
+    "CREATE TRIGGER workflow_launch_immutable\nBEFORE UPDATE OF id, launch_id, payload_hash, request_json, conversation_id, chain_id ON workflow_runs\nBEGIN SELECT RAISE(ABORT, 'workflow launch is immutable'); END",
+    "CREATE TRIGGER workflow_plan_immutable\nBEFORE UPDATE ON workflow_plan_revisions\nBEGIN SELECT RAISE(ABORT, 'workflow plan is immutable'); END",
+    "CREATE TRIGGER workflow_result_immutable\nBEFORE UPDATE ON workflow_results\nBEGIN SELECT RAISE(ABORT, 'workflow result is immutable'); END",
+)
+
+WORKFLOW_TABLES = frozenset(
+    [
+        "workflow_active_intervals",
+        "workflow_decisions",
+        "workflow_payload_reservations",
+        "workflow_phase_attempts",
+        "workflow_phases",
+        "workflow_plan_revisions",
+        "workflow_results",
+        "workflow_runs",
+        "workflow_task_attempts",
+        "workflow_tasks",
+    ]
+)
+WORKFLOW_INDEXES = frozenset(
+    [
+        ("idx_workflow_conversation", "workflow_runs"),
+        ("sqlite_autoindex_workflow_active_intervals_1", "workflow_active_intervals"),
+        ("sqlite_autoindex_workflow_decisions_1", "workflow_decisions"),
+        ("sqlite_autoindex_workflow_decisions_2", "workflow_decisions"),
+        (
+            "sqlite_autoindex_workflow_payload_reservations_1",
+            "workflow_payload_reservations",
+        ),
+        ("sqlite_autoindex_workflow_phase_attempts_1", "workflow_phase_attempts"),
+        ("sqlite_autoindex_workflow_phase_attempts_2", "workflow_phase_attempts"),
+        ("sqlite_autoindex_workflow_phase_attempts_3", "workflow_phase_attempts"),
+        ("sqlite_autoindex_workflow_phases_1", "workflow_phases"),
+        ("sqlite_autoindex_workflow_phases_2", "workflow_phases"),
+        ("sqlite_autoindex_workflow_plan_revisions_1", "workflow_plan_revisions"),
+        ("sqlite_autoindex_workflow_results_1", "workflow_results"),
+        ("sqlite_autoindex_workflow_runs_1", "workflow_runs"),
+        ("sqlite_autoindex_workflow_runs_2", "workflow_runs"),
+        ("sqlite_autoindex_workflow_runs_3", "workflow_runs"),
+        ("sqlite_autoindex_workflow_task_attempts_1", "workflow_task_attempts"),
+        ("sqlite_autoindex_workflow_task_attempts_2", "workflow_task_attempts"),
+        ("sqlite_autoindex_workflow_task_attempts_3", "workflow_task_attempts"),
+        ("sqlite_autoindex_workflow_task_attempts_4", "workflow_task_attempts"),
+        ("sqlite_autoindex_workflow_task_attempts_5", "workflow_task_attempts"),
+        ("sqlite_autoindex_workflow_tasks_1", "workflow_tasks"),
+        ("sqlite_autoindex_workflow_tasks_2", "workflow_tasks"),
+    ]
+)
+WORKFLOW_TRIGGERS = frozenset(
+    [
+        ("workflow_decision_immutable", "workflow_decisions"),
+        ("workflow_launch_immutable", "workflow_runs"),
+        ("workflow_plan_immutable", "workflow_plan_revisions"),
+        ("workflow_result_immutable", "workflow_results"),
+    ]
+)
+
+WORKFLOW_MIGRATION = (
+    *sorted(WORKFLOW_OBJECTS, key=lambda sql: not sql.startswith("CREATE TABLE")),
+    "INSERT INTO schema_version(version) VALUES (26)",
+)
+
+
+def workflow_catalog(catalog: tuple[str, ...]) -> tuple[str, ...]:
+    """Append only the captured, constructor-qualified v25-to-v26 delta."""
+    import re
+
+    def key(sql):
+        match = re.match(
+            r'CREATE (?:UNIQUE )?(TABLE|INDEX|TRIGGER|VIEW) ["`]?([^\s"`(]+)', sql
+        )
+        return match[1].lower(), match[2]
+
+    return tuple(sorted((*catalog, *WORKFLOW_OBJECTS), key=key))
+
+
+def validate_workflow_rows(
+    connection: sqlite3.Connection, *, schema_version: int | None = None
+) -> tuple[str, ...]:
+    """Validate passive rows and exact ownership without probing any captured path."""
+    import hashlib
+    import json
+    import math
+    from dataclasses import asdict
+
+    from tldw_chatbook.Agents.workflow_models import (
+        WorkflowDecision,
+        WorkflowPlan,
+        WorkflowRequest,
+        WorkflowTaskAttempt,
+        WorkflowTaskResult,
+    )
+
+    from .workflow_runs import WorkflowRunsStore
+
+    if schema_version is None:
+        schema_version = connection.execute(
+            "SELECT MAX(version) FROM schema_version"
+        ).fetchone()[0]
+
+    if schema_version >= 31:
+        for reviewed, revision, status in connection.execute(
+            "SELECT recovery_reviewed_revision,control_revision,status FROM workflow_runs"
+        ):
+            if (
+                type(reviewed) is not int
+                or not 0 <= reviewed <= revision
+                or reviewed
+                and status not in {"closed", "removed"}
+            ):
+                return ("invalid_workflow_recovery_review",)
+
+    if schema_version >= 30:
+        for digest, purpose, revision in connection.execute(
+            "SELECT repair_instruction_sha256,purpose,plan_revision FROM workflow_phase_attempts"
+        ):
+            if digest is not None and (
+                type(digest) is not str
+                or len(digest) != 64
+                or any(c not in "0123456789abcdef" for c in digest)
+                or purpose != "planning"
+                or type(revision) is not int
+                or revision <= 0
+            ):
+                return ("invalid_workflow_repair_input",)
+
+    if schema_version >= 29:
+        issues = _validate_workflow_windows(connection)
+        if issues:
+            return issues
+
+    if schema_version >= 28:
+        from tldw_chatbook.Agents.workflow_models import WorkflowCheckpoint
+
+        for attempt_id, workflow_id, payload_hash, payload in connection.execute(
+            "SELECT * FROM workflow_checkpoints"
+        ):
+            try:
+                checkpoint = WorkflowCheckpoint.model_validate_json(payload)
+                row = connection.execute(
+                    "SELECT r.payload_hash,r.payload_json,p.bytes FROM workflow_results r JOIN workflow_payload_reservations p ON p.attempt_id=r.attempt_id WHERE r.attempt_id=? AND r.workflow_id=?",
+                    (attempt_id, workflow_id),
+                ).fetchone()
+                if (
+                    row is None
+                    or checkpoint.attempt_id != attempt_id
+                    or checkpoint.workflow_id != workflow_id
+                    or hashlib.sha256(payload.encode()).hexdigest() != payload_hash
+                    or checkpoint.result_digest != row[0]
+                    or checkpoint.run_id
+                    != WorkflowTaskResult.model_validate_json(row[1]).run_id
+                    or any(
+                        connection.execute(
+                            "SELECT 1 FROM change_snapshots WHERE id=? AND run_id=?",
+                            (ref, checkpoint.run_id),
+                        ).fetchone()
+                        is None
+                        for ref in checkpoint.change_window_refs
+                    )
+                    or len(payload.encode()) + len(row[1].encode()) > row[2]
+                ):
+                    return ("invalid_workflow_checkpoint",)
+            except (ValueError, TypeError):
+                return ("invalid_workflow_checkpoint",)
+
+    if schema_version < 26:
+        return ()
+    previous = connection.row_factory
+    connection.row_factory = sqlite3.Row
+    try:
+        if schema_version >= 27:
+            invalid = connection.execute(
+                "SELECT 1 FROM automatic_wake_attempts a LEFT JOIN workflow_phase_attempts p ON p.native_attempt_id=a.id "
+                "WHERE a.attempt_kind='workflow_phase' AND (p.id IS NULL OR p.command_id IS NULL OR p.control_revision IS NULL) "
+                "UNION ALL SELECT 1 FROM workflow_phase_attempts p LEFT JOIN automatic_wake_attempts a ON a.id=p.native_attempt_id "
+                "WHERE p.command_id IS NOT NULL AND (a.id IS NULL OR a.attempt_kind!='workflow_phase' OR a.run_ids_json!='[]' OR a.message_ids_json!='[]') LIMIT 1"
+            ).fetchone()
+            if invalid:
+                return ("invalid_workflow_admission",)
+            invalid = connection.execute(
+                "SELECT 1 FROM workflow_task_claims c "
+                "JOIN workflow_task_attempts t ON t.id=c.task_attempt_id "
+                "JOIN workflow_phase_attempts p ON p.id=c.phase_attempt_id "
+                "JOIN workflow_runs w ON w.id=p.workflow_id "
+                "LEFT JOIN automatic_wake_attempts a ON a.id=p.native_attempt_id "
+                "LEFT JOIN automatic_work_reservations r ON r.id=c.child_reservation_id "
+                "LEFT JOIN workflow_payload_reservations result ON result.attempt_id=t.id "
+                "WHERE p.purpose!='execution' OR a.attempt_kind IS NOT 'workflow_phase' "
+                "OR t.workflow_id!=p.workflow_id OR t.plan_revision!=p.plan_revision OR t.phase_id!=p.phase_id "
+                "OR (t.run_id IS NOT NULL AND t.run_id!=c.launch_run_id) "
+                "OR result.attempt_id IS NULL OR result.workflow_id!=w.id "
+                "OR (c.child_reservation_id IS NOT NULL AND (r.id IS NULL OR r.chain_id!=w.chain_id OR r.owner_id!=a.owner_id OR r.kind!='child_launch' OR r.amount!=1)) LIMIT 1"
+            ).fetchone()
+            if invalid:
+                return ("invalid_workflow_task_claim",)
+            for interval in connection.execute(
+                "SELECT started_monotonic,observed_monotonic FROM workflow_active_intervals"
+            ):
+                if any(
+                    value is not None and not math.isfinite(value) for value in interval
+                ):
+                    return ("invalid_workflow_active_interval",)
+        for row in connection.execute("SELECT * FROM workflow_runs"):
+            request = WorkflowRequest.model_validate_json(row["request_json"])
+            chain = connection.execute(
+                "SELECT * FROM automatic_work_chains WHERE id=?", (row["chain_id"],)
+            ).fetchone()
+            if (
+                not chain
+                or chain["conversation_id"] != request.conversation_id
+                or row["conversation_id"] != request.conversation_id
+                or chain["allowance_root_chain_id"] is not None
+                or chain["root_submission_id"] != "workflow:" + row["id"]
+            ):
+                return ("invalid_workflow_ownership",)
+            if hashlib.sha256(row["request_json"].encode()).hexdigest() != row[
+                "payload_hash"
+            ] or json.loads(chain["limits_json"]) != asdict(request.policy):
+                return ("invalid_workflow_payload",)
+            try:
+                WorkflowRunsStore._required_results(
+                    connection,
+                    row["id"],
+                    status=row["status"],
+                    chain_id=row["chain_id"],
+                )
+            except ValueError:
+                return ("invalid_workflow_required_result",)
+            WorkflowRunsStore._capacity(connection, row["id"], 0)
+            plans = list(
+                connection.execute(
+                    "SELECT * FROM workflow_plan_revisions WHERE workflow_id=? ORDER BY revision",
+                    (row["id"],),
+                )
+            )
+            for revision, saved in enumerate(plans, 1):
+                plan = WorkflowPlan.model_validate_json(saved["payload_json"])
+                if (
+                    saved["revision"] != revision
+                    or plan.request != request
+                    or hashlib.sha256(saved["payload_json"].encode()).hexdigest()
+                    != saved["payload_hash"]
+                ):
+                    return ("invalid_workflow_plan",)
+                WorkflowRunsStore._plan_rows(connection, row["id"], revision, plan)
+        for row in connection.execute("SELECT * FROM workflow_task_attempts"):
+            WorkflowRunsStore._ownership(
+                connection, WorkflowTaskAttempt(**dict(row)), allow_removed=True
+            )
+        for row in connection.execute(
+            "SELECT p.*,w.conversation_id,w.chain_id FROM workflow_phase_attempts p JOIN workflow_runs w ON w.id=p.workflow_id WHERE p.native_attempt_id IS NOT NULL"
+        ):
+            native = connection.execute(
+                "SELECT conversation_id,chain_id FROM automatic_wake_attempts WHERE id=?",
+                (row["native_attempt_id"],),
+            ).fetchone()
+            if not native or tuple(native) != (row["conversation_id"], row["chain_id"]):
+                return ("invalid_workflow_ownership",)
+        for row in connection.execute("SELECT * FROM workflow_decisions"):
+            decision = WorkflowDecision.model_validate_json(row["payload_json"])
+            if (
+                decision.id,
+                decision.workflow_id,
+                decision.plan_revision,
+                decision.phase_id,
+                decision.control_revision,
+            ) != (
+                row["id"],
+                row["workflow_id"],
+                row["plan_revision"],
+                row["phase_id"],
+                row["control_revision"],
+            ):
+                return ("invalid_workflow_ownership",)
+            for ref in decision.result_refs:
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM workflow_payload_reservations WHERE attempt_id=? AND workflow_id=? AND state IN ('published','removed')",
+                        (ref, decision.workflow_id),
+                    ).fetchone()
+                    is None
+                ):
+                    return ("invalid_workflow_ownership",)
+        invalid = connection.execute(
+            "SELECT 1 FROM workflow_payload_reservations p LEFT JOIN workflow_results r ON r.attempt_id=p.attempt_id WHERE (p.state='published' AND r.attempt_id IS NULL) OR (p.state!='published' AND r.attempt_id IS NOT NULL) OR (r.workflow_id IS NOT NULL AND r.workflow_id!=p.workflow_id) LIMIT 1"
+        ).fetchone()
+        if invalid:
+            return ("invalid_workflow_required_result",)
+        for row in connection.execute(
+            "SELECT r.*,a.run_id,a.status AS attempt_status,p.bytes FROM workflow_results r JOIN workflow_task_attempts a ON a.id=r.attempt_id JOIN workflow_payload_reservations p ON p.attempt_id=r.attempt_id"
+        ):
+            result = WorkflowTaskResult.model_validate_json(row["payload_json"])
+            if (
+                (result.workflow_id, result.attempt_id, result.run_id)
+                != (row["workflow_id"], row["attempt_id"], row["run_id"])
+                or hashlib.sha256(row["payload_json"].encode()).hexdigest()
+                != row["payload_hash"]
+                or len(row["payload_json"].encode()) > row["bytes"]
+                or row["attempt_status"] not in {result.status, "closed"}
+            ):
+                return ("invalid_workflow_result_ownership",)
+        for row in connection.execute(
+            "SELECT started_at,ended_at,charged_seconds FROM workflow_active_intervals"
+        ):
+            if any(value is not None and not math.isfinite(value) for value in row):
+                return ("invalid_workflow_active_interval",)
+    except (ValueError, TypeError, KeyError):
+        return ("invalid_workflow_payload",)
+    finally:
+        connection.row_factory = previous
+    return ()
+
+
+# The v26 catalog above remains frozen for existing backup recognition.
+WORKFLOW_PHASE_V26 = (
+    next(
+        sql
+        for sql in WORKFLOW_OBJECTS
+        if sql.startswith("CREATE TABLE workflow_phase_attempts ")
+    )
+    .replace(
+        "workflow_id TEXT NOT NULL,",
+        "workflow_id TEXT NOT NULL REFERENCES workflow_runs(id),",
+        1,
+    )
+    .replace("plan_revision INTEGER NOT NULL,", "plan_revision INTEGER,")
+    .replace("phase_id TEXT NOT NULL,", "phase_id TEXT,")
+    .replace(
+        "    UNIQUE(workflow_id, plan_revision, phase_id, ordinal),",
+        """    purpose TEXT NOT NULL DEFAULT 'execution' CHECK(purpose IN ('planning','execution')),
+    command_id TEXT UNIQUE,
+    control_revision INTEGER CHECK(control_revision>0),
+    result_bytes INTEGER NOT NULL DEFAULT 0 CHECK(result_bytes BETWEEN 0 AND 131072),
+    CHECK((purpose='execution' AND plan_revision IS NOT NULL AND phase_id IS NOT NULL)
+       OR (purpose='planning' AND phase_id IS NULL)),
+    UNIQUE(workflow_id, plan_revision, phase_id, ordinal),""",
+    )
+)
+WORKFLOW_TASK_CLAIMS_V26 = """CREATE TABLE workflow_task_claims (
+    task_attempt_id TEXT PRIMARY KEY REFERENCES workflow_task_attempts(id),
+    phase_attempt_id TEXT NOT NULL REFERENCES workflow_phase_attempts(id),
+    child_reservation_id TEXT UNIQUE REFERENCES automatic_work_reservations(id),
+    launch_run_id TEXT NOT NULL UNIQUE
+)"""
+WORKFLOW_INTERVAL_COLUMNS = (
+    "clock_owner_id TEXT",
+    "started_monotonic REAL",
+    "observed_monotonic REAL",
+)
+WORKFLOW_ADMISSION_INDEXES = (
+    "CREATE UNIQUE INDEX idx_workflow_open_interval ON workflow_active_intervals(workflow_id) WHERE ended_at IS NULL",
+    "CREATE INDEX idx_workflow_task_phase ON workflow_task_claims(phase_attempt_id)",
+)
+WORKFLOW_ADMISSION_MIGRATION = (
+    "ALTER TABLE automatic_wake_attempts RENAME COLUMN attempt_kind TO old_attempt_kind",
+    "ALTER TABLE automatic_wake_attempts ADD COLUMN attempt_kind TEXT NOT NULL DEFAULT 'fleet_wake' CHECK (attempt_kind IN ('fleet_wake', 'goal_iteration', 'workflow_phase'))",
+    "UPDATE automatic_wake_attempts SET attempt_kind=old_attempt_kind",
+    "ALTER TABLE automatic_wake_attempts DROP COLUMN old_attempt_kind",
+    "ALTER TABLE workflow_phase_attempts RENAME TO workflow_phase_attempts_v26",
+    WORKFLOW_PHASE_V26,
+    "INSERT INTO workflow_phase_attempts (id,workflow_id,plan_revision,phase_id,ordinal,native_attempt_id,status,retirement) SELECT id,workflow_id,plan_revision,phase_id,ordinal,native_attempt_id,status,retirement FROM workflow_phase_attempts_v26",
+    "DROP TABLE workflow_phase_attempts_v26",
+    WORKFLOW_TASK_CLAIMS_V26,
+    *(
+        "ALTER TABLE workflow_active_intervals ADD COLUMN " + column
+        for column in WORKFLOW_INTERVAL_COLUMNS
+    ),
+    *WORKFLOW_ADMISSION_INDEXES,
+    "INSERT INTO schema_version(version) VALUES (27)",
+)
+
+
+def workflow_admission_catalog(catalog):
+    """Derive the exact fixed migration's DDL, including SQLite ALTER quoting."""
+    return _migrate_installed_catalog(catalog, WORKFLOW_ADMISSION_MIGRATION)
+
+
+WORKFLOW_CHECKPOINT_OBJECTS = (
+    "CREATE TABLE workflow_checkpoints (attempt_id TEXT PRIMARY KEY REFERENCES workflow_results(attempt_id), workflow_id TEXT NOT NULL REFERENCES workflow_runs(id), payload_hash TEXT NOT NULL, payload_json TEXT NOT NULL CHECK(length(CAST(payload_json AS BLOB)) <= 131072))",
+    "CREATE TRIGGER workflow_checkpoint_immutable BEFORE UPDATE ON workflow_checkpoints BEGIN SELECT RAISE(ABORT, 'workflow checkpoint is immutable'); END",
+    "CREATE TABLE workflow_resume_commands (id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL REFERENCES workflow_runs(id), control_revision INTEGER NOT NULL CHECK(control_revision>0), resulting_revision INTEGER NOT NULL CHECK(resulting_revision>control_revision))",
+)
+WORKFLOW_CHECKPOINT_MIGRATION = (
+    *WORKFLOW_CHECKPOINT_OBJECTS,
+    "INSERT INTO schema_version(version) VALUES (28)",
+)
+
+
+def workflow_checkpoint_catalog(catalog):
+    return _migrate_installed_catalog(catalog, WORKFLOW_CHECKPOINT_MIGRATION)
+
+
+WORKFLOW_WINDOW_MIGRATION = (
+    "CREATE TABLE workflow_change_windows (\n    id TEXT PRIMARY KEY CHECK(length(CAST(id AS BLOB)) BETWEEN 1 AND 256),\n    workflow_id TEXT NOT NULL REFERENCES workflow_runs(id),\n    phase_attempt_id TEXT NOT NULL REFERENCES workflow_phase_attempts(id),\n    ordinal INTEGER NOT NULL CHECK(typeof(ordinal)='integer' AND ordinal BETWEEN 1 AND 64),\n    anchor_attempt_id TEXT REFERENCES workflow_task_attempts(id),\n    roots_json TEXT NOT NULL CHECK(length(CAST(roots_json AS BLOB)) <= 32768),\n    state TEXT NOT NULL CHECK(state IN ('active','unused','completed','disclosed_failure','unresolved','removed')),\n    baseline TEXT NOT NULL DEFAULT 'pending' CHECK(baseline IN ('pending','completed','disclosed_failure','unresolved')),\n    ending TEXT NOT NULL DEFAULT 'pending' CHECK(ending IN ('pending','completed','disclosed_failure','unresolved','unused')),\n    snapshot_count INTEGER CHECK(snapshot_count IS NULL OR (typeof(snapshot_count)='integer' AND snapshot_count BETWEEN 0 AND 64)),\n    reserved_bytes INTEGER NOT NULL CHECK(reserved_bytes IN (0,65536)),\n    UNIQUE(workflow_id, ordinal),\n    CHECK((state='removed' AND reserved_bytes=0 AND roots_json='[]') OR (state!='removed' AND reserved_bytes=65536)),\n    CHECK(state!='unused' OR (anchor_attempt_id IS NULL AND baseline='completed' AND ending='unused')),\n    CHECK(state!='completed' OR (anchor_attempt_id IS NOT NULL AND baseline='completed' AND ending='completed')),\n    CHECK(state NOT IN ('active','unresolved') OR ending IN ('pending','unresolved')),\n    CHECK((state IN ('active','unresolved') AND snapshot_count IS NULL) OR (state NOT IN ('active','unresolved') AND snapshot_count IS NOT NULL)),\n    CHECK(state NOT IN ('unused','removed') OR snapshot_count=0)\n)",
+    "CREATE TABLE workflow_change_window_refs (\n    window_id TEXT NOT NULL REFERENCES workflow_change_windows(id),\n    snapshot_id INTEGER NOT NULL UNIQUE REFERENCES change_snapshots(id),\n    PRIMARY KEY(window_id,snapshot_id)\n)",
+    "CREATE TRIGGER workflow_change_window_identity\nBEFORE UPDATE OF id,workflow_id,phase_attempt_id,ordinal ON workflow_change_windows\nBEGIN SELECT RAISE(ABORT, 'workflow window identity is immutable'); END",
+    "CREATE TRIGGER workflow_change_window_anchor\nBEFORE UPDATE OF anchor_attempt_id ON workflow_change_windows\nWHEN OLD.anchor_attempt_id IS NOT NULL AND NEW.anchor_attempt_id IS NOT OLD.anchor_attempt_id\nBEGIN SELECT RAISE(ABORT, 'workflow window anchor is immutable'); END",
+    "INSERT INTO schema_version(version) VALUES (29)",
+)
+
+
+def workflow_window_catalog(catalog):
+    """Apply the exact additive v29 catalog without opening captured paths."""
+    return _migrate_installed_catalog(catalog, WORKFLOW_WINDOW_MIGRATION)
+
+
+def _validate_workflow_windows(conn):
+    """Validate durable evidence only; restored IDs never mint live membership."""
+    import json
+
+    from .workflow_runs import WorkflowRunsStore
+
+    rows = conn.execute("SELECT * FROM workflow_change_windows")
+    columns = [column[0] for column in rows.description]
+    try:
+        if conn.execute(
+            "SELECT 1 FROM workflow_change_windows GROUP BY workflow_id HAVING COUNT(*)>64 LIMIT 1"
+        ).fetchone():
+            return ("invalid_workflow_window_bound",)
+        for values in rows:
+            window = dict(zip(columns, values, strict=True))
+            phase = conn.execute(
+                "SELECT workflow_id,plan_revision,phase_id FROM workflow_phase_attempts WHERE id=?",
+                (window["phase_attempt_id"],),
+            ).fetchone()
+            if phase is None or phase[0] != window["workflow_id"]:
+                return ("invalid_workflow_window_phase",)
+            roots = json.loads(window["roots_json"])
+            if not isinstance(roots, list) or any(
+                not isinstance(root, str) for root in roots
+            ):
+                return ("invalid_workflow_window_roots",)
+            if window["state"] == "removed":
+                if (
+                    roots
+                    or window["reserved_bytes"]
+                    or conn.execute(
+                        "SELECT 1 FROM workflow_change_window_refs WHERE window_id=?",
+                        (window["id"],),
+                    ).fetchone()
+                ):
+                    return ("invalid_workflow_window_removal",)
+            else:
+                WorkflowRunsStore._window_roots(roots)
+            anchor = None
+            if window["anchor_attempt_id"] is not None:
+                anchor = conn.execute(
+                    "SELECT t.workflow_id,t.plan_revision,t.phase_id,t.run_id,c.phase_attempt_id FROM workflow_task_attempts t JOIN workflow_task_claims c ON c.task_attempt_id=t.id WHERE t.id=?",
+                    (window["anchor_attempt_id"],),
+                ).fetchone()
+                if (
+                    anchor is None
+                    or tuple(anchor[:3]) != tuple(phase)
+                    or anchor[3] is None
+                    or anchor[4] != window["phase_attempt_id"]
+                ):
+                    return ("invalid_workflow_window_anchor",)
+            refs = tuple(
+                conn.execute(
+                    "SELECT s.run_id,s.root FROM workflow_change_window_refs r LEFT JOIN change_snapshots s ON s.id=r.snapshot_id WHERE r.window_id=?",
+                    (window["id"],),
+                )
+            )
+            if (
+                len(refs) != (window["snapshot_count"] or 0)
+                or len(refs) > 64
+                or any(
+                    anchor is None or ref[0] != anchor[3] or ref[1] not in roots
+                    for ref in refs
+                )
+            ):
+                return ("invalid_workflow_window_refs",)
+            if refs and window["state"] not in {"completed", "disclosed_failure"}:
+                return ("invalid_workflow_window_disposition",)
+            if window["state"] == "disclosed_failure" and not (
+                window["baseline"] == "disclosed_failure"
+                and window["ending"] == "unused"
+                and anchor is None
+                and not refs
+                or anchor is not None
+                and window["ending"] == "disclosed_failure"
+                and window["baseline"] in {"completed", "disclosed_failure"}
+            ):
+                return ("invalid_workflow_window_disposition",)
+        return ()
+    except (ValueError, TypeError, KeyError):
+        return ("invalid_workflow_window",)
+
+
+WORKFLOW_REPAIR_INPUT_MIGRATION = (
+    "ALTER TABLE workflow_phase_attempts ADD COLUMN repair_instruction_sha256 TEXT CHECK(repair_instruction_sha256 IS NULL OR (typeof(repair_instruction_sha256)='text' AND length(CAST(repair_instruction_sha256 AS BLOB))=64 AND repair_instruction_sha256 NOT GLOB '*[^0-9a-f]*' AND purpose='planning' AND plan_revision IS NOT NULL))",
+    "CREATE TRIGGER workflow_repair_input_immutable\nBEFORE UPDATE OF id,workflow_id,plan_revision,phase_id,purpose,command_id,native_attempt_id,repair_instruction_sha256 ON workflow_phase_attempts\nWHEN OLD.repair_instruction_sha256 IS NOT NULL OR NEW.repair_instruction_sha256 IS NOT NULL\nBEGIN SELECT RAISE(ABORT, 'workflow repair input is immutable'); END",
+    "INSERT INTO schema_version(version) VALUES (30)",
+)
+
+
+def workflow_repair_input_catalog(catalog):
+    """Apply exact v30 command-equality metadata without reconstructing authority."""
+    return _migrate_installed_catalog(catalog, WORKFLOW_REPAIR_INPUT_MIGRATION)
+
+
+WORKFLOW_RECOVERY_REVIEW_MIGRATION = (
+    "ALTER TABLE workflow_runs ADD COLUMN recovery_reviewed_revision INTEGER NOT NULL DEFAULT 0 CHECK(typeof(recovery_reviewed_revision)='integer' AND recovery_reviewed_revision>=0 AND recovery_reviewed_revision<=control_revision AND (recovery_reviewed_revision=0 OR status IN ('closed','removed')))",
+    "CREATE TRIGGER workflow_recovery_review_immutable\nBEFORE UPDATE OF recovery_reviewed_revision ON workflow_runs\nWHEN OLD.recovery_reviewed_revision>0 AND NEW.recovery_reviewed_revision!=OLD.recovery_reviewed_revision\nBEGIN SELECT RAISE(ABORT, 'workflow recovery review is immutable'); END",
+    "INSERT INTO schema_version(version) VALUES (31)",
+)
+
+
+def workflow_recovery_review_catalog(catalog):
+    """Append fixed v31 DDL without opening SQLite while importing declarations."""
+    import re
+
+    column = WORKFLOW_RECOVERY_REVIEW_MIGRATION[0].partition(" ADD COLUMN ")[2]
+    objects = [
+        sql[:-1] + ", " + column + ")"
+        if sql.startswith("CREATE TABLE workflow_runs (")
+        else sql
+        for sql in catalog
+    ]
+    objects.append(WORKFLOW_RECOVERY_REVIEW_MIGRATION[1])
+    return tuple(
+        sorted(
+            objects,
+            key=lambda sql: re.match(
+                r'CREATE (?:UNIQUE )?(TABLE|INDEX|TRIGGER|VIEW) ["`]?([^\s"`(]+)', sql
+            ).groups(),
+        )
+    )

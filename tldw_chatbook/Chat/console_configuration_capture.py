@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from inspect import getattr_static
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -20,7 +21,7 @@ from .console_dispatch_checkpoint import ConsoleLibraryItemScopeSnapshot
 from .console_turn_context import (
     ConsoleCharacterAuthoritySnapshot,
     ConsoleTurnConfigurationSnapshot,
-    read_session_change_review_admission,
+    capture_change_review_metadata,
 )
 
 if TYPE_CHECKING:
@@ -268,13 +269,62 @@ def _capture_skill_context_from_records(
 
 
 def capture_mcp_definition_maximum(app: Any) -> dict[str, str]:
+    """Keep the existing hash-only synchronous metadata API."""
+    return dict(_capture_mcp_definition_selection(app).definitions)
+
+
+def _mcp_attachment_source(app, creator=None):
+    """Read runtime attachment without invoking a property or constructing it."""
+    source = (
+        getattr_static(app, "console_runtime", None),
+        getattr_static(creator, "_hooks_v2_runtime", None),
+        getattr_static(creator, "_original_mcp_capture_runtime", None),
+    )
+    if source[2] is not None and source[1] is not source[2]:
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+        raise RecoveryRequired("console_snapshot_owner_changed")
+    return source
+
+
+def _require_mcp_attachment_source(app, creator, source):
+    if any(
+        now is not before
+        for now, before in zip(
+            _mcp_attachment_source(app, creator), source, strict=True
+        )
+    ):
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+        raise RecoveryRequired("console_snapshot_owner_changed")
+
+
+def _has_managed_console_runtime(app, creator=None):
+    return any(value is not None for value in _mcp_attachment_source(app, creator))
+
+
+def _capture_mcp_definition_selection(
+    app: Any, *, profile_id="default", persona_policy_rules=(), _admitted=False
+):
     """Capture exact eligible MCP identities and definition hashes."""
+    from types import MappingProxyType
+
+    from tldw_chatbook.MCP.console_snapshot import (
+        _DefinitionSelection,
+        _project_definition_selection,
+    )
+
+    empty = _DefinitionSelection(MappingProxyType({}), ())
     service = getattr(app, "unified_mcp_service", None)
     if service is None:
-        return {}
+        return empty
+    from tldw_chatbook.MCP.console_snapshot import _mcp_metadata_is_closed
+
+    if not _admitted and not _mcp_metadata_is_closed(service):
+        return _DefinitionSelection(MappingProxyType({}), (), False, True)
     try:
         if service.get_kill_switch():
-            return {}
+            return _DefinitionSelection(MappingProxyType({}), (), False)
         from tldw_chatbook.MCP.hub_tool_catalog import (
             builtin_tools_from_inventory,
             local_tools_from_record,
@@ -288,21 +338,19 @@ def capture_mcp_definition_maximum(app: Any) -> dict[str, str]:
             inventory = local_service.get_inventory()
             if isinstance(inventory, Mapping):
                 tools.extend(builtin_tools_from_inventory(inventory))
-        effective = service.effective_tool_states(tools)
-        from tldw_chatbook.MCP.permission_store import definition_hash
+        effective = service.effective_tool_states(
+            tools, **({"profile_id": profile_id} if profile_id != "default" else {})
+        )
+        selection = _project_definition_selection(
+            tools,
+            effective,
+            CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
+            persona_policy_rules,
+        )
+        return _DefinitionSelection(selection.definitions, selection.sources, False)
 
-        return {
-            tool.tool_id: definition_hash(tool.description, tool.input_schema)
-            for tool in tools
-            if not (
-                tool.server_key == "builtin:tldw_chatbook"
-                and tool.name in CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS
-            )
-            and getattr(effective.get((tool.server_key, tool.name)), "state", "ask")
-            != "deny"
-        }
     except Exception:  # noqa: BLE001 -- uncertainty freezes an empty maximum
-        return {}
+        return _DefinitionSelection(MappingProxyType({}), (), False)
 
 
 _UNSET_SKILL_CONTEXT = object()
@@ -325,6 +373,12 @@ def capture_console_turn_configuration(
     tool_policy_profile_id: str | None,
     persona_policy_rules: Sequence[Mapping[str, Any]] | None,
     mcp_definition_maximum: Mapping[str, str] | None = None,
+    _mcp_definition_sources: Sequence[Sequence[str]] = (),
+    _mcp_definition_complete: bool = False,
+    _mcp_capture_pending: bool = False,
+    _change_review_capture_pending: bool = False,
+    _skill_capture_pending: bool = False,
+    _capture_creator=None,
     _require_current=None,
     _plugin_service: Any = _UNSET_PLUGIN_SERVICE,
     _skill_context_maximum: Any = _UNSET_SKILL_CONTEXT,
@@ -362,17 +416,38 @@ def capture_console_turn_configuration(
             _require_current()
         return value
 
+    attachment = _mcp_attachment_source(app, _capture_creator)
     session = next(item for item in store.sessions() if item.id == session_id)
     held_scope = session.rag_scope_holder.scope
+    workspace_id = store.session_workspace_id(session_id)
+    if _captured_change_review is _UNSET_CAPTURED_DOMAIN:
+        from tldw_chatbook.Workspaces.change_review_consent import (
+            _ordinary_metadata_sources,
+        )
+
+        consent = getattr_static(app, "change_review_consent_service", None)
+        _change_review_capture_pending = (
+            consent is not None and not _ordinary_metadata_sources(consent)[1]
+        )
     roots, aliases, skipped = (
-        checked(read_session_change_review_admission, app, store, session_id)
+        checked(capture_change_review_metadata, app, workspace_id)
         if _captured_change_review is _UNSET_CAPTURED_DOMAIN
         else _captured_change_review
     )
     model = provider_selection.explicit_model or provider_selection.configured_model
     if mcp_definition_maximum is None:
-        mcp_definition_maximum = capture_mcp_definition_maximum(app)
-    return ConsoleTurnConfigurationSnapshot.capture(
+        mcp = _capture_mcp_definition_selection(
+            app,
+            profile_id=tool_policy_profile_id or "default",
+            persona_policy_rules=persona_policy_rules or (),
+            _admitted=not _has_managed_console_runtime(app, _capture_creator),
+        )
+        _require_mcp_attachment_source(app, _capture_creator, attachment)
+        mcp_definition_maximum = mcp.definitions
+        _mcp_definition_sources = mcp.sources
+        _mcp_definition_complete = mcp.complete
+        _mcp_capture_pending = mcp.pending
+    result = ConsoleTurnConfigurationSnapshot.capture(
         session_id=session_id,
         provider_selection=provider_selection,
         scratch_space=scratch_space,
@@ -433,6 +508,11 @@ def capture_console_turn_configuration(
         ),
         mcp_tool_maximum=mcp_definition_maximum,
         mcp_definition_maximum=mcp_definition_maximum,
+        mcp_definition_sources=_mcp_definition_sources,
+        mcp_definition_complete=_mcp_definition_complete,
+        mcp_capture_pending=_mcp_capture_pending,
+        change_review_capture_pending=_change_review_capture_pending,
+        skill_capture_pending=_skill_capture_pending,
         capabilities={
             "vision": bool(model)
             and is_vision_capable(provider_selection.provider, model or ""),
@@ -459,6 +539,8 @@ def capture_console_turn_configuration(
             "thinking_budget_tokens": provider_selection.thinking_budget_tokens,
         },
     )
+    _require_mcp_attachment_source(app, _capture_creator, attachment)
+    return result
 
 
 # Same definition-time capsule format as the original stock skill source proof.

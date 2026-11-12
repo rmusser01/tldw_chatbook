@@ -194,7 +194,7 @@ aggregate storage limits before implementation planning.
     other rejected IDs, terminal/capture receipts and all sealing checks remain
     mandatory. This repairs the V1 dead-end observed in TASK-35582's
     `continuation-final60` run without treating its changed verdicts as accepted.
-    TASK-39147 repairs the accepted-ID case observed on 2026-11-07: an exact replay
+    TASK-40127 repairs the accepted-ID case observed on 2026-11-07: an exact replay
     of the original accepted chunk clears only that ID's outstanding rejection,
     retaining its original acknowledgment/revision and every accepted decision.
     Conflicting or empty replacements remain refused. A charged host receipt is
@@ -615,7 +615,7 @@ An approval denial ends a run's unstarted checks only when the denied call is th
 claimed check's own argv-exact `shell_exec`; an unrelated denied `shell_exec`
 leaves the claim pending.
 
-## Completion handoff repair (TASK-39147, 2026-11-07)
+## Completion handoff repair (TASK-40127, 2026-11-07)
 
 Primary recipes contain coordinator operations only; participant submission
 instructions stay in the host-composed child task/tool guidance. After a verifier

@@ -1925,6 +1925,8 @@ _CONSOLE_STANDARD_METHODS = (
     ("get_external_servers", LocalMCPControlService.get_external_servers),
     ("_project_external_catalog", LocalMCPControlService._project_external_catalog),
     ("get_inventory", LocalMCPControlService.get_inventory),
+    ("_require_allowed", LocalMCPControlService._require_allowed),
+    ("manifest_provider", _default_manifest_provider),
     ("catalog_fingerprint", LocalMCPControlService.catalog_fingerprint),
     (
         "_catalog_fingerprint_sources",

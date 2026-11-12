@@ -297,3 +297,27 @@ async def test_canonical_disposal_detaches_before_original_database_retirement(
     finally:
         await shutdown()
         database.close_connection()
+
+
+def test_console_send_fixture_owns_its_profile_bound_file_database():
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from Tests.UI import app_factory
+    from Tests.UI.test_console_native_chat_flow import _build_console_send_test_app
+    from tldw_chatbook.MCP.console_snapshot import standard_console_sources
+
+    app = _build_console_send_test_app()
+    database = app.chachanotes_db
+    connection = database.get_connection()
+    assert not database.is_memory_db
+    assert standard_console_sources(app.unified_mcp_service)
+    assert app.app_config["console"]["agent_runtime"] is False
+    borrowed_close = Mock()
+    app.chachanotes_db = SimpleNamespace(close=borrowed_close)
+
+    app_factory.drain_created_dirs()
+
+    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+        connection.execute("SELECT 1")
+    borrowed_close.assert_not_called()

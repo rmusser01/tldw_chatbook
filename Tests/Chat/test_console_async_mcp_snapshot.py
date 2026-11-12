@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 from dataclasses import replace
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -82,6 +82,9 @@ def snapshot_case(catalog_store, mcp_sources, monkeypatch):
         if not module_name.startswith("tldw_chatbook.") or module is config:
             continue
         for alias, value in tuple(vars(module).items()):
+            if isinstance(value, ModuleType) and value.__name__ == config.__name__:
+                monkeypatch.setattr(module, alias, config)
+                continue
             if (
                 callable(value)
                 and getattr(value, "__module__", None) == config.__name__
@@ -1481,3 +1484,47 @@ async def test_actual_wired_user_entry_issues_archive_proof_without_changing_cap
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await runtime.dispose(timeout_seconds=3)
+async def test_unavailable_mcp_metadata_does_not_prove_an_empty_maximum(snapshot_case):
+    from tldw_chatbook.MCP.console_snapshot import _capture_console_definition_selection
+
+    _loop_projection(snapshot_case)
+
+    async def unavailable(_callback):
+        raise OSError("controlled catalog read failure")
+
+    selection = await _capture_console_definition_selection(
+        snapshot_case.service,
+        frozenset(),
+        _run_native=unavailable,
+        _admitted=True,
+    )
+    assert not selection.definitions and not selection.pending
+    assert selection.complete is False
+
+
+def test_mcp_projected_names_match_original_provider_after_deny_and_collisions():
+    from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
+    from tldw_chatbook.MCP.console_snapshot import _project_definition_selection
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+    from tldw_chatbook.MCP.permission_store import EffectiveToolState
+
+    tools = [
+        HubTool(server, server, "local", "read", "", {}, (), False, True)
+        for server in ("local:a-b", "local:a b", "local:a_b")
+    ]
+    states = {
+        (tool.server_key, tool.name): EffectiveToolState(state, "tool_override")
+        for tool, state in zip(tools, ("deny", "ask", "allow"), strict=True)
+    }
+    selected = _project_definition_selection(tools, states, frozenset(), ())
+    provider = object.__new__(MCPToolProvider)
+    provider._maximum_tool_ids = None
+    provider._maximum_definition_hashes = selected.definitions
+    provider._install_console_catalog(tools, states, lambda: None)
+    assert [row[3] for row in selected.sources] == [
+        "mcp__a_b__read",
+        "mcp__a_b__read_2",
+    ]
+    assert {
+        name: entry[0].tool_id for name, entry in provider._entry_by_llm_name.items()
+    } == {row[3]: row[0] for row in selected.sources}

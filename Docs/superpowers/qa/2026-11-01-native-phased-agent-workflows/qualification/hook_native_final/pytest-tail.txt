@@ -1,0 +1,7 @@
+...                                                                      [100%]
+- generated xml file: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-hook_native_final/tests.xml -
+============================= slowest 25 durations =============================
+101.85s call     Tests/Chat/test_workflow_native_journeys.py::test_native_correction_keeps_failed_check_and_fresh_passing_handoff
+
+(8 durations < 1s hidden.)
+3 passed in 104.09s (0:01:44)

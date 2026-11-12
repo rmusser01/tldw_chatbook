@@ -154,6 +154,20 @@ def resolve_session_workspace_roots(
         controller.app, controller.store, session_id
     )
     return roots
+def capture_change_review_metadata(app: Any, workspace_id: str | None):
+    """Capture stock readiness without starting a future turn's initializer."""
+    from inspect import getattr_static
+
+    from tldw_chatbook.Workspaces.change_review_consent import (
+        _ordinary_metadata_sources,
+    )
+
+    service = getattr_static(app, "change_review_consent_service", None)
+    _sources, native = _ordinary_metadata_sources(service)
+    if not native:
+        return (), (), ()
+    admission = service.capture_turn(workspace_id)
+    return admission.ready_roots, admission.ready_aliases, admission.skipped_roots
 
 
 def resolve_turn_tool_policy_profile_id(app: Any, workspace_id: str | None) -> str:
@@ -361,6 +375,13 @@ class ConsoleTurnConfigurationSnapshot:
     mcp_definition_maximum: Mapping[str, str] = field(
         default_factory=lambda: MappingProxyType({}), repr=False
     )
+    mcp_definition_sources: tuple[tuple[str, str, str, str], ...] = field(
+        default=(), repr=False
+    )
+    mcp_definition_complete: bool = field(default=False, repr=False)
+    mcp_capture_pending: bool = field(default=False, repr=False)
+    change_review_capture_pending: bool = field(default=False, repr=False)
+    skill_capture_pending: bool = field(default=False, repr=False)
     change_review_root_aliases: tuple[str, ...] = field(default=(), repr=False)
     change_review_skipped_roots: tuple[SkippedReviewRoot, ...] = field(default=(), repr=False)
     capabilities: Mapping[str, Any] = field(
@@ -460,6 +481,17 @@ class ConsoleTurnConfigurationSnapshot:
             "mcp_definition_maximum",
             _freeze(self.mcp_definition_maximum),
         )
+        sources = tuple(tuple(row) for row in self.mcp_definition_sources)
+        if any(
+            len(row) != 4 or any(type(value) is not str for value in row)
+            for row in sources
+        ):
+            raise ValueError("Invalid detached MCP definition source")
+        if len({row[0] for row in sources}) != len(sources) or len(
+            {row[3] for row in sources}
+        ) != len(sources):
+            raise ValueError("Ambiguous detached MCP definition source")
+        object.__setattr__(self, "mcp_definition_sources", sources)
         for field_name in (
             "prompt_transform_inputs",
             "skill_context_maximum",
@@ -503,6 +535,11 @@ class ConsoleTurnConfigurationSnapshot:
         skill_context_maximum: Mapping[str, Any] | None = None,
         mcp_tool_maximum: Sequence[object] | None = None,
         mcp_definition_maximum: Mapping[str, str] | None = None,
+        mcp_definition_sources: Sequence[Sequence[str]] = (),
+        mcp_definition_complete: bool = False,
+        mcp_capture_pending: bool = False,
+        change_review_capture_pending: bool = False,
+        skill_capture_pending: bool = False,
         capabilities: Mapping[str, Any] | None = None,
         rag_defaults: Mapping[str, Any] | None = None,
         tool_configuration: Mapping[str, Any] | None = None,
@@ -534,6 +571,11 @@ class ConsoleTurnConfigurationSnapshot:
                 else None
             ),
             mcp_definition_maximum=mcp_definition_maximum or {},
+            mcp_definition_sources=tuple(tuple(row) for row in mcp_definition_sources),
+            mcp_definition_complete=mcp_definition_complete,
+            mcp_capture_pending=mcp_capture_pending,
+            change_review_capture_pending=change_review_capture_pending,
+            skill_capture_pending=skill_capture_pending,
             capabilities=capabilities or {},
             rag_defaults=rag_defaults or {},
             tool_configuration=tool_configuration or {},
@@ -572,6 +614,14 @@ class ConsoleTurnCustodyRequest:
     _pressed_inputs: Any | None = field(default=None, repr=False)
     _pressed_stash: Any | None = field(default=None, repr=False)
     _pressed_attachment_generation: int | None = field(default=None, repr=False)
+    _recovery_user_origin: object | None = field(default=None, repr=False, compare=False)
+
+    @property
+    def recovery_user_origin(self) -> object | None:
+        """Read the separate UI proof or the original configuration's proof."""
+        if self._recovery_user_origin is not None:
+            return self._recovery_user_origin
+        return self.configuration.recovery_user_origin
 
 
 def _detached_configuration(
@@ -597,6 +647,11 @@ def _detached_configuration(
         skill_context_maximum=configuration.skill_context_maximum,
         mcp_tool_maximum=configuration.mcp_tool_maximum,
         mcp_definition_maximum=configuration.mcp_definition_maximum,
+        mcp_definition_sources=configuration.mcp_definition_sources,
+        mcp_definition_complete=configuration.mcp_definition_complete,
+        mcp_capture_pending=configuration.mcp_capture_pending,
+        change_review_capture_pending=configuration.change_review_capture_pending,
+        skill_capture_pending=configuration.skill_capture_pending,
         capabilities=configuration.capabilities,
         rag_defaults=configuration.rag_defaults,
         tool_configuration=configuration.tool_configuration,

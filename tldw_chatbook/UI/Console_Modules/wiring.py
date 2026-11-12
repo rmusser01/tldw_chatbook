@@ -141,6 +141,7 @@ from .workspace import (
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Agents.hook_permissions import HookReviewSnapshot
+    from tldw_chatbook.Chat.console_command_grammar import CommandParse
     from .hooks import HookReviewResult
     from tldw_chatbook.Widgets.Console.console_voice_preview import (
         VoicePreviewProjection,
@@ -185,6 +186,27 @@ async def request_console_hooks_review(
         waiting,
         cancel,
     )
+
+
+def workflows_enabled() -> bool:
+    from tldw_chatbook.Agents.run_log import _setting
+    from tldw_chatbook.config import coerce_bool_setting
+
+    return coerce_bool_setting(_setting("workflow_runs_enabled", False), False)
+
+
+def console_workflows_for_screen(screen: Any):
+    """Return the screen's existing controller, constructing it on first use."""
+    from .workflows import ConsoleWorkflowsController
+
+    if "_workflow_ui" not in screen.__dict__:
+        screen._workflow_ui = ConsoleWorkflowsController(screen)
+    return screen._workflow_ui
+
+
+async def dispatch_console_workflow(screen: Any, parse: "CommandParse") -> None:
+    """Dispatch the parsed command through the current screen controller."""
+    screen._workflows.command(parse.args)
 
 
 def _stock_console_scratch_snapshot(screen: Any, session_id: str):
@@ -359,274 +381,275 @@ def receive_console_visible_intent(
 
     owner = screen._session
     runtime = screen._console_runtime()
-    store, controller = runtime._chat_store, runtime._chat_controller
-    composer = screen._console_composer_or_none()
-    if (
-        store is None
-        or controller is None
-        or composer is None
-        or type(owner) is not ConsoleSessionController
-    ):
-        return None
-    if _captured_inputs is None and stash is not None:
-        # Without captured inputs this path sends the live composer and reloads
-        # it afterwards, so it takes only the exact captured revision. After an
-        # edit or a reload, decline: the ordinary dispatch sends the stash and
-        # commits only it (TASK-340; TASK-38689, owner 2026-11-03: no refusal).
-        # A capture another send already took is not sent again.
-        live = composer.capture_draft_snapshot()
-        if live.generation != stash.generation or live.edit_serial != stash.edit_serial:
-            return "" if composer.captured_draft_spent(stash) else None
-    if (
-        screen._console_visible_draft_session_id != session_id
-        or (_captured_inputs is None and composer.draft_text() != draft)
-    ):
-        return None
-    if _captured_inputs is not None:
-        if _captured_inputs.draft != draft:
-            return None  # Classified chat text keeps its ordinary dispatch route.
-        if not store.session_inputs_are_current(_captured_inputs, include_draft=False):
-            screen.app_instance.notify(
-                "Console input source changed; the draft was kept.", severity="warning"
-            )
-            return ""
-    if getattr(composer, "_send_blocked", False):
-        from .send_acknowledgement import ConsoleSendAcknowledgement
-
-        send_ack = getattr(screen, "_console_send_ack", None)
-        pending = (
-            send_ack._dispatching_send(session_id)
-            if type(send_ack) is ConsoleSendAcknowledgement
-            else None
-        )
-        # The dispatching press disables subsequent Sends during its own paint.
-        # This presentation state never replaces the authority checks below.
+    with runtime._first_send_source_scope():
+        store, controller = runtime._chat_store, runtime._chat_controller
+        composer = screen._console_composer_or_none()
         if (
-            _captured_inputs is None
-            or pending is None
-            or pending.admitted
-            or pending.row.content != draft
+            store is None
+            or controller is None
+            or composer is None
+            or type(owner) is not ConsoleSessionController
         ):
             return None
-    # TASK-33620.1 AC#7: this path never reaches ``send_refusal_copy``, so it
-    # asks the emergency stop itself; a held send takes the refusing path.
-    from .emergency_stop_hold import received_send_held
-
-    if received_send_held(screen):
-        return None
-    callbacks = getattr(screen, "_console_received_live_adapters", ())
-    if not callbacks or any(
-        getattr(target, name, None) is not original
-        for target, name, original in callbacks
-    ):
-        return None
-    for name, function, code in _CONSOLE_RECEIVED_SCREEN_SELECTORS:
-        method = getattr(screen, name, None)
+        if _captured_inputs is None and stash is not None:
+            # Without captured inputs this path sends the live composer and reloads
+            # it afterwards, so it takes only the exact captured revision. After an
+            # edit or a reload, decline: the ordinary dispatch sends the stash and
+            # commits only it (TASK-340; TASK-38689, owner 2026-11-03: no refusal).
+            # A capture another send already took is not sent again.
+            live = composer.capture_draft_snapshot()
+            if live.generation != stash.generation or live.edit_serial != stash.edit_serial:
+                return "" if composer.captured_draft_spent(stash) else None
         if (
-            not isinstance(method, MethodType)
-            or method.__self__ is not screen
-            or method.__func__ is not function
+            screen._console_visible_draft_session_id != session_id
+            or (_captured_inputs is None and composer.draft_text() != draft)
+        ):
+            return None
+        if _captured_inputs is not None:
+            if _captured_inputs.draft != draft:
+                return None  # Classified chat text keeps its ordinary dispatch route.
+            if not store.session_inputs_are_current(_captured_inputs, include_draft=False):
+                screen.app_instance.notify(
+                    "Console input source changed; the draft was kept.", severity="warning"
+                )
+                return ""
+        if getattr(composer, "_send_blocked", False):
+            from .send_acknowledgement import ConsoleSendAcknowledgement
+
+            send_ack = getattr(screen, "_console_send_ack", None)
+            pending = (
+                send_ack._dispatching_send(session_id)
+                if type(send_ack) is ConsoleSendAcknowledgement
+                else None
+            )
+            # The dispatching press disables subsequent Sends during its own paint.
+            # This presentation state never replaces the authority checks below.
+            if (
+                _captured_inputs is None
+                or pending is None
+                or pending.admitted
+                or pending.row.content != draft
+            ):
+                return None
+        # TASK-33620.1 AC#7: this path never reaches ``send_refusal_copy``, so it
+        # asks the emergency stop itself; a held send takes the refusing path.
+        from .emergency_stop_hold import received_send_held
+
+        if received_send_held(screen):
+            return None
+        callbacks = getattr(screen, "_console_received_live_adapters", ())
+        if not callbacks or any(
+            getattr(target, name, None) is not original
+            for target, name, original in callbacks
+        ):
+            return None
+        for name, function, code in _CONSOLE_RECEIVED_SCREEN_SELECTORS:
+            method = getattr(screen, name, None)
+            if (
+                not isinstance(method, MethodType)
+                or method.__self__ is not screen
+                or method.__func__ is not function
+                or function.__code__ is not code
+            ):
+                return None
+        builder = owner._build_console_turn_execution_context
+        if (
+            not isinstance(builder, MethodType)
+            or builder.__func__ is not _CONSOLE_TURN_CONTEXT_BUILDER
+        ):
+            return None
+        if not policy_producers_current():
+            return None
+        scratch = owner._scratch_snapshot_provider
+        function, code = _STOCK_CONSOLE_SCRATCH_SNAPSHOT
+        if (
+            type(scratch) is not partial
+            or scratch.func is not function
             or function.__code__ is not code
+            or scratch.args != (screen,)
+            or scratch.keywords
         ):
             return None
-    builder = owner._build_console_turn_execution_context
-    if (
-        not isinstance(builder, MethodType)
-        or builder.__func__ is not _CONSOLE_TURN_CONTEXT_BUILDER
-    ):
-        return None
-    if not policy_producers_current():
-        return None
-    scratch = owner._scratch_snapshot_provider
-    function, code = _STOCK_CONSOLE_SCRATCH_SNAPSHOT
-    if (
-        type(scratch) is not partial
-        or scratch.func is not function
-        or function.__code__ is not code
-        or scratch.args != (screen,)
-        or scratch.keywords
-    ):
-        return None
-    rag_source = owner._rag_source_types_accessor
-    if (
-        type(rag_source) is not partial
-        or rag_source.func is not _stock_received_rag_sources
-        or rag_source.args != (screen,)
-        or rag_source.keywords
-        or owner._rag_top_k_accessor is not _stock_received_rag_top_k
-    ):
-        return None
-    from ..Screens import chat_screen as screen_module
-
-    if any(
-        getattr(screen_module, function.__name__, None) is not function
-        or function.__code__ is not code
-        for function, code in _CONSOLE_RECEIVED_RAG_READERS
-    ):
-        return None
-    config_identity = config.current_config_identity()
-    resident = getattr(screen.app_instance, "app_config", None)
-    raw = (
-        config._CONFIG_CACHE
-        if isinstance(resident, Mapping)
-        and all(name in resident for name in ("general", "logging"))
-        else resident
-    )
-    if not isinstance(raw, Mapping):
-        return None
-    preparation = capture_console_received_configuration_preparation(
-        screen.app_instance, store, controller, session_id=session_id
-    )
-    if preparation is None:
-        return None
-    session = next((item for item in store.sessions() if item.id == session_id), None)
-    settings = store.effective_session_settings(session_id)
-    if session is None or settings is None:
-        return None
-    handoffs = getattr(screen.app_instance, "pending_handoffs", None)
-    if handoffs is not None and handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK):
-        return None
-    if session.persisted_conversation_id in getattr(
-        screen.app_instance, "_conversation_archive_inflight", ()
-    ):
-        return None
-    launch = getattr(screen, "_pending_console_launch_context", None)
-    if launch is not None and screen_module._source_mentions_rag(launch.source):
-        state = screen_module.build_console_evidence_display_state(launch)
-        if state is None or state.available_count == 0:
-            return None
-    if controller._chat_start.is_prepared(session_id):
-        return None
-    activity = controller.activity_for(session_id)
-    queue = controller.prompt_queue_registry.snapshot(session_id)
-    if activity.preparing_before_acceptance and queue.total_count == 0:
-        screen.app_instance.notify(
-            "Preparing the current turn. Queueing becomes available once it is accepted.",
-            severity="warning",
-        )
-        return ""
-    queue_revision = (
-        queue.revision if activity.accepted_live_turn or queue.total_count else None
-    )
-    if queue_revision is not None:
-        from tldw_chatbook.Chat.console_chat_controller import (
-            _CONSOLE_RECEIVED_QUEUE_METHOD,
-        )
-        from tldw_chatbook.Chat.console_received_dispatch import stock_native_methods
-
-        function, code = _CONSOLE_RECEIVED_QUEUE_METHOD
-        if not stock_native_methods(controller, (("queue_prompt", function, code),)):
-            return None
-    section = raw.get("console", {})
-    section = section if isinstance(section, Mapping) else {}
-    defaults = raw.get("chat_defaults", {})
-    defaults = defaults if isinstance(defaults, Mapping) else {}
-    enabled = console_live_runtime_enabled(resident, section)
-    display_name = _console_global_user_display_name(raw)
-    selected = build_console_provider_selection_from_settings(
-        settings,
-        app_config=raw,
-        workspace_context=ConsoleWorkspaceContext(
-            active_workspace_id=store.session_workspace_id(session_id)
-        ),
-        legacy_model=settings.model
-        if getattr(settings, "source", "derived") == "user"
-        else defaults.get("model"),
-        endpoint_policy=store.session_ephemeral_endpoint_policy(session_id),
-        identity_session=session,
-        global_user_name=lambda: display_name,
-    )
-    selection = ConsoleTurnCaptureSelection(
-        selected,
-        store.presentation_context(session_id, display_name),
-        {
-            "source_types": tuple(
-                screen_module._console_library_rag_source_scope(screen)
-            )
-        },
-        {
-            "session_ephemeral": session.ephemeral,
-            "agent_runtime_enabled": enabled,
-            "native_tool_calls_enabled": coerce_bool_setting(
-                section.get("native_tool_calls", True), True
-            ),
-            "local_tools_enabled": coerce_bool_setting(
-                section.get("local_tools_enabled", False), False
-            ),
-            "direct_library_tools": load_direct_library_tools(raw),
-            "exchange_capture_enabled": coerce_bool_setting(
-                section.get("exchange_capture", True), True
-            ),
-            "project_instructions_startup_max_bytes": coerce_int_setting(
-                section.get(
-                    "project_instructions_startup_max_bytes",
-                    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-                ),
-                DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-                minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-                maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-            ),
-            "project_instructions_nested_max_bytes": coerce_int_setting(
-                section.get(
-                    "project_instructions_nested_max_bytes",
-                    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-                ),
-                DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-                minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-                maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-            ),
-        },
-        None,
-        bool(
-            enabled
-            and not store.session_one_shot_prefill(session_id)
-            and session.assistant_kind != "character"
-        ),
-        enabled,
-    )
-    composer._authored_draft_observer = screen._publish_console_authored_draft
-    if _captured_inputs is None:
-        if not screen._publish_console_authored_draft(
-            draft, (composer.capture_draft_snapshot().generation, composer.edit_serial)
+        rag_source = owner._rag_source_types_accessor
+        if (
+            type(rag_source) is not partial
+            or rag_source.func is not _stock_received_rag_sources
+            or rag_source.args != (screen,)
+            or rag_source.keywords
+            or owner._rag_top_k_accessor is not _stock_received_rag_top_k
         ):
+            return None
+        from ..Screens import chat_screen as screen_module
+
+        if any(
+            getattr(screen_module, function.__name__, None) is not function
+            or function.__code__ is not code
+            for function, code in _CONSOLE_RECEIVED_RAG_READERS
+        ):
+            return None
+        config_identity = config.current_config_identity()
+        resident = getattr(screen.app_instance, "app_config", None)
+        raw = (
+            config._CONFIG_CACHE
+            if isinstance(resident, Mapping)
+            and all(name in resident for name in ("general", "logging"))
+            else resident
+        )
+        if not isinstance(raw, Mapping):
+            return None
+        preparation = capture_console_received_configuration_preparation(
+            screen.app_instance, store, controller, session_id=session_id
+        )
+        if preparation is None:
+            return None
+        session = next((item for item in store.sessions() if item.id == session_id), None)
+        settings = store.effective_session_settings(session_id)
+        if session is None or settings is None:
+            return None
+        handoffs = getattr(screen.app_instance, "pending_handoffs", None)
+        if handoffs is not None and handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK):
+            return None
+        if session.persisted_conversation_id in getattr(
+            screen.app_instance, "_conversation_archive_inflight", ()
+        ):
+            return None
+        launch = getattr(screen, "_pending_console_launch_context", None)
+        if launch is not None and screen_module._source_mentions_rag(launch.source):
+            state = screen_module.build_console_evidence_display_state(launch)
+            if state is None or state.available_count == 0:
+                return None
+        if controller._chat_start.is_prepared(session_id):
+            return None
+        activity = controller.activity_for(session_id)
+        queue = controller.prompt_queue_registry.snapshot(session_id)
+        if activity.preparing_before_acceptance and queue.total_count == 0:
             screen.app_instance.notify(
-                "Draft or chat changed; Send again.", severity="warning"
+                "Preparing the current turn. Queueing becomes available once it is accepted.",
+                severity="warning",
             )
             return ""
-        inputs = store.session_input_snapshot(session_id)
-    else:
-        inputs = _captured_inputs
-    launch, revision, _notice = runtime.snapshot_console_staged_evidence(session_id)
-    if config.current_config_identity() != config_identity:
-        raise RuntimeError("Console configuration changed; Send again.")
-    intent = ConsoleReceivedTurnIntent(
-        str(uuid4()),
-        session_id,
-        inputs,
-        selection,
-        launch,
-        revision,
-        screen._console_runtime_attachment_generation or 0,
-        queue_revision,
-        _pressed_inputs=_captured_inputs,
-        _pressed_stash=stash if _captured_inputs is not None else None,
-        recovery_user_origin=runtime.ensure_archive_recovery().issue_user_proof(
-            session_id
-        ),
-    )
-    if config.current_config_identity() != config_identity:
-        raise RuntimeError("Console configuration changed; Send again.")
-    send_ack = getattr(screen, "_console_send_ack", None)
-    callbacks = (
-        {"terminal_callback": send_ack.custody_callback(session_id)}
-        if send_ack is not None else {}
-    )
-    turn_id = runtime.accept_received_intent(
-        intent, _configuration_preparation=preparation, **callbacks
-    )
-    if send_ack is not None:
-        send_ack.mark_admitted(session_id)
-    return turn_id
+        queue_revision = (
+            queue.revision if activity.accepted_live_turn or queue.total_count else None
+        )
+        if queue_revision is not None:
+            from tldw_chatbook.Chat.console_chat_controller import (
+                _CONSOLE_RECEIVED_QUEUE_METHOD,
+            )
+            from tldw_chatbook.Chat.console_received_dispatch import stock_native_methods
+
+            function, code = _CONSOLE_RECEIVED_QUEUE_METHOD
+            if not stock_native_methods(controller, (("queue_prompt", function, code),)):
+                return None
+        section = raw.get("console", {})
+        section = section if isinstance(section, Mapping) else {}
+        defaults = raw.get("chat_defaults", {})
+        defaults = defaults if isinstance(defaults, Mapping) else {}
+        enabled = console_live_runtime_enabled(resident, section)
+        display_name = _console_global_user_display_name(raw)
+        selected = build_console_provider_selection_from_settings(
+            settings,
+            app_config=raw,
+            workspace_context=ConsoleWorkspaceContext(
+                active_workspace_id=store.session_workspace_id(session_id)
+            ),
+            legacy_model=settings.model
+            if getattr(settings, "source", "derived") == "user"
+            else defaults.get("model"),
+            endpoint_policy=store.session_ephemeral_endpoint_policy(session_id),
+            identity_session=session,
+            global_user_name=lambda: display_name,
+        )
+        selection = ConsoleTurnCaptureSelection(
+            selected,
+            store.presentation_context(session_id, display_name),
+            {
+                "source_types": tuple(
+                    screen_module._console_library_rag_source_scope(screen)
+                )
+            },
+            {
+                "session_ephemeral": session.ephemeral,
+                "agent_runtime_enabled": enabled,
+                "native_tool_calls_enabled": coerce_bool_setting(
+                    section.get("native_tool_calls", True), True
+                ),
+                "local_tools_enabled": coerce_bool_setting(
+                    section.get("local_tools_enabled", False), False
+                ),
+                "direct_library_tools": load_direct_library_tools(raw),
+                "exchange_capture_enabled": coerce_bool_setting(
+                    section.get("exchange_capture", True), True
+                ),
+                "project_instructions_startup_max_bytes": coerce_int_setting(
+                    section.get(
+                        "project_instructions_startup_max_bytes",
+                        DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    ),
+                    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                ),
+                "project_instructions_nested_max_bytes": coerce_int_setting(
+                    section.get(
+                        "project_instructions_nested_max_bytes",
+                        DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    ),
+                    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                ),
+            },
+            None,
+            bool(
+                enabled
+                and not store.session_one_shot_prefill(session_id)
+                and session.assistant_kind != "character"
+            ),
+            enabled,
+        )
+        composer._authored_draft_observer = screen._publish_console_authored_draft
+        if _captured_inputs is None:
+            if not screen._publish_console_authored_draft(
+                draft, (composer.capture_draft_snapshot().generation, composer.edit_serial)
+            ):
+                screen.app_instance.notify(
+                    "Draft or chat changed; Send again.", severity="warning"
+                )
+                return ""
+            inputs = store.session_input_snapshot(session_id)
+        else:
+            inputs = _captured_inputs
+        launch, revision, _notice = runtime.snapshot_console_staged_evidence(session_id)
+        if config.current_config_identity() != config_identity:
+            raise RuntimeError("Console configuration changed; Send again.")
+        intent = ConsoleReceivedTurnIntent(
+            str(uuid4()),
+            session_id,
+            inputs,
+            selection,
+            launch,
+            revision,
+            screen._console_runtime_attachment_generation or 0,
+            queue_revision,
+            _pressed_inputs=_captured_inputs,
+            _pressed_stash=stash if _captured_inputs is not None else None,
+            recovery_user_origin=runtime.ensure_archive_recovery().issue_user_proof(
+                session_id
+            ),
+        )
+        if config.current_config_identity() != config_identity:
+            raise RuntimeError("Console configuration changed; Send again.")
+        send_ack = getattr(screen, "_console_send_ack", None)
+        callbacks = (
+            {"terminal_callback": send_ack.custody_callback(session_id)}
+            if send_ack is not None else {}
+        )
+        turn_id = runtime.accept_received_intent(
+            intent, _configuration_preparation=preparation, **callbacks
+        )
+        if send_ack is not None:
+            send_ack.mark_admitted(session_id)
+        return turn_id
 
 
 def _raw_cli_run_log_root() -> Path:
@@ -681,11 +704,8 @@ def _admit_console_turn_to_runtime(
             )
         request = replace(
             request,
-            configuration=replace(
-                request.configuration,
-                recovery_user_origin=runtime.ensure_archive_recovery().issue_user_proof(
-                    session_id
-                ),
+            _recovery_user_origin=runtime.ensure_archive_recovery().issue_user_proof(
+                session_id
             ),
         )
         send_ack = getattr(screen, "_console_send_ack", None)
@@ -731,10 +751,86 @@ def _admit_console_turn_to_runtime(
 async def _precapture_turn_authority(screen: Any, session_id: str) -> Any:
     """TASK-33620.15: read a send's service-owned authority off the UI pump."""
     from functools import partial
+    from inspect import getattr_static
 
-    from .turn_admission import applied, precapture
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 
-    return partial(applied, await precapture(screen._session, session_id))
+    from .turn_admission import _OwnedTurnPreparation, applied, precapture
+
+    runtime = getattr_static(screen.app_instance, "console_runtime", None)
+    if runtime is None:
+        if (
+            getattr_static(screen, "_console_received_live_adapters", ())
+            or getattr_static(screen, "_console_runtime", None) is not None
+        ):
+            raise RuntimeError("Console preparation source unavailable; Send again.")
+        return partial(applied, await precapture(screen._session, session_id))
+    if type(runtime) is not ConsoleRuntime:
+        raise RuntimeError("Console preparation source unavailable; Send again.")
+    controller, store, owner = (
+        runtime._chat_controller,
+        runtime._chat_store,
+        screen._session,
+    )
+    if controller is None or store is None:
+        raise RuntimeError("Console preparation source unavailable; Send again.")
+    from tldw_chatbook import config
+    from tldw_chatbook.Chat.console_configuration_preparation import (
+        _configuration_session_identity,
+        capture_mounted_configuration_owned,
+        original_mcp_capture_matches,
+    )
+
+    session = next((item for item in store.sessions() if item.id == session_id), None)
+    if session is None:
+        raise RuntimeError("Console session is closed.")
+    identity, config_identity = (
+        _configuration_session_identity(session),
+        config.current_config_identity(),
+    )
+
+    def current():
+        if (
+            getattr_static(screen.app_instance, "console_runtime", None) is not runtime
+            or runtime._disposed
+            or runtime._chat_controller is not controller
+            or runtime._chat_store is not store
+            or screen._session is not owner
+            or controller.app is not screen.app_instance
+            or controller.store is not store
+            or getattr_static(controller, "_hooks_v2_runtime", None) is not runtime
+            or next((item for item in store.sessions() if item.id == session_id), None)
+            is not session
+            or _configuration_session_identity(session) != identity
+            or config.current_config_identity() != config_identity
+        ):
+            raise RuntimeError("Console preparation source changed; Send again.")
+
+    current()
+    captured = await capture_mounted_configuration_owned(
+        controller,
+        session_id,
+        owner,
+        owner._build_console_turn_execution_context,
+        require_current=current,
+        _with_current=True,
+    )
+    if captured is None:
+        raise RuntimeError("Console preparation source unavailable; Send again.")
+    configuration, source_check = captured
+
+    def consume_check():
+        source_check()
+        if not original_mcp_capture_matches(
+            controller,
+            session,
+            configuration,
+            pending=configuration.mcp_capture_pending,
+            require_complete=False,
+        ):
+            raise RuntimeError("Console preparation source changed; Send again.")
+
+    return partial(applied, _OwnedTurnPreparation(owner, session_id, configuration, consume_check))
 
 
 async def _resend_refused_console_echo(screen: Any, echo: Any) -> str | None:
@@ -1366,6 +1462,10 @@ def build_console_controllers(
         None. The controllers are reachable as attributes of `screen`.
     """
     screen._approval_feedback = None
+
+    async def sync_native_console_chat_ui() -> bool:
+        return await screen._sync_native_console_chat_ui()
+
     screen._context_spend = ConsoleContextSpendController(
         screen,
         ensure_chat_store=lambda: screen._ensure_console_chat_store(),
@@ -1587,7 +1687,7 @@ def build_console_controllers(
             lambda: screen._session._bind_composer_to_active_session(focus=False)
         ),
         sync_chat_core_state=lambda: screen._sync_console_chat_core_state(),
-        sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
+        sync_native_console_chat_ui=sync_native_console_chat_ui,
         sync_temporary_chip=lambda: screen._sync_console_temporary_chip(),
         default_session_settings_accessor=(
             lambda: screen._session._default_console_session_settings()
@@ -1966,7 +2066,7 @@ def build_console_controllers(
         ),
         schedule_native_console_sync=(
             lambda: screen.run_worker(
-                screen._sync_native_console_chat_ui(),
+                screen._sync_native_console_chat_ui,
                 exclusive=True,
                 group="console-sync",
             )
@@ -2254,7 +2354,7 @@ def build_console_controllers(
         scratch_snapshot_provider=partial(_stock_console_scratch_snapshot, screen),
         rag_source_types_accessor=rag_source_types_accessor,
         rag_top_k_accessor=rag_top_k_accessor,
-        sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
+        sync_native_console_chat_ui=sync_native_console_chat_ui,
         sync_chat_core_state=lambda: screen._sync_console_chat_core_state(),
         sync_temporary_chip=lambda: screen._sync_console_temporary_chip(),
         sync_settings_summary=lambda: screen._sync_console_settings_summary(),
@@ -2610,7 +2710,7 @@ def build_console_controllers(
             controller.send_refusal_copy(session_id)
             or screen._console_provider_blocker_copy()
         ),
-        sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
+        sync_native_console_chat_ui=sync_native_console_chat_ui,
         # Session <-> message seam (design spec: "a named callable
         # between them; design it deliberately, never a back-door
         # through the screen"). `self._session` was constructed above;
@@ -2924,40 +3024,36 @@ def build_console_controllers(
     )
     screen._console_terminal_workspace = None
     screen._terminal = _DeferredConsoleTerminalController(screen)
+    raw_runtime = screen._console_runtime()
+    raw_store = screen._ensure_console_chat_store()
     screen._raw_cli = ConsoleRawCliController(
         raw_cli_runtime=lambda: screen.app_instance.raw_cli_runtime,
-        active_session_id=lambda: _raw_cli_active_session_id(screen),
-        persist_session_if_needed=(
-            lambda session_id: _raw_cli_persist_session_if_needed(screen, session_id)
-        ),
-        active_leaf_anchor=(
-            lambda session_id: _raw_cli_active_leaf_anchor(screen, session_id)
-        ),
-        persisted_leaf_anchor=(
-            lambda session_id, native_leaf_id: _raw_cli_persisted_leaf_anchor(
-                screen, session_id, native_leaf_id
-            )
-        ),
+        native_source=raw_runtime.raw_cli_source,
+        active_session_id=lambda: str(raw_store.ensure_session().id),
+        persist_session_if_needed=(raw_store.persist_session_if_needed),
+        active_leaf_anchor=(raw_store.active_leaf),
+        persisted_leaf_anchor=(raw_store.persisted_message_id_for_session_node),
         selected_local_root=(
             lambda session_id: _selected_console_local_root(screen, session_id)
         ),
         private_scratch_root=(
-            lambda session_id: (
-                screen._console_runtime().scratch_spaces.snapshot(session_id).root
-            )
+            lambda session_id: raw_runtime.scratch_spaces.snapshot(session_id).root
         ),
-        refusal_stash_bank=screen._console_runtime().raw_cli_refusal_stash_bank,
+        refusal_stash_bank=raw_runtime.raw_cli_refusal_stash_bank,
         accepts_raw_cli_refusal_callbacks=(
-            lambda: screen._console_runtime().accepts_raw_cli_refusal_callbacks
+            lambda: raw_runtime.accepts_raw_cli_refusal_callbacks
         ),
         restore_stash=(
             lambda session_id, stash: restore_refused_raw_cli_stash(
                 session_id,
                 stash,
-                composer=screen._console_composer_or_none(),
-                active_session_id=(
-                    screen._ensure_console_chat_store().active_session_id
+                composer=(
+                    screen._console_composer_or_none()
+                    if screen._console_runtime() is raw_runtime
+                    and raw_runtime._chat_store is raw_store
+                    else None
                 ),
+                active_session_id=(raw_store.active_session_id),
                 visible_session_id=screen._console_visible_draft_session_id,
             )
         ),
@@ -2970,18 +3066,13 @@ def build_console_controllers(
                 name="_append_console_raw_cli_refusal",
             )
         ),
-        append_store_marker=(
-            lambda *args, **kwargs: screen._ensure_console_chat_store().append_message(
-                *args, **kwargs
-            )
-        ),
-        update_store_marker=(
-            lambda *args, **kwargs: getattr(
-                screen._ensure_console_chat_store(), "update_tool_marker"
-            )(*args, **kwargs)
-        ),
+        append_store_marker=(raw_store.append_message),
+        update_store_marker=(raw_store.update_tool_marker),
         agent_runs_db=(
-            lambda: getattr(screen._ensure_console_agent_bridge(), "_db", None)
+            lambda: (
+                raw_runtime.ensure_activity_receipt_service()
+                and raw_runtime._agent_runs_db
+            )
         ),
         run_log_access=lambda: _raw_cli_run_log_root(),
         start_worker=lambda work, **kwargs: screen.run_worker(

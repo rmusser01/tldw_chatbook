@@ -14,6 +14,7 @@ from tldw_chatbook.app import TldwCli
 from tldw_chatbook.config import load_settings
 from tldw_chatbook.Constants import TAB_CHAT
 from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
+from tldw_chatbook.UI.Console_Modules.wiring import _capture_console_configuration_async
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
@@ -270,8 +271,8 @@ async def test_real_console_change_model_command_opens_real_picker(
                 ("openai", "gpt-task-648")
             ]
 
-            before_apply = screen._session._build_console_turn_execution_context(
-                session_id
+            before_apply = await _capture_console_configuration_async(
+                screen, session_id
             )
             search.value = "claude-task"
             await pilot.pause()
@@ -293,8 +294,8 @@ async def test_real_console_change_model_command_opens_real_picker(
                 "anthropic",
                 "claude-task-648",
             )
-            after_apply = screen._session._build_console_turn_execution_context(
-                session_id
+            after_apply = await _capture_console_configuration_async(
+                screen, session_id
             )
             assert (
                 before_apply.provider_selection.provider,

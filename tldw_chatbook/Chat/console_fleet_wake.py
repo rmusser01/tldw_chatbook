@@ -11,6 +11,7 @@ Badges never grant delivery or recovery authority (ADR-134/135 and ADR-199).
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import re
 import threading
 import time
@@ -301,6 +302,7 @@ class ConsoleFleetWakeCoordinator:
         self._disposed = False
         self._conversation_fences: dict[str, int] = {}
         self._runtime_submitter = None
+        self._recovery_projection = None
 
     def on_review_boundary(self, receipt) -> None:
         """Stage a live host receipt for the existing finite wake owner."""
@@ -722,6 +724,7 @@ class ConsoleFleetWakeCoordinator:
             for child in children
             if getattr(child, "settled_after_turn", False)
             and getattr(child, "run_id", None)
+            and getattr(child, "workflow_task", None) is None
         ]
         excluded = [
             str(child.run_id)
@@ -881,7 +884,9 @@ class ConsoleFleetWakeCoordinator:
             self._coalesce_until.pop(conversation_id, None)
         coroutine = self._deliver(conversation_id, session_id, delivery.slot_token)
         try:
-            task = loop.create_task(coroutine)
+            # Child settlement callbacks may carry their worker execution context.
+            # This independent delivery issues its own native wake authority.
+            task = loop.create_task(coroutine, context=contextvars.Context())
         except Exception as exc:  # noqa: BLE001 - failed scheduling grants no authority
             logger.warning(
                 "wake delivery task could not be scheduled; deferring (exception_type={})",
@@ -1450,6 +1455,10 @@ class ConsoleFleetWakeCoordinator:
                 return
             ledger = database.automatic_work
             await run_owned_db_call(ledger._db, ledger.recover, current_owner_id=self._owner_id)
+            if self._disposed:
+                return
+            if self._recovery_projection is not None:
+                await self._recovery_projection(ledger.recovery_result)
             if self._disposed:
                 return
             await run_owned_db_call(ledger._db, self.seed_from_marks, database=ledger._db)

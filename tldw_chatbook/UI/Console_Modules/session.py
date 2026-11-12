@@ -38,22 +38,8 @@ Tab selection and character/persona Start Chat handoffs call it before UI
 publication so resume reconciliation sees the selected conversation's scope.
 `ChatScreen` still calls its own controllers directly.
 
-Moved: every `ChatScreen` method matching `*session*` whose body touched
-only session-lifecycle state (or one of the callables above) and no DOM --
-27 methods, plus the first-chat handoff family (eight methods and its
-notification-revision state), and four small module-level pure helpers only
-those methods (or
-this cluster's own remaining screen-side callers) use:
-`_has_selected_text`/`_is_empty_select_value` (Select-value predicates
-`_default_console_session_settings` needs; `ChatScreen` imports both back --
-`_is_empty_select_value` has its own independent `@on(Select.Changed)`
-consumer, `_has_selected_text` a dozen more, none of them session-shaped),
-and the character-handoff quintet `_canonical_card_character_id`/
-`_canonical_character_id_text`/`_character_session_identity_from_handoff`/
-`_character_session_prompt_seed`/`_SERVER_CHARACTER_AUTHORITY_PATTERN`
-(`_start_character_console_session`'s own dependencies; the character
-controller imports the card-id and prompt-seed helpers for its picker and
-session-choice policy).
+Session lifecycle and first-chat handoffs live here. Shared Select predicates and
+character handoff helpers remain exported for their existing screen/controller callers.
 
 `_console_active_session_is_ephemeral` is the one exception to "moved for
 real": its IMPLEMENTATION lives here, but `ChatScreen` keeps a one-line
@@ -804,7 +790,7 @@ def request_console_repaint(screen: Any) -> None:
         screen._console_sync_requested = True
         return
     screen.run_worker(
-        screen._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
+        screen._sync_native_console_chat_ui, exclusive=True, group="console-sync"
     )
 
 
@@ -2565,7 +2551,7 @@ class ConsoleSessionController:
             # must appear in the browser on the very next sync.
             self._invalidate_console_persisted_rows_cache()
             self.run_worker(
-                self._sync_native_console_chat_ui(),
+                self._sync_native_console_chat_ui,
                 exclusive=True,
                 group="console-sync",
             )
@@ -4396,6 +4382,15 @@ class ConsoleSessionController:
         ``turn_admission``: precaptured on a worker for the send being
         launched when its inputs still match, otherwise read here.
         """
+        from .turn_admission import prepared_configuration_for
+
+        prepared = prepared_configuration_for(self, session_id)
+        if prepared is not None:
+            if mcp_definition_maximum is not None and dict(
+                mcp_definition_maximum
+            ) != dict(prepared.mcp_definition_maximum):
+                raise RuntimeError("Console preparation selection changed; Send again.")
+            return prepared
         from ...Chat.console_configuration_capture import capture_console_turn_configuration
         from ...Chat.attachment_core import max_history_images  # noqa: F401 - preserve the existing first-use import boundary.
         from ...model_capabilities import is_vision_capable  # noqa: F401 - preserve the existing first-use import boundary.
@@ -4953,7 +4948,7 @@ class ConsoleSessionController:
         # showing "Temporary" on an already-saved conversation.
         self._sync_console_temporary_chip()
         self.run_worker(
-            self._sync_native_console_chat_ui(), exclusive=False, group="console-sync"
+            self._sync_native_console_chat_ui, exclusive=False, group="console-sync"
         )
         self.app_instance.notify("Chat saved.", severity="information")
 
@@ -6950,9 +6945,7 @@ class ConsoleSessionController:
     def _console_trace_recovery_state(self) -> Any:
         """Project the active pre-dispatch pause, with a context hold's numbers.
 
-        A display read: it ensures the controller only when there is none
-        yet (TASK-35444). Ensuring a live one re-reads config on the UI loop,
-        which waits out any config rebuild.
+        Passive display reads only the installed controller and never refreshes settings.
         """
 
         from ...Chat.console_turn_preparation import (
@@ -6960,11 +6953,12 @@ class ConsoleSessionController:
             library_pause_copy,
         )
 
-        controller = (
-            self._current_chat_controller_accessor()
-            or self._ensure_console_chat_controller()
+        controller = self._current_chat_controller_accessor()
+        preparation = (
+            controller.trace_call_recovery_preparation()
+            if controller is not None
+            else None
         )
-        preparation = controller.trace_call_recovery_preparation()
         # TASK-33621.20: only a Library-paused send has a reason to look up
         # and pass on (why its search stopped).
         library: dict[str, str] = {}

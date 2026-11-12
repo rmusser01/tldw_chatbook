@@ -30,6 +30,7 @@ from typing import Generic, TypeVar
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.workflow_models import WorkflowTaskClaim
     from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
     from tldw_chatbook.Agents.run_log_paging import RunLogPage, RunLogPageCursor
     from tldw_chatbook.Agents.execution_capacity import ExecutionOwner, OwnedOperation, RuntimeCapacity
@@ -48,6 +49,7 @@ if TYPE_CHECKING:
 
 from loguru import logger
 
+from tldw_chatbook.app_services import read_mcp_service
 from tldw_chatbook.Agents.activation import guarded as agent_execution_guard
 from tldw_chatbook.Agents.activation import (
     async_worker_guard as agent_async_worker_guard,  # noqa: F401 - lazy request helper compatibility seam
@@ -62,8 +64,8 @@ from tldw_chatbook.Agents.agent_models import (
     LOAD_TOOLS_NAME,
     MAX_RUN_CONTROL_STEPS,
     MAX_STEERING_CHARS,
-    RUN_CANCELLED,
-    RUN_DONE,
+    RUN_CANCELLED as RUN_CANCELLED,
+    RUN_DONE as RUN_DONE,
     RunBudget,
     RUNTIME_TOOL_NAMES,
     STEERING_SOURCE_USER,
@@ -86,7 +88,6 @@ from tldw_chatbook.Agents.agent_models import (
     RunOutcome,
     SkillFileBindings,
     ToolCall,
-    ToolCatalogEntry,
     ToolOutcome,
     ToolResult,
     ToolReviewValue,
@@ -99,8 +100,7 @@ from tldw_chatbook.Agents.agent_service import (
     RUN_LOG_PROMPT_SECTION,
     SUBAGENT_SYSTEM_PROMPT,
     AgentService,
-    FirstRequestSchemaPlan,
-    RunLogRequestPlan,
+    ConsoleFirstRequestPlan as ConsoleFirstRequestPlan,
     build_first_request_schema_plan,
     build_run_log_request_plan,
 )
@@ -134,6 +134,7 @@ from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator, FleetHandle
 # modules resident at `_ui_ready` to compare a handful of strings. The set
 # they feed is now built on first use; see `_refusal_statuses`.
 from tldw_chatbook.Agents.mcp_tool_provider import (
+    CollisionFilteredMCPProvider as _CollisionFilteredMCPProvider,
     DENY_REFUSAL as MCP_DENY_REFUSAL,
     KILL_SWITCH_REFUSAL as MCP_KILL_SWITCH_REFUSAL,
     TIMEOUT_REFUSAL as MCP_TIMEOUT_REFUSAL,
@@ -185,14 +186,14 @@ from tldw_chatbook.Chat.console_raw_cli import (
 )
 from tldw_chatbook.Chat.console_display_state import (
     format_diff_feedback_disclosure,
-    render_diff_feedback_block,
+    render_diff_feedback_block as render_diff_feedback_block,
 )
 from tldw_chatbook.Chat.console_history_budget import ProviderContinuationSidecar
 from tldw_chatbook.Chat.console_prepared_request import (
-    CONTINUATION_OWNER_KEY,
+    CONTINUATION_OWNER_KEY as CONTINUATION_OWNER_KEY,
     THINKING_OWNER_KEY,
     PreparedConsoleRequest,
-    PreparedProviderRequest,  # noqa: F401 - lazy request helper compatibility seam
+    PreparedProviderRequest as PreparedProviderRequest,
     build_console_request,
     freeze_json,
 )
@@ -238,12 +239,12 @@ from tldw_chatbook.Provider_Contract.provider_continuation import (
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.config import (
-    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-    MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-    MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-    coerce_int_setting,
-    get_cli_setting,
-    load_settings,
+    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES as DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+    MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES as MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+    MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES as MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+    coerce_int_setting as coerce_int_setting,
+    get_cli_setting as get_cli_setting,
+    load_settings as load_settings,
 )
 
 from tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE
@@ -251,16 +252,16 @@ from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB, _CHANGE_REVIEW_LIST_RUNS_
 from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Workspaces.change_review_consent import SkippedReviewRoot
 from tldw_chatbook.Workspaces.change_review_finalization import (
-    ChangeReviewFinalizeResult,
+    ChangeReviewFinalizeResult as ChangeReviewFinalizeResult,
 )
 from tldw_chatbook.Workspaces.change_turn_tracker import (
-    ChangeTurnTracker,
+    ChangeTurnTracker as ChangeTurnTracker,
     _BASELINE_TIMEOUT_SECONDS as _CHANGE_BOUNDARY_WAIT_SECONDS,
 )
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Internal_Prompts.catalog import CATALOG
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
-from tldw_chatbook.Utils.path_validation import validate_path
+from tldw_chatbook.Utils.path_validation import validate_path as validate_path
 from tldw_chatbook.Utils.token_counter import get_model_token_limit
 
 
@@ -2288,6 +2289,7 @@ class SettledChild:
     session_id: str
     assistant_message_id: str
     settled_after_turn: bool = False
+    workflow_task: WorkflowTaskClaim | None = None
 
 
 @dataclass(frozen=True)
@@ -2457,6 +2459,8 @@ class _ModelCallLifeline:
         "_shutdown_lock",
         "_shutdown_requested",
         "_operation",
+        "_cleanup_returned",
+        "_driver_returned",
     )
 
     def __init__(
@@ -2470,6 +2474,8 @@ class _ModelCallLifeline:
         self._shutdown_lock = threading.Lock()
         self._shutdown_requested = False
         self._operation: OwnedOperation | None = None
+        self._cleanup_returned = False
+        self._driver_returned = False
         self.loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._run, name=name, daemon=True)
 
@@ -2483,6 +2489,7 @@ class _ModelCallLifeline:
             finally:
                 if self._operation is not None:
                     self._operation.finish()
+                self._driver_returned = True
 
     async def _cleanup(self) -> None:
         try:
@@ -2491,8 +2498,14 @@ class _ModelCallLifeline:
                 for task in asyncio.all_tasks()
                 if task is not asyncio.current_task()
             ]
-            for task in pending:
-                task.cancel()
+            from .console_preparation_reads import current_planning_preparation
+
+            planning = current_planning_preparation()
+            if planning is not None and planning.turn_lifeline is self:
+                planning._planning_return_source()
+            else:
+                for task in pending:
+                    task.cancel()
             try:
                 if pending:
                     await asyncio.gather(*pending, return_exceptions=True)
@@ -2506,6 +2519,7 @@ class _ModelCallLifeline:
                     # generic transport's chat_api_call): the model operation
                     # stays owned until it returns, as ADR-134 requires.
                     await self.loop.shutdown_default_executor()
+            self._cleanup_returned = True
         except BaseException:  # noqa: BLE001 -- cleanup cannot replace the run result
             logger.warning("model-call loop cleanup failed")
         finally:
@@ -2543,6 +2557,7 @@ class _ModelCallLifeline:
                     self._operation.mark_stopping()
                 if self._thread.ident is None:
                     self.loop.close()
+                    self._cleanup_returned = self._driver_returned = True
                 elif not self.loop.is_closed():
                     self.loop.call_soon_threadsafe(
                         lambda: self.loop.create_task(self._cleanup())
@@ -3305,6 +3320,7 @@ class _StreamingModelAdapter:
         should_cancel,
         loop,
         native_tools: bool,
+        session_id: str | None = None,
         provider_stream_signals: ConsoleProviderStreamSignals | None = None,
         continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
         continuation_target: ContinuationRestoreTarget | None = None,
@@ -3322,6 +3338,7 @@ class _StreamingModelAdapter:
         self._gateway = provider_gateway
         self._resolution = resolution
         self._assistant_message_id = assistant_message_id
+        self._session_id = session_id
         self._should_cancel = should_cancel
         # TASK-28227: armed by run_reply's redirect-ready hook; cuts the
         # PRIMARY's in-flight stream only (see stream_cut in chat_call).
@@ -3815,49 +3832,6 @@ def _compose_run_allowed_tools(
     return tuple(builtin_names) + skill_names + (SPAWN_TOOL_NAME,)
 
 
-class _CollisionFilteredMCPProvider:
-    """View over a composed MCP provider that hides collision-excluded entries.
-
-    Registered into the run's registry INSTEAD OF the raw provider, so
-    ``ToolCatalogRegistry.list_catalog()`` (a raw sweep across every
-    registered provider) never surfaces a shadowed MCP entry either --
-    mirrors ``_non_colliding_skill_entries``'s own raw-catalog exclusion
-    invariant (a colliding skill is filtered out before ``SkillToolProvider``
-    is even constructed, so its catalog never contains it). MCP tools are
-    already fully composed by the time this run sees them (T3: composed
-    once, by the caller, on the main loop), so this wraps rather than
-    reconstructs -- a read-time filter only. The underlying provider's own
-    state (its composed catalog, per-turn decision stamps) is never
-    touched, and ``invoke``/``load_schema`` are simple pass-throughs: a
-    filtered-out tool id can never reach them anyway, since the registry's
-    own owner/name caches are built exclusively from this wrapper's
-    (already-filtered) ``list_catalog()``.
-    """
-
-    def __init__(self, provider: Any, allowed_names: frozenset[str]) -> None:
-        self._provider = provider
-        self._allowed_names = allowed_names
-
-    def list_catalog(self) -> list[ToolCatalogEntry]:
-        return [
-            entry
-            for entry in self._provider.list_catalog()
-            if entry.name in self._allowed_names
-        ]
-
-    def hook_operation(self, tool_id: str) -> str | None:
-        if not any(entry.id == tool_id for entry in self.list_catalog()):
-            return None
-        classify = getattr(self._provider, "hook_operation", None)
-        return classify(tool_id) if callable(classify) else None
-
-    def load_schema(self, tool_id: str) -> ToolSchema:
-        return self._provider.load_schema(tool_id)
-
-    def invoke(self, tool_id: str, args: dict) -> ToolResult:
-        return self._provider.invoke(tool_id, args)
-
-
 def _non_colliding_mcp_names(
     mcp_provider: Any,
     collision_names: frozenset[str] | set[str],
@@ -4168,6 +4142,11 @@ def _compose_run_registry_and_allowed(
     """
     if (scratch_root is None) != (scratch_lease is None):
         raise ValueError("Console scratch root and lease must be supplied together")
+    from .console_ordinary_tree import current_ordinary_tree
+
+    ordinary = current_ordinary_tree()
+    if ordinary is not None:
+        ordinary.check_local_sources()
     registry = ToolCatalogRegistry(ephemeral=ephemeral)
     builtin_provider = BuiltinToolProvider(
         gate=builtin_gate,
@@ -4183,6 +4162,8 @@ def _compose_run_registry_and_allowed(
     )
     registry.register_provider(builtin_provider)
     builtin_names = tuple(entry.name for entry in builtin_provider.list_catalog())
+    if ordinary is not None:
+        ordinary.bind_builtin_provider(builtin_provider, builtin_names)
     canvas_names: tuple[str, ...] = ()
     if canvas_provider is not None and registry.register_canvas_provider(
         canvas_provider, canvas_authority
@@ -4203,6 +4184,11 @@ def _compose_run_registry_and_allowed(
     if local_provider is not None:
         registry.register_provider(local_provider)
         local_names = tuple(e.name for e in local_provider.list_catalog())
+        from .console_ordinary_tree import current_ordinary_tree
+
+        ordinary = current_ordinary_tree()
+        if ordinary is not None:
+            ordinary.bind_local_provider(local_provider, local_names)
     if virtual_cli_provider is not None:
         registry.register_provider(virtual_cli_provider)
         local_names += tuple(e.name for e in virtual_cli_provider.list_catalog())
@@ -4224,6 +4210,8 @@ def _compose_run_registry_and_allowed(
         library_provider, library_authority
     ):
         library_names = tuple(e.name for e in library_provider.list_catalog())
+        if ordinary is not None:
+            ordinary.bind_library_provider(library_provider, library_names)
     profile_names: tuple[str, ...] = ()
     if profile_provider is not None and not ephemeral:
         registry.register_provider(profile_provider)
@@ -4337,32 +4325,21 @@ def _compose_run_registry_and_allowed(
 
 
 @dataclass(frozen=True, slots=True)
-class ConsoleFirstRequestPlan:
-    """Pure, disposable inputs for the Console agent's first model request."""
+class _PreparedNativeReply:
+    """Original native resources; the producer frame owns their finalizers."""
 
-    registry: ToolCatalogRegistry
-    allowed_tools: tuple[str, ...]
-    builtin_names: tuple[str, ...]
-    local_names: tuple[str, ...]
-    skill_names: frozenset[str]
-    config: AgentConfig
-    schemas: FirstRequestSchemaPlan
-    run_log: RunLogRequestPlan
-    messages: list[dict]
-    api_endpoint: str
-    profile_context_snapshot: ProfileContextSnapshot
-    # Raw selection id before family flattening (``custom-ep:<slug>`` when
-    # the session's provider names a registry endpoint; otherwise equals
-    # ``api_endpoint``). Spawn resolution uses it as ``parent_provider`` so
-    # an inheriting child snapshots the endpoint, not the execution family.
-    selected_provider: str = ""
-    # TASK-34100.5.3 (review round 1): the planner inputs the context meter
-    # re-runs against another resolution (``console_tool_surface_preview``).
-    # A factory, so only a live send pays for copying the catalog.
-    tool_surface_inputs: Callable[[], Any] | None = None
-    # Light surface only: the names from the user's own sources (Library,
-    # MCP servers they added, an armed shell) that the plan kept.
-    user_source_names: tuple[str, ...] = ()
+    service: AgentService
+    first_request_plan: ConsoleFirstRequestPlan
+    session_id: str
+    progress_owner_id: str
+    resolution: Any
+    adapter: _StreamingModelAdapter
+    turn_lifeline: _ModelCallLifeline | None
+    project_instruction_context: _ProjectInstructionDispatchContext | None
+    review_state_scope: Any
+    run_log_writer: Any
+    child_change_state: _ChildChangeState
+    run_primary: Callable[[], tuple[str, RunOutcome]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -4496,7 +4473,7 @@ def _resolve_native_tool_context(messages, registry, eligible):
     return [dict(row, content=content(row.get("content"))) for row in messages]
 
 
-def build_console_first_request_plan(
+def _compose_first_request_catalog(
     *,
     shared_registry: ToolCatalogRegistry,
     shared_allowed_tools: tuple[str, ...],
@@ -4505,102 +4482,28 @@ def build_console_first_request_plan(
     mcp_provider: Any | None,
     builtin_gate: Any | None,
     local_provider: Any | None,
-    virtual_cli_provider: Any | None = None,
-    raw_shell_provider: Any | None = None,
-    recovery_provider: Any | None = None,
+    virtual_cli_provider: Any | None,
+    raw_shell_provider: Any | None,
+    recovery_provider: Any | None,
     library_provider: Any | None,
     library_authority: Any | None,
-    profile_provider: Any | None = None,
+    profile_provider: Any | None,
     workspace_id: str | None,
-    workspace_read_binding_ids: tuple[str, ...] | None = None,
-    workspace_write_binding_ids: tuple[str, ...] | None = None,
-    workspace_binding_authority: tuple[Any, ...] | None = None,
-    run_budget: RunBudget | None = None,
+    workspace_read_binding_ids: tuple[str, ...] | None,
+    workspace_write_binding_ids: tuple[str, ...] | None,
+    workspace_binding_authority: tuple[Any, ...] | None,
     ephemeral: bool,
     diff_sink: Callable[[tuple[str, str, str, str]], None] | None,
     scratch_root: Path | None,
     scratch_lease: Callable[[], ContextManager[Path]] | None,
-    resolution: Any,
-    fallback_model: str,
-    session_system_prompt: str,
-    native_tools: bool,
-    turn_skill_bindings: tuple[str, ...],
-    turn_bundle_block: str,
-    install_skill_enabled: bool,
-    run_skill_script_enabled: bool,
-    fork_chat_enabled: bool = False,
-    new_chat_enabled: bool = False,
-    spawn_override_enabled: bool = False,
-    spawn_override_targets: tuple[tuple[str, tuple[str, ...]], ...] = (),
-    worktree_merge_enabled: bool = False,
-    agent_messages: list[dict],
-    agent_definitions: tuple[AgentDefinition, ...] = (),
-    fleet_max_live: int = 1,
-    persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
-    profile_context_service: Any | None = None,
-    personal_context_snapshot: ProfileContextSnapshot | None = None,
-    code_review_provider: Any | None = None,
-    canvas_provider: Any | None = None,
-    canvas_authority: Any | None = None,
-    preview_canvas_profile_snapshot: Any | None = None,
-    progress_inbox_exists: bool = False,
-    light_surface: bool = False,
-    storage_provider: Callable[[], Any] | None = None,
-) -> ConsoleFirstRequestPlan:
-    """Build live/preview-identical first-request inputs without live effects.
-
-    Args:
-        shared_registry: Existing catalog used when no per-run provider exists.
-        shared_allowed_tools: Existing allow-list paired with that catalog.
-        context: Frozen Console context used to compose per-run providers.
-        skills_present: Whether eligible skills exist for this turn.
-        mcp_provider: Optional MCP catalog provider for the run.
-        builtin_gate: Optional permission gate for built-in tools.
-        local_provider: Optional local-filesystem tool provider.
-        virtual_cli_provider: Optional virtual command-line tool provider.
-        raw_shell_provider: Optional raw-shell tool provider.
-        library_provider: Optional authenticated Library provider.
-        library_authority: Capability authorizing the Library provider.
-        workspace_id: Selected workspace identifier, if any.
-        ephemeral: Whether this is an unbound scratch-only Console session.
-        diff_sink: Optional callback receiving local-file change records.
-        scratch_root: Optional private scratch directory for this run.
-        scratch_lease: Optional scoped accessor for that scratch directory.
-        resolution: Frozen provider and model resolution for the request.
-        fallback_model: Model id used when the resolution does not supply one.
-        session_system_prompt: User-visible base system prompt for the session.
-        native_tools: Whether to prefer provider-native tool schemas.
-        turn_skill_bindings: Skill names explicitly bound to this turn.
-        turn_bundle_block: Exact automatic context rider for the next request.
-        install_skill_enabled: Whether the skill installer is available.
-        run_skill_script_enabled: Whether skill scripts are available.
-        worktree_merge_enabled: Whether the actual worktree confirmation
-            surface is available. Both Console preview paths and live dispatch
-            pass the same surface gate to this shared planner so worktree tool
-            disclosure matches the live first request.
-        agent_messages: Exact conversation messages before optional riders.
-        agent_definitions: Named sub-agent definitions available this turn.
-        fleet_max_live: Maximum simultaneously live agents for this run.
-        run_budget: Optional precomputed run budget override.
-        persona_policy_rules: Optional persona rules applied to tool composition.
-        profile_context_service: Optional profile snapshot builder for this turn.
-        personal_context_snapshot: Optional prebuilt snapshot used verbatim.
-        preview_canvas_profile_snapshot: Immutable Canvas profile data for budgeting;
-            no Canvas provider is registered and no authority is issued.
-        light_surface: TASK-34100.5.3 -- plan plain chat's light tool surface
-            (``Agents/plain_chat_tool_surface.py``): the safe set plus the
-            tools the user switched on, no runtime tools (sub-agents, skills,
-            chat forks, run log, discovery), and the minimal prompt.
-
-    Returns:
-        A frozen catalog, config, message, schema, and run-log plan shared by
-        preview and live dispatch.
-    """
-    from tldw_chatbook.Personal_Context.context_service import (
-        ProfileContextRequest,
-        ProfileContextSnapshot,
-    )
-
+    code_review_provider: Any | None,
+    persona_policy_rules: tuple[Mapping[str, Any], ...] | None,
+    canvas_provider: Any | None,
+    canvas_authority: Any | None,
+    preview_canvas_profile_snapshot: Any | None,
+    storage_provider: Callable[[], Any] | None,
+):
+    """Compose the one actual catalog before message-dependent request planning."""
     fresh = bool(
         skills_present
         or mcp_provider is not None
@@ -4668,6 +4571,153 @@ def build_console_first_request_plan(
         if skills_present and not ephemeral
         else frozenset()
     )
+    from .console_ordinary_tree import current_ordinary_tree
+
+    ordinary = current_ordinary_tree()
+    if ordinary is not None:
+        ordinary.bind_catalog(registry, allowed_tools)
+    return registry, allowed_tools, builtin_names, local_names, skill_names
+
+
+def build_console_first_request_plan(
+    *,
+    shared_registry: ToolCatalogRegistry,
+    shared_allowed_tools: tuple[str, ...],
+    context: Mapping[str, Any],
+    skills_present: bool,
+    mcp_provider: Any | None,
+    builtin_gate: Any | None,
+    local_provider: Any | None,
+    virtual_cli_provider: Any | None = None,
+    raw_shell_provider: Any | None = None,
+    recovery_provider: Any | None = None,
+    library_provider: Any | None,
+    library_authority: Any | None,
+    profile_provider: Any | None = None,
+    workspace_id: str | None,
+    workspace_read_binding_ids: tuple[str, ...] | None = None,
+    workspace_write_binding_ids: tuple[str, ...] | None = None,
+    workspace_binding_authority: tuple[Any, ...] | None = None,
+    run_budget: RunBudget | None = None,
+    ephemeral: bool,
+    diff_sink: Callable[[tuple[str, str, str, str]], None] | None,
+    scratch_root: Path | None,
+    scratch_lease: Callable[[], ContextManager[Path]] | None,
+    resolution: Any,
+    fallback_model: str,
+    session_system_prompt: str,
+    native_tools: bool,
+    turn_skill_bindings: tuple[str, ...],
+    turn_bundle_block: str,
+    install_skill_enabled: bool,
+    run_skill_script_enabled: bool,
+    fork_chat_enabled: bool = False,
+    new_chat_enabled: bool = False,
+    spawn_override_enabled: bool = False,
+    spawn_override_targets: tuple[tuple[str, tuple[str, ...]], ...] = (),
+    worktree_merge_enabled: bool = False,
+    agent_messages: list[dict],
+    agent_definitions: tuple[AgentDefinition, ...] = (),
+    fleet_max_live: int = 1,
+    persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
+    profile_context_service: Any | None = None,
+    personal_context_snapshot: ProfileContextSnapshot | None = None,
+    code_review_provider: Any | None = None,
+    canvas_provider: Any | None = None,
+    canvas_authority: Any | None = None,
+    preview_canvas_profile_snapshot: Any | None = None,
+    progress_inbox_exists: bool = False,
+    light_surface: bool = False,
+    storage_provider: Callable[[], Any] | None = None,
+    _catalog: tuple | None = None,
+) -> ConsoleFirstRequestPlan:
+    """Build live/preview-identical first-request inputs without live effects.
+
+    Args:
+        shared_registry: Existing catalog used when no per-run provider exists.
+        shared_allowed_tools: Existing allow-list paired with that catalog.
+        context: Frozen Console context used to compose per-run providers.
+        skills_present: Whether eligible skills exist for this turn.
+        mcp_provider: Optional MCP catalog provider for the run.
+        builtin_gate: Optional permission gate for built-in tools.
+        local_provider: Optional local-filesystem tool provider.
+        virtual_cli_provider: Optional virtual command-line tool provider.
+        raw_shell_provider: Optional raw-shell tool provider.
+        library_provider: Optional authenticated Library provider.
+        library_authority: Capability authorizing the Library provider.
+        workspace_id: Selected workspace identifier, if any.
+        ephemeral: Whether this is an unbound scratch-only Console session.
+        diff_sink: Optional callback receiving local-file change records.
+        scratch_root: Optional private scratch directory for this run.
+        scratch_lease: Optional scoped accessor for that scratch directory.
+        resolution: Frozen provider and model resolution for the request.
+        fallback_model: Model id used when the resolution does not supply one.
+        session_system_prompt: User-visible base system prompt for the session.
+        native_tools: Whether to prefer provider-native tool schemas.
+        turn_skill_bindings: Skill names explicitly bound to this turn.
+        turn_bundle_block: Exact automatic context rider for the next request.
+        install_skill_enabled: Whether the skill installer is available.
+        run_skill_script_enabled: Whether skill scripts are available.
+        worktree_merge_enabled: Whether the actual worktree confirmation
+            surface is available. Both Console preview paths and live dispatch
+            pass the same surface gate to this shared planner so worktree tool
+            disclosure matches the live first request.
+        agent_messages: Exact conversation messages before optional riders.
+        agent_definitions: Named sub-agent definitions available this turn.
+        fleet_max_live: Maximum simultaneously live agents for this run.
+        run_budget: Optional precomputed run budget override.
+        persona_policy_rules: Optional persona rules applied to tool composition.
+        profile_context_service: Optional profile snapshot builder for this turn.
+        personal_context_snapshot: Optional prebuilt snapshot used verbatim.
+        preview_canvas_profile_snapshot: Immutable Canvas profile data for budgeting;
+            no Canvas provider is registered and no authority is issued.
+        light_surface: TASK-34100.5.3 -- plan plain chat's light tool surface
+            (``Agents/plain_chat_tool_surface.py``): the safe set plus the
+            tools the user switched on, no runtime tools (sub-agents, skills,
+            chat forks, run log, discovery), and the minimal prompt.
+
+    Returns:
+        A frozen catalog, config, message, schema, and run-log plan shared by
+        preview and live dispatch.
+    """
+    from tldw_chatbook.Personal_Context.context_service import (
+        ProfileContextRequest,
+        ProfileContextSnapshot,
+    )
+
+    registry, allowed_tools, builtin_names, local_names, skill_names = (
+        _catalog
+        if _catalog is not None
+        else _compose_first_request_catalog(
+            shared_registry=shared_registry,
+            shared_allowed_tools=shared_allowed_tools,
+            context=context,
+            skills_present=skills_present,
+            mcp_provider=mcp_provider,
+            builtin_gate=builtin_gate,
+            local_provider=local_provider,
+            virtual_cli_provider=virtual_cli_provider,
+            raw_shell_provider=raw_shell_provider,
+            recovery_provider=recovery_provider,
+            code_review_provider=code_review_provider,
+            library_provider=library_provider,
+            library_authority=library_authority,
+            profile_provider=profile_provider,
+            workspace_id=workspace_id,
+            workspace_read_binding_ids=workspace_read_binding_ids,
+            workspace_write_binding_ids=workspace_write_binding_ids,
+            workspace_binding_authority=workspace_binding_authority,
+            ephemeral=ephemeral,
+            diff_sink=diff_sink,
+            scratch_root=scratch_root,
+            scratch_lease=scratch_lease,
+            persona_policy_rules=persona_policy_rules,
+            canvas_provider=canvas_provider,
+            canvas_authority=canvas_authority,
+            preview_canvas_profile_snapshot=preview_canvas_profile_snapshot,
+            storage_provider=storage_provider,
+        )
+    )
     user_source_names: tuple[str, ...] = ()
     if light_surface:
         # TASK-34100.5.3 (owner ruling 2026-10-04, "Light surface by
@@ -4681,12 +4731,42 @@ def build_console_first_request_plan(
             + surface.provider_names(raw_shell_provider)
             + tuple(sorted(surface.user_mcp_tool_names(mcp_provider)))
         )
-        allowed_tools = surface.light_surface_allowed_tools(
+        light_tools = surface.light_surface_allowed_tools(
             allowed_tools,
             builtin_names=builtin_names,
             local_names=surface.provider_names(local_provider),
             user_source_names=user_source_names,
         )
+        if _catalog is not None:
+            from tldw_chatbook.Agents.workflow_task_scope import (
+                current_planning_authorization,
+            )
+
+            planning = current_planning_authorization()
+            if (
+                planning is not None
+                and planning.registry is registry
+                and planning.allowed == frozenset(allowed_tools)
+            ):
+                # The live planning catalog already bounds these reads.
+                workflow_local_tools = planning.allowed.intersection(
+                    local_names, {"fs_list", "fs_read"}
+                )
+            elif planning is None and local_provider is not None:
+                from .console_workflow_preparation import (
+                    current_workflow_execution_local_tools,
+                )
+
+                workflow_local_tools = current_workflow_execution_local_tools(
+                    registry, allowed_tools, local_provider
+                )
+            else:
+                workflow_local_tools = ()
+            light_tools = tuple(
+                name for name in allowed_tools
+                if name in light_tools or name in workflow_local_tools
+            )
+        allowed_tools = light_tools
         user_source_names = tuple(
             name for name in user_source_names if name in allowed_tools
         )
@@ -4793,8 +4873,12 @@ def build_console_first_request_plan(
         allowed_tools = config.allowed_tools
     # Describe only the final offered capabilities, including Goal scope
     # narrowing, before schema/request construction consumes the note.
+    from .console_preparation_reads import current_agent_sources
+
+    original_sources = current_agent_sources()
     workspace_note = workspace_context_note(
         workspace_id,
+                         registry=original_sources.registry if original_sources is not None else None,
         binding_authority=workspace_binding_authority,
         status_cache=get_remote_binding_status_cache(),
         path_tool_aliases=_advertised_path_root_aliases(
@@ -4817,6 +4901,8 @@ def build_console_first_request_plan(
     messages = agent_messages
     if turn_bundle_block:
         messages, _ = _append_to_last_user_message(agent_messages, turn_bundle_block)
+    from .console_preparation_reads import current_planning_preparation
+
     schema_flags: dict[str, Any] = dict(
         skill_file_enabled=bool(skills_present and turn_skill_bindings),
         install_skill_enabled=install_skill_enabled,
@@ -4830,7 +4916,7 @@ def build_console_first_request_plan(
         spawn_override_targets=spawn_override_targets,
         # The run log itself still records a light run; its tools are not
         # part of the light surface.
-        run_log_active=run_log.requested and not light_surface,
+        run_log_active=run_log.requested and not light_surface and current_planning_preparation() is None,
         agent_definitions=agent_definitions,
         fleet_active=fleet_max_live > 1,
         # Live fleet construction opens an inbox before the first request.
@@ -5214,6 +5300,8 @@ class ConsoleAgentBridge:
         change_tracker: Any | None = None,
         buddy_sink: "PersonaBuddyConsoleAdapter | None" = None,
         change_finalization_coordinator: Any | None = None,
+        change_review_native: Any | None = None,
+        change_revert_native: Any | None = None,
         runtime_capacity: RuntimeCapacity | None = None,
         runtime_capacity_factory: Callable[[], RuntimeCapacity] | None = None,
         message_store: MessageStore | None = None,
@@ -5270,6 +5358,10 @@ class ConsoleAgentBridge:
         self._change_tracker = change_tracker
         self._buddy_sink = buddy_sink
         self._change_finalization_coordinator = change_finalization_coordinator
+        self._change_revert_native = change_revert_native
+        self._native_undo_expected = change_revert_native is not None
+        self._change_review_native = change_review_native
+        self._native_change_review_expected = change_review_native is not None
         self._store = store
         if self._store is not None and message_store is not None:
             self._store.register_progress_message_store(message_store)
@@ -5572,6 +5664,19 @@ class ConsoleAgentBridge:
         if conversation_id is None:
             conversation_id = self._preview_conversation_id(session_id)
         return not self._agent_work_in_flight(session_id, conversation_id)
+
+    def composed_local_tools_available(self, service: Any, engaged: bool) -> bool | None:
+        """Reuse a same-source compose observation for the Tools chip."""
+        from tldw_chatbook.Agents.plain_chat_tool_surface import AppToolKillSwitch
+
+        switch = self._tool_kill_switch
+        if (
+            type(self) is ConsoleAgentBridge
+            and type(switch) is AppToolKillSwitch
+            and read_mcp_service(switch.app) is service
+        ):
+            return not engaged
+        return None
 
     def light_surface_local_tools_available(self) -> bool:
         """Whether a send now composes local tools (the kill switch is off).
@@ -6004,6 +6109,21 @@ class ConsoleAgentBridge:
 
     # -- run ------------------------------------------------------------
 
+    async def _prepare_workflow_reply(
+        self, *, phase, task_id, binding, resolution, **kwargs
+    ):
+        """Prepare original task custody without a primary turn or provider call."""
+        from .console_workflow_preparation import prepare_workflow_reply
+
+        return await prepare_workflow_reply(
+            self,
+            phase=phase,
+            task_id=task_id,
+            binding=binding,
+            resolution=resolution,
+            **kwargs,
+        )
+
     @agent_execution_guard
     @_retire_generation_attempt_after_reply
     def run_reply(
@@ -6119,2466 +6239,295 @@ class ConsoleAgentBridge:
         parent_budget_deadline: float | None = None,
         on_primary_budget_settled: Callable[[RunBudget | bool], None] | None = None,
     ) -> tuple[str, RunOutcome]:
-        replay = getattr(resolution, "reasoning_replay", None)
-        if replay is not None and thinking_policy in {"include", "exclude"}:
-            resolution = dataclass_replace(
-                resolution,
-                reasoning_replay=dataclass_replace(
-                    replay,
-                    mode="all" if thinking_policy == "include" else "off",
-                    source="conversation",
-                ),
-            )
-        canvas_turn_controller = None
-        canvas_run_id = None
-        lifecycle_reader = getattr(canvas_provider, "lifecycle_binding", None)
-        if callable(lifecycle_reader):
-            try:
-                lifecycle_binding = lifecycle_reader(canvas_authority)
-                if (
-                    isinstance(lifecycle_binding, tuple)
-                    and len(lifecycle_binding) == 2
-                    and isinstance(lifecycle_binding[1], str)
-                    and lifecycle_binding[1]
-                ):
-                    canvas_turn_controller, canvas_run_id = lifecycle_binding
-            except Exception:
-                canvas_turn_controller = None
-                canvas_run_id = None
-        if generation_token is None:
-            generation_token = self._store.begin_generation_attempt(
-                assistant_message_id
-            )
-        # SQLite preparation must finish outside the native identity scope.
-        self._store.prepare_progress_inbox(session_id, message_store=self.message_store)
-        # Capture before setup can yield to native close/state replacement.
-        # Reusing a native ID must not let this delayed run bind its successor.
-        with self._store.progress_owner_scope(
-            session_id, message_store=self.message_store
-        ) as initial_progress_owner_id:
-            if initial_progress_owner_id is None or (
-                expected_progress_owner_id is not None
-                and initial_progress_owner_id != expected_progress_owner_id
-            ):
-                from tldw_chatbook.Agents.fleet_messages import MessageError
-
-                raise MessageError("unavailable")
-        protocol = getattr(resolution, "continuation_protocol", None)
-        if continuation_target is None and isinstance(protocol, str) and protocol:
-            provider = getattr(resolution, "execution_key", None)
-            model_name = getattr(resolution, "model", None)
-            base_url = getattr(resolution, "base_url", None)
-            if not all(
-                isinstance(value, str) and value
-                for value in (provider, model_name, base_url)
-            ):
-                raise ValueError("Provider continuation request is not pinned.")
-            continuation_target = ContinuationRestoreTarget(
-                provider=provider,
-                protocol=protocol,
-                model=model_name,
-                api_base_url=base_url,
-                selected_provider=getattr(resolution, "selected_provider", None)
-                or getattr(resolution, "provider", None),
-            )
-        if continuation_target is not None and continuation_owner_key is None:
-            continuation_owner_key = CONTINUATION_OWNER_KEY
-        # Per-run tool registry + allow-list (Task 12, extended by P5-T6 for
-        # MCP, by task-545/T6 for a per-run builtin_gate, and extended again
-        # for local tools): rebuilt FRESH for this run whenever there is a
-        # skills service, an already-composed MCP or local provider, OR a
-        # builtin_gate for this run (never
-        # cached across runs, and never the shared self._registry/
-        # self._allowed_tools built at construction) -- so a skill or MCP
-        # tool approved/edited/revoked since the last run always takes
-        # effect on the very next one. `mcp_provider` is built and
-        # composed by the CALLER (ConsoleChatController._compose_mcp_
-        # provider, on the running Textual main loop, BEFORE this method
-        # is dispatched onto asyncio.to_thread) -- see MCPToolProvider's
-        # own module docstring for why `compose_catalog()`'s async I/O can
-        # never run from inside this worker-thread method. `builtin_gate`
-        # MUST route through this fresh-build branch rather than the
-        # shared fast path below: the shared path's own `BuiltinToolProvider`
-        # is built once at bridge-construction time with `gate=None` (its
-        # own lazy default), which would be a SECOND, independently-built
-        # gate the run's review hook never stamps -- see
-        # `_compose_run_registry_and_allowed`'s own docstring for the
-        # desync this would cause. None of skills service, MCP provider,
-        # local provider, or builtin_gate: the shipped shared
-        # registry/allow-list is used unchanged -- the no-skills, no-MCP,
-        # no-local-tools, no-gate path stays
-        # byte-identical to before this task (existing callers that never
-        # pass `builtin_gate` see no behavior change at all).
-        skill_runner = None
-        # TASK-1366: this run's UI-side diff channel. When this run takes
-        # the fresh-build branch below, the provider's strip seam
-        # (BuiltinToolProvider.invoke) appends
-        # ``(tool_name, file_path, old, new)`` here BEFORE the raw contents
-        # are removed from the LLM/run-log-bound result; the on_step
-        # handler below pairs each capture with its STEP_TOOL_RESULT (via
-        # ``_pair_step_diff``) and hangs it on the TOOL marker message
-        # (session-only ``tool_diff``). Threading: invoke() runs on the
-        # tool call's PER-CALL DAEMON THREAD (AgentService.
-        # _call_with_timeout) while on_step runs on this run's worker
-        # thread. In the normal case the daemon thread is joined before
-        # the result step is emitted, so a capture always precedes its
-        # step; on timeout/cancel the thread is abandoned unjoined and a
-        # late capture can land cross-thread AFTER its step -- the pairing
-        # rule (most-recent match, everything older is stale) tolerates
-        # both orderings, and deque append/scan/del degrade to a cosmetic
-        # missed pairing at worst. The shared fast path's construction-
-        # time provider has no sink (a cross-run provider must not capture
-        # into one run's queue), so gate-less callers simply get no diff
-        # capture -- their rows render exactly as before. Production always
-        # passes builtin_gate (console_chat_controller), i.e. the
-        # fresh-build branch.
-        pending_diffs: deque[tuple[str, str, str, str]] = deque()
-        # task-4 (skills-fork-reachability): one SkillFileBindings per run,
-        # handed to BOTH AgentService (the loop's authorization + reader
-        # closure -- Task 3) and this run's _BridgeSkillRunner (which grants
-        # a spawned skill's own name pre-spawn) -- never two independently-
-        # seeded copies, or the runner's grant would never reach the loop's
-        # check. `authorized` starts empty here (Task 5 seeds the turn's
-        # $skill names); the reader is a SYNC adapter over the async scope-
-        # service read, matching _BridgeSkillRunner.run's own
-        # asyncio.run-in-worker-thread pattern just below.
-        skill_file_bindings = None
-        context: Mapping[str, Any] = skills_context or {}
-        if self._skills_service is not None and skills_context is None:
-            context = asyncio.run(self._skills_service.get_context(mode="local"))
-        plugin_service = getattr(
-            getattr(self._skills_service, "local_service", None), "plugin_service", None
-        )
-        if restore_provider_continuation is not None:
-            if plugin_service is not None:
-                context = asyncio.run(
-                    plugin_service.resume_maximum(
-                        context,
-                        restore_provider_continuation,
-                        self._store._session_or_raise(
-                            session_id
-                        ).persisted_conversation_id
-                        or "",
-                        assistant_message_id,
-                    )
-                )
-            elif restore_provider_continuation.managed_resume is not None:
-                raise PermissionError("Managed continuation service unavailable.")
-            else:
-                context = dict(context, plugin_resume_constraint="zero")
-                context["available_skills"] = [
-                    row
-                    for row in context.get("available_skills", ())
-                    if not row.get("plugin_owned")
-                ]
-                context["context_text"] = "\n".join(
-                    str(row.get("name", "")) for row in context["available_skills"]
-                )
-        if plugin_service is not None and (
-            context.get("plugin_resume_constraint") is not None
-            or context.get("_plugin_requirement_ceiling")
-            or any(
-                item.get("plugin_owned") for item in context.get("available_skills", ())
-            )
-        ):
-            context = asyncio.run(
-                plugin_service.admit(
-                    context, context.get("plugin_run_id") or "pending:" + uuid4().hex
-                )
-            )
-        plugin_entries = tuple(
-            row
-            for row in context.get("available_skills", ())
-            if row.get("plugin_owned")
-        )
-        run_workspace_id = workspace_id
-        run_is_ephemeral = bool(workspace_ephemeral)
-        if self._store is not None and workspace_id is None:
-            try:
-                run_workspace_id = self._store.session_workspace_id(session_id)
-            except KeyError:
-                pass
-        if self._store is not None and workspace_ephemeral is None:
-            try:
-                run_is_ephemeral = self._store.session_is_ephemeral(session_id)
-            except KeyError:
-                pass
-        # TASK-34100.5.3: plain chat's light surface. Beyond what the plan
-        # discloses, the runtime tools' closures are not even built, so a
-        # model naming one anyway has nothing to dispatch.
-        light_surface = self.light_surface_for(
-            turn_skill_bindings, session_id=session_id, conversation_id=conversation_id
-        )
-        if light_surface:
-            request_skill_install_confirm = request_skill_script_confirm = None
-            request_chat_create_confirm = request_worktree_merge_confirm = None
-            managed_skill_promotion_gate = None
-        from tldw_chatbook.Skills_Interop.skill_script_runner import (
-            sandbox_supported,
-        )
-
-        script_tool_enabled = bool(
-            self._skills_service is not None
-            and request_skill_script_confirm is not None
-            and sandbox_supported()
-        )
-        native_tools = (
-            bool(native_tools_enabled)
-            if native_tools_enabled is not None
-            else (
-                True
-                if self._native_tools_enabled is None
-                else bool(self._native_tools_enabled())
-            )
-        )
-        run_budget = (
-            intersect_console_run_budget(run_budget, console_run_budget())
-            if run_budget is not None
-            else console_run_budget()
-        )
-        # A light run's sub-agent budget is zeroed in the plan itself
-        # (``build_console_first_request_plan``), the config this run uses.
-        runtime_definitions, fleet_max_live = _console_first_request_runtime_context(
-            self._db, run_budget
-        )
-        if plugin_entries and not run_is_ephemeral:
-            plugin_catalog = tuple(
-                row
-                for provider in (
-                    self._registry,
-                    mcp_provider,
-                    local_provider,
-                    virtual_cli_provider,
-                    raw_shell_provider,
-                    library_provider,
-                    profile_provider,
-                    canvas_provider,
-                )
-                if provider is not None
-                for row in provider.list_catalog()
-            )
-            eligible = frozenset(row.name for row in plugin_catalog)
-            managed = asyncio.run(
-                plugin_service.agent_presets(
-                    plugin_entries,
-                    eligible,
-                    registry={row.id: row.name for row in plugin_catalog},
-                    parent_provider=str(
-                        getattr(resolution, "selected_provider", "")
-                        or getattr(resolution, "execution_key", "")
-                        or getattr(resolution, "provider", "")
-                    ),
-                )
-            )
-            if {item.name for item in managed} & {
-                item.name for item in runtime_definitions
-            }:
-                raise PermissionError("plugin_agent_namespace_collision")
-            runtime_definitions = (*runtime_definitions, *managed)
-        # Build the exact outbound user payload before schema planning. Both
-        # automatic riders can change whether direct catalog disclosure still
-        # leaves the configured response reserve, so the planner and live run
-        # must receive the same immutable message snapshot.
-        planning_messages = agent_messages
-        if turn_bundle_block:
-            planning_messages, _ = _append_to_last_user_message(
-                planning_messages, turn_bundle_block
-            )
-        diff_feedback_included_ids: list[int] = []
-        diff_feedback_included_notes: list[dict] = []
-        try:
-            pending_notes = self._db.pending_notes_for_conversation(conversation_id)
-            diff_feedback_block, diff_feedback_included_ids = (
-                render_diff_feedback_block(pending_notes)
-            )
-            diff_feedback_included_notes = pending_notes[
-                : len(diff_feedback_included_ids)
-            ]
-            if diff_feedback_block:
-                planning_messages, attached = _append_to_last_user_message(
-                    planning_messages, diff_feedback_block
-                )
-                if not attached:
-                    logger.warning(
-                        "change_review: "
-                        f"{len(diff_feedback_included_ids)} pending diff-"
-                        "feedback note(s) held back -- no user message "
-                        "could carry the block this turn"
-                    )
-                    diff_feedback_included_ids = []
-                    diff_feedback_included_notes = []
-        except Exception:  # noqa: BLE001 -- notes must never break the reply
-            logger.opt(exception=True).warning(
-                "change_review: could not attach pending diff-feedback notes"
-            )
-            diff_feedback_included_ids = []
-            diff_feedback_included_notes = []
-        # advertised) rather than auto-denying every call, the same
-        # advertised-equals-usable rule as `install_skill_tool`/
-        # `run_skill_script_tool` below. Built up here (before the first
-        # request plan) because the plan's schema flags must reflect
-        # whether the tools exist.
-        # `run_id`: the run's own id only exists once `run_turn` mints it
-        # (far below), so the originating assistant message id -- this
-        # turn's stable identity, already in scope -- rides in the payload
-        # under the `run_id` key instead.
-        fork_chat_tool = new_chat_tool = None
-        if (
-            request_chat_create_confirm is not None
-            and execute_agent_chat_create is not None
-        ):
-            fork_chat_tool, new_chat_tool = build_chat_create_tool_closures(
-                confirm=request_chat_create_confirm,
-                execute=execute_agent_chat_create,
-                prepare=prepare_agent_chat_create,
-                session_id=session_id,
-                run_id=assistant_message_id,
-            )
-
-        # TASK-32874 (Qodo round, finding 1): the prebuilt plan is the one
-        # the Console actually runs with, so the routing flags MUST be
-        # computed here or the gated provider/model args are never
-        # advertised -- this also un-blinds spawn_subagent's own override
-        # args on this path (same flags, same plan builder).
-        from tldw_chatbook.Agents.agent_routing import (
-            load_agents_routing_config as _load_spawn_routing,
-        )
-        from tldw_chatbook.Agents.agent_service import spawn_override_targets
-
-        try:
-            _spawn_routing_cfg = _load_spawn_routing()
-        except ValueError:
-            _spawn_routing_cfg = None
-        chat_create_spawn_override_enabled = bool(
-            _spawn_routing_cfg is not None
-            and _spawn_routing_cfg.spawn_override_enabled
-        )
-        chat_create_spawn_override_targets = (
-            spawn_override_targets(load_settings(), _spawn_routing_cfg)
-            if chat_create_spawn_override_enabled
-            else ()
-        )
-
-        first_request_plan = build_console_first_request_plan(
-            storage_provider=self._storage_provider,
-            shared_registry=self._registry,
-            shared_allowed_tools=self._allowed_tools,
-            context=context,
-            skills_present=self._skills_service is not None,
+        with self._prepare_native_reply(
+            conversation_id=conversation_id,
+            session_id=session_id,
+            resolution=resolution,
+            assistant_message_id=assistant_message_id,
+            model=model,
+            session_system_prompt=session_system_prompt,
+            agent_messages=agent_messages,
+            should_cancel=should_cancel,
+            expected_progress_owner_id=expected_progress_owner_id,
+            work_origin=work_origin,
+            work_chain_id=work_chain_id,
+            provider_stream_signals=provider_stream_signals,
+            supersede_previous=supersede_previous,
             mcp_provider=mcp_provider,
             builtin_gate=builtin_gate,
+            scratch_root=scratch_root,
+            scratch_lease=scratch_lease,
+            review_tool_calls=review_tool_calls,
+            on_steer_ready=on_steer_ready,
+            on_redirect_ready=on_redirect_ready,
+            change_roots=change_roots,
+            worktree_repo_authority=worktree_repo_authority,
+            change_root_aliases=change_root_aliases,
+            change_review_skipped_roots=change_review_skipped_roots,
+            turn_skill_bindings=turn_skill_bindings,
+            turn_bundle_block=turn_bundle_block,
+            request_skill_install_confirm=request_skill_install_confirm,
+            request_skill_script_confirm=request_skill_script_confirm,
+            request_chat_create_confirm=request_chat_create_confirm,
+            execute_agent_chat_create=execute_agent_chat_create,
+            prepare_agent_chat_create=prepare_agent_chat_create,
+            request_worktree_merge_confirm=request_worktree_merge_confirm,
             local_provider=local_provider,
             virtual_cli_provider=virtual_cli_provider,
             raw_shell_provider=raw_shell_provider,
-            recovery_provider=recovery_provider,
             library_provider=library_provider,
             library_authority=library_authority,
+            managed_skill_promotion_gate=managed_skill_promotion_gate,
             profile_provider=profile_provider,
-            code_review_provider=code_review_provider,
             canvas_provider=canvas_provider,
             canvas_authority=canvas_authority,
-            workspace_id=run_workspace_id,
+            skills_context=skills_context,
+            workspace_id=workspace_id,
+            workspace_ephemeral=workspace_ephemeral,
             workspace_read_binding_ids=workspace_read_binding_ids,
             workspace_write_binding_ids=workspace_write_binding_ids,
             workspace_binding_authority=workspace_binding_authority,
-            ephemeral=run_is_ephemeral,
-            diff_sink=pending_diffs.append,
-            scratch_root=scratch_root,
-            scratch_lease=scratch_lease,
-            resolution=resolution,
-            fallback_model=model,
-            session_system_prompt=session_system_prompt,
-            native_tools=native_tools,
-            turn_skill_bindings=turn_skill_bindings,
-            turn_bundle_block="",
-            install_skill_enabled=bool(
-                self._skills_service is not None
-                and request_skill_install_confirm is not None
-            ),
-            run_skill_script_enabled=script_tool_enabled,
-            fork_chat_enabled=bool(fork_chat_tool is not None),
-            new_chat_enabled=bool(new_chat_tool is not None),
-            spawn_override_enabled=chat_create_spawn_override_enabled,
-            spawn_override_targets=chat_create_spawn_override_targets,
-            worktree_merge_enabled=request_worktree_merge_confirm is not None,
-            agent_messages=planning_messages,
-            agent_definitions=runtime_definitions,
-            fleet_max_live=fleet_max_live,
-            run_budget=run_budget,
-            persona_policy_rules=persona_policy_rules,
-            profile_context_service=profile_context_service,
-            personal_context_snapshot=personal_context_snapshot,
-            progress_inbox_exists=self._session_progress_inbox(session_id) is not None,
-            light_surface=light_surface,
-        )
-        self._remember_tool_surface(
-            session_id, first_request_plan, light_surface=light_surface
-        )
-        if on_tool_surface_selected is not None:
-            on_tool_surface_selected(
-                len(first_request_plan.schemas.runtime_schemas)
-                + len(first_request_plan.schemas.active_schemas)
-            )
-        registry = first_request_plan.registry
-        allowed_tools = first_request_plan.allowed_tools
-        config = first_request_plan.config
-        from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
-
-        automatic = current_automatic_work()
-        if automatic is not None and automatic.goal is not None:
-            config = automatic.goal.narrow_config(config, registry)
-        project_instruction_context = None
-        service_confirm_project_instruction_dispatch = (
-            confirm_project_instruction_dispatch
-        )
-        if startup_instruction_candidate is not None:
-            project_instruction_context = _ProjectInstructionDispatchContext(
-                nested_max_bytes=coerce_int_setting(
-                    project_instruction_nested_max_bytes
-                    if project_instruction_nested_max_bytes is not None
-                    else get_cli_setting(
-                        "console",
-                        "project_instructions_nested_max_bytes",
-                        DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-                    ),
-                    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-                    minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-                    maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
-                ),
-                on_activation=on_project_instruction_activation,
-                final_payload_fits=(
-                    None
-                    if config.native_tools
-                    and provider_supports_native_tools(
-                        first_request_plan.api_endpoint,
-                        reasoning_replay=config.reasoning_replay,
-                    )
-                    else lambda rows: _fenced_project_instruction_payload_fits(
-                        rows,
-                        model=config.model,
-                        provider=first_request_plan.api_endpoint,
-                        response_reserve_tokens=config.response_reserve_tokens,
-                        reasoning_replay=config.reasoning_replay,
-                    )
-                ),
-            )
-            original_confirm = confirm_project_instruction_dispatch
-
-            def service_confirm_project_instruction_dispatch(snapshot):
-                project_instruction_context.accept_primary_snapshot(snapshot)
-                bind_promotion_context = getattr(
-                    local_provider, "bind_instruction_promotion_context", None
-                )
-                if callable(bind_promotion_context):
-                    bind_promotion_context(
-                        snapshotter=project_instruction_context.snapshot_promotion_target,
-                        revalidator=project_instruction_context.revalidate_promotion_target,
-                    )
-                decision = "cancel"
-                try:
-                    decision = (
-                        original_confirm(snapshot)
-                        if original_confirm is not None
-                        else "cancel"
-                    )
-                    return decision
-                finally:
-                    if decision != "proceed":
-                        project_instruction_context.discard_primary_snapshot()
-                        unbind_promotion_context = getattr(
-                            local_provider, "unbind_instruction_promotion_context", None
-                        )
-                        if callable(unbind_promotion_context):
-                            unbind_promotion_context()
-
-        admitted_skill_definition_digests = {
-            str(item["name"]): str(item["definition_digest"])
-            for item in _eligible_skill_entries(context)
-            if item.get("name") and item.get("definition_digest")
-        }
-        admitted_skill_definition_digests.update(
-            (entry["name"], entry["definition_digest"]) for entry in plugin_entries
-        )
-        if self._skills_service is not None:
-            local_skills = getattr(self._skills_service, "local_service", None)
-            if local_skills is None and hasattr(
-                self._skills_service, "trust_service"
-            ):
-                local_skills = self._skills_service
-            trust_service = getattr(local_skills, "trust_service", None)
-
-            def current_skill_definition_digest(skill_name: str) -> str | None:
-                for entry in plugin_entries:
-                    if skill_name in {entry["name"], entry["tool_name"]}:
-                        return plugin_service.current_definition(
-                            skill_name, entry["plugin_admission"]
-                        )
-                if trust_service is None:
-                    return None
-                return trust_service.current_fingerprint_digest(skill_name)
-
-            skill_file_bindings = SkillFileBindings(
-                authorized=set(),
-                reader=lambda skill_name, path: asyncio.run(
-                    self._skills_service.read_skill_file(
-                        skill_name,
-                        path,
-                        mode="local",
-                        **next(
-                            (
-                                {"plugin_admission": entry["plugin_admission"]}
-                                for entry in plugin_entries
-                                if skill_name in {entry["name"], entry["tool_name"]}
-                            ),
-                            {},
-                        ),
-                    )
-                ),
-                current_definition_digest=current_skill_definition_digest,
-            )
-            skill_runner = _BridgeSkillRunner(
-                skills_service=self._skills_service,
-                plugin_entries=plugin_entries,
-                plugin_registry=registry,
-                plugin_eligible=frozenset(first_request_plan.config.allowed_tools),
-                plugin_provider=str(
-                    getattr(resolution, "selected_provider", "")
-                    or getattr(resolution, "execution_key", "")
-                    or getattr(resolution, "provider", "")
-                ),
-                skill_names=first_request_plan.skill_names,
-                builtin_names=first_request_plan.builtin_names,
-                local_names=first_request_plan.local_names,
-                owned_mcp_names=tuple(
-                    entry.name
-                    for entry in registry.list_catalog()
-                    if entry.source == "plugin_mcp"
-                    and entry.name in first_request_plan.config.allowed_tools
-                ),
-                skill_file_bindings=skill_file_bindings,
-                definition_digests={
-                    name: digest
-                    for name, digest in admitted_skill_definition_digests.items()
-                    if name in first_request_plan.skill_names
-                },
-            )
-        prepare_managed_skill_promotion_tool = None
-        if (
-            self._skills_service is not None
-            and managed_skill_promotion_gate is not None
-        ):
-            managed_skill_promotion_gate.bind_reader(
-                lambda skill_name: asyncio.run(
-                    self._skills_service.get_skill(skill_name, mode="local")
-                )
-            )
-            prepare_managed_skill_promotion_tool = managed_skill_promotion_gate.invoke
-        # task-5 (skills-fork-reachability): seed this run's own bindings
-        # with the names the CONTROLLER already resolved/spliced for the
-        # triggering turn (a leading `$skill` mention, or embedded mentions
-        # that actually spliced) -- so the primary agent's very first turn
-        # can already read that skill's bundle via skill_file, matching
-        # what a spawned skill child gets for its OWN bundle (Task 4).
-        # `skill_file_bindings` is None whenever there is no skills service
-        # for this run, in which case a non-empty `turn_skill_bindings`
-        # (which can only happen when the controller's own skills-service-
-        # gated substitution ran) has nothing to seed.
-        if skill_file_bindings is not None:
-            for skill_name in turn_skill_bindings:
-                skill_file_bindings.authorize(
-                    skill_name,
-                    admitted_skill_definition_digests.get(skill_name),
-                )
-        # Agent-callable skill install (5th runtime tool). Built only when
-        # BOTH a skills service AND a confirm callback exist -- without a
-        # callback the tool is simply absent (never advertised) rather than
-        # auto-denying every call; wired to AgentService, which pins/
-        # dispatches it for the top-level agent only. Order (load-bearing):
-        # enforce policy (no prompt on denial) -> classify URL (no prompt on
-        # a bad URL) -> in-chat confirm (plain blocking call, OUTSIDE asyncio.run)
-        # -> asyncio.run(install) -> broad-catch wrap. import_skill_file
-        # raises a bare ValueError("local_skill_exists:...") on collision, so
-        # the install catch is broad.
-        def goal_tool_refusal(name: str) -> ToolResult | None:
-            from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
-            from tldw_chatbook.Agents.automatic_work_runtime import (
-                current_automatic_work,
-            )
-
-            context = current_automatic_work()
-            if context is None or context.goal is None:
-                return None
-            try:
-                context.check()
-                if not context.goal.permits_runtime(name):
-                    raise AutomaticWorkRefused("goal_tool_scope")
-            except AutomaticWorkRefused as exc:
-                return ToolResult(
-                    ok=False,
-                    error=exc.reason,
-                    termination_reason=exc.termination_reason,
-                )
-            return None
-
-        from tldw_chatbook.Agents.agent_models import RunTerminationReason
-
-        def goal_tool_failure(message: str, reason: RunTerminationReason) -> ToolResult:
-            return ToolResult(
-                ok=False,
-                error=message,
-                termination_reason=(
-                    reason
-                    if automatic is not None and automatic.goal is not None
-                    else None
-                ),
-            )
-
-        install_skill_tool = None
-        if (
-            self._skills_service is not None
-            and request_skill_install_confirm is not None
-        ):
-            scope = self._skills_service
-
-            def install_skill_tool(url: str) -> ToolResult:
-                from tldw_chatbook.Agents.automatic_work_budget import (
-                    AutomaticWorkRefused,
-                )
-
-                refusal = goal_tool_refusal("install_skill")
-                if refusal is not None:
-                    return refusal
-                from tldw_chatbook.Skills_Interop.skill_remote_fetch import (
-                    classify_skill_source_url,
-                    install_skill_from_url,
-                )
-                from tldw_chatbook.runtime_policy.types import PolicyDeniedError
-
-                try:
-                    scope.enforce_install_remote()
-                except PolicyDeniedError as exc:
-                    return goal_tool_failure(
-                        exc.user_message, RunTerminationReason.PERMISSION_REFUSED
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    return goal_tool_failure(
-                        str(exc), RunTerminationReason.AUTHORITY_CHANGED
-                    )
-                try:
-                    classify_skill_source_url(url)
-                except Exception as exc:  # noqa: BLE001 (RemoteSkillError etc.)
-                    return goal_tool_failure(
-                        str(exc), RunTerminationReason.AUTHORITY_CHANGED
-                    )
-                try:
-                    allowed = bool(
-                        request_skill_install_confirm(url)
-                        if request_skill_install_confirm is not None
-                        else False
-                    )
-                except Exception:  # noqa: BLE001 — a UI error fails closed
-                    allowed = False
-                if not allowed:
-                    return goal_tool_failure(
-                        "The user declined to install this skill.",
-                        RunTerminationReason.PERMISSION_REFUSED,
-                    )
-                try:
-                    from tldw_chatbook.Agents.automatic_work_runtime import (
-                        current_automatic_work,
-                    )
-
-                    automatic_work = current_automatic_work()
-                    if automatic_work is not None:
-                        automatic_work.check()
-                    refusal = goal_tool_refusal("install_skill")
-                    if refusal is not None:
-                        return refusal
-                    result = asyncio.run(
-                        install_skill_from_url(url, scope_service=scope)
-                    )
-                except AutomaticWorkRefused as exc:
-                    return goal_tool_failure(exc.reason, exc.termination_reason)
-                except PolicyDeniedError as exc:
-                    return goal_tool_failure(
-                        exc.user_message, RunTerminationReason.PERMISSION_REFUSED
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    return goal_tool_failure(
-                        str(exc), RunTerminationReason.UNKNOWN_EFFECT
-                    )
-                name = result.get("name", "") if isinstance(result, dict) else ""
-                return ToolResult(
-                    ok=True,
-                    content=(
-                        f'Installed "{name}" — it is pending your review and '
-                        "cannot run until you approve it in Library > Skills."
-                    ),
-                )
-
-        # Trust-gated skill script execution (6th runtime tool). Built only
-        # when a skills service AND a confirm callback exist AND this
-        # platform's sandbox is actually usable -- without any one of the
-        # three the tool is absent (never advertised) rather than
-        # auto-denying every call. The platform check matters because the
-        # sandbox (skill_script_runner.run_script_subprocess) depends on
-        # POSIX-only primitives (process-group teardown, RLIMIT_* via the
-        # `resource` module) that do not exist on Windows: "advertised must
-        # equal usable" -- a tool the model can call but that always raises
-        # is a defect, not a graceful degradation, so it must simply not be
-        # wired on an unsupported platform. Order (load-bearing): enforce
-        # policy (no prompt on denial) -> describe/resolve (no prompt on a
-        # bad path or an unrunnable type) -> grant check (no prompt when the
-        # user already granted this skill) -> confirm (plain blocking call,
-        # OUTSIDE any asyncio.run) -> run -> broad-catch wrap.
-        # run_skill_script re-verifies policy/trust/path authoritatively, so
-        # a stale plan can never widen what actually executes.
-        run_skill_script_tool = None
-        if script_tool_enabled:
-            scope = self._skills_service
-            trust_service = getattr(
-                getattr(scope, "local_service", None), "trust_service", None
-            )
-
-            def run_skill_script_tool(
-                skill_name: str, script_path: str, args: list[str]
-            ) -> ToolResult:
-                from tldw_chatbook.Agents.automatic_work_budget import (
-                    AutomaticWorkRefused,
-                )
-
-                refusal = goal_tool_refusal("run_skill_script")
-                if refusal is not None:
-                    return refusal
-                from tldw_chatbook.runtime_policy.types import PolicyDeniedError
-                from tldw_chatbook.Skills_Interop.skill_trust_models import (
-                    SkillTrustBlockedError,
-                )
-
-                try:
-                    scope.enforce_run_script()
-                except PolicyDeniedError as exc:
-                    return goal_tool_failure(
-                        exc.user_message, RunTerminationReason.PERMISSION_REFUSED
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    return goal_tool_failure(
-                        str(exc), RunTerminationReason.AUTHORITY_CHANGED
-                    )
-                try:
-                    plan = asyncio.run(
-                        scope.describe_skill_script(skill_name, script_path)
-                    )
-                except Exception as exc:  # noqa: BLE001 (trust/path/type)
-                    return goal_tool_failure(
-                        f"run_skill_script: {exc}",
-                        RunTerminationReason.AUTHORITY_CHANGED,
-                    )
-
-                granted = False
-                if trust_service is not None:
-                    try:
-                        granted = bool(
-                            trust_service.script_execution_granted(skill_name)
-                        )
-                    except Exception:  # noqa: BLE001 — doubt ⇒ prompt
-                        granted = False
-                if not granted:
-                    try:
-                        decision = request_skill_script_confirm(
-                            {
-                                # plan.skill_name, not the agent's raw
-                                # spelling: the service normalizes the name
-                                # it acts on, and a consent card must show
-                                # the value that will actually be used.
-                                "skill_name": str(
-                                    getattr(plan, "skill_name", None) or skill_name
-                                ),
-                                "script_path": script_path,
-                                "mechanism": plan.mechanism,
-                                "interpreter": plan.interpreter_display,
-                                "is_binary": plan.is_binary,
-                                "args": [str(a) for a in args],
-                            }
-                        )
-                    except Exception:  # noqa: BLE001 — a UI error fails closed
-                        decision = {"allow": False, "remember": False}
-                    if not isinstance(decision, Mapping):
-                        decision = {"allow": False, "remember": False}
-                    if not decision.get("allow", False):
-                        return goal_tool_failure(
-                            "The user declined to run this script.",
-                            RunTerminationReason.PERMISSION_REFUSED,
-                        )
-                    if decision.get("remember", False) and trust_service is not None:
-                        # Deliberate ordering: this persists the standing
-                        # grant BEFORE run_skill_script below actually runs,
-                        # so "remember my choice" sticks even if this
-                        # particular run then fails (e.g. trust revoked
-                        # mid-flight). That is fine -- run_skill_script
-                        # re-verifies policy/trust/path authoritatively on
-                        # every call regardless of this grant, so recording
-                        # it early never widens what is allowed to execute.
-                        try:
-                            trust_service.grant_script_execution(skill_name)
-                        except Exception:  # noqa: BLE001 — grant is best-effort
-                            logger.opt(exception=True).debug(
-                                "Failed to persist skill script grant"
-                            )
-                try:
-                    from tldw_chatbook.Agents.automatic_work_runtime import (
-                        current_automatic_work,
-                    )
-
-                    automatic_work = current_automatic_work()
-                    if automatic_work is not None:
-                        automatic_work.check()
-                    refusal = goal_tool_refusal("run_skill_script")
-                    if refusal is not None:
-                        return refusal
-                    if scratch_root is not None and scratch_lease is not None:
-                        with scratch_lease():
-                            outcome = asyncio.run(
-                                scope.run_skill_script(
-                                    skill_name,
-                                    script_path,
-                                    list(args),
-                                    output_root=(scratch_root / "skill_script_output"),
-                                )
-                            )
-                    else:
-                        outcome = asyncio.run(
-                            scope.run_skill_script(
-                                skill_name,
-                                script_path,
-                                list(args),
-                            )
-                        )
-                except AutomaticWorkRefused as exc:
-                    return goal_tool_failure(exc.reason, exc.termination_reason)
-                except PolicyDeniedError as exc:
-                    return goal_tool_failure(
-                        exc.user_message, RunTerminationReason.PERMISSION_REFUSED
-                    )
-                except SkillTrustBlockedError:
-                    return goal_tool_failure(
-                        "Skill trust changed.", RunTerminationReason.AUTHORITY_CHANGED
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    return goal_tool_failure(
-                        f"run_skill_script: {exc}", RunTerminationReason.UNKNOWN_EFFECT
-                    )
-
-                lines = [f"exit_code: {outcome.exit_code}"]
-                if outcome.goal_evidence_id:
-                    lines.append(f"goal_evidence_id: {outcome.goal_evidence_id}")
-                if outcome.timed_out:
-                    lines.append("timed out — the script was killed")
-                if outcome.output_capped:
-                    lines.append("output was truncated at the size cap")
-                for warning in outcome.sandbox_warnings:
-                    lines.append(f"note: {warning}")
-                if outcome.stdout:
-                    lines.append(f"stdout:\n{outcome.stdout}")
-                if outcome.stderr:
-                    lines.append(f"stderr:\n{outcome.stderr}")
-                # task-584: report WHAT was produced, never its contents. This
-                # string enters the model's context, and a script's artifact is
-                # not trust-reviewed material -- the listing is name + size, and
-                # the path lets the user (or a file tool, where enabled) open it.
-                if outcome.output_files:
-                    listed = ", ".join(
-                        f"{item['name']} ({item['size']} bytes)"
-                        for item in outcome.output_files
-                    )
-                    lines.append(
-                        f"produced {len(outcome.output_files)} file(s): {listed}"
-                    )
-                    display_output_dir = str(outcome.output_dir)
-                    if scratch_root is not None and outcome.output_dir is not None:
-                        try:
-                            display_output_dir = str(
-                                Path(outcome.output_dir)
-                                .resolve()
-                                .relative_to(scratch_root.resolve())
-                            )
-                        except ValueError:
-                            display_output_dir = "private scratch output"
-                    lines.append(f"output directory: {display_output_dir}")
-                return ToolResult(
-                    ok=True,
-                    content="\n".join(lines),
-                    termination_reason=RunTerminationReason.UNKNOWN_EFFECT
-                    if automatic_work is not None
-                    and automatic_work.goal is not None
-                    and outcome.exit_code is None
-                    else None,
-                )
-
-        # One event loop for the whole run (PR #629 Fix 1(c)): every turn
-        # this run makes -- primary tool-call turns, any sub-agent turns,
-        # and the final-answer turn -- bridges through this same loop via
-        # `_StreamingModelAdapter.chat_call`, instead of each turn spinning
-        # up (and tearing down) its own loop via `asyncio.run()`. That
-        # per-turn churn forced a client swap on the gateway's owned httpx
-        # client every single turn (see
-        # `ConsoleProviderGateway._active_http_client`); reusing one loop
-        # for the whole run means at most one swap per run.
-        #
-        # PR2a Task 6.5: the loop gets its OWN thread. It is no longer
-        # driven by `run_until_complete` from whichever agent's thread is
-        # calling, because with the fleet ON by default several of them
-        # call at once and a loop may only ever be driven by one thread --
-        # the second concurrent driver raises "This event loop is already
-        # running" and kills that child's run. `chat_call` now submits
-        # with `run_coroutine_threadsafe`, so this thread is the single
-        # driver and the callers merely wait on their own futures.
-        # Constructed here (with the loop it drives) but STARTED only just
-        # before the try/finally that owns its shutdown, a few hundred
-        # lines below: a raise in the composition work between the two
-        # would otherwise leave a daemon thread spinning `run_forever`
-        # forever with nothing to stop it. Same ordering rule -- and the
-        # same failure -- as `AgentService`'s own `thread.start()` guard.
-        #
-        # PR3a-1 Task 1: the loop+thread pair is now a `_ModelCallLifeline`
-        # (identical construction, start ordering and teardown -- see its
-        # docstring), because a fleet CHILD now owns one of its own from
-        # birth via `adapter.child_lifeline`. This one stays exactly what
-        # it always was: the PRIMARY agent's, turn-scoped.
-        turn_lifeline = _ModelCallLifeline(
-            "console-agent-loop",
-            close_current_loop=getattr(self._gateway, "aclose_current_loop", None),
-        )
-        thinking_capture = ThinkingCapture(assistant_owner_id=assistant_message_id)
-        adapter = _StreamingModelAdapter(
-            store=self._store,
-            provider_gateway=self._gateway,
-            resolution=resolution,
-            assistant_message_id=assistant_message_id,
-            should_cancel=should_cancel,
-            loop=turn_lifeline.loop,
-            native_tools=(
-                config.native_tools
-                and provider_supports_native_tools(
-                    first_request_plan.api_endpoint,
-                    reasoning_replay=config.reasoning_replay,
-                )
-            ),
-            provider_stream_signals=provider_stream_signals,
+            revoke_approvals=revoke_approvals,
+            plugin_cancel_root=plugin_cancel_root,
+            on_tool_terminal=on_tool_terminal,
+            on_tool_result_terminal=on_tool_result_terminal,
+            on_run_terminal=on_run_terminal,
+            native_tools_enabled=native_tools_enabled,
+            restore_provider_continuation=restore_provider_continuation,
+            restore_provider_target=restore_provider_target,
+            expand_provider_continuation=expand_provider_continuation,
+            resume_provider_continuation=resume_provider_continuation,
             continuation_sidecar=continuation_sidecar,
             continuation_target=continuation_target,
             continuation_owner_key=continuation_owner_key,
             thinking_sidecar=thinking_sidecar,
             thinking_policy=thinking_policy,
             thinking_owner_key=thinking_owner_key,
-            thinking_capture=thinking_capture,
             generation_token=generation_token,
+            startup_instruction_candidate=startup_instruction_candidate,
+            project_instruction_nested_max_bytes=project_instruction_nested_max_bytes,
+            run_budget=run_budget,
+            confirm_project_instruction_dispatch=confirm_project_instruction_dispatch,
+            on_project_instruction_activation=on_project_instruction_activation,
+            propagate_trace_call_persistence_errors=propagate_trace_call_persistence_errors,
             capture_mode=capture_mode,
             trace_request=trace_request,
-        )
-
-        # PR3a-1 Task 6b (audit F1): this turn's own key into
-        # `self._live[conversation_id]`. Minted here because `run_turn`
-        # only hands back the primary run id when the turn ENDS, and the
-        # rail must show "running" from the moment it starts; every write
-        # below (start, each primary step, the terminal publish) uses this
-        # one key, so an earlier turn's surviving child -- which writes
-        # under its OWN run id -- can never land in it.
-        primary_live_key = uuid4().hex
-        adapter._live_usage_sink = functools.partial(
-            self._observe_live_usage,
-            conversation_id=conversation_id,
-        )
-        child_change_state = _ChildChangeState(
-            owner_key=primary_live_key,
-            survivor_key=assistant_message_id,
-        )
-        child_path_root = None
-        if scratch_root is not None:
-            try:
-                child_path_root = scratch_root.expanduser().resolve()
-            except (OSError, RuntimeError, ValueError):
-                logger.warning(
-                    "change_review: could not normalize the attributed child WRITE root"
-                )
-        live_steps = _LiveStepFeed()
-        subagents: list[SubAgentSummary] = []
-        #: run key -> that run's own live step feed. The primary's entry is
-        #: `live_steps` itself, so every existing reader of that local is
-        #: unchanged.
-        run_live_steps: dict[str, _LiveStepFeed] = {primary_live_key: live_steps}
-        buddy_tool_sequences: dict[str, deque[int]] = {}
-        primary_buddy_run_ids: set[str] = set()
-        raw_shell_progress_run_ids: set[str] = set()
-        self._publish_live(
-            conversation_id,
-            primary_live_key,
-            AgentLiveSnapshot(status="running"),
-            primary=True,
-        )
-        # PR3a-1 Task 6b (audit F1): bound the per-run slots -- one turn's
-        # worth plus whatever is still live. Must run AFTER the publish
-        # above, which is what tells it which key is this turn's.
-        self._prune_live_run_slots(conversation_id)
-        # A live run is starting -- live_snapshot takes over as the rail's
-        # source of truth for this conversation from here on, so any
-        # previously cached historical (DB-derived) summary is stale.
-        self._historical_cache.pop(conversation_id, None)
-        planning_deriver = _PendingPrimaryPlanningDeriver()
-        from .console_tool_activity import ConsoleToolActivity
-
-        tool_activity = ConsoleToolActivity(self._store, session_id)
-        tool_activity_run_ids: set[str] = set()
-
-        def on_tool_activity(step: AgentStep, agent_kind: str, run_id: str) -> None:
-            if agent_kind != AGENT_KIND_PRIMARY or not run_id:
-                return
-            self._tool_activity_runs[run_id] = tool_activity
-            tool_activity_run_ids.add(run_id)
-            if step.kind == "tool_proposed":
-                planning = planning_deriver.observe(
-                    dataclass_replace(step, kind=STEP_TOOL_CALL),
-                    agent_kind,
-                    actual_thinking_round_ordinals=_thinking_round_ordinals(
-                        thinking_capture.snapshot().envelope
-                    ),
-                )
-                if planning is not None:
-                    self._append_marker(
-                        session_id,
-                        planning.content,
-                        activity_presentation=planning.activity_presentation,
-                        activity_round_ordinal=planning.activity_round_ordinal,
-                    )
-            tool_activity.observe(step, planning_deriver.active_round_ordinal)
-            self._observe_approval_step(session_id, run_id, step)
-
-        def on_resolved_target(run_id: str, provider: str, model: str) -> None:
-            for index, summary in enumerate(subagents):
-                if summary.run_id != run_id:
-                    continue
-                subagents[index] = dataclass_replace(
-                    summary, resolved_provider=provider, resolved_model=model
-                )
-                snapshot = self._live.get(conversation_id, {}).get(primary_live_key)
-                if snapshot is not None:
-                    self._publish_live(
-                        conversation_id,
-                        primary_live_key,
-                        dataclass_replace(snapshot, subagents=tuple(subagents)),
-                        primary=False,
-                    )
-                break
-
-        def on_step(step: AgentStep, agent_kind: str, run_id: str) -> None:
-            self._observe_approval_step(session_id, run_id, step)
-            if agent_kind == AGENT_KIND_PRIMARY and run_id:
-                self._live_primary_runs[conversation_id] = run_id
-            # PR 2a (task-3): AgentService now attributes every step to its
-            # run id so a fleet of concurrent children can be told apart.
-            # PR3a-1 Task 6b (audit F1): that attribution is finally USED.
-            # PR 2b Task 2 argued it was redundant because the bridge runs
-            # one primary at a time -- true only while a run cannot outlive
-            # its turn. It can now, so a child's step arriving after this
-            # turn returned would otherwise be published into the slot the
-            # NEXT turn owns: wrong step list, wrong count, and a
-            # `status="running"` that never clears. Each run's feed and
-            # each run's published snapshot are keyed by that run instead.
-            # (`service.fleet_snapshot()` below still supplies the
-            # `subagents` rows, and is still the authority for a child's
-            # STATUS -- this splits the STEP feed, not the row list.)
-            live_key = (
-                primary_live_key
-                if agent_kind == AGENT_KIND_PRIMARY
-                # An empty run id (no run attributed) falls back to this
-                # turn's own key -- the pre-fix destination, so nothing
-                # regresses for a step that cannot be attributed.
-                else (run_id or primary_live_key)
-            )
-            if agent_kind != AGENT_KIND_PRIMARY and run_id:
-                touched_paths = ChangeTurnTracker.tool_touched_paths((step,))
-                normalized_paths: list[str] = []
-                inherited_claim = None
-                for raw_path in touched_paths:
-                    try:
-                        path = Path(raw_path)
-                        if child_path_root is not None:
-                            normalized_paths.append(
-                                str(
-                                    validate_path(
-                                        path,
-                                        child_path_root,
-                                        redact_paths=True,
-                                        allow_hidden=True,
-                                    )
-                                )
-                            )
-                        elif path.is_absolute():
-                            normalized_paths.append(str(path))
-                        else:
-                            normalized_paths.append(raw_path)
-                    except ValueError:
-                        logger.warning(
-                            "change_review: could not normalize one attributed "
-                            "child WRITE path"
-                        )
-                with self._change_window_lock:
-                    child_change_state.touched_paths.update(normalized_paths)
-                    window = self._post_turn_change_windows.get(conversation_id)
-                    if (
-                        touched_paths
-                        and window is not None
-                        and window.successor_claim is not None
-                        and any(
-                            state is child_change_state for state in window.child_states
-                        )
-                    ):
-                        inherited_claim = window.successor_claim
-                if (
-                    normalized_paths
-                    and self._change_finalization_coordinator is not None
-                ):
-                    self._change_finalization_coordinator.record_survivor_paths(
-                        assistant_message_id,
-                        normalized_paths,
-                    )
-                if inherited_claim is not None:
-                    try:
-                        claim_ready = inherited_claim.ready.wait(
-                            _CHANGE_BOUNDARY_WAIT_SECONDS
-                        )
-                    except Exception:  # noqa: BLE001 -- tracking is best effort
-                        claim_ready = False
-                    claim_failed = True
-                    claim_handle = None
-                    if claim_ready:
-                        with self._change_window_lock:
-                            claim_failed = inherited_claim.failed
-                            claim_handle = inherited_claim.handle
-                    baseline_trusted = False
-                    if not claim_failed and claim_handle is not None:
-                        try:
-                            claim_handle.await_baseline()
-                            baselines = dict(claim_handle.baselines)
-                            roots = tuple(claim_handle.roots)
-                            baseline_trusted = not claim_handle.errors and all(
-                                baselines.get(str(root)) for root in roots
-                            )
-                        except Exception:  # noqa: BLE001 -- tracking is best effort
-                            baseline_trusted = False
-                    if not baseline_trusted:
-                        with self._change_window_lock:
-                            inherited_claim.failed = True
-            buddy_run_id = run_id or live_key
-            buddy_sink = self._buddy_sink
-            if buddy_sink is not None:
-                if agent_kind == AGENT_KIND_PRIMARY:
-                    primary_buddy_run_ids.add(buddy_run_id)
-                if step.kind == STEP_TOOL_CALL:
-                    buddy_tool_sequences.setdefault(buddy_run_id, deque()).append(
-                        step.index
-                    )
-                    buddy_sink.tool_step(buddy_run_id, step.index, step.kind, session_id=session_id)
-                elif step.kind == STEP_TOOL_RESULT:
-                    sequences = buddy_tool_sequences.get(buddy_run_id)
-                    sequence = sequences.popleft() if sequences else step.index
-                    buddy_sink.tool_step(buddy_run_id, sequence, step.kind, session_id=session_id)
-                    if sequences is not None and not sequences:
-                        buddy_tool_sequences.pop(buddy_run_id, None)
-                elif step.kind == STEP_ERROR:
-                    buddy_sink.release_run(buddy_run_id)
-            key_steps = run_live_steps.setdefault(live_key, _LiveStepFeed())
-            key_steps.append(
-                # `time.monotonic()` HERE is the step's real start: this hook
-                # runs synchronously inside the runtime loop, before the work
-                # the step announces (a STEP_TOOL_CALL lands one statement
-                # ahead of `deps.invoke_tool`). See `AgentLiveStep.started_at`.
-                AgentLiveStep(
-                    step.kind, self._summarize(step), agent_kind, time.monotonic()
-                )
-            )
-            # TASK-1366: pair this result step with the raw before/after
-            # contents the provider's diff_sink captured at the strip seam,
-            # when this call was a diff-carrying file write. Sub-agent
-            # result steps pair-and-discard too (their writes can ride this
-            # run's provider) even though only primary steps drop markers.
-            # See _pair_step_diff for the threading model and the staleness
-            # rule that keeps an abandoned call's late capture from pairing
-            # with a later write.
-            tool_diff: tuple[str, str, str] | None = None
-            if step.kind == STEP_TOOL_RESULT and pending_diffs:
-                tool_diff = _pair_step_diff(pending_diffs, step.tool_name)
-            planning_marker = planning_deriver.observe(
-                step,
-                agent_kind,
-                actual_thinking_round_ordinals=_thinking_round_ordinals(
-                    thinking_capture.snapshot().envelope
-                ),
-            )
-            if agent_kind == AGENT_KIND_PRIMARY:
-                # Adoption may succeed before its display update raises. Register
-                # cleanup first so an interrupted run still detaches that marker.
-                if step.tool_name == "shell_exec" and run_id:
-                    raw_shell_progress_run_ids.add(run_id)
-                raw_shell_projected = self._project_raw_shell_step(
-                    session_id,
-                    run_id,
-                    step,
-                    agent_kind,
-                )
-                if planning_marker is not None:
-                    self._append_marker(
-                        session_id,
-                        planning_marker.content,
-                        full_output=planning_marker.tool_output_full,
-                        activity_presentation=(planning_marker.activity_presentation),
-                        activity_round_ordinal=(planning_marker.activity_round_ordinal),
-                    )
-                if step.kind == STEP_SPAWN:
-                    # PR2b Task 2: this is this run's ONLY source of rows
-                    # on the inline path (fleet off, `[agents]
-                    # max_live_subagents <= 1`) -- there is no coordinator
-                    # there, ever, so every entry appended here stays live
-                    # for the run's whole duration. On a fleet-ON run it
-                    # is superseded, publish by publish, as soon as ANY
-                    # handle has been reserved (`_subagent_summaries_
-                    # from_fleet` then uses `service.fleet_snapshot()`
-                    # exclusively, not a merge -- see that function's own
-                    # docstring for why a positional merge was tried and
-                    # reverted: it silently duplicated a child's row
-                    # forever whenever an EARLIER spawn in the same run
-                    # had been refused, e.g. an unknown named agent).
-                    # Entries appended here past that point are still
-                    # correct, just unused by that publish.
-                    subagents.append(SubAgentSummary(step.summary or ""))
-                # format_agent_step_marker is the single source of truth for
-                # marker text -- shared with resume_marker_messages below --
-                # so live and resume-rebuilt transcripts render identically
-                # (Plan-B final-review Medium-1). See its docstring for why
-                # the text must stay raw/unescaped.
-                marker_text = (
-                    None
-                    if raw_shell_projected
-                    else format_agent_step_marker(
-                        step.kind,
-                        tool_name=step.tool_name,
-                        result=step.result,
-                        summary=step.summary,
-                    )
-                )
-                if step.kind == STEP_TOOL_RESULT and not raw_shell_projected:
-                    lifecycle_content = (
-                        marker_text or f"⚙ {step.tool_name} → {step.result}"
-                    )
-                    if tool_activity.complete(
-                        step,
-                        build_step_activity_presentation(
-                            step.kind,
-                            tool_name=step.tool_name,
-                            result=step.result,
-                            tool_outcome=step.tool_outcome,
-                        ),
-                        lifecycle_content,
-                        tool_diff,
-                        record_trajectory=marker_text is not None,
-                    ):
-                        marker_text = None
-                if marker_text is not None:
-                    self._append_marker(
-                        session_id,
-                        marker_text,
-                        full_output=full_step_output(
-                            step.kind,
-                            result=step.result,
-                            summary=step.summary,
-                            marker_text=marker_text,
-                        ),
-                        tool_diff=tool_diff,
-                        activity_presentation=build_step_activity_presentation(
-                            step.kind,
-                            tool_name=step.tool_name,
-                            result=step.result,
-                            tool_outcome=step.tool_outcome,
-                        ),
-                        activity_round_ordinal=(planning_deriver.active_round_ordinal),
-                    )
-            # Content-free operational logging for tool outcomes. The actual
-            # invocation lives inside AgentService, so this intentionally
-            # records no arguments, results, summaries, or provider ids.
-            if step.kind == STEP_TOOL_RESULT:
-                logger.debug(
-                    "agent tool call: agent_kind={agent_kind} tool={tool_name} "
-                    "outcome=completed step={step_index}",
-                    agent_kind=agent_kind,
-                    tool_name=step.tool_name,
-                    step_index=step.index,
-                )
-            elif step.kind == STEP_ERROR:
-                logger.warning(
-                    "agent step error: agent_kind={agent_kind} tool={tool_name} "
-                    "outcome=error step={step_index}",
-                    agent_kind=agent_kind,
-                    tool_name=step.tool_name,
-                    step_index=step.index,
-                )
-            self._publish_live(
-                conversation_id,
-                live_key,
-                AgentLiveSnapshot(
-                    status="running",
-                    step=key_steps.count,
-                    steps=key_steps.tail(5),
-                    # PR2b Task 2: rebuilt from the fleet's REAL live state
-                    # on every publish, not appended once and left stuck at
-                    # the "running" default -- see
-                    # `_subagent_summaries_from_fleet`'s docstring.
-                    subagents=_subagent_summaries_from_fleet(
-                        service.fleet_snapshot(), subagents
-                    ),
-                ),
-                # PR3a-1 Task 6b: a step from a child NEVER moves the rail's
-                # summary pointer. Only `run_reply` (this turn) may.
-                primary=False,
-            )
-
-        # C1 (probe-verified security regression): thread the composed MCP
-        # provider's stamp_scope() through as AgentService's generic
-        # review_state_scope seam whenever one was composed for this run --
-        # see AgentService.__init__'s own comment and
-        # MCPToolProvider.stamp_scope's docstring for the exact adversarial
-        # interleave this protects against (a spawned child's own turn(s)
-        # clobbering the parent turn's already-decided MCP approval stamps).
-        # getattr(..., None) rather than a bare attribute access: mcp_provider
-        # is typed Any (a ToolProvider-shaped double in tests may not define
-        # stamp_scope at all, and MUST NOT be forced to); production always
-        # hands in a real, fully-composed MCPToolProvider here, which always
-        # has it.
-        # task-628: the seam holds ONE context manager, but two components
-        # now own per-turn stamp state a nested sub-agent run would clobber
-        # -- the MCP provider's `_stamped_decisions` and the built-in gate's
-        # `_stamps`. Compose whichever exist rather than leaving the gate's
-        # state unguarded (it was, before this task, and unlike MCP it has
-        # no per-call approval fallback to degrade to: a lost stamp fails
-        # closed outright). ADR-300 adds the local provider's stamp state
-        # to the same composition.
-        _scopes = [
-            scope
-            for scope in (
-                getattr(mcp_provider, "stamp_scope", None)
-                if mcp_provider is not None
-                else None,
-                getattr(builtin_gate, "stamp_scope", None)
-                if builtin_gate is not None
-                else None,
-                getattr(local_provider, "stamp_scope", None)
-                if local_provider is not None
-                else None,
-                getattr(virtual_cli_provider, "stamp_scope", None)
-                if virtual_cli_provider is not None
-                else None,
-                getattr(raw_shell_provider, "stamp_scope", None)
-                if raw_shell_provider is not None
-                else None,
-            )
-            if scope is not None
-        ]
-        review_state_scope = _combine_state_scopes(_scopes)
-
-        # TASK-1971 (Agent Change Review): kick the baseline snapshot in the
-        # background NOW -- it rides the model's first-token latency -- and
-        # gate tool dispatch on its completion by wrapping the review hook,
-        # which the runtime invokes before every tool batch executes. A tool
-        # writing before B settles would race its own change into the
-        # baseline and vanish from the diff. Tracking failures never block
-        # the run (spec failure posture): begin_turn cannot raise, and the
-        # wrapper's await records timeouts as per-root disclosures.
-        change_handle = None
-        change_reservation = None
-        successor_claim: _SuccessorBoundaryClaim | None = None
-        inherited_child_states_at_b: tuple[_ChildChangeState, ...] = ()
-        # PR3a-1 Task 6c: measured BEFORE this turn's B. Any sub-agent
-        # running now belongs to an EARLIER turn (this one has not spawned
-        # anything yet), and a working-tree differ cannot tell its writes
-        # from this turn's agent's -- so this turn's record is stamped
-        # `turn_concurrent_subagent` and discloses the overlap rather than
-        # implying sole authorship.
-        concurrent_subagent = self._live_child_count(conversation_id) > 0
-        if self._change_finalization_coordinator is not None and change_roots:
-            try:
-                change_reservation = self._change_finalization_coordinator.register(
-                    change_roots,
-                    survivor_key=assistant_message_id,
-                )
-            except Exception:  # noqa: BLE001 -- tracking must never block a run
-                logger.opt(exception=True).warning(
-                    "change_review: coordinator admission failed; turn untracked"
-                )
-        elif self._change_tracker is not None and change_roots:
-            boundary_failed = False
-            while True:
-                close_window = None
-                close_done = None
-                claim_to_release = None
-                begin_failed = False
-                with self._change_window_lock:
-                    prior_window = self._post_turn_change_windows.get(conversation_id)
-                    if prior_window is not None and prior_window.closing:
-                        close_window = prior_window
-                        close_done = prior_window.close_done
-                    else:
-                        inherited_states = {
-                            state.owner_key: state
-                            for state in self._child_change_states.get(
-                                conversation_id, {}
-                            ).values()
-                        }
-                        successor_claim = None
-                        if prior_window is not None:
-                            successor_claim = _SuccessorBoundaryClaim()
-                            prior_window.successor_claim = successor_claim
-                            inherited_states.update(
-                                {
-                                    state.owner_key: state
-                                    for state in prior_window.child_states
-                                }
-                            )
-                        concurrent_subagent = concurrent_subagent or any(
-                            state.live_scopes > 0 or state.pending_scopes > 0
-                            for state in inherited_states.values()
-                        )
-                        inherited_child_states_at_b = tuple(inherited_states.values())
-                        begin_paths = sorted(
-                            {
-                                path
-                                for state in inherited_child_states_at_b
-                                for path in state.touched_paths
-                            }
-                        )
-                        try:
-                            change_handle = self._change_tracker.begin_turn(
-                                change_roots,
-                                touched_paths=begin_paths,
-                            )
-                        except Exception:  # noqa: BLE001 -- tracking is best effort
-                            change_handle = None
-                            begin_failed = True
-                        if successor_claim is not None:
-                            if successor_claim.failed:
-                                change_handle = None
-                                successor_claim.handle = None
-                            else:
-                                successor_claim.handle = change_handle
-                                successor_claim.failed = change_handle is None
-                            claim_to_release = successor_claim
-
-                if close_done is None:
-                    if claim_to_release is not None:
-                        claim_to_release.ready.set()
-                    if begin_failed:
-                        logger.warning(
-                            "change_review: begin_turn failed; turn untracked"
-                        )
-                    break
-                try:
-                    close_completed = close_done.wait(_CHANGE_BOUNDARY_WAIT_SECONDS)
-                except Exception:  # noqa: BLE001 -- tracking is best effort
-                    close_completed = False
-                if close_completed:
-                    with self._change_window_lock:
-                        close_completed = close_window.close_succeeded is True
-                if not close_completed:
-                    boundary_failed = True
-                    break
-
-            if boundary_failed:
-                change_handle = None
-                successor_claim = None
-                logger.warning(
-                    "change_review: prior survivor close did not finish "
-                    "successfully; successor turn untracked"
-                )
-        # run-hooks (Task 5): resolve the app-owned engine ONCE per turn (its
-        # presence answer re-runs while unconfigured -- the runtime's R17
-        # rule -- so a first-ever [hooks] entry takes effect on the next
-        # turn). `None` (unconfigured, or a bridge built without the runtime
-        # accessor -- every test harness) builds the service exactly as
-        # before: no PostToolUse dep, byte-identical run behavior.
-        run_hooks_engine = (
-            self._ensure_run_hooks() if self._ensure_run_hooks is not None else None
-        )
-        # A restriction-only guard sees every call, including Canvas tools
-        # that intentionally skip interactive approval. The permission chain
-        # remains independent and cannot override a hook refusal.
-        guard_tool_calls = (
-            run_hooks_engine.wrap_review(lambda calls, run_id: {}, session_id=session_id)
-            if run_hooks_engine is not None else None
-        )
-        baseline_gate = change_reservation or change_handle
-        before_tool_dispatch = None
-        alias_by_root: dict[str, str] = {}
-        if baseline_gate is not None:
-            timeout_warned = False
-            alias_by_root = {
-                str(root): str(alias)
-                for root, alias in zip(
-                    baseline_gate.roots,
-                    change_root_aliases,
-                    strict=False,
-                )
-            }
-
-            def on_baseline_timeout() -> None:
-                nonlocal timeout_warned
-                if timeout_warned:
-                    return
-                timeout_warned = True
-                handle = getattr(baseline_gate, "_handle", baseline_gate)
-                timed_out_roots = [
-                    root
-                    for root, error in handle.errors.items()
-                    if "baseline snapshot still running" in error
-                ]
-                for index, root in enumerate(timed_out_roots, start=1):
-                    self._append_marker(
-                        session_id,
-                        format_change_review_skipped_marker(
-                            alias_by_root.get(root, f"workspace {index}"),
-                            "baseline timed out; this turn's changes are not tracked",
-                        ),
-                    )
-
-            if (
-                change_reservation is not None
-                and self._change_finalization_coordinator is not None
-            ):
-                coordinator_wait = getattr(
-                    self._change_finalization_coordinator,
-                    "await_baseline",
-                    None,
-                )
-                await_baseline = (
-                    functools.partial(coordinator_wait, change_reservation)
-                    if callable(coordinator_wait)
-                    else change_reservation.await_baseline
-                )
-            else:
-                await_baseline = baseline_gate.await_baseline
-            before_tool_dispatch = build_change_review_dispatch_gate(
-                await_baseline,
-                on_timeout=on_baseline_timeout,
-            )
-
-        if plugin_entries:
-            original_review = review_tool_calls
-            original_dispatch = before_tool_dispatch
-
-            def review_tool_calls(calls, kind):
-                active_plugin_entries = bind_plugin_actor()
-                plugin_service.check_entries_from_agent(active_plugin_entries)
-                decisions = original_review(calls, kind) if original_review else {}
-                plugin_service.check_entries_from_agent(active_plugin_entries)
-                return decisions
-
-            def before_tool_dispatch(calls, pure_runtime_tools):
-                active_plugin_entries = bind_plugin_actor()
-                plugin_service.check_entries_from_agent(active_plugin_entries)
-                if original_dispatch is not None:
-                    original_dispatch(calls, pure_runtime_tools)
-                plugin_service.check_entries_from_agent(active_plugin_entries)
-
-        run_log_writer = None
-        if scratch_root is not None and scratch_lease is not None:
-            from tldw_chatbook.Agents.run_log import RunLogWriter, resolve_log_root
-
-            run_log_root: Path | None = None
-            try:
-                with scratch_lease():
-                    run_log_root = resolve_log_root(
-                        sandbox_root=scratch_root,
-                        workspace_id=run_workspace_id,
-                    )
-            except Exception:  # noqa: BLE001 -- writer will fail closed on lease
-                run_log_root = None
-            run_log_writer = RunLogWriter(
-                root=run_log_root or scratch_root,
-                access_scope=scratch_lease,
-                on_bound=functools.partial(
-                    self._remember_run_log_authority,
-                    session_id=session_id,
-                    conversation_id=conversation_id,
-                    access_scope=scratch_lease,
-                ),
-            )
-
-        def on_child_settled(run_id: str | None, status: str) -> None:
-            try:
-                engine = self._ensure_run_hooks() if self._ensure_run_hooks else None
-                if engine is not None:
-                    engine.notify(
-                        "SubagentStop", session_id=session_id, run_id=run_id,
-                        data={"child_run_id": run_id, "status": status},
-                    )
-            except Exception:  # noqa: BLE001 -- observation cannot prevent settlement
-                logger.warning("SubagentStop observer failed; continuing settlement")
-            try:
-                if not service.live_subagent_handles():
-                    with self._change_window_lock:
-                        child_change_state.pending_scopes = 0
-                        states = self._child_change_states.get(conversation_id)
-                        if (
-                            states is not None
-                            and states.get(child_change_state.owner_key)
-                            is child_change_state
-                        ):
-                            states.pop(child_change_state.owner_key, None)
-                            if not states:
-                                self._child_change_states.pop(conversation_id, None)
-                        has_window = conversation_id in self._post_turn_change_windows
-                    if has_window:
-                        self._close_post_turn_change_window_if_idle(conversation_id)
-            finally:
-                self._on_fleet_child_settled(
-                    conversation_id,
-                    session_id,
-                    assistant_message_id,
-                    run_id,
-                    status,
-                )
-
-        def _redirect_ready(redirect_fn, abort_probe):
-            # TASK-28227: arm the primary stream's abort probe,
-            # then hand the Console its redirect hook. The probe
-            # reaches ONLY the adapter's stream_cut predicate --
-            # LoopDeps.should_cancel never sees it, so a
-            # redirect can never kill the run.
-            adapter._primary_stream_abort = abort_probe
-            if on_redirect_ready is not None:
-                on_redirect_ready(redirect_fn)
-
-        # TASK-34100.5.3: a light-surface run creates no fleet (it offers no
-        # sub-agent tools), so it never asks for a temporary progress inbox.
-        create_fleet = bool(
-            not light_surface
-            and (
-                first_request_plan.schemas.runtime_schemas
-                or first_request_plan.schemas.active_schemas
-            )
-        )
-        progress_store = self.message_store
-        self._store.prepare_progress_inbox(
-            session_id, message_store=progress_store, create_temporary=create_fleet
-        )
-        with self._store.progress_owner_scope(
-            session_id, message_store=progress_store
-        ) as progress_owner_id:
-            if progress_owner_id != initial_progress_owner_id:
-                from tldw_chatbook.Agents.fleet_messages import MessageError
-
-                raise MessageError("unavailable")
-            message_inbox = progress_store.get_inbox(progress_owner_id)
-            if create_fleet and message_inbox is None:
-                from tldw_chatbook.Agents.fleet_messages import MessageError
-
-                raise MessageError("unavailable")
-            fleet_coordinator = self._conversation_fleet_coordinator(
-                conversation_id,
-                create=create_fleet,
-                progress_owner_id=progress_owner_id,
-                message_inbox=message_inbox,
-            )
-        if light_surface:
-            # No fleet and no progress inbox: either would add fleet or
-            # read_agent_messages tools the light surface does not offer.
-            fleet_coordinator = message_inbox = None
-        plugin_root_id = ""
-        plugin_producer_pin = None
-
-        def bind_plugin_root(actual_run_id: str) -> None:
-            nonlocal plugin_root_id, plugin_producer_pin
-            plugin_root_id = actual_run_id
-            if plugin_entries:
-                if plugin_cancel_root is None:
-                    raise PermissionError(
-                        "Plugin run cancellation owner is unavailable."
-                    )
-
-                def cancel_root():
-                    plugin_cancel_root()
-                    if revoke_approvals is not None:
-                        revoke_approvals(actual_run_id)
-
-                plugin_service.bind_run(plugin_entries, actual_run_id, cancel_root)
-                if plugin_producer_pin is None:
-                    # Capture capabilities at real binding. The store finalizer
-                    # binds its durable conversation ID only after persisting it.
-                    conversation_id = (
-                        self._store._session_or_raise(
-                            session_id
-                        ).persisted_conversation_id
-                        or session_id
-                    )
-                    plugin_producer_pin = plugin_service.capture_resume_pin(
-                        plugin_entries,
-                        actual_run_id,
-                        conversation_id,
-                        assistant_message_id,
-                    )
-
-        def bind_plugin_actor():
-            from tldw_chatbook.Agents.run_context import current_run_actor
-
-            actor = current_run_actor()
-            if actor is None:
-                raise PermissionError("Plugin run identity is unavailable.")
-            actual_run_id = actor.run_id
-            if actor.kind == "primary":
-                bind_plugin_root(actual_run_id)
-                return plugin_entries
-            handle = next(
-                (
-                    item
-                    for item in service.fleet_snapshot()
-                    if item.run_id == actual_run_id
-                ),
-                None,
-            )
-            if handle is None:
-                if actor.parent_run_id != plugin_root_id or plugin_cancel_root is None:
-                    raise PermissionError("Plugin child ownership is unavailable.")
-
-                def cancel_inline_child():
-                    plugin_cancel_root()
-                    if revoke_approvals is not None:
-                        revoke_approvals(actual_run_id)
-
-                plugin_service.bind_run(
-                    plugin_entries,
-                    actual_run_id,
-                    cancel_inline_child,
-                    parent_run_id=actor.parent_run_id,
-                )
-                return plugin_entries
-            ceiling = handle.managed_resume_ceiling
-            if handle.managed_resume_handle_id is not None:
-                ceiling = plugin_service.fleet_resume_ceiling(
-                    handle.managed_resume_pin,
-                    handle.managed_resume_run_id,
-                    handle.managed_resume_handle_id,
-                    plugin_entries,
-                )
-            child_entries = plugin_service.constrain_entries(plugin_entries, ceiling)
-            plugin_service.bind_run(
-                child_entries,
-                actual_run_id,
-                lambda: service.cancel_subagent(handle.handle_id),
-                handle.handle_id,
-                parent_run_id=actor.parent_run_id,
-                component_ceiling=ceiling,
-            )
-            if handle.managed_pin is None:
-                pin = plugin_service.capture_resume_pin(
-                    child_entries,
-                    actual_run_id,
-                    session_id,
-                    handle.handle_id,
-                )
-                service._fleet.set_managed_custody(
-                    handle.handle_id,
-                    required=bool(plugin_entries),
-                    pin=pin,
-                    resume_ceiling=ceiling,
-                    resume_pin=handle.managed_resume_pin,
-                    resume_run_id=handle.managed_resume_run_id,
-                    resume_handle_id=handle.managed_resume_handle_id,
-                )
-            return child_entries
-
-        def plugin_run_terminal(actual_run_id: str) -> None:
-            if plugin_entries:
-                plugin_service.complete_run(actual_run_id)
-            if on_run_terminal is not None:
-                on_run_terminal(actual_run_id)
-
-        def plugin_checked_chat_call(**kwargs):
-            active_plugin_entries = ()
-            if plugin_entries:
-                active_plugin_entries = bind_plugin_actor()
-                plugin_service.check_entries_from_agent(active_plugin_entries)
-                from tldw_chatbook.Plugins.context import check_send_context
-
-                kwargs["messages_payload"] = check_send_context(
-                    kwargs["messages_payload"]
-                )
-            result = adapter.chat_call(**kwargs)
-            if plugin_entries:
-                plugin_service.check_entries_from_agent(active_plugin_entries)
-            return result
-
-        def finalize_managed_checkpoint(
-            checkpoint, conversation_id, message_id, run_id
-        ):
-            if plugin_producer_pin is None or run_id != plugin_root_id:
-                raise PermissionError("Managed continuation producer is unavailable.")
-            pin = json.loads(plugin_producer_pin)
-            session = self._store._session_or_raise(session_id)
-            if (
-                session.persisted_conversation_id != conversation_id
-                or message_id != assistant_message_id
-            ):
-                raise PermissionError("Managed continuation durable owner changed.")
-            if pin["conversation_id"] not in {session_id, conversation_id}:
-                raise PermissionError("Managed continuation original owner changed.")
-            pin["conversation_id"] = conversation_id
-            return plugin_service.seal_resume_checkpoint(
-                json.dumps(pin),
-                checkpoint,
-                conversation_id,
-                message_id,
-            )
-
-        def persist_continuation(event):
-            if (
-                plugin_entries
-                and event.context.durability == "persistent"
-                and event.context.agent_kind == "primary"
-            ):
-                bind_plugin_root(event.context.run_id)
-            self._store.persist_provider_continuation_event(
-                event,
-                continuation_target=continuation_target,
-                checkpoint_finalizer=(
-                    finalize_managed_checkpoint if plugin_entries else None
-                ),
-            )
-            if capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON:
-                adapter._live_native_persisted_event = event
-
-        hooks_v2_engine = self._get_hooks_v2(session_id) if self._get_hooks_v2 else None
-        service = AgentService(
-            self._db,
-            registry,
-            chat_call=plugin_checked_chat_call if plugin_entries else adapter.chat_call,
-            runtime_capacity=self.runtime_capacity,
-            work_origin=work_origin,
-            work_chain_id=work_chain_id,
-            worktree_repo_authority=worktree_repo_authority,
-            clock=self._clock,
-            app_config=self._app_config,
-            on_step=on_step,
-            on_resolved_target=on_resolved_target,
-            on_tool_activity=on_tool_activity,
-            # TASK-25903: hands the controller a steer(text) bound to THIS
-            # run once its mailbox registers -- run ids are minted inside
-            # run_turn, so the caller cannot key by one.
-            on_primary_steer_ready=on_steer_ready,
-            on_primary_redirect_ready=_redirect_ready,
-            skill_runner=skill_runner,
-            skill_file_bindings=skill_file_bindings,
-            review_tool_calls=review_tool_calls,
-            guard_tool_calls=guard_tool_calls,
-            hooks_v2_engine=hooks_v2_engine,
-            hooks_v2_session_id=session_id,
-            hooks_v2_turn_id=accepted_turn_id or assistant_message_id,
+            persona_policy_rules=persona_policy_rules,
+            profile_context_service=profile_context_service,
+            personal_context_snapshot=personal_context_snapshot,
+            accepted_turn_id=accepted_turn_id,
+            parent_budget_deadline=parent_budget_deadline,
             on_primary_budget_settled=on_primary_budget_settled,
-            # Standalone work has no plugin dependency graph.
-            hooks_v2_required_handler_ids=lambda _run_id: (),
-            hooks_v2_render_context=(
-                hooks_v2_engine.native_plugins.render_context
-                if hooks_v2_engine is not None
-                and getattr(hooks_v2_engine, "native_plugins", None) is not None
-                else None
-            ),
-            hooks_v2_definition_requirements=(
-                (
-                    lambda definition, messages: (
-                        hooks_v2_engine.native_plugins.requirements_for(
-                            definition, registry, messages
-                        )
-                    )
-                )
-                if hooks_v2_engine is not None
-                and getattr(hooks_v2_engine, "native_plugins", None) is not None
-                else None
-            ),
-            before_tool_dispatch=before_tool_dispatch,
-            review_state_scope=review_state_scope,
-            install_skill_tool=install_skill_tool,
-            prepare_managed_skill_promotion_tool=(prepare_managed_skill_promotion_tool),
-            run_skill_script_tool=run_skill_script_tool,
-            archive_recovery_provider=recovery_provider,
-            fork_chat_tool=fork_chat_tool,
-            new_chat_tool=new_chat_tool,
-            run_log_writer=run_log_writer,
-            post_tool_call=(
-                run_hooks_engine.post_tool_dep(session_id=session_id)
-                if run_hooks_engine is not None
-                else None
-            ),
-            run_log_request_plan=first_request_plan.run_log,
-            revoke_approvals=revoke_approvals,
-            on_tool_terminal=on_tool_terminal,
-            on_tool_result_terminal=on_tool_result_terminal,
-            on_run_terminal=lambda run_id: self._on_live_run_terminal(
-                run_id,
-                plugin_run_terminal if plugin_entries else on_run_terminal,
-                observation_owners=(
-                    mcp_provider,
-                    local_provider,
-                    virtual_cli_provider,
-                    raw_shell_provider,
-                ),
-            ),
-            run_model_scope=functools.partial(
-                self._live_usage_run_scope,
-                adapter,
-                conversation_id,
-                primary_live_key,
-                inline_subagents=subagents if fleet_coordinator is None else None,
-            ),
-            managed_child_required=bool(plugin_entries),
-            managed_child_resume=(
-                (
-                    lambda retained: plugin_service.fleet_resume_ceiling(
-                        retained.managed_pin,
-                        retained.run_id,
-                        retained.handle_id,
-                        plugin_entries,
-                    )
-                )
-                if plugin_service is not None
-                else None
-            ),
-            persist_provider_continuation=persist_continuation,
-            acknowledge_provider_continuation=(
-                adapter._acknowledge_live_native_continuation
-                if capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
-                else None
-            ),
-            expand_provider_continuation=expand_provider_continuation,
-            prepare_provider_continuation_request=bool(
-                continuation_target is not None
-                and callable(getattr(self._gateway, "prepare_chat_request", None))
-            ),
-            # PR3a-1 Task 1: every fleet child gets its own model-call
-            # lifeline, entered on the child's own thread and torn down
-            # when the CHILD finishes -- never when this turn does.
-            # PR3a-1 Task 6c wraps that lifeline (it does not replace it)
-            # so the same enter/exit also counts live children: "the last
-            # child of this conversation just finished" is the signal that
-            # closes a survivor's change-review window, and nothing else
-            # in the bridge knows it (the coordinator marks a handle
-            # terminal only AFTER this scope exits).
-            inline_child_model_scope=adapter.child_lifeline,
-            child_model_scope=functools.partial(
-                self._child_run_scope,
-                conversation_id,
-                adapter,
-                child_change_state,
-            ),
-            # PR3a-2 Task 2: the settle half of the same seam. The wrapper
-            # above binds this turn's IDENTITY -- session + originating
-            # assistant message -- and removes Task 3's live WRITE state
-            # only after this service's final handle settles, then forwards
-            # to the existing fan-out path. The run id arrives per call from
-            # `run_child`'s finally, where it is first knowable.
-            on_child_settled=on_child_settled,
-            # PR3a-1 Task 6a: this CONVERSATION's coordinator, not this
-            # turn's -- the only thing that makes `[agents]
-            # max_live_subagents` a bound on the fleet rather than on one
-            # message, and the only thing an earlier turn's survivor is
-            # still visible and stoppable through. `None` when the fleet
-            # kill switch is on, which leaves `AgentService` to take its
-            # own inline path exactly as before.
-            fleet_coordinator=fleet_coordinator,
-            message_inbox=message_inbox,
-            startup_instruction_candidate=startup_instruction_candidate,
-            confirm_project_instruction_dispatch=(
-                service_confirm_project_instruction_dispatch
-            ),
-            project_instruction_context=project_instruction_context,
-            on_ephemeral_runtime_warning=(
-                (
-                    lambda code, _names, _count: on_project_instruction_activation(
-                        ProjectInstructionActivationEvent(
-                            outcome_codes=(code,),
-                        )
-                    )
-                )
-                if on_project_instruction_activation is not None
-                else None
-            ),
-            propagate_trace_call_persistence_errors=(
-                propagate_trace_call_persistence_errors
-            ),
-        )
-        # PR2b Task 1: publish BEFORE `run_turn` is called (below) -- see
-        # `self._fleet_services`'s own docstring in `__init__` for the
-        # lifetime/thread-safety contract this relies on.
-        self._fleet_services[conversation_id] = service
-        # PR3a-2 Task 4: open the survivor-discriminator window for THIS
-        # turn -- a child settling while this id is present finished
-        # within its turn (see `_inflight_turn_message_ids`); the matching
-        # discard is the FIRST statement of the `finally` below.
-        with self._change_window_lock:
-            self._inflight_turn_message_ids.add(assistant_message_id)
+            recovery_provider=recovery_provider,
+            code_review_provider=code_review_provider,
+            on_tool_surface_selected=on_tool_surface_selected,
+        ) as prepared:
+            result = prepared.run_primary()
+        return result
 
-        supersede_run_id = (
-            self._previous_primary_run_id(conversation_id)
-            if supersede_previous
-            else None
-        )
-        run_messages = list(first_request_plan.messages)
-        execution_owner = None
-        try:
-            execution_owner = self.runtime_capacity.begin_execution(
-                origin=work_origin, conversation_id=conversation_id
-            )
-            # FIRST statement in the block that owns this thread's
-            # shutdown -- see its construction above. Not merely *before*
-            # the try: one inserted line there would silently re-open the
-            # leak. If start() itself raises (thread exhaustion), the
-            # finally still runs and still closes the loop; `is_alive()`
-            # is False for a never-started thread, so the close branch is
-            # the one taken and no fd leaks.
-            turn_lifeline.start(owner=execution_owner)
-            if parent_budget_deadline is not None:
-                wall = parent_budget_deadline - time.monotonic()
-                if wall <= 0:
-                    raise RuntimeError("native_parent_budget_exhausted")
-                config = dataclass_replace(
-                    config,
-                    budget=dataclass_replace(
-                        config.budget,
-                        max_wall_seconds=min(config.budget.max_wall_seconds, wall),
-                    ),
-                )
-            from .console_continuation_binding import continuation_can_be_durable
+    @contextlib.contextmanager
+    def _prepare_native_reply(
+        self,
+        *,
+        conversation_id: str,
+        session_id: str,
+        resolution: Any,
+        assistant_message_id: str,
+        model: str,
+        session_system_prompt: str,
+        agent_messages: list[dict],
+        should_cancel: Callable[[], bool],
+        expected_progress_owner_id: str | None = None,
+        work_origin: WorkOrigin = WorkOrigin.MANUAL,
+        work_chain_id: str | None = None,
+        provider_stream_signals: ConsoleProviderStreamSignals | None = None,
+        supersede_previous: bool = False,
+        mcp_provider: Any | None = None,
+        builtin_gate: Any | None = None,
+        scratch_root: Path | None = None,
+        scratch_lease: Callable[[], ContextManager[Path]] | None = None,
+        # PR2a Task 5: `(calls, run_id)` -- forwarded straight to
+        # `AgentService(review_tool_calls=...)`, which binds each run's own
+        # id in before handing it to `LoopDeps`.
+        review_tool_calls: (
+            Callable[[list[ToolCall], str], dict[str, ToolReviewValue]] | None
+        ) = None,
+        on_steer_ready: Callable[[Callable[[str], str | None]], None] | None = None,
+        # TASK-28227: fired once the run's mailbox registers, with a bound
+        # `redirect(text) -> refusal | None` -- the Redirect button's and
+        # /redirect's hook, exactly like on_steer_ready is /steer's.
+        on_redirect_ready: Callable[[Callable[[str], str | None]], None] | None = None,
+        change_roots: Sequence[Path] | None = None,
+        worktree_repo_authority: RunAdmittedWorkspaceRoot | None = None,
+        change_root_aliases: Sequence[str] = (),
+        change_review_skipped_roots: Sequence[SkippedReviewRoot] = (),
+        turn_skill_bindings: tuple[str, ...] = (),
+        turn_bundle_block: str = "",
+        request_skill_install_confirm: Callable[[str], bool] | None = None,
+        request_skill_script_confirm: Callable[[dict], dict] | None = None,
+        request_chat_create_confirm: Callable[[dict], dict] | None = None,
+        execute_agent_chat_create: Callable[[dict], dict] | None = None,
+        prepare_agent_chat_create: Callable[[dict], dict] | None = None,
+        # TASK-28238 phase 2 Task 6: forwarded straight to
+        # `AgentService.run_turn(request_worktree_merge_confirm=...)` --
+        # unlike `request_skill_script_confirm` above, this is never
+        # consumed inside a bridge-built closure; `merge_agent_worktree`/
+        # `discard_agent_worktree` are the service's OWN closures (Task 5),
+        # so there is nothing for `run_reply` to do with it but pass it on.
+        request_worktree_merge_confirm: Callable[[dict], dict] | None = None,
+        local_provider: Any | None = None,
+        virtual_cli_provider: Any | None = None,
+        raw_shell_provider: Any | None = None,
+        library_provider: Any | None = None,
+        library_authority: Any | None = None,
+        managed_skill_promotion_gate: Any | None = None,
+        profile_provider: Any | None = None,
+        canvas_provider: Any | None = None,
+        canvas_authority: Any | None = None,
+        skills_context: Mapping[str, Any] | None = None,
+        workspace_id: str | None = None,
+        workspace_ephemeral: bool | None = None,
+        workspace_read_binding_ids: tuple[str, ...] | None = None,
+        workspace_write_binding_ids: tuple[str, ...] | None = None,
+        workspace_binding_authority: tuple[Any, ...] | None = None,
+        # PR2a Task 7: called with the run id of every sub-agent this turn
+        # cancels or abandons, so its still-armed approval cards are failed
+        # closed and taken off screen instead of staying pressable for a
+        # run that is already over. Forwarded straight to
+        # `AgentService(revoke_approvals=...)`; `None` (a caller with no UI)
+        # leaves cancellation exactly as it was.
+        revoke_approvals: Callable[[str], object] | None = None,
+        plugin_cancel_root: Callable[[], object] | None = None,
+        on_tool_terminal: Callable[[str, str, str], object] | None = None,
+        on_tool_result_terminal: (
+            Callable[[str, str, str, ToolResult], object] | None
+        ) = None,
+        on_run_terminal: Callable[[str], object] | None = None,
+        native_tools_enabled: bool | None = None,
+        restore_provider_continuation: ProviderContinuationCheckpoint | None = None,
+        restore_provider_target: ContinuationRestoreTarget | None = None,
+        expand_provider_continuation: (
+            Callable[[ProviderContinuationCheckpoint], list[dict]] | None
+        ) = None,
+        resume_provider_continuation: bool = False,
+        continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
+        continuation_target: ContinuationRestoreTarget | None = None,
+        continuation_owner_key: str | None = None,
+        thinking_sidecar: tuple[ProviderThinkingSidecar, ...] = (),
+        thinking_policy: ThinkingHistoryPolicy = "auto",
+        thinking_owner_key: str | None = None,
+        generation_token: int | None = None,
+        startup_instruction_candidate: StartupInstructionCandidate | None = None,
+        project_instruction_nested_max_bytes: int | None = None,
+        run_budget: RunBudget | None = None,
+        confirm_project_instruction_dispatch: (
+            Callable[[InstructionSnapshot], str] | None
+        ) = None,
+        on_project_instruction_activation: (
+            Callable[[ProjectInstructionActivationEvent], None] | None
+        ) = None,
+        propagate_trace_call_persistence_errors: bool = False,
+        capture_mode: ConsoleTraceCaptureMode = ConsoleTraceCaptureMode.CAPTURE_OFF,
+        trace_request: PreparedConsoleRequest | None = None,
+        persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
+        profile_context_service: Any | None = None,
+        personal_context_snapshot: ProfileContextSnapshot | None = None,
+        accepted_turn_id: str | None = None,
+        parent_budget_deadline: float | None = None,
+        on_primary_budget_settled: Callable[[RunBudget | bool], None] | None = None,
+        recovery_provider: Any | None = None,
+        code_review_provider: Any | None = None,
+        on_tool_surface_selected: Callable[[int], None] | None = None,
+        _workflow_preparation: Any | None = None,
+    ):
+        from . import console_agent_preparation
 
-            run_id, outcome = service.run_turn(
-                execution_owner=execution_owner,
-                conversation_id=conversation_id,
-                messages=run_messages,
-                config=config,
-                # Intentionally NOT forwarding the native in-memory id here.
-                # create_run would store it, but the native id can never match
-                # any persisted_message_id -- so a run left unfinished (stopped
-                # mid-run, cancelled, failed, or crashed) would hold a stale,
-                # non-null id that resume anchoring can never match (and Task 3
-                # would drop as "off-path", silently hiding its markers). By
-                # omitting it the run row starts NULL; the controller writes the
-                # durable PERSISTED id onto the run on EVERY terminal path once
-                # the reply is persisted (see record_run_assistant_message), and
-                # any still-unfinished run stays NULL for resume's null->ordinal
-                # fallback. run_turn's assistant_message_id threading stays a
-                # generic service capability (its own tests call it directly).
-                # execution_key-first (Task 5): the service's capability
-                # check keys off api_endpoint, and execution_key is by
-                # definition "Provider key passed to chat_api_call" — the
-                # PROVIDER_PARAM_MAP key space provider_supports_native_tools
-                # matches against. `provider` (the display key) and then
-                # "agent" remain fallbacks for fakes lacking either
-                # attribute (e.g. resolution=object() in existing tests),
-                # which keeps them on the fence path unchanged.
-                api_endpoint=first_request_plan.api_endpoint,
-                # Raw selection identity for spawn resolution: an inheriting
-                # child of custom-ep:<slug> must snapshot the endpoint (and
-                # its registry base URL), not the flattened execution family.
-                parent_raw_provider=first_request_plan.selected_provider,
-                should_cancel=should_cancel,
-                supersede_run_id=supersede_run_id,
-                continuation_owner_message_id=assistant_message_id,
-                continuation_durability=(
-                    "persistent"
-                    if continuation_can_be_durable(
-                        self._store, session_id, assistant_message_id, resolution
-                    )
-                    else "ephemeral"
-                ),
-                restore_provider_continuation=restore_provider_continuation,
-                restore_provider_target=restore_provider_target,
-                resume_provider_continuation=resume_provider_continuation,
-                continuation_sidecar=continuation_sidecar,
-                continuation_target=continuation_target,
-                continuation_owner_key=continuation_owner_key,
-                first_request_schema_plan=first_request_plan.schemas,
-                request_worktree_merge_confirm=request_worktree_merge_confirm,
-                requested_run_id=canvas_run_id,
-            )
-        finally:
-            # PR3a-2 Task 4: this turn is over -- from here on a settling
-            # child of it is a background (after-turn) completion. First
-            # statement of the finally so the window closes even when
-            # `run_turn` raised, before any teardown below can block.
-            with self._change_window_lock:
-                self._inflight_turn_message_ids.discard(assistant_message_id)
-            if canvas_turn_controller is not None:
-                try:
-                    canvas_turn_controller.finish_assistant_run(
-                        assistant_message_id,
-                        actual_run_id=(run_id if "run_id" in locals() else ""),
-                        terminal_status=(
-                            outcome.status if "outcome" in locals() else "error"
-                        ),
-                    )
-                except Exception:
-                    logger.warning("canvas run settlement failed closed")
-            if managed_skill_promotion_gate is not None:
-                managed_skill_promotion_gate.unbind_reader()
-            unbind_promotion_context = getattr(
-                local_provider, "unbind_instruction_promotion_context", None
-            )
-            if callable(unbind_promotion_context):
-                unbind_promotion_context()
-            run_cancelled = "outcome" in locals() and outcome.status == RUN_CANCELLED
-            from .console_tool_activity import finish_approval_activity
-
-            finish_approval_activity(
-                self, session_id, tool_activity, tool_activity_run_ids,
-                raw_shell_progress_run_ids, run_cancelled,
-                (mcp_provider, local_provider, virtual_cli_provider, raw_shell_provider),
-                log=logger,
-            )
-            if self._buddy_sink is not None:
-                for buddy_run_id in primary_buddy_run_ids:
-                    self._buddy_sink.release_run(buddy_run_id)
-            # PR2b Task 1: clear the published service in the SAME
-            # teardown path that already tears this run down -- not a
-            # second one. From this point `fleet_snapshot` reverts to `[]`
-            # for this conversation (unless a newer run has already
-            # published over this one -- see `_teardown_fleet_service`),
-            # even on a raised/cancelled run (this `finally` always runs).
-            # Pinned choice: a completed run's snapshot goes back to `[]`,
-            # not the run's terminal handles (see
-            # `test_fleet_snapshot_reflects_two_live_handles_in_flight_
-            # then_empty_after_run_completes`).
-            self._teardown_fleet_service(conversation_id, service)
-            # PR2a Task 6.5: stop the driver thread before closing, and
-            # join it (the stop/join/close ordering, and why a wedged
-            # thread keeps its loop open, now live in
-            # `_ModelCallLifeline.shutdown`).
-            #
-            # PR3a-1 Task 1: this tears down the PRIMARY agent's loop and
-            # nothing else. It used to be the whole run tree's -- and the
-            # comment here used to argue that was safe because "run_turn
-            # has already settled every fleet child ... so nothing should
-            # still be submitting", an invariant PR 3a deliberately
-            # breaks. A fleet child submits to a lifeline it owns itself
-            # (see `_StreamingModelAdapter.child_lifeline`), so a child
-            # still running when this line executes keeps a live transport
-            # to the model rather than losing one out from under it.
-            try:
-                turn_lifeline.shutdown()
-            finally:
-                if execution_owner is not None:
-                    execution_owner.finish_root()
-            # TASK-1971: E snapshot on EVERY terminal path -- completed,
-            # failed, cancelled, or crashed. A run that died halfway through
-            # editing is when review matters most. `run_id` is unbound when
-            # run_turn itself raised before creating the run row; the
-            # records are then logged instead of stored (nothing to attach
-            # them to), and the exception still propagates unchanged.
-            if change_reservation is not None:
-                try:
-                    if "run_id" in locals():
-                        _steps = outcome.steps if "outcome" in locals() else []
-                        _primary_paths = ChangeTurnTracker.tool_touched_paths(_steps)
-                        _touched_paths = list(
-                            dict.fromkeys(
-                                (
-                                    *_primary_paths,
-                                    *sorted(child_change_state.touched_paths),
-                                )
-                            )
-                        )
-                        finalization = self._change_finalization_coordinator.finalize(
-                            change_reservation,
-                            run_id=run_id,
-                            touched_paths=_touched_paths,
-                            kind=(
-                                CHANGE_KIND_TURN_CONCURRENT_SUBAGENT
-                                if concurrent_subagent
-                                else CHANGE_KIND_TURN
-                            ),
-                            has_live_survivors=(
-                                self._live_child_count_for_turn(assistant_message_id)
-                                > 0
-                            ),
-                        )
-                        if finalization is ChangeReviewFinalizeResult.OVERLOAD_VISIBLE:
-                            error = (
-                                change_reservation.admission_error
-                                or "change-review finalization queue unavailable"
-                            )
-                            for index, root in enumerate(
-                                change_reservation.roots,
-                                start=1,
-                            ):
-                                self._append_marker(
-                                    session_id,
-                                    format_change_tracking_failure_marker(
-                                        alias_by_root.get(
-                                            str(root), f"workspace {index}"
-                                        ),
-                                        error,
-                                    ),
-                                )
-                    else:
-                        self._change_finalization_coordinator.cancel(change_reservation)
-                except Exception:  # noqa: BLE001 -- never mask the run outcome
-                    logger.opt(exception=True).warning(
-                        "change_review: finalization scheduling failed; "
-                        "turn changes untracked"
-                    )
-            elif change_handle is not None:
-                # PR3a-1 Task 6c: close the EARLIER turn's survivor
-                # window before this turn's E. A timed-out close waiter
-                # cannot prove that close-time handoff finished, so this
-                # turn must fail closed instead of overtaking it.
-                boundary_safe = self._close_post_turn_change_window(conversation_id)
-                with self._change_window_lock:
-                    claim_failed = (
-                        successor_claim is not None and successor_claim.failed
-                    )
-                if not boundary_safe or claim_failed:
-                    change_handle = None
-            if change_handle is not None:
-                try:
-                    _steps = outcome.steps if "outcome" in locals() else []
-                    _current_live_handles = service.live_subagent_handles()
-                    _current_state_pending = bool(_current_live_handles)
-                    with self._change_window_lock:
-                        if _current_state_pending:
-                            _live_states = self._child_change_states.setdefault(
-                                conversation_id, {}
-                            )
-                            _live_states[child_change_state.owner_key] = (
-                                child_change_state
-                            )
-                            child_change_state.pending_scopes = max(
-                                0,
-                                len(_current_live_handles)
-                                - child_change_state.live_scopes,
-                            )
-                        _pending_child_states_before_e = tuple(
-                            self._child_change_states.get(conversation_id, {}).values()
-                        )
-                        _e_child_states = {
-                            state.owner_key: state
-                            for state in inherited_child_states_at_b
-                        }
-                        _e_child_states.update(
-                            {
-                                state.owner_key: state
-                                for state in _pending_child_states_before_e
-                            }
-                        )
-                        if child_change_state.touched_paths:
-                            _e_child_states[child_change_state.owner_key] = (
-                                child_change_state
-                            )
-                        _child_paths_before_e = sorted(
-                            {
-                                path
-                                for state in _e_child_states.values()
-                                for path in state.touched_paths
-                            }
-                        )
-                    # A handle can settle between the parent-visible query
-                    # and registration. Keep the captured reference for E,
-                    # but do not strand a dead state in the live map after
-                    # its one settle callback already ran.
-                    if _current_state_pending and not service.live_subagent_handles():
-                        with self._change_window_lock:
-                            states = self._child_change_states.get(conversation_id)
-                            if (
-                                states is not None
-                                and states.get(child_change_state.owner_key)
-                                is child_change_state
-                                and child_change_state.live_scopes == 0
-                            ):
-                                child_change_state.pending_scopes = 0
-                                states.pop(child_change_state.owner_key, None)
-                                if not states:
-                                    self._child_change_states.pop(conversation_id, None)
-                    _primary_paths = ChangeTurnTracker.tool_touched_paths(_steps)
-                    _touched_paths = list(
-                        dict.fromkeys((*_primary_paths, *_child_paths_before_e))
-                    )
-                    _records = self._change_tracker.end_turn(
-                        change_handle,
-                        touched_paths=_touched_paths,
-                    )
-                    if "run_id" in locals():
-                        self._record_change_snapshots(
-                            run_id=run_id,
-                            records=_records,
-                            kind=(
-                                CHANGE_KIND_TURN_CONCURRENT_SUBAGENT
-                                if concurrent_subagent
-                                else CHANGE_KIND_TURN
-                            ),
-                        )
-                        self._append_change_markers(
-                            session_id,
-                            run_id,
-                            _records,
-                            kind=(
-                                CHANGE_KIND_TURN_CONCURRENT_SUBAGENT
-                                if concurrent_subagent
-                                else CHANGE_KIND_TURN
-                            ),
-                        )
-                        if _pending_child_states_before_e:
-                            self._open_post_turn_change_window(
-                                conversation_id,
-                                run_id=run_id,
-                                session_id=session_id,
-                                handle=change_handle,
-                                child_states=_pending_child_states_before_e,
-                            )
-                    elif _records:
-                        logger.warning(
-                            "change_review: run crashed before a run row "
-                            f"existed; {len(_records)} change record(s) "
-                            "not stored"
-                        )
-                except Exception:  # noqa: BLE001 -- never mask the run's outcome
-                    logger.opt(exception=True).warning(
-                        "change_review: end_turn failed; turn changes untracked"
-                    )
-            if "run_id" in locals() and change_review_skipped_roots:
-                self._append_skipped_change_review_markers(
-                    session_id,
-                    change_review_skipped_roots,
-                )
-            # task-5 (turn-file-annotate, spec §4): stamp exactly the
-            # notes this run's attach seam included (captured above,
-            # before `run_turn` was even called) and disclose what was
-            # sent. Placed BESIDE the marker seam above -- not inside
-            # `_append_change_markers`, and deliberately NOT nested under
-            # `if change_handle is not None:`: diff-feedback notes are
-            # about what the user told the agent, unrelated to whether
-            # THIS turn's own tracked roots changed, or whether change
-            # tracking is even configured for this run at all -- the
-            # marker seam's internal `if files:` gate ("nothing to
-            # report") must not become a reason to strand notes that were
-            # genuinely delivered in the outbound payload. Gated only on
-            # the run having actually produced assistant output: a run
-            # that errors, gets cancelled empty-handed, or crashes before
-            # a run row exists leaves every attached note pending for the
-            # retry -- the block only ever lived in the outbound COPY (see
-            # the attach seam above run_turn), so nothing is lost by not
-            # stamping. `run_id`/`outcome` are bound together by the same
-            # assignment, so the one `locals()` check covers both. Double
-            # delivery is impossible by construction (the pending query
-            # excludes already-stamped rows). Never breaks the reply.
-            if (
-                "run_id" in locals()
-                and outcome.final_text
-                and diff_feedback_included_ids
-            ):
-                try:
-                    # task-6 fix round: stamp with the id of THIS
-                    # (completing) run -- the run whose completion is
-                    # actually doing the delivering, which resume
-                    # re-derivation anchors the disclosure row to. `run_id`
-                    # is already known-bound by the `locals()` check above.
-                    #
-                    # Qodo #4 (PR #1779 fix round): disclose only the ids
-                    # `mark_notes_delivered` reports ACTUALLY stamped, not
-                    # every id this seam captured -- a concurrent delivery
-                    # elsewhere could have already stamped one of them
-                    # first (the UPDATE's own `delivered_at IS NULL` guard
-                    # silently skips it), and disclosing a note nobody
-                    # verifiably delivered on THIS run's completion would
-                    # be dishonest. Concurrent replies on one conversation
-                    # are architecturally serialized today, so this is
-                    # defense in depth, not a reachable-today bug.
-                    stamped_ids = set(
-                        self._db.mark_notes_delivered(
-                            diff_feedback_included_ids, delivered_by_run_id=run_id
-                        )
-                    )
-                    disclosed_notes = [
-                        note
-                        for note in diff_feedback_included_notes
-                        if int(note["id"]) in stamped_ids
-                    ]
-                    if disclosed_notes:
-                        self._store.append_message(
-                            session_id,
-                            role=ConsoleMessageRole.TOOL,
-                            content=format_diff_feedback_disclosure(disclosed_notes),
-                            activity_presentation=ConsoleActivityPresentation(
-                                "feedback", "Feedback delivered", "done"
-                            ),
-                        )
-                except Exception:  # noqa: BLE001 -- notes must never break the reply
-                    logger.opt(exception=True).warning(
-                        "change_review: could not stamp/disclose diff feedback"
-                    )
-        capture_outcome = (
-            "complete"
-            if outcome.status == RUN_DONE
-            else "stopped"
-            if outcome.status == RUN_CANCELLED
-            else "failed"
-        )
-        capture_update = thinking_capture.settle(capture_outcome)
-        if capture_update.envelope is not None:
-            self._store.settle_message_thinking(
-                assistant_message_id,
-                capture_update.envelope,
-                generation_token=generation_token,
-            )
-        from tldw_chatbook.Agents.tool_disclosure_diagnostics import log_agent_steps
-
-        log_agent_steps(outcome.steps, run_id)
-        logger.info(
-            "console agent bridge run_reply end",
+        with console_agent_preparation._prepare_native_reply(
+            self,
             conversation_id=conversation_id,
             session_id=session_id,
-            outcome_status=outcome.status,
-            final_text_len=len(outcome.final_text),
-            step_count=len(outcome.steps),
-        )
-        # PR3a-1 Task 6b (audit F1): under THIS turn's own key, so the
-        # terminal status it writes is final -- a surviving child's later
-        # steps land in the child's own slot and can no longer reset this
-        # one to "running" for the rest of the process's life.
-        self._publish_live(
-            conversation_id,
-            primary_live_key,
-            AgentLiveSnapshot(
-                status=outcome.status,
-                step=live_steps.count,
-                steps=live_steps.tail(5),
-                # PR2b Task 2: `service` here -- NOT `self.fleet_snapshot(
-                # conversation_id)` -- deliberately: the `finally` block
-                # just above already ran `self._teardown_fleet_service`,
-                # which pops THIS run's own `self._fleet_services` entry
-                # (assuming no overlapping resend already overwrote it --
-                # see that method's docstring), so a lookup by
-                # conversation_id here would see `[]` and wipe out every
-                # child's final status right when the run ends. The
-                # `service` local variable is unaffected by that pop -- by
-                # this point `_settle_fleet` (called from inside
-                # `run_turn`, before it returned above) has already
-                # joined/abandoned every fleet child, so every handle
-                # `service.fleet_snapshot()` returns here is already
-                # terminal.
-                subagents=_subagent_summaries_from_fleet(
-                    service.fleet_snapshot(), subagents
-                ),
-            ),
-            primary=True,
-        )
-        # The run just finished -- drop any stale historical cache entry so
-        # a *later* resume (in a future process) always re-derives fresh
-        # rather than reading this run's now-superseded snapshot (belt and
-        # braces on top of the pop at run start above).
-        self._historical_cache.pop(conversation_id, None)
-        return run_id, outcome
+            resolution=resolution,
+            assistant_message_id=assistant_message_id,
+            model=model,
+            session_system_prompt=session_system_prompt,
+            agent_messages=agent_messages,
+            should_cancel=should_cancel,
+            expected_progress_owner_id=expected_progress_owner_id,
+            work_origin=work_origin,
+            work_chain_id=work_chain_id,
+            provider_stream_signals=provider_stream_signals,
+            supersede_previous=supersede_previous,
+            mcp_provider=mcp_provider,
+            builtin_gate=builtin_gate,
+            scratch_root=scratch_root,
+            scratch_lease=scratch_lease,
+            review_tool_calls=review_tool_calls,
+            on_steer_ready=on_steer_ready,
+            on_redirect_ready=on_redirect_ready,
+            change_roots=change_roots,
+            worktree_repo_authority=worktree_repo_authority,
+            change_root_aliases=change_root_aliases,
+            change_review_skipped_roots=change_review_skipped_roots,
+            turn_skill_bindings=turn_skill_bindings,
+            turn_bundle_block=turn_bundle_block,
+            request_skill_install_confirm=request_skill_install_confirm,
+            request_skill_script_confirm=request_skill_script_confirm,
+            request_chat_create_confirm=request_chat_create_confirm,
+            execute_agent_chat_create=execute_agent_chat_create,
+            prepare_agent_chat_create=prepare_agent_chat_create,
+            request_worktree_merge_confirm=request_worktree_merge_confirm,
+            local_provider=local_provider,
+            virtual_cli_provider=virtual_cli_provider,
+            raw_shell_provider=raw_shell_provider,
+            library_provider=library_provider,
+            library_authority=library_authority,
+            managed_skill_promotion_gate=managed_skill_promotion_gate,
+            profile_provider=profile_provider,
+            canvas_provider=canvas_provider,
+            canvas_authority=canvas_authority,
+            skills_context=skills_context,
+            workspace_id=workspace_id,
+            workspace_ephemeral=workspace_ephemeral,
+            workspace_read_binding_ids=workspace_read_binding_ids,
+            workspace_write_binding_ids=workspace_write_binding_ids,
+            workspace_binding_authority=workspace_binding_authority,
+            revoke_approvals=revoke_approvals,
+            plugin_cancel_root=plugin_cancel_root,
+            on_tool_terminal=on_tool_terminal,
+            on_tool_result_terminal=on_tool_result_terminal,
+            on_run_terminal=on_run_terminal,
+            native_tools_enabled=native_tools_enabled,
+            restore_provider_continuation=restore_provider_continuation,
+            restore_provider_target=restore_provider_target,
+            expand_provider_continuation=expand_provider_continuation,
+            resume_provider_continuation=resume_provider_continuation,
+            continuation_sidecar=continuation_sidecar,
+            continuation_target=continuation_target,
+            continuation_owner_key=continuation_owner_key,
+            thinking_sidecar=thinking_sidecar,
+            thinking_policy=thinking_policy,
+            thinking_owner_key=thinking_owner_key,
+            generation_token=generation_token,
+            startup_instruction_candidate=startup_instruction_candidate,
+            project_instruction_nested_max_bytes=project_instruction_nested_max_bytes,
+            run_budget=run_budget,
+            confirm_project_instruction_dispatch=confirm_project_instruction_dispatch,
+            on_project_instruction_activation=on_project_instruction_activation,
+            propagate_trace_call_persistence_errors=propagate_trace_call_persistence_errors,
+            capture_mode=capture_mode,
+            trace_request=trace_request,
+            persona_policy_rules=persona_policy_rules,
+            profile_context_service=profile_context_service,
+            personal_context_snapshot=personal_context_snapshot,
+            accepted_turn_id=accepted_turn_id,
+            parent_budget_deadline=parent_budget_deadline,
+            on_primary_budget_settled=on_primary_budget_settled,
+            recovery_provider=recovery_provider,
+            code_review_provider=code_review_provider,
+            on_tool_surface_selected=on_tool_surface_selected,
+            _workflow_preparation=_workflow_preparation,
+        ) as prepared:
+            yield prepared
 
     def _teardown_fleet_service(
         self, conversation_id: str, service: AgentService
@@ -8915,6 +6864,8 @@ class ConsoleAgentBridge:
         assistant_message_id: str,
         run_id: str | None,
         status: str,
+        *,
+        workflow_task: WorkflowTaskClaim | None = None,
     ) -> None:
         """Record one settlement, notify individually, then fire any final drain.
 
@@ -8949,6 +6900,7 @@ class ConsoleAgentBridge:
             # HERE knows which was which by fire time.
             record = SettledChild(
                 run_id=run_id,
+                workflow_task=workflow_task,
                 status=status,
                 session_id=session_id,
                 assistant_message_id=assistant_message_id,
@@ -11249,6 +9201,8 @@ class ConsoleAgentBridge:
             db=self._db,
             service=self._change_tracker.service,
             conversation_id=conversation_id,
+            undo_native=self._change_revert_native,
+            native_undo_expected=self._native_undo_expected,
         )
 
     @staticmethod
@@ -12082,3 +10036,7 @@ _CHANGE_REVIEW_MARKER_HELPER_SOURCE = (
     _read_change_review_markers.__kwdefaults__,
     tuple(_read_change_review_markers.__kwdefaults__.items()),
 )
+
+
+# Original collision view is part of ordinary catalog identity, not a new owner.
+_NATIVE_ORDINARY_COLLISION_PROVIDER = _CollisionFilteredMCPProvider

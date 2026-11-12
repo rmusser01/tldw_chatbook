@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import sys
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -9,10 +10,15 @@ from types import SimpleNamespace
 
 import pytest
 
-pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
-
+from Tests.Agents.test_hook_permissions import _approve
+from Tests.Agents.test_hook_permissions import hook_file as _hook_file
+from Tests.Chat.test_console_hook_preparation_demand import _save_hooks
 from Tests.hooks_v2_process_support import child_argv
 from Tests.Plugins.test_native_components import install_components
+
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
+
+hook_file = _hook_file
 
 _REQUIRES_COMMAND_HOOKS = pytest.mark.skipif(
     "sys.platform == 'win32'",
@@ -461,6 +467,7 @@ async def _owned_peer(
     transport="stdio",
     requires=None,
     schema=None,
+    canonical_store=False,
 ):
     """One reviewed owned profile over the existing inert transport fixtures."""
     from Tests.Plugins.platform_support import require_managed_runtime
@@ -522,8 +529,14 @@ async def _owned_peer(
                 }, None
 
     async with transport_case() as (client, definition, requests):
+        from tldw_chatbook.config import get_user_data_dir
+
+        mcp_path = (
+            get_user_data_dir() / "local_mcp_store.json"
+            if canonical_store else tmp_path / "owned-mcp.json"
+        )
         local = LocalMCPControlService(
-            store=LocalMCPStore(tmp_path / "owned-mcp.json"),
+            store=LocalMCPStore(mcp_path),
             client=client,
             manifest_provider=dict,
         )
@@ -1137,7 +1150,15 @@ async def _installed_compaction_case(
         await plugin_service.commit(global_enable, global_enable.operation_id)
     ).committed
     db, repository, controller, store, session, conversation, _ = (
-        _real_selection_controller(tmp_path, "owned-compact")
+        _real_selection_controller(
+            tmp_path,
+            "owned-compact",
+            database_path=(
+                tmp_path / "owned-compact.sqlite"
+                if owned_case is not None and owned_case.unified._permission_store is None
+                else ":memory:"
+            ),
+        )
     )
     controller.app = native_console.controller.app
     controller._skills_service = native_console.skills
@@ -1289,6 +1310,34 @@ async def _installed_compaction_case(
 
         monkeypatch.setattr(controller_module, "decide_compaction", observe_decision)
         monkeypatch.setattr(controller, "_hooks_for_compaction", observe_hooks)
+    if mode in {"copied_capture", "changed_mcp_source"}:
+        from tldw_chatbook.MCP.unified_control_plane_service import (
+            UnifiedMCPControlPlaneService,
+        )
+
+        hooks_for_compaction = controller._hooks_for_compaction
+
+        async def displace_capture(*args, configuration=None, **kwargs):
+            if configuration is None:
+                configuration = await controller.capture_turn_configuration_snapshot(args[0])
+            with monkeypatch.context() as patch:
+                if mode == "copied_capture":
+                    from dataclasses import replace as copy_configuration
+
+                    configuration = copy_configuration(configuration)
+                else:
+                    replacement = UnifiedMCPControlPlaneService(
+                        local_service=owned_case.local,
+                        server_service=None,
+                        target_store=None,
+                        context_store=None,
+                    )
+                    patch.setattr(controller.app, "unified_mcp_service", replacement)
+                return await hooks_for_compaction(
+                    *args, configuration=configuration, **kwargs
+                )
+
+        monkeypatch.setattr(controller, "_hooks_for_compaction", displace_capture)
     prior_state = controller.run_state_for(session.id)
     if standalone:
         controller._set_run_state(prior_state, session_id=session.id)
@@ -1317,6 +1366,19 @@ async def _installed_compaction_case(
 
     next_input = None
     try:
+        if mode in {"copied_capture", "changed_mcp_source"}:
+            with pytest.raises(PermissionError, match="Original compaction MCP capture changed"):
+                await compact
+            assert_released()
+            assert not controller.has_pending_approval_round(session.id)
+            assert not runtime.execution_capacity.snapshot().executions
+            assert not controller._preparation_reads
+            assert owned_case.unified._permission_store is None
+            snapshots = controller._durable_context_snapshots(session.id)
+            assert repository.load_applicable_branch_memory(
+                conversation, frozenset(row.message_id for row in snapshots)
+            ).memory is None
+            return
         if mode == "nonce":
             await compact
         await _wait(
@@ -1563,11 +1625,10 @@ async def _installed_compaction_case(
     "mode", ["approved", "disconnected", "denied", "cancelled", "cyclic"]
 )
 async def test_installed_provisional_mcp_initialization(
-    native_console, native_package, tmp_path, monkeypatch, mode
+    native_console, native_package, tmp_path, monkeypatch, hook_file, mode
 ):
     from uuid import uuid4
 
-    from tldw_chatbook.Agents.run_hooks import HookOutcome
     from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
     from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
     from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
@@ -1575,16 +1636,24 @@ async def test_installed_provisional_mcp_initialization(
     rig = native_console
     accepted, terminal, stops, cards = [], [], [], []
 
-    class LegacyObserver:
-        async def fire_async(self, *_args, **_kwargs):
-            return HookOutcome()
-
-        def notify(self, event, **kwargs):
-            if event == "Stop":
-                stops.append(kwargs)
-
-    recorder = LegacyObserver()
-    rig.controller._ensure_run_hooks = lambda: recorder
+    stop_marker = tmp_path / "accepted-stop"
+    _save_hooks(
+        hook_file,
+        {
+            "hook": [
+                {
+                    "id": "installed-mcp-stop",
+                    "event": "Stop",
+                    "command": [
+                        sys.executable,
+                        "-c",
+                        f"with open({str(stop_marker)!r}, 'a') as marker: "
+                        "marker.write('stop' + chr(10))",
+                    ],
+                }
+            ]
+        },
+    )
     rig.controller.on_submission_accepted = lambda: accepted.append(rig.session.id)
     rig.controller.set_pending_approval = lambda payload: (
         cards.append(payload) if payload else None
@@ -1743,9 +1812,22 @@ async def test_installed_provisional_mcp_initialization(
                 not accepted and not terminal and not stops and not rig.gateway.payloads
             )
             assert not case.service.live_runs()
-            assert not case.launch_marker.exists()
+            assert not case.launch_marker.exists() and not stop_marker.exists()
             return
         async with _runtime(rig) as runtime:
+            _approve(runtime.ensure_hook_permissions())
+            rig.controller._hook_permissions_accessor = runtime.ensure_hook_permissions
+            rig.controller._ensure_run_hooks = runtime.ensure_run_hooks
+            legacy_engine = runtime.ensure_run_hooks()
+            notify = legacy_engine.notify
+
+            def observe_stop(event, *, _prepared=None, **kwargs):
+                notify(event, _prepared=_prepared, **kwargs)
+                if event == "Stop":
+                    assert _prepared is not None
+                    stops.append(kwargs)
+
+            monkeypatch.setattr(legacy_engine, "notify", observe_stop)
             request = ConsoleTurnCustodyRequest(
                 turn_id=str(uuid4()),
                 session_id=rig.session.id,
@@ -1824,6 +1906,11 @@ async def test_installed_provisional_mcp_initialization(
                         )
                 await _wait(lambda: bool(terminal))
                 assert len(accepted) == len(stops) == (1 if mode == "approved" else 0)
+                if mode == "approved":
+                    await _wait(stop_marker.exists)
+                    assert stop_marker.read_text().splitlines() == ["stop"]
+                else:
+                    assert not stop_marker.exists()
                 assert bool(rig.gateway.payloads) is (mode == "approved")
                 assert (
                     "installed initializer context" in str(rig.gateway.payloads)
@@ -2096,9 +2183,13 @@ async def test_installed_standalone_compact_now_releases_admission(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mode", ["warm", "cold", "copied_capture", "changed_mcp_source"]
+)
 async def test_installed_owned_mcp_post_compaction(
-    native_console, native_package, tmp_path, monkeypatch
+    native_console, native_package, tmp_path, monkeypatch, mode
 ):
+    cold_permission = mode != "warm"
     payload = {
         "content": [],
         "structuredContent": {
@@ -2114,16 +2205,34 @@ async def test_installed_owned_mcp_post_compaction(
         monkeypatch,
         [handler],
         requires={"hook:initial": ["mcp:peer"]},
+        canonical_store=cold_permission,
     ) as case:
+        if cold_permission:
+            from tldw_chatbook.MCP.console_snapshot import standard_console_sources
+            from tldw_chatbook.MCP.unified_control_plane_service import (
+                UnifiedMCPControlPlaneService,
+            )
+
+            case.unified = UnifiedMCPControlPlaneService(
+                local_service=case.local,
+                server_service=None,
+                target_store=None,
+                context_store=None,
+            )
+            assert case.unified._permission_store is None
+            assert standard_console_sources(case.unified)
         await _installed_compaction_case(
             native_console,
             native_package,
             tmp_path,
-            "success",
+            "success" if mode in {"warm", "cold"} else mode,
             standalone=True,
             owned_case=case,
             monkeypatch=monkeypatch,
         )
+
+        if mode == "cold":
+            assert case.unified._permission_store is not None
 
 
 @pytest.mark.asyncio

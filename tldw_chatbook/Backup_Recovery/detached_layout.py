@@ -13,7 +13,6 @@ import sqlite3
 import stat
 import struct
 import tomllib
-from contextlib import closing
 from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Event
@@ -93,11 +92,8 @@ def _normalize_sqlite(owner, source: Path, destination: Path, cancel: Event) -> 
     The acquired main/WAL/SHM set remains unchanged. SHM is rebuilt locally, never
     trusted as evidence. All imported SQL is restricted before the first query.
     """
-    from tldw_chatbook.DB.private_sqlite import open_recovery_validation
-
     from .native_files import create_private_directory, create_private_file
-    from .sqlite_validation import _check as validate_connection
-    from .sqlite_validation import _installed_owner, validated_schema_version
+    from .sqlite_validation import normalize_detached_candidate
 
     _check(cancel)
     if Path(str(source) + "-journal").exists():
@@ -128,33 +124,7 @@ def _normalize_sqlite(owner, source: Path, destination: Path, cancel: Event) -> 
                 while chunk := incoming.read(1024**2):
                     _check(cancel)
                     output.write(chunk)
-        installed = _installed_owner(owner.owner_id)
-        with open_recovery_validation(
-            installed.owner_id,
-            main,
-            writable=True,
-            with_restrictions=True,
-            cancel=cancel,
-        ) as (connection, restrictions):
-            issues, _ = validate_connection(
-                connection, installed, installed.schema_policy(), restrictions
-            )
-            if issues:
-                raise ValueError(issues[0])
-            with create_private_file(destination):
-                pass
-            with closing(sqlite3.connect(destination)) as output:
-                output.enable_load_extension(False)
-                output.execute("PRAGMA trusted_schema=OFF")
-
-                def progress(_status, _remaining, _total):
-                    _check(cancel)
-                    if restrictions.expired():
-                        raise ValueError("detached_sqlite_limit")
-
-                connection.backup(output, pages=64, progress=progress, sleep=0)
-                output.execute("PRAGMA journal_mode=DELETE")
-        return validated_schema_version(installed, destination, cancel)
+        return normalize_detached_candidate(owner, main, destination, cancel)
     except sqlite3.Error:
         raise ValueError("detached_sqlite_invalid") from None
     # Keep operation-owned normalization evidence private. The outer transaction

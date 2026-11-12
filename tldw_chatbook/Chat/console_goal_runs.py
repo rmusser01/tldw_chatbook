@@ -22,7 +22,6 @@ from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused, Goa
 from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
 from tldw_chatbook.Agents.goal_models import (
     GoalIterationResult,
-    GoalProviderRef,
     GoalRequest,
     GoalScriptEvidence,
     GoalScriptInvocation,
@@ -31,9 +30,7 @@ from tldw_chatbook.Agents.goal_models import (
 )
 from tldw_chatbook.Agents.goal_storage_lifetime import goal_authority_operation
 from tldw_chatbook.Agents.run_log import setting as _setting
-from tldw_chatbook.Chat.console_provider_endpoints import (
-    normalize_generic_endpoint_for_compare,
-)
+from tldw_chatbook.Chat.console_provider_endpoints import goal_provider_ref
 from tldw_chatbook.Skills_Interop.skill_script_runner import ScriptRunResult
 
 if TYPE_CHECKING:
@@ -44,19 +41,6 @@ if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
     from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
     from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
-
-
-def goal_provider_ref(resolution: ConsoleProviderResolution) -> GoalProviderRef:
-    """Pin resolved execution and credential identity without retaining credentials."""
-    return GoalProviderRef(
-        provider=resolution.provider,
-        model=resolution.model,
-        config_ref="api_settings."
-        + (resolution.readiness_key or resolution.execution_key or resolution.provider),
-        authority_ref=resolution.api_key_source or "unauthenticated",
-        endpoint_ref=normalize_generic_endpoint_for_compare(resolution.base_url)
-        or "provider-default",
-    )
 
 
 _KEY = object()
@@ -180,6 +164,7 @@ class GoalIterationAuthorization:
             candidates = capture_run_admitted_workspace_roots(
                 session=SimpleNamespace(workspace_id=reference.workspace_id),
                 registry=registry,
+                binding_ids=frozenset({reference.binding_id}),
             )
             root = next(
                 (

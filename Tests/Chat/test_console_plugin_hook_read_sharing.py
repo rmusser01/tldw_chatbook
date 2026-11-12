@@ -29,7 +29,13 @@ async def test_shared_read_preserves_plugin_requirement_verification(
     elif capture == "retained-requirement":
         # Opaque proof remains for its real owner to authenticate. This test
         # substitutes that boundary's refusal, never issues plugin authority.
-        maximum["_plugin_requirement_ceiling"] = object()
+        class UnissuedCeiling:
+            __slots__ = ()
+
+            def __deepcopy__(self, memo):
+                return self
+
+        maximum["_plugin_requirement_ceiling"] = UnissuedCeiling()
     configuration = SimpleNamespace(skill_context_maximum=maximum)
 
     async def hook_configuration(

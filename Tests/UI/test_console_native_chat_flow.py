@@ -213,26 +213,16 @@ def test_checking_citations_is_an_active_console_run_status():
 
 
 def _build_console_send_test_app(*args, **kwargs):
-    """Build a factory app that can actually complete a Console send.
+    """Build a gateway-only Console with actual profile-bound file storage.
 
-    TASK-21590. `_build_test_app` boots with ``chachanotes_db = None``, so the
-    Console store is built with ``persistence=None``. Since TASK-19900.3's
-    review-fix commit `56db75386` a durable turn (any non-ephemeral manual or
-    queued send -- i.e. the flow every real user takes) *fails closed* unless
-    the persistence adapter exposes a callable ``commit_durable_turn``, and a
-    ``None`` adapter cannot. The refusal returns a bare `ConsoleSubmitResult`
-    rather than going through `_block`, so it writes no system row and raises
-    no toast: 26 tests in this module kept pressing Send and asserting against
-    a transcript the production gate had silently refused to write.
-
-    The shipping app always has this DB (`ConsoleRuntime.ensure_chat_store`
-    builds a real `ChatPersistenceService` from it), so every test here that
-    drives a real send builds its app through this helper instead. Use
-    `_build_test_app` directly for tests that are *about* the db-less shape.
-    See `attach_chachanotes_db` for why the attached DB is `:memory:`.
+    Native configuration capture requires real file-backed sources. Disable
+    agent runtime explicitly to keep these tests on their existing provider
+    gateway path; the factory retires the database's actual handles.
     """
+    assert config_module.save_setting_to_cli_config("console", "agent_runtime", False)
+    kwargs.setdefault("user_data_dir", config_module.get_user_data_dir())
     app = _build_test_app(*args, **kwargs)
-    attach_chachanotes_db(app)
+    attach_chachanotes_db(app, db_path=config_module.get_chachanotes_db_path())
     return app
 
 

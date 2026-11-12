@@ -1983,3 +1983,40 @@ class PersonalContextService:
         from .export_service import export_recovery
 
         return export_recovery(self, request)
+
+
+from types import FunctionType as _OrdinaryProfileFunction
+
+_NATIVE_ORDINARY_PROFILE_CLASS = PersonalContextService
+_NATIVE_ORDINARY_PROFILE_METHODS = tuple(
+    (name, value)
+    for name, value in vars(PersonalContextService).items()
+    if isinstance(
+        value, (_OrdinaryProfileFunction, staticmethod, classmethod, property)
+    )
+)
+_NATIVE_ORDINARY_PROFILE_FUNCTIONS = tuple(
+    (
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+    )
+    for function in (
+        *(
+            value
+            for value in tuple(globals().values())
+            if type(value) is _OrdinaryProfileFunction and value.__module__ == __name__
+        ),
+        *(
+            value.__func__ if isinstance(value, (staticmethod, classmethod)) else value
+            for _name, value in _NATIVE_ORDINARY_PROFILE_METHODS
+            if not isinstance(value, property)
+        ),
+    )
+)
+
+_NATIVE_ORDINARY_PROFILE_CALLBACKS = (_default_clock, _default_id)

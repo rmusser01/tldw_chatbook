@@ -1,0 +1,17 @@
+{
+  "scope": "root full formal proposal readback/freeze; native behavior not rerun",
+  "proposals": [
+    {
+      "file": "task-10-passive-recovery-proposal.md",
+      "sha256": "1c6dcc9d80a91a56efa9b871364dda612470b08c203d6ea2cd1781f0ad147d87",
+      "bytes": 921,
+      "frozen": "task-10-passive-recovery-proposal.frozen-1c6dcc9d80a91a56efa9b871364dda612470b08c203d6ea2cd1781f0ad147d87.md"
+    },
+    {
+      "file": "task-10-checked-failure-proposal.md",
+      "sha256": "9b068423f441ef6150fbb0bfd42ce41cd879da11d85974381652e8f28a4e3289",
+      "bytes": 1385,
+      "frozen": "task-10-checked-failure-proposal.frozen-9b068423f441ef6150fbb0bfd42ce41cd879da11d85974381652e8f28a4e3289.md"
+    }
+  ]
+}

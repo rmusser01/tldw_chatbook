@@ -296,3 +296,37 @@ class LocalPromptService:
             if classified is not None:
                 raise classified from exc
             raise
+
+
+# Original Library read interfaces; unknown replacements require OPAQUE custody.
+from types import FunctionType as _LibraryFunction
+
+_NATIVE_ORDINARY_LIBRARY_CLASS = LocalPromptService
+_NATIVE_ORDINARY_LIBRARY_METHODS = tuple(
+    (name, value)
+    for name, value in vars(LocalPromptService).items()
+    if isinstance(value, (_LibraryFunction, staticmethod, classmethod, property))
+)
+_NATIVE_ORDINARY_LIBRARY_FUNCTIONS = tuple(
+    (
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+    )
+    for function in (
+        *(
+            value
+            for value in tuple(globals().values())
+            if type(value) is _LibraryFunction and value.__module__ == __name__
+        ),
+        *(
+            value.__func__ if isinstance(value, (staticmethod, classmethod)) else value
+            for _name, value in _NATIVE_ORDINARY_LIBRARY_METHODS
+            if not isinstance(value, property)
+        ),
+    )
+)

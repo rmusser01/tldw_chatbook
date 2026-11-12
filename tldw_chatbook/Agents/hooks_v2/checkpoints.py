@@ -7,7 +7,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .engine import HookEventOutcome
+from .engine import HookEventOutcome, native_outcome_current
 from .models import HookEvent
 
 
@@ -176,14 +176,20 @@ class HookCheckpointStore:
                     if handler_id not in entry.failed
                 )
                 if accepted_results:
-                    accepted_outcome = HookEventOutcome(accepted=accepted_results)
+                    accepted_outcome = HookEventOutcome(
+                        accepted=accepted_results,
+                        _native_sources=result._native_sources,
+                    )
                     try:
                         entry.stage_context(entry.event, accepted_outcome)
                     except Exception:  # noqa: BLE001 -- fail closed
                         entry.failed = required
                         entry.reason = "hook context acceptance failed"
                     else:
-                        if entry.retain_context:
+                        if not native_outcome_current(entry.event, result):
+                            entry.failed = required
+                            entry.reason = "hook source changed during acceptance"
+                        elif entry.retain_context:
                             self._contexts.setdefault(owner, []).append(
                                 (entry.event, accepted_outcome)
                             )

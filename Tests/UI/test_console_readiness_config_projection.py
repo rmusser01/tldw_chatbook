@@ -27,7 +27,7 @@ def _screen(monkeypatch):
     tasks, published = [], []
 
     def schedule(operation, **_):
-        task = asyncio.create_task(operation)
+        task = asyncio.create_task(operation() if callable(operation) else operation)
         tasks.append(task)
         return task
 

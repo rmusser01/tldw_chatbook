@@ -41,6 +41,7 @@ import weakref
 from loguru import logger
 from tldw_chatbook.Utils.input_validation import escape_markup
 
+from tldw_chatbook.Agents.activation import capture_callable_source
 from tldw_chatbook.Agents.approval_provenance import (
     ApprovalDecisions,
     append_denial_reason,
@@ -360,6 +361,7 @@ from tldw_chatbook.Chat.console_configuration_capture import (
 from tldw_chatbook.Chat.console_turn_context import (
     commit_fence_configuration,
     read_session_change_review_admission,
+    capture_change_review_metadata as capture_change_review_metadata,
     resolve_turn_persona_policy_rules,
     resolve_turn_tool_policy_profile_id,
     ConsoleProjectAuthoritySnapshot,
@@ -440,8 +442,8 @@ if TYPE_CHECKING:
 
 from tldw_chatbook.Agents.builtin_tool_gate import (
     DENIAL_POLICY,
-    LOCAL_TOOLS_DEFAULT_ENABLED,
-    build_builtin_gate,
+    LOCAL_TOOLS_DEFAULT_ENABLED as LOCAL_TOOLS_DEFAULT_ENABLED,
+    build_builtin_gate as build_builtin_gate,
 )
 
 #: task-31385: environment override for ``[console] interrupt_bell``
@@ -529,13 +531,17 @@ from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
 from tldw_chatbook.MCP.execution_log import UNRESOLVED_DENIED_DECISION
 from tldw_chatbook.MCP.permission_store import BUILTIN_TOOL_SERVER_KEY
 from tldw_chatbook.runtime_policy.bootstrap import (
-    load_default_runtime_source_state,
+    load_default_runtime_source_state as load_default_runtime_source_state,
 )
 from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
 from tldw_chatbook.Tools.file_operation_tools import path_precheck_failed
 from tldw_chatbook.Tools.remote_root_types import RemoteRoot, is_remote
-from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
-from tldw_chatbook.Tools.watchlists_command_service import WatchlistsCommandService
+from tldw_chatbook.Tools.watchlists_tool_service import (
+    WatchlistsToolService as WatchlistsToolService,
+)
+from tldw_chatbook.Tools.watchlists_command_service import (
+    WatchlistsCommandService as WatchlistsCommandService,
+)
 from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
 from tldw_chatbook.Utils.input_validation import validate_console_draft
 from tldw_chatbook.Chat.provider_failures import (  # noqa: F401  (re-export: tests and callers import describe_stream_failure from here)
@@ -584,7 +590,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
     from tldw_chatbook.Chat.console_run_start_tools import LocalKillSwitchRead
-    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool as HubTool
     from tldw_chatbook.Agents.profile_tool_provider import ProfileToolProvider
     from tldw_chatbook.Personal_Context.context_service import (
         ProfileContextRequest,
@@ -1184,6 +1190,17 @@ def capture_project_instruction_authority(
     )
 
 
+# Hook identity projects only this original effective-authority capture.
+_HOOK_PROJECT_AUTHORITY_ORIGINAL = (
+    ConsoleProjectAuthoritySnapshot,
+    capture_project_instruction_authority,
+    capture_project_instruction_authority.__code__,
+    capture_project_instruction_authority.__defaults__,
+    capture_project_instruction_authority.__kwdefaults__,
+    capture_project_instruction_authority.__closure__,
+)
+
+
 def capture_mcp_tool_maximum(app: Any) -> frozenset[str]:
     """Capture exact eligible MCP raw identities before turn acceptance."""
     return frozenset(capture_mcp_definition_maximum(app))
@@ -1620,77 +1637,12 @@ def _exclusion_paths_provider(
     return read
 
 
-#: Parity-matrix v1 wording (spec: "Run composition & tool parity"):
-#: git_* stays advertised for local aliases on mixed runs, but a remote
-#: alias refuses at CALL time with this typed message.
-_REMOTE_GIT_UNSUPPORTED_MESSAGE = "git tools not yet supported on SSH bindings"
+def __getattr__(name: str) -> Any:
+    if name == "_RemoteExecutorDispatchAdapter":
+        from tldw_chatbook.Tools.remote_workspace_executor import RemoteExecutorDispatchAdapter
 
-#: URI-in-path teaching copy (spec: "Model-facing surface"): the note
-#: shows alias -> URI mappings, so the refusal a URI path earns must
-#: teach the correct convention instead of a bare invalid-path error.
-_REMOTE_URI_PATH_MESSAGE = (
-    "remote roots take a path RELATIVE to the root, not a URI: use "
-    'root_alias "{alias}" with a relative path'
-)
-
-
-class _RemoteExecutorDispatchAdapter:
-    """Wire-dict-to-str adapter at the run-composition seam (Task 18).
-
-    ``LocalToolSpec`` handlers return the bounded result TEXT (the local
-    ``WorkspaceToolExecutor.execute`` contract) and the CAS/ledger sites
-    above them consume either seam via ``_response_result_text`` — but
-    every handler-facing slot expects a STR. The remote transport
-    executor returns the final wire-frame dict. Wrapping ONCE here (the
-    adapter Task 17 shipped test-only, now real) keeps every spec
-    handler transport-agnostic and gives the two call-time policies one
-    owner:
-
-    - git_* on a remote alias refuses with the parity-matrix typed error
-      (local aliases keep git tools — they hold different executors);
-    - a URI in a ``path``/``pattern`` argument refuses with the message
-      that teaches the ``root_alias`` + relative-path convention.
-
-    Raises whatever the inner executor raises (typed transport errors
-    included); the provider's protocol boundary renders them.
-    """
-
-    def __init__(self, inner: Any, *, alias: str) -> None:
-        self._inner = inner
-        self._alias = str(alias)
-
-    def execute(self, tool: str, args: dict[str, Any], *, intent: str) -> str:
-        from tldw_chatbook.Tools.remote_workspace_executor import (
-            RemoteWorkspaceExecutionError,
-        )
-
-        if tool.startswith("git_"):
-            raise RemoteWorkspaceExecutionError(
-                "git_unsupported_on_remote",
-                _REMOTE_GIT_UNSUPPORTED_MESSAGE,
-                admitted=False,
-            )
-        for key in ("path", "pattern"):
-            value = args.get(key) if isinstance(args, dict) else None
-            if isinstance(value, str) and "://" in value:
-                raise RemoteWorkspaceExecutionError(
-                    "uri_path_rejected",
-                    _REMOTE_URI_PATH_MESSAGE.format(alias=self._alias),
-                    admitted=False,
-                )
-        wire = self._inner.execute(tool, args, intent=intent)
-        result = wire.get("result") if isinstance(wire, dict) else wire
-        if not isinstance(result, str):
-            # Contract violation (a success frame without result text):
-            # refuse loudly rather than stringifying a wire dict.
-            raise RemoteWorkspaceExecutionError("protocol_failure", admitted=True)
-        return result
-
-    def ping(self) -> Any:
-        return self._inner.ping()
-
-    def maybe_schedule_recovery_probe(self) -> None:
-        self._inner.maybe_schedule_recovery_probe()
+        return RemoteExecutorDispatchAdapter
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _default_remote_run_executor_factory(
@@ -1711,6 +1663,7 @@ def _default_remote_run_executor_factory(
     """
     from tldw_chatbook.Tools.remote_binding_locator import parse_remote_locator
     from tldw_chatbook.Tools.remote_workspace_executor import (
+        RemoteExecutorDispatchAdapter,
         RemoteWorkspaceToolExecutor,
         ssh_binding_identity,
     )
@@ -1731,7 +1684,10 @@ def _default_remote_run_executor_factory(
         canonical_host_key=host_key,
         session_key=session_key,
     )
-    return _RemoteExecutorDispatchAdapter(inner, alias=binding_id)
+    from .console_ssh_custody import register_ordinary_ssh_executor
+
+    register_ordinary_ssh_executor(inner, binding, _default_remote_run_executor_factory)
+    return RemoteExecutorDispatchAdapter(inner, alias=binding_id)
 
 
 def _default_remote_instruction_executor(
@@ -1761,7 +1717,7 @@ def _default_remote_instruction_executor(
     metadata = getattr(selection.binding, "metadata", None) or {}
     python = str(metadata.get("python") or "python3")
     expected_fingerprint, host_key = ssh_binding_identity(metadata)
-    return RemoteWorkspaceToolExecutor.for_ssh(
+    executor = RemoteWorkspaceToolExecutor.for_ssh(
         loc,
         binding_id,
         cache=status_cache,
@@ -1771,6 +1727,11 @@ def _default_remote_instruction_executor(
         expected_fingerprint=expected_fingerprint,
         canonical_host_key=host_key,
         session_key=session_key,
+    )
+    from .console_ssh_custody import register_ordinary_ssh_executor
+
+    return register_ordinary_ssh_executor(
+        executor, selection.binding, _default_remote_instruction_executor
     )
 
 
@@ -1884,6 +1845,7 @@ def capture_run_admitted_workspace_roots(
     status_cache: Any = None,
     remote_executor_factory: Callable[..., Any] | None = None,
     remote_session_key: str | None = None,
+    binding_ids: frozenset[str] | None = None,
 ) -> tuple[Any, ...]:
     """Capture immutable run-root authority for one owning Console run.
 
@@ -1971,7 +1933,11 @@ def capture_run_admitted_workspace_roots(
             _schedule_recovery_probe(project_selection.binding, binding_id)
     else:
         try:
-            bindings = registry.list_runtime_bindings(workspace_id)
+            bindings = tuple(
+                binding
+                for binding in registry.list_runtime_bindings(workspace_id)
+                if binding_ids is None or binding.binding_id in binding_ids
+            )
         except (KeyError, OSError, RuntimeError, ValueError, AttributeError):
             return ()
         # Remote pre-pass (cache-only reads): BLOCKED/MISSING rows are
@@ -3040,6 +3006,7 @@ class _DurablePostcommitContinuation:
     #: persisted any citation provenance from `a26cdafd8` onward.
     terminal_citation_finalizer: TerminalCitationFinalizer | None = None
     hook_context: str = field(default="", repr=False)
+    hook_handoff: Any | None = field(default=None, repr=False, compare=False)
     hook_continuation: bool = False
     machine_followup: bool = False
     explicit_manual_retry: bool = False
@@ -3702,6 +3669,7 @@ class ConsoleChatController:
         self.streaming = streaming
         self.system_prompt = system_prompt
         self._agent_bridge = agent_bridge
+        self._hooks_v2_runtime = None
         self._buddy_sink = buddy_sink
         # App-owned, content-free lifecycle projection. ConsoleRuntime binds
         # this stable callback; it is never a detachable screen hook.
@@ -3910,7 +3878,7 @@ class ConsoleChatController:
         self._pending_round_kinds: dict[str, dict[str, str]] = {}
         self._unvisited_outcomes: dict[str, ConsoleRunMarker] = {}
         self._ordinary_outcome_ids: dict[str, str] = {}
-        self._run_hooks_stop_pending: set[str] = set()
+        self._run_hooks_stop_pending: dict[str, object] = {}
         self._ordinary_outcome_assistant_ids: dict[str, str | None] = {}
         #: F2b fix (Qodo wave): guards every mutation of `_pending_
         #: approvals`, `_parked_approval_payloads`, and `_pending_
@@ -6025,6 +5993,26 @@ class ConsoleChatController:
         """Receive queue-owner changes without copying its state."""
 
         self._advance_lifecycle_revision(session_id)
+        runtime = getattr(self, "_hooks_v2_runtime", None)
+        if runtime is not None:
+            runtime._wake_first_send()
+            activity = runtime.worktree_activity
+            if activity is not None:
+                from .console_prompt_queue import PromptQueueMode
+
+                queue = self.prompt_queue_coordinator
+                snapshot = queue._queue_snapshots.get(session_id)
+                activity._set_ready_manual(
+                    (queue, session_id),
+                    ready=bool(
+                        snapshot is not None
+                        and snapshot.total_count
+                        and snapshot.mode is not PromptQueueMode.PAUSED
+                        and not snapshot.closing
+                        and not queue._shutting_down
+                        and not queue._maintenance_paused
+                    ),
+                )
 
     def _lifecycle_revision_for(self, session_id: str | None) -> int:
         with self._lifecycle_revision_lock:
@@ -6089,8 +6077,37 @@ class ConsoleChatController:
         from tldw_chatbook.Agents.activation import worker_guard
 
         owned_call = functools.partial(self._run_owned_chat_db_operation, function)
+        from .console_preparation_reads import current_agent_sources
+
+        sources = current_agent_sources(self)
+        tree = getattr(sources, "ordinary_tree", None)
+        native_host = tree.retain_primary_host() if tree is not None else None
+        retained_source = tree.retain_source_scope() if tree is not None else None
+        if retained_source is not None:
+            retained_source.__enter__()
+        if sources is not None:
+            original_call = owned_call
+
+            def owned_call(**kwargs):
+                try:
+                    with sources.activate():
+                        try:
+                            return original_call(**kwargs)
+                        finally:
+                            if tree is not None:
+                                tree.primary_host_returned(native_host)
+                finally:
+                    if retained_source is not None:
+                        retained_source.__exit__(None, None, None)
+
         worker = worker_guard(self._agent_bridge)(owned_call)
-        task = self._retain_maintenance_task(asyncio.to_thread(worker, **kwargs))
+        try:
+            task = self._retain_maintenance_task(asyncio.to_thread(worker, **kwargs))
+        except BaseException:
+            if tree is not None:
+                tree.primary_host_returned(native_host)
+                retained_source.__exit__(None, None, None)
+            raise
         return await asyncio.shield(task)
 
     def lifecycle_impact(
@@ -6211,76 +6228,88 @@ class ConsoleChatController:
     ) -> PromptQueueMutationResult:
         """Attempt atomic text-only admission behind queue-owned work."""
 
-        clean_text, validation_error = self._validated_draft(text)
-        if validation_error is not None:
-            return PromptQueueMutationResult(
-                QueueMutationStatus.INVALID,
-                self.prompt_queue_registry.snapshot(session_id),
-                detail=validation_error,
-            )
-        captured_mixins = None
-        mixin_current = None
-        if configuration is None:
-            mixin_service = self.prompt_mixin_service()
-            revision = mixin_service.preferences(session_id).revision
-            mixin_current = mixin_service._capture_currentness(session_id, expected_revision=revision)
-            captured_mixins = await mixin_service.capture(
-                session_id, expected_revision=revision
-            )
-        from .console_hook_preparation import bind_hook_preparation_session
+        runtime = self._hooks_v2_runtime
+        scope = (
+            runtime._first_send_source_scope_async()
+            if runtime is not None
+            else contextlib.nullcontext()
+        )
+        async with scope:
+            clean_text, validation_error = self._validated_draft(text)
+            if validation_error is not None:
+                return PromptQueueMutationResult(
+                    QueueMutationStatus.INVALID,
+                    self.prompt_queue_registry.snapshot(session_id),
+                    detail=validation_error,
+                )
+            captured_mixins = None
+            mixin_current = None
+            if configuration is None:
+                mixin_service = self.prompt_mixin_service()
+                revision = mixin_service.preferences(session_id).revision
+                mixin_current = mixin_service._capture_currentness(session_id, expected_revision=revision)
+                captured_mixins = await mixin_service.capture(
+                    session_id, expected_revision=revision
+                )
+            from .console_hook_preparation import bind_hook_preparation_session
 
-        with bind_hook_preparation_session(self, session_id):
-            reason = await self.hook_admission_reason()
-        if mixin_current is not None:
-            mixin_current()
-        if reason is not None:
-            return PromptQueueMutationResult(
-                QueueMutationStatus.INVALID,
-                self.prompt_queue_registry.snapshot(session_id),
-                detail=reason,
+            with bind_hook_preparation_session(self, session_id):
+                reason = await self.hook_admission_reason()
+            if mixin_current is not None:
+                mixin_current()
+            if reason is not None:
+                return PromptQueueMutationResult(
+                    QueueMutationStatus.INVALID,
+                    self.prompt_queue_registry.snapshot(session_id),
+                    detail=reason,
+                )
+            if configuration is None:
+                configuration = replace(
+                    self.resolve_turn_configuration_snapshot(session_id),
+                    prompt_mixins=captured_mixins,
+                )
+            if not isinstance(configuration, ConsoleTurnConfigurationSnapshot):
+                raise TypeError("Queue configuration must be an immutable turn snapshot.")
+            if configuration.session_id != session_id:
+                return PromptQueueMutationResult(
+                    QueueMutationStatus.INVALID,
+                    self.prompt_queue_registry.snapshot(session_id),
+                    detail="Queue configuration belongs to a different session.",
+                )
+            if _before_admission is not None:
+                _before_admission()
+            one_shot_prefill, one_shot_prefill_revision = (
+                self.store.session_one_shot_prefill_snapshot(session_id)
             )
-        if configuration is None:
-            configuration = replace(
-                self.resolve_turn_configuration_snapshot(session_id),
-                prompt_mixins=captured_mixins,
+            request = ConsoleTurnCustodyRequest(
+                turn_id=str(uuid4()),
+                session_id=session_id,
+                draft=clean_text,
+                configuration=configuration,
+                one_shot_prefill=one_shot_prefill,
+                one_shot_prefill_revision=one_shot_prefill_revision,
             )
-        if not isinstance(configuration, ConsoleTurnConfigurationSnapshot):
-            raise TypeError("Queue configuration must be an immutable turn snapshot.")
-        if configuration.session_id != session_id:
-            return PromptQueueMutationResult(
-                QueueMutationStatus.INVALID,
-                self.prompt_queue_registry.snapshot(session_id),
-                detail="Queue configuration belongs to a different session.",
-            )
-        if _before_admission is not None:
-            _before_admission()
-        one_shot_prefill, one_shot_prefill_revision = (
-            self.store.session_one_shot_prefill_snapshot(session_id)
-        )
-        request = ConsoleTurnCustodyRequest(
-            turn_id=str(uuid4()),
-            session_id=session_id,
-            draft=clean_text,
-            configuration=configuration,
-            one_shot_prefill=one_shot_prefill,
-            one_shot_prefill_revision=one_shot_prefill_revision,
-        )
-        if mixin_current is not None:
-            mixin_current()
-        result = self.prompt_queue_coordinator.admit(
-            session_id,
-            text=clean_text,
-            expected_revision=expected_revision,
-            custody_request=request,
-        )
-        if result.applied:
-            self.prompt_mixin_service().publish_accepted_usage(
-                session_id, configuration.prompt_mixins,
-                observed_revision=mixin_current.revision if mixin_current is not None else None,
-            )
-        if result.applied and self.response_rules is not None:
-            self.response_rules.invalidate(session_id, "user_input")
-        return result
+            if mixin_current is not None:
+                mixin_current()
+            from .console_configuration_preparation import seal_pending_queue_capture
+
+            session = next(item for item in self.store.sessions() if item.id == session_id)
+            with seal_pending_queue_capture(self, session, configuration):
+                result = self.prompt_queue_coordinator.admit(
+                    session_id,
+                    text=clean_text,
+                    expected_revision=expected_revision,
+                    custody_request=request,
+                )
+            if result.applied:
+                self.prompt_mixin_service().publish_accepted_usage(
+                    session_id, configuration.prompt_mixins,
+                    observed_revision=mixin_current.revision if mixin_current is not None else None,
+                )
+            if result.applied and self.response_rules is not None:
+                self.response_rules.invalidate(session_id, "user_input")
+            return result
+
 
     def edit_queued_prompt(
         self,
@@ -9248,7 +9277,13 @@ class ConsoleChatController:
         """Observe the whole attempt, including refusals before trace setup."""
         from .console_send_diagnostics import send_diagnostic_scope
 
-        async with send_diagnostic_scope("controller_submit") as diagnostic:
+        runtime = self._hooks_v2_runtime
+        scope = (
+            runtime._first_send_source_scope_async()
+            if runtime is not None
+            else contextlib.nullcontext()
+        )
+        async with scope, send_diagnostic_scope("controller_submit") as diagnostic:
             result = await self._submit_draft_lifecycle(
                 draft,
                 session_id=session_id,
@@ -9532,6 +9567,9 @@ class ConsoleChatController:
                 self, "_plugin_pending_submissions", {}
             ).pop(active_task, ()):
                 await service.retire_pending(pending_id)
+            from .console_ordinary_tree import finish_ordinary_submission
+
+            finish_ordinary_submission(self, active_task)
             self._unregister_submit_task(active_task)
 
     async def _submit_draft_inner(
@@ -9570,8 +9608,10 @@ class ConsoleChatController:
         from .console_automatic_submission import submission_scope
 
         scope = submission_scope(self, origin, session_id)
+        from .console_preparation_reads import issuing_agent_sources
+
         try:
-            with scope:
+            with scope, issuing_agent_sources(self):
                 result = await self._submit_draft_body(
                     draft,
                     session_id=session_id,
@@ -10012,30 +10052,6 @@ class ConsoleChatController:
                 from .console_prompt_mixins import MixinPreferenceConflictError
                 raise MixinPreferenceConflictError("mixin_preference_conflict")
             configuration = replace(configuration, prompt_mixins=mixins)
-        from .console_plugin_context import _prepare_native_references
-
-        try:
-            (
-                clean_draft,
-                executed_draft_text,
-                reference_records,
-                reference_offsets,
-            ) = await _prepare_native_references(
-                self,
-                clean_draft,
-                configuration,
-                origin=origin,
-                machine_input=machine_input,
-                resumed_preparation=resumed_preparation,
-                prepared_continuation=prepared_continuation,
-            )
-        except PermissionError as error:
-            copy = (
-                "Plugin agents run through child spawning; select an admitted agent there."
-                if str(error) == "plugin_agent_child_only"
-                else "Plugin selector is unavailable; review selected components."
-            )
-            return self._block(session.id, copy)
         if configuration.skill_context_maximum.get(
             "_plugin_requirement_ceiling"
         ) or any(
@@ -10085,6 +10101,102 @@ class ConsoleChatController:
             return self._block(
                 session.id, turn_selection.workspace_context.recovery_copy
             )
+        if origin.automatic:
+            selected_prefill = (None, False, None)
+        elif prepared_continuation is not None:
+            selected_prefill = (
+                prepared_continuation.prefill,
+                prepared_continuation.prefill_from_one_shot,
+                prepared_continuation.one_shot_prefill_revision,
+            )
+        elif custodied_inputs:
+            selected_prefill = (
+                admitted_prefill,
+                admitted_prefill_from_one_shot,
+                admitted_prefill_revision,
+            )
+        elif preserve_composer:
+            selected_prefill = (
+                self._pinned_prefill_for_session(session.id),
+                False,
+                None,
+            )
+        else:
+            one_shot, revision = self.store.session_one_shot_prefill_snapshot(
+                session.id
+            )
+            selected_prefill = (
+                (one_shot, True, revision)
+                if one_shot
+                else (self._pinned_prefill_for_session(session.id), False, None)
+            )
+        from .console_preparation_reads import prepare_agent_sources
+
+        await prepare_agent_sources(self, session, configuration)
+        from tldw_chatbook.Agents.execution_capacity import CapacityRefused
+
+        from .console_ordinary_tree import admit_ordinary_turn
+        from .console_references import _native_reference_candidates
+
+        candidates = (
+            tuple(_native_reference_candidates(clean_draft))
+            if not origin.automatic
+            and machine_input is None
+            and resumed_preparation is None
+            else ()
+        )
+        try:
+            ordinary_tree, configuration = await admit_ordinary_turn(
+                self,
+                session,
+                configuration,
+                origin,
+                clean_draft,
+                candidates,
+                hook_read=_hook_read,
+                agent_eligible=self._agent_dispatch_is_eligible(
+                    session, prefill=selected_prefill[0]
+                ),
+            )
+        except CapacityRefused:
+            return ConsoleSubmitResult(
+                False,
+                False,
+                "Workspace activity is busy; retry after it finishes.",
+                session_id=session.id,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+            )
+        from .console_received_dispatch import admit_received_attachments
+
+        transferred = admit_received_attachments(self, session.id)
+        if transferred is not None:
+            accepted_attachments = transferred
+        from .console_plugin_context import _prepare_native_references
+
+        try:
+            (
+                clean_draft,
+                executed_draft_text,
+                reference_records,
+                reference_offsets,
+            ) = await _prepare_native_references(
+                self,
+                clean_draft,
+                configuration,
+                origin=origin,
+                session=session,
+                machine_input=machine_input,
+                resumed_preparation=resumed_preparation,
+                prepared_continuation=prepared_continuation,
+            )
+        except PermissionError as error:
+            copy = (
+                "Plugin agents run through child spawning; select an admitted agent there."
+                if str(error) == "plugin_agent_child_only"
+                else "Plugin selector is unavailable; review selected components."
+            )
+            return self._block(session.id, copy)
         hook_refusal = await self._prepare_submission_hooks(
             session, configuration, origin, queue_authorization,
             chat_start_authorization=chat_start_authorization,
@@ -10094,6 +10206,27 @@ class ConsoleChatController:
             _prompt_mixin_capture[2]()
         if hook_refusal is not None:
             return hook_refusal
+        if ordinary_tree is not None:
+            from tldw_chatbook.Agents.activation import worker_guard
+
+            from .console_preparation_reads import run_preparation_read
+
+            def hold_legacy_stop():
+                engine = self._run_hooks_engine()
+                ordinary_tree.stop_notification = (
+                    (engine, engine.prepare_notification("Stop", session.id))
+                    if engine is not None
+                    else (None, None)
+                )
+
+            await run_preparation_read(
+                worker_guard(self._agent_bridge)(hold_legacy_stop),
+                creator=self,
+                session_id=session.id,
+                reads=self._preparation_reads,
+                observers=(ordinary_tree.runtime._preparation_reads,),
+                require_current=ordinary_tree.check,
+            )
         library_authority = (
             resumed_preparation.execution_context.library_authority
             if resumed_preparation is not None
@@ -10530,21 +10663,7 @@ class ConsoleChatController:
                 queue_generation = self.prompt_queue_registry.snapshot(
                     session.id
                 ).revision
-            if custodied_inputs:
-                frozen_prefill = admitted_prefill
-                frozen_prefill_from_one_shot = admitted_prefill_from_one_shot
-                captured_prefill_revision = admitted_prefill_revision
-            elif preserve_composer:
-                frozen_prefill = self._pinned_prefill_for_session(session.id)
-                frozen_prefill_from_one_shot = False
-                captured_prefill_revision = None
-            else:
-                one_shot_prefill, captured_prefill_revision = (
-                    self.store.session_one_shot_prefill_snapshot(session.id)
-                )
-                frozen_prefill, frozen_prefill_from_one_shot = (
-                    self._resolve_submit_prefill(session.id)
-                )
+            frozen_prefill, frozen_prefill_from_one_shot, captured_prefill_revision = selected_prefill
             one_shot_prefill = frozen_prefill if frozen_prefill_from_one_shot else None
             if custodied_inputs:
                 # TASK-34352: a turn admitted with a frozen capture seam froze
@@ -10974,33 +11093,7 @@ class ConsoleChatController:
                     source_event_id=attached_event_id,
                     sensitivity="system_context",
                 )
-            if origin.automatic:
-                # The one-shot prefill is USER-staged state; a wake must
-                # not consume (and thereby destroy) it.
-                prefill, prefill_from_one_shot, one_shot_prefill_revision = (
-                    None,
-                    False,
-                    None,
-                )
-            elif prepared_continuation is not None:
-                prefill = prepared_continuation.prefill
-                prefill_from_one_shot = prepared_continuation.prefill_from_one_shot
-                one_shot_prefill_revision = (
-                    prepared_continuation.one_shot_prefill_revision
-                )
-            elif custodied_inputs:
-                prefill = admitted_prefill
-                prefill_from_one_shot = admitted_prefill_from_one_shot
-                one_shot_prefill_revision = admitted_prefill_revision
-            else:
-                prefill, prefill_from_one_shot = self._resolve_submit_prefill(
-                    session.id
-                )
-                one_shot_prefill_revision = (
-                    self.store.session_one_shot_prefill_snapshot(session.id)[1]
-                    if prefill_from_one_shot
-                    else None
-                )
+            prefill, prefill_from_one_shot, one_shot_prefill_revision = selected_prefill
             terminal_citation_finalizer = self._build_terminal_citation_finalizer(
                 context=citation_context,
                 builder=citation_trace_builder,
@@ -11102,6 +11195,12 @@ class ConsoleChatController:
                     session_id=session.id,
                 )
                 raise
+            from tldw_chatbook.Agents.run_hooks import (
+                check_prompt_handoff,
+                prompt_handed_off,
+            )
+
+            check_prompt_handoff()
             if outcome is not None and outcome.blocked:
                 if echoed_user is not None:
                     self._mark_transient_echo_blocked(echoed_user.id)
@@ -11118,6 +11217,7 @@ class ConsoleChatController:
                     persist=self.store.persistence is not None,
                     metadata=MessageMetadata(origin=MESSAGE_ORIGIN_HOOK),
                 )
+                prompt_handed_off()
                 return ConsoleSubmitResult(
                     False,
                     False,
@@ -11320,6 +11420,7 @@ class ConsoleChatController:
                     self._rollback_committing_preparation(preparation.preparation_id)
                 raise
             if hook_context:
+                check_prompt_handoff()
                 # Run hooks (spec 2026-09-11, Task 7): a UserPromptSubmit
                 # hook's captured stdout is recorded as its own hook-origin
                 # SYSTEM row -- appended only once the user echo is
@@ -11333,6 +11434,7 @@ class ConsoleChatController:
                     persist=self.store.persistence is not None,
                     metadata=MessageMetadata(origin=MESSAGE_ORIGIN_HOOK),
                 )
+                prompt_handed_off()
         from .console_pre_provider_stop import AcceptedStopAuthority
 
         accepted_authority = AcceptedStopAuthority(self, session.id)
@@ -12567,6 +12669,8 @@ class ConsoleChatController:
         assistant_holder: dict[str, ConsoleChatMessage] = {}
 
         def publish_owners() -> None:
+            if continuation.hook_handoff is not None:
+                continuation.hook_handoff.check()
             _user, assistant = self.store.publish_durable_turn_owners(
                 session_id,
                 commit,
@@ -12855,7 +12959,30 @@ class ConsoleChatController:
         try:
 
             async def publish_identity_and_settings() -> None:
-                self.store.publish_durable_turn_identity(session_id, commit)
+                from .console_configuration_preparation import (
+                    begin_first_library_publication,
+                    stage_first_library_publication,
+                )
+
+                transport = begin_first_library_publication(
+                    self,
+                    session_id,
+                    preparation_id,
+                    fingerprint,
+                    commit,
+                    continuation,
+                )
+                self.store.publish_durable_turn_identity(
+                    session_id,
+                    commit,
+                    **(
+                        {}
+                        if transport is None
+                        else {"_original_policy_result": transport.results}
+                    ),
+                )
+                if transport is not None:
+                    stage_first_library_publication(transport)
                 if not any(row.id == session_id for row in self.store.sessions()):
                     return
                 await self.store.reconcile_durable_turn_settings(session_id, commit)
@@ -12877,12 +13004,26 @@ class ConsoleChatController:
                 publish_identity_and_settings,
                 fingerprint=fingerprint,
             )
+            from .console_configuration_preparation import (
+                verify_first_library_publication,
+            )
+
+            verify_first_library_publication(
+                self,
+                session_id,
+                preparation_id,
+                fingerprint,
+                commit,
+                continuation,
+            )
             await self._run_durable_postcommit_effect(
                 preparation_id,
                 "durable_owner_publication",
                 publish_owners,
                 fingerprint=fingerprint,
             )
+            if continuation.hook_handoff is not None:
+                continuation.hook_handoff.complete()
             await self._run_durable_postcommit_effect(
                 preparation_id,
                 "staged_input_clearing",
@@ -13893,6 +14034,8 @@ class ConsoleChatController:
     ) -> None:
         """Release an exact frozen evidence lease once at owner retirement."""
 
+        if continuation.hook_handoff is not None:
+            continuation.hook_handoff.discard()
         prepared = continuation.prepared
         lease = prepared.staged_evidence if prepared is not None else None
         if lease is not None and not lease.released:
@@ -15516,6 +15659,8 @@ class ConsoleChatController:
         tool_count: int | None,
         not_connected_count: int | None,
         session_id: str | None = None,
+        *,
+        composed_switch: tuple[Any, bool] | None = None,
     ) -> None:
         """Publish this run's MCP catalog counts for the inspector's "MCP" row.
 
@@ -15551,7 +15696,9 @@ class ConsoleChatController:
         except AttributeError:
             counts = {}
         counts.pop(session_id, None)
-        self.app.console_tool_count = offered_builtin_tool_count(self._agent_bridge, session_id)
+        self.app.console_tool_count = offered_builtin_tool_count(
+            self._agent_bridge, session_id, composed_switch=composed_switch
+        )
         self.app.console_mcp_tool_count = tool_count
         self.app.console_mcp_not_connected_count = not_connected_count
 
@@ -15672,177 +15819,21 @@ class ConsoleChatController:
         _freeze_definition_maximum_on_compose: bool = False,
         _retain_empty_plugin_providers: bool = False,
     ) -> MCPToolProvider | None:
-        """Build + compose THIS run's MCPToolProvider for the running main loop.
+        from . import console_provider_composition
 
-        MUST be awaited on the real Textual main loop (``_run_agent_reply``,
-        BEFORE the bridge's own ``asyncio.to_thread``): the provider is bound
-        to that loop for tool calls. TASK-33620.15.1: one kill-switch read
-        decides MCP and local tools (``local_kill_switch``), and a catalog is
-        reused while nothing it was composed from has changed
-        (``console_run_start_tools``).
-
-        TASK-632: returns the provider ALONE. It used to also build and
-        return a per-run `build_mcp_review_hook` closure, but TASK-545's
-        run-level `build_tool_review_hook` made that second element dead --
-        the production call site unpacked it into `_unused_...` and threw it
-        away, while the closure was still constructed on every run.
-
-        Returns ``None`` whenever MCP tools should not be offered
-        this run: no ``unified_mcp_service`` on the app, the kill switch
-        is on, ``get_kill_switch``/``compose_catalog`` raised, or the
-        composed catalog is empty (nothing to register, and -- since
-        ``not_connected_count`` is only ever non-zero for servers that
-        already contributed at least one eligible tool -- nothing an
-        empty catalog could usefully report either). Live composition
-        publishes this run's inspector counts on every return path via
-        ``_publish_mcp_inspector_counts``. Disposable Context composition
-        passes ``publish_counts=False`` and never mutates those app-level
-        inspector values.
-
-        Args:
-            session_id: The run's OWNING session (Task 3/9) -- threaded
-                into the composed provider's ``approval_callback`` (via a
-                ``functools.partial`` binding, since ``MCPToolProvider``
-                calls it with a fixed ``[pending]`` single-list arg) so a
-                single-call fallback approval raised through
-                ``invoke()``'s own gate parks/mounts and scopes its cancel
-                check exactly like the batch review-hook path does.
-                ``None`` (the default -- every pre-Task-9 call site) keeps
-                ``request_mcp_approvals``' legacy no-session behavior.
-            publish_counts: Whether to publish app-level MCP inspector counts.
-                Live dispatch keeps the default; disposable preview disables it.
-            profile_id_provider: Workspace assistant defaults (Task 7) --
-                callable returning the workspace's named permission profile
-                this run's MCP gates resolve under (catalog composition,
-                batch review, and `invoke`'s own fresh gate). ``None`` keeps
-                the provider's own ``"default"`` fallback -- byte-identical
-                to the pre-profiles behavior.
-            persona_policy_provider: Persona require_confirmation floor
-                (final review) -- callable returning this run's parsed
-                persona tool policy; the provider floors matching tools'
-                invoke-time gates to "ask" under it. ``None`` keeps the
-                pre-feature behavior.
-
-        Returns:
-            A composed ``MCPToolProvider`` ready to hand to
-            ``ConsoleAgentBridge.run_reply`` when eligible; ``None``
-            otherwise.
-        """
-
-        def publish(tool_count: int | None, not_connected: int | None) -> None:
-            if local_kill_switch is not None and local_kill_switch._current is not None:
-                local_kill_switch._current()
-            if publish_counts:
-                self._publish_mcp_inspector_counts(tool_count, not_connected, session_id)
-
-        service = getattr(self.app, "unified_mcp_service", None)
-        if service is None:
-            if _freeze_definition_maximum_on_compose:
-                raise PermissionError("mcp_catalog_source_changed")
-            publish(None, None)
-            return None
-        bound_request_approvals = functools.partial(
-            self.request_mcp_approvals, session_id=session_id
-        )
-        uncomposed = MCPToolProvider(
-            service=service,
-            main_loop=asyncio.get_running_loop(),
-            approval_callback=bound_request_approvals,
-            # task-1337 (plan Task 8): the Console always excludes the
-            # shadowed built-in raw names, in BOTH retrieval modes -- the
-            # run's own Library provider (direct or bounded-RAG) is the only
-            # Library retrieval path Console agents get.
-            builtin_raw_name_exclusions=CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
+        return await console_provider_composition._compose_mcp_provider(
+            self,
+            session_id,
+            publish_counts=publish_counts,
             profile_id_provider=profile_id_provider,
             persona_policy_provider=persona_policy_provider,
-            # TASK-33106: ADR-183's built-in character writes follow THIS
-            # session's runtime source, like the Console's character_save.
-            runtime_source_provider=(
-                None
-                if session_id is None
-                else functools.partial(self._session_runtime_source, session_id)
-            ),
             maximum_tool_ids=maximum_tool_ids,
             maximum_definition_hashes=maximum_definition_hashes,
-            **(
-                {"_freeze_definition_maximum_on_compose": True}
-                if _freeze_definition_maximum_on_compose
-                else {}
-            ),
+            plugin_maximum=plugin_maximum,
+            local_kill_switch=local_kill_switch,
+            _freeze_definition_maximum_on_compose=_freeze_definition_maximum_on_compose,
+            _retain_empty_plugin_providers=_retain_empty_plugin_providers,
         )
-        # TASK-33620.15.1: composed here, on the loop, or reused while nothing
-        # it read has changed; ``None`` = switched off or a read failed.
-        from .console_run_start_tools import compose_run_mcp_provider
-
-        provider = await compose_run_mcp_provider(
-            service, uncomposed, local_kill_switch
-        )
-        if provider is None:
-            publish(None, None)
-            return None
-        providers = [provider]
-        if plugin_maximum is not None:
-            from tldw_chatbook.MCP.connection_ownership import ConnectionOwnership
-            from tldw_chatbook.Plugins.mcp_provider import (
-                MCPProviderGroup,
-                PluginMCPProvider,
-            )
-
-            local = getattr(self._skills_service, "local_service", None)
-            plugins = getattr(local, "plugin_service", None)
-            if plugins is None:
-                raise PermissionError("plugin_mcp_authority_unavailable")
-            snapshots = await plugins.component_snapshots(plugin_maximum)
-            local_mcp = service.local_service
-            ownership = local_mcp.connection_ownership
-            if ownership is None:
-                ownership = ConnectionOwnership(
-                    plugin_service=plugins, local_service=local_mcp
-                )
-            if ownership.plugins is not plugins:
-                raise PermissionError("plugin_mcp_owner_changed")
-            for snapshot in snapshots:
-                if not any(
-                    snapshot.inspection.inventory[key].kind == "mcp"
-                    for key in snapshot.selection
-                ):
-                    continue
-                owned = PluginMCPProvider(
-                    plugin_service=plugins,
-                    ownership=ownership,
-                    snapshot=snapshot,
-                    service=service,
-                    main_loop=asyncio.get_running_loop(),
-                    approval_callback=bound_request_approvals,
-                    builtin_raw_name_exclusions=CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
-                    profile_id_provider=profile_id_provider,
-                    persona_policy_provider=persona_policy_provider,
-                    runtime_source_provider=(
-                        None
-                        if session_id is None
-                        else functools.partial(self._session_runtime_source, session_id)
-                    ),
-                    maximum_tool_ids=maximum_tool_ids,
-                    maximum_definition_hashes=maximum_definition_hashes,
-                )
-                await owned.compose_catalog()
-                providers.append(owned)
-            provider = MCPProviderGroup(providers)
-        catalog = provider.list_catalog()
-        if not catalog:
-            publish(None, None)
-            # Explicit discovery needs the actual owned connection before any
-            # tools are mapped. All ordinary callers keep the empty result.
-            if _retain_empty_plugin_providers and plugin_maximum is not None:
-                return provider
-            return None
-        from tldw_chatbook.Agents.plain_chat_tool_surface import offered_mcp_tool_count
-
-        publish(
-            offered_mcp_tool_count(self._agent_bridge, provider, session_id),
-            provider.not_connected_count,
-        )
-        return provider
 
     async def _compose_agent_request_providers(
         self,
@@ -15859,120 +15850,17 @@ class ConsoleChatController:
         LocalToolProvider | None,
         Callable[[list["ToolCall"]], dict[str, str]] | None,
     ]:
-        """Compose providers shared by live and preview.
+        from . import console_provider_composition
 
-        ``publish_mcp_counts`` is true for live dispatch and false for the
-        disposable Context preflight, whose composition must not mutate the
-        app-level inspector counters.
-        """
-        # Workspace assistant defaults (Task 7): the workspace's named
-        # permission profile rides the turn context into the MCP provider's
-        # profile seam. A None/absent context, or the "default" profile,
-        # omits the keyword entirely -- the call shape (and behavior) stays
-        # byte-identical for every legacy caller and signature-exact double.
-        profile_id = (
-            turn_context.tool_policy_profile_id
-            if turn_context is not None
-            else "default"
-        )
-        mcp_profile_kwargs: dict[str, Any] = {}
-        if profile_id != "default":
-            mcp_profile_kwargs["profile_id_provider"] = lambda: profile_id
-        # Persona require_confirmation floor (final review): thread THIS
-        # run's parsed persona policy into the MCP provider's invoke-time
-        # gates, mirroring the local provider's `_resolve_state` layering.
-        # Parsed once here; the provider reads it per gate. The kwarg is
-        # only added when rules exist, so every no-persona run keeps the
-        # exact pre-feature call shape.
-        if turn_context is not None and turn_context.persona_policy_rules:
-            # Lazy import (boot budget, ADR-097): per-run path only.
-            from tldw_chatbook.Agents.persona_policy import (
-                parse_persona_policy_from_rules,
-            )
-
-            parsed_persona_policy = parse_persona_policy_from_rules(
-                turn_context.persona_policy_rules
-            )
-            if parsed_persona_policy.kinds:
-                mcp_profile_kwargs["persona_policy_provider"] = lambda: (
-                    parsed_persona_policy
-                )
-        if (
-            turn_context is not None
-            and turn_context.skill_context_maximum.get("plugin_run_id")
-            and (
-                turn_context.skill_context_maximum.get("_plugin_requirement_ceiling")
-                or any(
-                    row.get("plugin_owned")
-                    for row in turn_context.skill_context_maximum.get(
-                        "available_skills", ()
-                    )
-                )
-            )
-        ):
-            mcp_profile_kwargs["plugin_maximum"] = turn_context.skill_context_maximum
-        deferred = (turn_context is not None and turn_context.mcp_definition_capture == "composition")
-        if deferred and not _stock_console_tool_composition_current(self):
-            raise PermissionError("mcp_catalog_source_changed")
-        from .console_run_start_tools import capture_run_tool_read
-
-        local_kill_switch = capture_run_tool_read(
-            self, session_id, turn_context, project_authority_guard,
-            plugins="plugin_maximum" in mcp_profile_kwargs,
-        )
-        mcp_provider = await self._compose_mcp_provider(
-            session_id,
-            publish_counts=publish_mcp_counts,
-            local_kill_switch=local_kill_switch,
-            **mcp_profile_kwargs,
-            maximum_tool_ids=(
-                turn_context.mcp_tool_maximum if turn_context is not None else None
-            ),
-            maximum_definition_hashes=(
-                turn_context.mcp_definition_maximum
-                if turn_context is not None and not deferred
-                else None
-            ),
-            **({"_freeze_definition_maximum_on_compose": True} if deferred else {}),
-        )
-        builtin_gate = build_builtin_gate(
-            getattr(self.app, "unified_mcp_service", None), profile_id=profile_id
-        )
-        if admitted_roots is None:
-            session = next(
-                (item for item in self.store.sessions() if item.id == session_id), None
-            )
-            admitted_roots = capture_run_admitted_workspace_roots(
-                session=session,
-                registry=getattr(self.app, "workspace_registry_service", None),
-                project_selection=project_selection,
-                project_authority_guard=project_authority_guard,
-            )
-        index_service, index_scopes = await asyncio.to_thread(
-            self._prepare_project_index_scopes, tuple(admitted_roots)
-        )
-        index_kwargs = (
-            {
-                "project_index_service": index_service,
-                "project_index_scopes": index_scopes,
-            }
-            if index_scopes
-            else {}
-        )
-        local_provider, local_review_hook = self._compose_local_provider(
+        return await console_provider_composition._compose_agent_request_providers(
+            self,
             session_id=session_id,
+            project_selection=project_selection,
+            project_authority_guard=project_authority_guard,
             turn_context=turn_context,
-            project_root=(project_selection.root if project_selection else None),
-            allow_write=(project_selection.allow_write if project_selection else True),
-            project_root_identity=(
-                project_selection.root_identity if project_selection else None
-            ),
-            project_root_guard=project_authority_guard,
+            publish_mcp_counts=publish_mcp_counts,
             admitted_roots=admitted_roots,
-            local_kill_switch=local_kill_switch,
-            **index_kwargs,
         )
-        return mcp_provider, builtin_gate, local_provider, local_review_hook
 
     def _prepare_project_index_scopes(self, admitted_roots):
         """Retire registry handles opened by scope preparation, including guards."""
@@ -15996,273 +15884,21 @@ class ConsoleChatController:
     ) -> tuple[
         LocalToolProvider | None, Callable[[list["ToolCall"]], dict[str, str]] | None
     ]:
-        """Build THIS run's LocalToolProvider + review hook, or ``(None, None)``.
+        from . import console_provider_composition
 
-        Sync, unlike ``_compose_mcp_provider``: ``LocalToolProvider``'s
-        specs are static (no async catalog composition), so there is no
-        main-loop I/O constraint -- but it is still called from
-        ``_run_agent_reply`` alongside the MCP composition, before the
-        bridge is dispatched onto ``asyncio.to_thread``.
-
-        Returns ``(None, None)`` whenever local tools should not be
-        offered this run:
-
-        - ``[console] local_tools_enabled`` is false (the master flag);
-        - no ``unified_mcp_service`` on the app -- ADR-300 reuses the MCP
-          permission store under the synthetic ``local:__local__`` server
-          key, so without the service there is no state source, no
-          session-approval cache, and no persistence path;
-        - the kill switch is on, or reading it raised (fail closed --
-          mirrors ``_compose_mcp_provider``).
-
-        Wiring (all straight MCP parity): ``resolve_state`` is the
-        service's own ``gate_tool_test`` -- the exact payload source the
-        MCP gate uses (fresh ``store.load()`` + ``resolve_effective_
-        state`` per call, fail-closed to "ask" with no store);
-        ``persist_approval`` routes ``approve_session`` to the in-memory
-        session cache and ``always_allow`` to ``set_tool_state``, which
-        fingerprints ``definition_hash(description, input_schema)``
-        itself (the rug-pull guard, spec §3.2); ``record_decision`` is
-        the same ``record_tool_decision`` audit path the MCP provider
-        uses (``initiator="agent"``), recording local refusals as
-        "denied"/"denied-timeout" under the ``local:__local__`` server
-        key.
-
-        Todo wiring (TASK-13216): when ``session_id`` resolves to a live
-        session, the provider is handed that session's stable task store
-        plus an ``on_todo_change`` callback that renders defensive task
-        snapshots via ``ConsoleAgentBridge.append_todo_marker``. Without a
-        session (or without a bridge), the provider stays context-free and
-        no task specs are registered.
-
-        Args:
-            session_id: THIS run's owning session id, bound into the
-                approval bridge exactly as ``_compose_mcp_provider`` and
-                the built-in review hook bind it, so cancellation checks
-                and card parking scope to this run's own session.
-
-        Returns:
-            ``(provider, review_tool_calls)`` when eligible -- a
-            ``LocalToolProvider`` confined to the resolved workspace root
-            and this run's ``build_local_review_hook``-built batch-review
-            closure; ``(None, None)`` otherwise.
-        """
-        # task-3240 fix round 1 (Critical 2): get_cli_setting returns the RAW
-        # TOML value -- a hand-typed quoted "false" is a non-empty string
-        # and therefore truthy under bare `not` truthiness, which would
-        # COMPOSE the entire local tool group while the MCP-hub gate
-        # checkbox (Agents/builtin_tool_gate.py's all_tool_gates()) and
-        # mcp_workbench.py's own [console] read both show it OFF. Note
-        # this is NOT normalized by load_settings() the way some [console]
-        # keys are -- that normalization lives in load_settings(), never
-        # in get_cli_setting() itself, which reads the raw bootstrap
-        # config. coerce_bool_setting is the arc's sixth such site.
-        local_tools_enabled = (
-            turn_context.tool_configuration.get(
-                "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
-            )
-            if turn_context is not None
-            else get_cli_setting(
-                "console", "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
-            )
-        )
-        if not coerce_bool_setting(local_tools_enabled, LOCAL_TOOLS_DEFAULT_ENABLED):
-            return None, None
-        service = getattr(self.app, "unified_mcp_service", None)
-        if service is None:
-            return None, None
-        from .console_run_start_tools import local_tools_kill_switch
-
-        # Fail closed: the run-start hop's read, else a read made here.
-        if local_tools_kill_switch(service, local_kill_switch):
-            return None, None
-
-        profile_id = (
-            turn_context.tool_policy_profile_id
-            if turn_context is not None
-            else "default"
-        )
-        profile_kwargs = {} if profile_id == "default" else {"profile_id": profile_id}
-
-        bound_request_approvals = functools.partial(
-            self.request_mcp_approvals, session_id=session_id
-        )
-
-        def _kill_switch() -> bool:
-            # invoke()-time read, mirroring MCPToolProvider._kill_switch_
-            # engaged: never raises, and a read failure must not block
-            # execution (compose-time read above already failed closed).
-            try:
-                return bool(service.get_kill_switch())
-            except Exception as exc:  # noqa: BLE001 -- invoke must never raise
-                logger.warning(
-                    f"ConsoleChatController: get_kill_switch failed during local invoke: {exc}"
-                )
-                return False
-
-        def _persist_approval(hub: "HubTool", decision: str) -> None:
-            if decision == "approve_session":
-                service.approve_for_session(hub.server_key, hub.name, **profile_kwargs)
-            elif decision == "always_allow":
-                # set_tool_state computes definition_hash(hub.description,
-                # hub.input_schema) itself -- required for the rug-pull guard.
-                service.set_tool_state(
-                    hub.server_key,
-                    hub.name,
-                    "allow",
-                    tool=hub,
-                    **profile_kwargs,
-                )
-
-        def _record_decision(hub: "HubTool", decision: str) -> None:
-            # Same audit path MCPToolProvider._record_decision_safe uses;
-            # the provider guards the call (never-raise seam).
-            service.record_tool_decision(
-                hub.server_key,
-                hub.name,
-                decision=decision,
-                initiator="agent",
-            )
-
-        if project_root is None or is_remote(project_root):
-            # Phase 4a: a REMOTE working-folder selection contributes its
-            # authority through ``admitted_roots`` (the per-alias remote
-            # executor), never as the provider's base root — the base
-            # root is a laptop-path construction input (standalone
-            # executor, spill home), and a RemoteRoot there is the
-            # Phase 3a laptop-disk boundary. The run's private scratch
-            # stands in, so a BLOCKED remote selection proceeds on
-            # scratch/local (the degraded posture) instead of crashing.
-            snapshot = turn_context.scratch_space if turn_context is not None else None
-            if snapshot is None:
-                return None, None
-            root = snapshot.root
-            authority_scope = functools.partial(self._scratch_spaces.lease, snapshot)
-        else:
-            root = project_root
-            authority_scope = None
-        subscriptions_db = getattr(self.app, "subscriptions_db", None)
-        watchlists_service = WatchlistsToolService(
-            db_resolver=lambda: subscriptions_db,
-            # Owner-module loader (TASK-18609): constructing the store here
-            # violated the runtime-policy ownership boundary.
-            runtime_source_loader=load_default_runtime_source_state,
-        )
-        local_watchlists_service = getattr(self.app, "local_watchlists_service", None)
-        watchlist_bundle_service = getattr(self.app, "watchlist_bundle_service", None)
-        watchlists_coordinator = getattr(
-            self.app,
-            "watchlists_operation_coordinator",
-            None,
-        )
-
-        def _create_collection(**kwargs: Any) -> Any:
-            if watchlist_bundle_service is None:
-                raise RuntimeError("Watchlists collection service unavailable")
-            return watchlist_bundle_service.create_with_sources(**kwargs)
-
-        def _update_collection_sources(**kwargs: Any) -> Any:
-            if watchlist_bundle_service is None:
-                raise RuntimeError("Watchlists collection service unavailable")
-            return watchlist_bundle_service.update_sources(**kwargs)
-
-        def _create_sources_batch(rows: list[Mapping[str, Any]]) -> Any:
-            if local_watchlists_service is None:
-                raise RuntimeError("Watchlists source service unavailable")
-            return local_watchlists_service.create_sources_exact_batch_sync(rows)
-
-        watchlists_command_service = getattr(
-            self.app, "watchlists_command_service", None
-        )
-        if watchlists_command_service is None:
-            watchlists_command_service = WatchlistsCommandService(
-                runtime_source_loader=load_default_runtime_source_state,
-                create_sources_batch=_create_sources_batch,
-                create_collection=_create_collection,
-                update_collection_sources=_update_collection_sources,
-                accept_source_checks=(
-                    watchlists_coordinator.submit_checks
-                    if watchlists_coordinator is not None
-                    else None
-                ),
-                accept_briefing=(
-                    watchlists_coordinator.submit_briefing
-                    if watchlists_coordinator is not None
-                    else None
-                ),
-                resolve_collection_sources=(
-                    watchlist_bundle_service.list_sources
-                    if watchlist_bundle_service is not None
-                    else None
-                ),
-            )
-
-        from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
-
-        # Workspace assistant defaults (Task 7): THIS run's posture, from the
-        # turn context. The resolve-state closure layers, narrowing-only:
-        # (1) the workspace's named permission profile selects WHICH profile
-        # the fresh per-call gate resolves under (the Task 6 `_profile_kwargs`
-        # convention -- the default profile keeps calling `gate_tool_test`
-        # exactly as before, so signature-exact service doubles stay valid);
-        # (2) the persona floor then lowers allow->ask for tools whose rules
-        # demand confirmation. No path here can raise a state or add a tool.
-        # Lazy import (boot budget, ADR-097): per-run provider gate only.
-        from tldw_chatbook.Agents.persona_policy import (
-            parse_persona_policy_from_rules,
-            persona_floor_state,
-        )
-
-        persona_policy = parse_persona_policy_from_rules(
-            turn_context.persona_policy_rules if turn_context is not None else None
-        )
-
-        def _resolve_state(hub: "HubTool") -> Any:
-            if profile_id == "default":
-                state = service.gate_tool_test(hub)
-            else:
-                state = service.gate_tool_test_for_profile(hub, profile_id)
-            return persona_floor_state(state, persona_policy, hub.name)
-
-        from tldw_chatbook.Chat.approval_presentation import profile_authority
-
-        provider = LocalToolProvider(
-            presentation_authority=profile_authority(
-                "local", profile_id, str(root), "call"
-            ),
-            workspace_root=root,
+        return console_provider_composition._compose_local_provider(
+            self,
+            session_id,
+            turn_context,
+            project_root=project_root,
             allow_write=allow_write,
-            authority_scope=authority_scope,
-            result_redaction_root=(root if project_root is None else None),
-            root_guard=(
-                project_root_guard
-                if project_root_guard is not None
-                else (
-                    lambda: (
-                        _project_root_identity_matches(root, project_root_identity)
-                        if project_root_identity is not None
-                        else True
-                    )
-                )
-            ),
-            resolve_state=_resolve_state,
-            kill_switch=_kill_switch,
-            approval_callback=bound_request_approvals,
-            is_session_approved=lambda hub: service.is_session_approved(
-                hub.server_key, hub.name, **profile_kwargs
-            ),
-            persist_approval=_persist_approval,
-            record_decision=_record_decision,
-            watchlists_service=watchlists_service,
-            watchlists_command_service=watchlists_command_service,
+            project_root_identity=project_root_identity,
+            project_root_guard=project_root_guard,
             admitted_roots=admitted_roots,
+            local_kill_switch=local_kill_switch,
             project_index_service=project_index_service,
             project_index_scopes=project_index_scopes,
-            **self._todo_wiring(session_id),
-            **self._ask_user_wiring(session_id),
-            **self._character_wiring(session_id),
         )
-        return provider, build_local_review_hook(provider, bound_request_approvals)
 
     def _compose_virtual_cli_provider(
         self,
@@ -16277,134 +15913,17 @@ class ConsoleChatController:
         VirtualCliProvider | None,
         Callable[[list["ToolCall"], str], dict[str, str]] | None,
     ]:
-        """Compose the read-only virtual CLI over this run's local root."""
-        configured = (
-            turn_context.tool_configuration.get(
-                "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
-            )
-            if turn_context is not None
-            else get_cli_setting(
-                "console", "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
-            )
-        )
-        if not coerce_bool_setting(configured, LOCAL_TOOLS_DEFAULT_ENABLED):
-            return None, None
-        if admitted_roots is not None and not admitted_roots:
-            return None, None
-        service = getattr(self.app, "unified_mcp_service", None)
-        if service is None:
-            return None, None
-        try:
-            if service.get_kill_switch():
-                return None, None
-        except Exception:  # noqa: BLE001 -- unreadable security state fails closed
-            return None, None
+        from . import console_provider_composition
 
-        profile_id = (
-            turn_context.tool_policy_profile_id
-            if turn_context is not None
-            else "default"
-        )
-        profile_kwargs = {} if profile_id == "default" else {"profile_id": profile_id}
-
-        def resolve_state(hub: "HubTool") -> Any:
-            if profile_id == "default":
-                return service.gate_tool_test(hub)
-            return service.gate_tool_test_for_profile(hub, profile_id)
-
-        if project_root is None or is_remote(project_root):
-            # Phase 4a: a REMOTE working-folder selection contributes its
-            # authority through ``admitted_roots`` (the per-alias remote
-            # executor), never as the provider's base root — the base
-            # root is a laptop-path construction input (standalone
-            # executor, spill home), and a RemoteRoot there is the
-            # Phase 3a laptop-disk boundary. The run's private scratch
-            # stands in, so a BLOCKED remote selection proceeds on
-            # scratch/local (the degraded posture) instead of crashing.
-            snapshot = turn_context.scratch_space if turn_context is not None else None
-            if snapshot is None:
-                return None, None
-            root = snapshot.root
-            authority_scope = functools.partial(self._scratch_spaces.lease, snapshot)
-        else:
-            root = project_root
-            authority_scope = None
-
-        root_guard = (
-            project_root_guard
-            if project_root_guard is not None
-            else lambda: (
-                _project_root_identity_matches(root, project_root_identity)
-                if project_root_identity is not None
-                else True
-            )
-        )
-        bound_request = functools.partial(
-            self.request_mcp_approvals, session_id=session_id
-        )
-
-        def persist(hub: "HubTool", decision: str) -> None:
-            if decision == "approve_session":
-                service.approve_for_session(hub.server_key, hub.name, **profile_kwargs)
-            elif decision == "always_allow":
-                service.set_tool_state(
-                    hub.server_key,
-                    hub.name,
-                    "allow",
-                    tool=hub,
-                    **profile_kwargs,
-                )
-
-        def record(hub: "HubTool", decision: str) -> None:
-            service.record_tool_decision(
-                hub.server_key,
-                hub.name,
-                decision=decision,
-                initiator="agent",
-            )
-
-        def persist_arg_rule(hub: "HubTool", args: Mapping[str, Any]) -> None:
-            # task-32281: same shape as `MCPToolProvider._apply_verdict()`'s
-            # own "allow_matching" handling -- persist scoped to EXACTLY
-            # the displayed arguments, never a whole-tool allow.
-            service.add_tool_arg_rule(
-                hub.server_key,
-                hub.name,
-                args=dict(args),
-                tool=hub,
-                **profile_kwargs,
-            )
-
-        def arg_rule_allows(hub: "HubTool", args: Mapping[str, Any]) -> bool:
-            return service.arg_rule_allows_call(hub, dict(args), **profile_kwargs)
-
-        from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
-        from tldw_chatbook.Chat.approval_presentation import profile_authority
-
-        provider = VirtualCliProvider(
-            presentation_authority=profile_authority(
-                "virtual_cli", profile_id, str(root), "call"
-            ),
-            workspace_root=root,
-            resolve_state=resolve_state,
-            local_tools_enabled=lambda: coerce_bool_setting(
-                configured, LOCAL_TOOLS_DEFAULT_ENABLED
-            ),
-            kill_switch=lambda: bool(service.get_kill_switch()),
-            approval_callback=bound_request,
-            is_session_approved=lambda hub: service.is_session_approved(
-                hub.server_key, hub.name, **profile_kwargs
-            ),
-            persist_approval=persist,
-            persist_arg_rule=persist_arg_rule,
-            arg_rule_allows=arg_rule_allows,
-            record_decision=record,
-            root_guard=root_guard,
-            authority_scope=authority_scope,
-            result_redaction_root=(root if project_root is None else None),
+        return console_provider_composition._compose_virtual_cli_provider(
+            self,
+            session_id,
+            turn_context,
+            project_root=project_root,
+            project_root_identity=project_root_identity,
+            project_root_guard=project_root_guard,
             admitted_roots=admitted_roots,
         )
-        return provider, build_virtual_cli_review_hook(provider, bound_request)
 
     def _compose_raw_shell_provider(
         self,
@@ -16416,92 +15935,14 @@ class ConsoleChatController:
         RawShellToolProvider | None,
         Callable[[list["ToolCall"], str], dict[str, str]] | None,
     ]:
-        """Compose model raw shell only while every live safety gate is open."""
-        configured = (
-            turn_context.tool_configuration.get(
-                "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
-            )
-            if turn_context is not None
-            else get_cli_setting(
-                "console", "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
-            )
+        from . import console_provider_composition
+
+        return console_provider_composition._compose_raw_shell_provider(
+            self,
+            session_id,
+            turn_context,
+            project_root=project_root,
         )
-        local_enabled = coerce_bool_setting(configured, LOCAL_TOOLS_DEFAULT_ENABLED)
-        if not local_enabled or not session_id:
-            return None, None
-        service = getattr(self.app, "unified_mcp_service", None)
-        runtime = getattr(self.app, "raw_cli_runtime", None)
-        if service is None or runtime is None:
-            return None, None
-        try:
-            if (
-                runtime.permitted is not True
-                or runtime.armed is not True
-                or service.get_kill_switch()
-            ):
-                return None, None
-        except Exception:
-            return None, None
-
-        profile_id = (
-            turn_context.tool_policy_profile_id
-            if turn_context is not None
-            else "default"
-        )
-
-        def resolve_state(hub: "HubTool") -> Any:
-            if profile_id == "default":
-                return service.gate_tool_test(hub)
-            return service.gate_tool_test_for_profile(hub, profile_id)
-
-        if project_root is not None and not is_remote(project_root):
-            initial_directory = project_root
-        else:
-            # Phase 4a: raw shell is local-only (ADR-094); a remote
-            # working-folder selection never becomes its cwd — the run's
-            # private scratch stands in (the remote authority rides the
-            # fs_* admitted roots, not the shell).
-            snapshot = turn_context.scratch_space if turn_context is not None else None
-            if snapshot is None:
-                return None, None
-            initial_directory = snapshot.root
-
-        def kill_switch() -> bool:
-            try:
-                return bool(service.get_kill_switch())
-            except Exception:
-                return True
-
-        bound_request = functools.partial(
-            self.request_mcp_approvals, session_id=session_id
-        )
-        agent_bridge = getattr(self, "_agent_bridge", None)
-        from tldw_chatbook.Agents.raw_shell_tool_provider import (
-            RawShellToolProvider,
-        )
-
-        provider = RawShellToolProvider(
-            runtime=runtime,
-            console_session_id=session_id,
-            initial_directory=lambda: initial_directory,
-            resolve_state=resolve_state,
-            local_tools_enabled=lambda: local_enabled,
-            kill_switch=kill_switch,
-            progress_sink=(
-                agent_bridge.raw_shell_progress_sink
-                if agent_bridge is not None
-                else None
-            ),
-        )
-        providers = getattr(self, "_raw_shell_providers", None)
-        if providers is None:
-            providers = weakref.WeakSet()
-            self._raw_shell_providers = providers
-        providers.add(provider)
-        runtime.set_model_authority_revoker(self.revoke_raw_shell_authority)
-        if not provider.catalog_enabled():
-            return None, None
-        return provider, build_raw_shell_review_hook(provider, bound_request)
 
     def _todo_wiring(self, session_id: str | None) -> _TodoWiring:
         """The todo_store/on_todo_change kwargs for ``_compose_local_provider``.
@@ -16639,6 +16080,11 @@ class ConsoleChatController:
         factory = self._library_provider_factory
         if factory is None:
             return None
+        from .console_ordinary_tree import current_ordinary_tree
+
+        ordinary = current_ordinary_tree(self)
+        if ordinary is not None:
+            ordinary.check_library_factory()
         provider = factory(turn_context)
         if provider is None:
             return None
@@ -18254,7 +17700,8 @@ class ConsoleChatController:
             for task in read_tasks:
                 if task is not asyncio.current_task():
                     self._cancel_task_on_owner_loop(task)
-            return True
+            # A concurrent read must not consume Stop for a live response.
+            review_stopped = True
         native_tasks = self._ordinary_native_commit_tasks(session_id)
         if native_tasks:
             with self._active_submit_tasks_lock:
@@ -18262,6 +17709,7 @@ class ConsoleChatController:
                     if owner.session.id == session_id:
                         owner.explicit_stop = True
             self._signal_stop(session_id=session_id)
+            self.prompt_queue_coordinator.pause_for_stop(session_id)
             for task in native_tasks:
                 if task is not asyncio.current_task():
                     task.cancel()
@@ -20787,11 +20235,20 @@ class ConsoleChatController:
             its budget.
         """
 
+        from .console_ordinary_tree import (
+            current_ordinary_tree,
+            run_ordinary_preparation,
+        )
+
+        ordinary = current_ordinary_tree(self)
+        if ordinary is not None:
+            ordinary.check_personal_source()
         getter = getattr(
             getattr(self, "app", None), "get_personal_context_service", None
         )
         if not callable(getter):
             return None
+        owned_task = None
         if _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.is_set():
             return None
         _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.set()
@@ -20809,7 +20266,12 @@ class ConsoleChatController:
             # to the executor; the worker is running now, so re-assert it.
             _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.set()
             try:
-                return getter()
+                if ordinary is not None:
+                    ordinary.check_personal_source()
+                result = getter()
+                if ordinary is not None:
+                    ordinary.check_personal_source()
+                return result
             finally:
                 _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.clear()
 
@@ -20820,12 +20282,36 @@ class ConsoleChatController:
             that worker is still parked on the app's bootstrap lock, which is
             exactly what the guard exists to stop later sends from joining.
             """
-            if not started.is_set():
+            if owned_task is None and not started.is_set():
                 _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.clear()
 
         try:
+            if ordinary is not None:
+                owned_task = asyncio.create_task(
+                    run_ordinary_preparation(
+                        self,
+                        _bootstrap,
+                        opaque=not ordinary.personal_native,
+                    )
+                )
+                retained = getattr(self, "_ordinary_preparation_tasks", None)
+                if retained is None:
+                    retained = self._ordinary_preparation_tasks = set()
+                retained.add(owned_task)
+
+                def returned(done):
+                    retained.discard(done)
+                    if not started.is_set():
+                        _PERSONAL_CONTEXT_BOOTSTRAP_IN_FLIGHT.clear()
+                    if not done.cancelled():
+                        done.exception()
+
+                owned_task.add_done_callback(returned)
+                pending = asyncio.shield(owned_task)
+            else:
+                pending = asyncio.to_thread(_bootstrap)
             return await asyncio.wait_for(
-                asyncio.to_thread(_bootstrap),
+                pending,
                 CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS,
             )
         except (asyncio.TimeoutError, TimeoutError):
@@ -20981,14 +20467,22 @@ class ConsoleChatController:
                     project_selection.binding.binding_id,
                 )
                 return None
-            return await asyncio.to_thread(
-                ProjectInstructionResolver(remote_io=remote_io).resolve_startup,
-                binding_id=project_selection.binding.binding_id,
-                binding_root=project_selection.root,
-                locator_fingerprint=project_selection.locator_fingerprint,
-                max_bytes=startup_max_bytes,
-                dispatch_started_wall_ns=time.time_ns(),
-                excluded_dirs=_project_instruction_excluded_dirs(project_selection),
+            from .console_ordinary_tree import run_ordinary_preparation
+            from .console_ssh_custody import capture_preparation_ssh
+
+            return await run_ordinary_preparation(
+                self,
+                functools.partial(
+                    ProjectInstructionResolver(remote_io=remote_io).resolve_startup,
+                    binding_id=project_selection.binding.binding_id,
+                    binding_root=project_selection.root,
+                    locator_fingerprint=project_selection.locator_fingerprint,
+                    max_bytes=startup_max_bytes,
+                    dispatch_started_wall_ns=time.time_ns(),
+                    excluded_dirs=_project_instruction_excluded_dirs(project_selection),
+                ),
+                ssh=capture_preparation_ssh(io=remote_io),
+                opaque=True,
             )
         except Exception:  # noqa: BLE001 - prep failure proceeds
             # Content-free by design: no exception text is attached (a
@@ -21749,7 +21243,7 @@ class ConsoleChatController:
         console_config = app_config.get("console", {})
         if not isinstance(console_config, Mapping):
             console_config = {}
-        return capture_console_turn_configuration(
+        configuration = capture_console_turn_configuration(
             self.app,
             self.store,
             session_id,
@@ -21810,7 +21304,16 @@ class ConsoleChatController:
             ),
             persona_policy_rules=resolve_turn_persona_policy_rules(self.app, session),
             mcp_definition_maximum=mcp_definition_maximum,
+            _capture_creator=self,
         )
+        if (
+            configuration.mcp_capture_pending
+            or configuration.change_review_capture_pending
+        ):
+            from .console_configuration_preparation import remember_pending_mcp_capture
+
+            remember_pending_mcp_capture(self, session, configuration)
+        return configuration
 
     def resolve_turn_execution_context(
         self, session_id: str
@@ -21838,6 +21341,7 @@ class ConsoleChatController:
             raise KeyError(f"Unknown Console session: {session_id}")
 
         coordinator = self.store.library_policy_coordinator
+        first_library_read = None
         if coordinator is None:
             policy = ConsoleLibraryPolicySnapshot(
                 auto_retrieve=ConsoleAutoRetrieve.NEVER,
@@ -21847,6 +21351,19 @@ class ConsoleChatController:
                 error_code="policy_read_error",
             )
         else:
+            from .console_configuration_preparation import (
+                begin_first_library_execution_read,
+            )
+
+            try:
+                first_library_read = begin_first_library_execution_read(
+                    self,
+                    session,
+                    configuration,
+                    coordinator,
+                )
+            except (AttributeError, TypeError, ValueError, RuntimeError):
+                first_library_read = None
             try:
                 from .console_received_dispatch import capture_received_library_policy
 
@@ -21884,6 +21401,20 @@ class ConsoleChatController:
         )
         frozen_policy = configuration.library_policy_maximum
         if frozen_policy is not None:
+            from .console_configuration_preparation import (
+                finish_first_library_execution_read,
+            )
+
+            try:
+                first_publication = finish_first_library_execution_read(
+                    self,
+                    session,
+                    configuration,
+                    policy,
+                    first_library_read,
+                )
+            except (AttributeError, TypeError, ValueError, RuntimeError):
+                first_publication = False
             live_narrowed = (
                 policy.auto_retrieve is ConsoleAutoRetrieve.NEVER
                 and frozen_policy.auto_retrieve is ConsoleAutoRetrieve.AUTOMATIC
@@ -21912,10 +21443,10 @@ class ConsoleChatController:
                 ),
                 policy_revision=(
                     policy.policy_revision
-                    if live_identity
+                    if live_identity or first_publication
                     else frozen_policy.policy_revision
                 ),
-                source=policy.source if live_identity else frozen_policy.source,
+                source=policy.source if live_identity or first_publication else frozen_policy.source,
                 error_code=(
                     policy.error_code if live_identity else frozen_policy.error_code
                 ),
@@ -23359,16 +22890,21 @@ class ConsoleChatController:
         request = prompt.custody_request
         if request is None:
             raise RuntimeError("Queued prompt has no frozen custody request.")
-        return await self.submit_draft(
-            request.draft,
-            session_id=session_id,
-            origin=ConsoleSubmissionOrigin.QUEUED,
-            queue_entry_id=entry_id,
-            queue_authorization=authorization,
-            configuration=request.configuration,
-            accepted_attachments=(),
-            staged_evidence_launch=request.staged_evidence_launch,
-        )
+        from .console_configuration_preparation import use_pending_mcp_witness
+
+        with use_pending_mcp_witness(
+            prompt.mcp_capture_witness, prompt=prompt, authorization=authorization
+        ):
+            return await self.submit_draft(
+                request.draft,
+                session_id=session_id,
+                origin=ConsoleSubmissionOrigin.QUEUED,
+                queue_entry_id=entry_id,
+                queue_authorization=authorization,
+                configuration=request.configuration,
+                accepted_attachments=(),
+                staged_evidence_launch=request.staged_evidence_launch,
+            )
 
     def _notify_run_hook_approval(
         self, kind: str, payload: dict[str, Any], state: dict[str, Any]
@@ -28542,7 +28078,10 @@ class ConsoleChatController:
 
     def _arm_run_hooks_stop(self, session_id: str) -> None:
         """Register one accepted turn for a single terminal hook notification."""
-        self._run_hooks_stop_pending.add(session_id)
+        from .console_ordinary_tree import current_ordinary_tree
+
+        tree = current_ordinary_tree(self)
+        self._run_hooks_stop_pending[session_id] = tree.stop_notification if tree is not None else None
 
     def _set_run_state(
         self, run_state: ConsoleRunState, *, session_id: str | None = None
@@ -28581,7 +28120,11 @@ class ConsoleChatController:
             and previous_status is not ConsoleRunStatus.COMPLETED
             and target
         ):
-            self._maybe_schedule_micro_compaction(target)
+            from .console_preparation_reads import current_planning_preparation
+
+            planning = current_planning_preparation(self)
+            if planning is None or planning.session.id != target:
+                self._maybe_schedule_micro_compaction(target)
         if self._buddy_sink is not None:
             context_owners = self._buddy_run_owner_context.get() or {}
             if run_state.status is ConsoleRunStatus.VALIDATING:
@@ -28681,12 +28224,17 @@ class ConsoleChatController:
             ConsoleRunStatus.FAILED,
             ConsoleRunStatus.STOPPED,
         }:
-            self._run_hooks_stop_pending.discard(target)
+            original = self._run_hooks_stop_pending.pop(target)
             try:
-                engine = self._run_hooks_engine()
-                if engine is not None:
+                engine, custody = (
+                    original
+                    if original is not None
+                    else (self._run_hooks_engine(), None)
+                )
+                if engine is not None and (original is None or custody is not None):
                     engine.notify(
                         "Stop",
+                        _prepared=custody,
                         session_id=target,
                         data={
                             "status": {
@@ -29057,11 +28605,7 @@ class ConsoleChatController:
 _HOOK_AUTHORITY_VALUES_ORIGINAL = (
     ConsoleChatController,
     '_hook_authority_values',
-    ConsoleChatController._hook_authority_values,
-    ConsoleChatController._hook_authority_values.__code__,
-    ConsoleChatController._hook_authority_values.__defaults__,
-    ConsoleChatController._hook_authority_values.__kwdefaults__,
-    ConsoleChatController._hook_authority_values.__closure__,
+    capture_callable_source(ConsoleChatController._hook_authority_values),
 )
 
 
@@ -29173,3 +28717,18 @@ def _stock_console_tool_composition_current(controller):
 _CONSOLE_TOOL_COMPOSITION_CHECKER = (_stock_console_tool_composition_current, _stock_console_tool_composition_current.__code__, globals())
 
 _CONSOLE_CONTEXT_PRESENTATION_READERS = tuple((name, function, function.__code__) for name in ("context_control_presentation_inputs", "_held_send_echo_id") for function in (getattr(ConsoleChatController, name),))
+
+_NATIVE_REMOTE_EXECUTOR_FACTORIES = (
+    _default_remote_run_executor_factory,
+    _default_remote_instruction_executor,
+)
+
+from tldw_chatbook.Agents.project_instruction_resolver import (
+    RemoteInstructionIO as _NativeRemoteInstructionIO,
+)
+
+_NATIVE_REMOTE_INSTRUCTION_IO_DESCRIPTORS = {
+    name: descriptor
+    for name, descriptor in vars(_NativeRemoteInstructionIO).items()
+    if name not in {"__module__", "__doc__", "__slots__"}
+}

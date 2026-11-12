@@ -42,7 +42,8 @@ from Tests.UI.test_console_send_acknowledgement import (
 from Tests.UI.test_console_send_admission_off_pump import (
     B_DRAFT,
     ENTRY_SECONDS,
-    HeldMcpRead,
+    HOLD_SECONDS,
+    HeldNativeMcpRead,
     _allow_second_turns,
     _first_turn_done,
     _hold_first_send_tail,
@@ -69,7 +70,7 @@ async def _idle(host, console, pilot, session_id: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_draft_sent_after_a_non_append_edit_says_it_was_sent():
+async def test_a_draft_sent_after_a_non_append_edit_says_it_was_sent(monkeypatch):
     """AC#2: a sent draft the composer still shows is announced as sent.
 
     Enter, then Home and "x" while the send is admitted. The captured draft
@@ -84,7 +85,7 @@ async def test_a_draft_sent_after_a_non_append_edit_says_it_was_sent():
             console, composer = await ready_console(host, pilot, gateway)
             session_id = console._console_chat_store.active_session_id
             notices = _record_notices(host)
-            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
+            hold = HeldNativeMcpRead(host.app_instance.unified_mcp_service, monkeypatch)
             gateway.validation_release.set()
             try:
                 press(host, "enter", "\r")
@@ -102,7 +103,7 @@ async def test_a_draft_sent_after_a_non_append_edit_says_it_was_sent():
 
 
 @pytest.mark.asyncio
-async def test_a_press_held_on_a_non_append_edit_of_a_sent_draft_is_not_sent():
+async def test_a_press_held_on_a_non_append_edit_of_a_sent_draft_is_not_sent(monkeypatch):
     """AC#2: a press captured before the commit retired its draft sends nothing.
 
     Enter, a tab round trip, then Home, "x" and Enter while the first send is
@@ -121,7 +122,7 @@ async def test_a_press_held_on_a_non_append_edit_of_a_sent_draft_is_not_sent():
             session_a, session_b = await _second_tab(console, pilot, ready=True)
             notices = _record_notices(host)
             tail = _hold_first_send_tail(console)
-            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
+            hold = HeldNativeMcpRead(host.app_instance.unified_mcp_service, monkeypatch)
             gateway.validation_release.set()
             try:
                 press(host, "enter", "\r")
@@ -155,7 +156,7 @@ async def test_a_press_held_on_a_non_append_edit_of_a_sent_draft_is_not_sent():
 
 
 @pytest.mark.asyncio
-async def test_a_draft_sent_from_a_tab_left_during_admission_does_not_come_back():
+async def test_a_draft_sent_from_a_tab_left_during_admission_does_not_come_back(monkeypatch):
     """AC#2: the sent draft comes off the chat it was sent from.
 
     Enter, "x", then Alt+2 while the send is admitted: the send still goes
@@ -170,7 +171,7 @@ async def test_a_draft_sent_from_a_tab_left_during_admission_does_not_come_back(
             console, composer = await ready_console(host, pilot, gateway)
             session_a, session_b = await _second_tab(console, pilot, ready=True)
             store = console._ensure_console_chat_store()
-            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
+            hold = HeldNativeMcpRead(host.app_instance.unified_mcp_service, monkeypatch)
             gateway.validation_release.set()
             try:
                 press(host, "enter", "\r")
@@ -268,7 +269,13 @@ async def test_a_held_enter_never_resends_a_draft_a_spoken_send_took(monkeypatch
                 press(host, "y", "y")
                 press(host, "enter", "\r")
                 await until(lambda: _held(console), timeout=10)
-                await until(lambda: _first_turn_done(host, console))
+                runtime = console._console_runtime()
+                # The reply can finish while first-Send settings still own publication.
+                await until(
+                    lambda: _first_turn_done(host, console)
+                    and runtime._first_send_task is not None
+                    and runtime._first_send_task.done()
+                )
                 _speak_send(console, session_id)
                 await until(lambda: _turns_done(console, session_id, 2))
                 assert composer.draft_text() == ""
@@ -283,12 +290,12 @@ async def test_a_held_enter_never_resends_a_draft_a_spoken_send_took(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_an_enter_never_resends_a_draft_a_spoken_send_committed_meanwhile():
+async def test_an_enter_never_resends_a_draft_a_spoken_send_committed_meanwhile(monkeypatch):
     """AC#1: an Enter's capture is spent once another send commits it.
 
     A spoken send of "y" is admitted when Enter captures the same "y". The
-    spoken send commits it while Enter's "Sending…" is being painted; the
-    Enter's send then started with its capture and sent "y" again.
+    spoken send commits it while the captured Enter is waiting to start.
+    Enter must drop that capture once the spoken send has taken it.
     """
     from tldw_chatbook.UI.Console_Modules import send_acknowledgement
 
@@ -300,28 +307,33 @@ async def test_an_enter_never_resends_a_draft_a_spoken_send_committed_meanwhile(
             composer.load_draft("y")
             await pilot.pause()
             session_id = console._console_chat_store.active_session_id
-            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
+            hold = HeldNativeMcpRead(host.app_instance.unified_mcp_service, monkeypatch)
             gateway.validation_release.set()
-            paint_release = asyncio.Event()
-            real_paint = send_acknowledgement.paint_acknowledgement
+            reached, release = asyncio.Event(), asyncio.Event()
+            real_start = send_acknowledgement._start_send
 
-            async def held_paint(screen, painted_session_id):
-                await paint_release.wait()
-                await real_paint(screen, painted_session_id)
+            def held_start(screen, send):
+                async def start_when_released():
+                    reached.set()
+                    await release.wait()
+                    real_start(screen, send)
 
-            send_acknowledgement.paint_acknowledgement = held_paint
+                asyncio.get_running_loop().create_task(start_when_released())
+
+            monkeypatch.setattr(send_acknowledgement, "_start_send", held_start)
             try:
                 _speak_send(console, session_id)
                 await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
                 press(host, "enter", "\r")
-                await until(lambda: console._console_pending_send is not None)
+                await until(
+                    lambda: reached.is_set() and console._console_pending_send is not None
+                )
                 hold.release.set()
                 await until(lambda: _sent_or_queued(console, session_id) == ["y"])
                 await until(lambda: composer.draft_text() == "")
             finally:
                 hold.release.set()
-                paint_release.set()
-                send_acknowledgement.paint_acknowledgement = real_paint
+                release.set()
             await _idle(host, console, pilot, session_id)
             assert _sent_or_queued(console, session_id) == ["y"]
             assert gateway.stream_calls == 1
@@ -330,7 +342,7 @@ async def test_an_enter_never_resends_a_draft_a_spoken_send_committed_meanwhile(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("typed_in_b", [False, True], ids=["round_trip", "typed_in_b"])
 async def test_enter_after_a_tab_round_trip_during_admission_sends_the_draft_once(
-    typed_in_b,
+    typed_in_b, monkeypatch,
 ):
     """AC#1/#2: Enter, Alt+2, Alt+1, Enter during admission sends one message.
 
@@ -355,7 +367,7 @@ async def test_enter_after_a_tab_round_trip_during_admission_sends_the_draft_onc
             store = console._ensure_console_chat_store()
             notices = _record_notices(host)
             tail = _hold_first_send_tail(console)
-            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
+            hold = HeldNativeMcpRead(host.app_instance.unified_mcp_service, monkeypatch)
             gateway.validation_release.set()
             try:
                 press(host, "enter", "\r")
@@ -437,7 +449,7 @@ async def test_a_press_refused_for_a_send_held_in_another_tab_names_that_tab():
 
 
 @pytest.mark.asyncio
-async def test_a_send_refused_while_another_tab_sends_names_that_tab():
+async def test_a_send_refused_while_another_tab_sends_names_that_tab(monkeypatch):
     """AC#3: the Send gate's "already in progress" names the busy tab.
 
     A spoken send in tab A is being admitted (it holds the Send gate), then
@@ -452,11 +464,22 @@ async def test_a_send_refused_while_another_tab_sends_names_that_tab():
             store = console._ensure_console_chat_store()
             store.rename_session(session_a, "Alpha plans")
             notices = _record_notices(host)
-            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
+            entered = asyncio.Event()
+            release = asyncio.Event()
+            launch = console._prompt_queue._launch_chain_async
+
+            async def held_launch(*args, **kwargs):
+                entered.set()
+                await asyncio.wait_for(release.wait(), timeout=HOLD_SECONDS)
+                return await launch(*args, **kwargs)
+
+            # A custom launch uses the compatibility gate while keeping real admission.
+            monkeypatch.setattr(console._prompt_queue, "_launch_chain_async", held_launch)
             gateway.validation_release.set()
             try:
                 _speak_send(console, session_a)
-                await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
+                await until(entered.is_set, timeout=ENTRY_SECONDS)
+                assert console._hooks._busy_session == session_a
                 press(host, "alt+2")
                 await until(
                     lambda: console._console_visible_draft_session_id == session_b
@@ -465,7 +488,7 @@ async def test_a_send_refused_while_another_tab_sends_names_that_tab():
                 press(host, "enter", "\r")
                 await until(lambda: any("already in progress" in n for n in notices))
             finally:
-                hold.release.set()
+                release.set()
             await until(lambda: gateway.stream_calls == 1)
             await _idle(host, console, pilot, session_a)
             refusals = [n for n in notices if "already in progress" in n]
@@ -552,7 +575,7 @@ def _clear(host, how: str) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("how", ["ctrl+u", "backspace"], ids=["ctrl_u", "backspaces"])
-async def test_a_draft_cleared_while_it_is_sent_draws_no_was_sent_notice(how):
+async def test_a_draft_cleared_while_it_is_sent_draws_no_was_sent_notice(how, monkeypatch):
     """The notice is only for sent text the composer still shows.
 
     Enter, then the draft cleared (Ctrl+U, or Backspace over all of it) and
@@ -570,7 +593,7 @@ async def test_a_draft_cleared_while_it_is_sent_draws_no_was_sent_notice(how):
             console, composer = await ready_console(host, pilot, gateway)
             session_id = console._console_chat_store.active_session_id
             notices = _record_notices(host)
-            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
+            hold = HeldNativeMcpRead(host.app_instance.unified_mcp_service, monkeypatch)
             gateway.validation_release.set()
             try:
                 press(host, "enter", "\r")
@@ -594,7 +617,7 @@ async def test_a_draft_cleared_while_it_is_sent_draws_no_was_sent_notice(how):
 
 
 @pytest.mark.asyncio
-async def test_a_hidden_chat_whose_draft_was_replaced_draws_no_was_sent_notice():
+async def test_a_hidden_chat_whose_draft_was_replaced_draws_no_was_sent_notice(monkeypatch):
     """The hidden-chat notice is only for a saved draft that still has it.
 
     Enter, Ctrl+U, "n", then Alt+2 while the send is admitted: tab A saves
@@ -609,7 +632,7 @@ async def test_a_hidden_chat_whose_draft_was_replaced_draws_no_was_sent_notice()
             session_a, session_b = await _second_tab(console, pilot, ready=True)
             store = console._ensure_console_chat_store()
             notices = _record_notices(host)
-            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
+            hold = HeldNativeMcpRead(host.app_instance.unified_mcp_service, monkeypatch)
             gateway.validation_release.set()
             try:
                 press(host, "enter", "\r")
@@ -632,7 +655,8 @@ async def test_a_hidden_chat_whose_draft_was_replaced_draws_no_was_sent_notice()
 
 
 @pytest.mark.asyncio
-async def test_an_escaped_bang_chat_send_leaves_the_composer():
+@pytest.mark.parametrize("send_mode", ("enter", "spoken"))
+async def test_an_escaped_bang_chat_send_leaves_the_composer(send_mode):
     """A "\\! " chat send goes out as "! …" and leaves the composer.
 
     The send dispatches the draft with its escape removed, and the commit
@@ -650,7 +674,11 @@ async def test_an_escaped_bang_chat_send_leaves_the_composer():
             store = console._ensure_console_chat_store()
             notices = _record_notices(host)
             gateway.validation_release.set()
-            press(host, "enter", "\r")
+            if send_mode == "spoken":
+                spoken = _speak_send(console, session_id)
+                await until(lambda: spoken.is_finished, timeout=ENTRY_SECONDS)
+            else:
+                press(host, "enter", "\r")
             await until(lambda: gateway.stream_calls == 1, timeout=ENTRY_SECONDS)
             await _idle(host, console, pilot, session_id)
             assert _sent_or_queued(console, session_id) == [ESCAPED[1:]]
@@ -772,7 +800,7 @@ async def test_an_enter_never_resends_a_draft_a_spoken_send_took_before_a_clear(
             await pilot.pause()
             session_id = console._console_chat_store.active_session_id
             notices = _record_notices(host)
-            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
+            hold = HeldNativeMcpRead(host.app_instance.unified_mcp_service, monkeypatch)
             gateway.validation_release.set()
             reached, release = asyncio.Event(), asyncio.Event()
             real_start = send_acknowledgement._start_send

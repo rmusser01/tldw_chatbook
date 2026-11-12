@@ -490,3 +490,61 @@ async def test_parked_maintenance_still_collects_once_per_interval(
     finally:
         await runtime.dispose()
         db.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail", [False, True])
+async def test_disposal_retains_original_maintenance_return_through_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+    fail: bool,
+) -> None:
+    """The finite native offload returns before cancellation or its exact error."""
+    entered, release, returned = threading.Event(), threading.Event(), threading.Event()
+    failure = RuntimeError("original maintenance failure")
+    calls = []
+
+    class Maintenance:
+        def __init__(self, _database, **_kwargs):
+            pass
+
+        def run_batch(self):
+            calls.append("batch")
+            entered.set()
+            try:
+                assert release.wait(5)
+                if fail:
+                    raise failure
+                return SimpleNamespace(logical_complete=True, admitted=True)
+            finally:
+                returned.set()
+
+    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
+    module.LegacyTraceMaintenance = Maintenance
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    runtime = _fast_runtime(monkeypatch)
+    runtime._schedule_legacy_trace_maintenance(object(), object)
+    assert await asyncio.to_thread(entered.wait, 5)
+    disposal = asyncio.create_task(runtime.dispose())
+    try:
+        await _real_sleep(0.02)
+        for _ in range(2):
+            disposal.cancel()
+            runtime._legacy_trace_maintenance_task.cancel()
+            await _real_sleep(0.01)
+            assert not disposal.done()
+            assert not returned.is_set()
+    finally:
+        release.set()
+    if fail:
+        with pytest.raises(RuntimeError) as caught:
+            await disposal
+        assert caught.value is failure
+        # An already-done original maintenance failure is never discarded.
+        with pytest.raises(RuntimeError) as repeated:
+            await runtime.dispose()
+        assert repeated.value is failure
+    else:
+        with pytest.raises(asyncio.CancelledError):
+            await disposal
+    assert returned.is_set()
+    assert calls == ["batch"]

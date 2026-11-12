@@ -539,3 +539,75 @@ def test_terminal_checkpoint_reconcile_still_deletes_under_write_lock(
         .fetchone()[0]
     )
     assert remaining == 0
+
+
+@pytest.mark.parametrize("read_scope", ["app", "same-session", "other-session"])
+@private_profile_test
+async def test_stop_with_concurrent_preparation_read_still_finalizes_live_stream(
+    request, tmp_path, monkeypatch, read_scope
+):
+    """A finite read cannot consume Stop for an already streaming response."""
+    from tldw_chatbook.Chat.console_preparation_reads import run_preparation_read
+
+    db, store, controller, gateway = _controller(tmp_path)
+    session_id = store.active_session_id
+    streaming = asyncio.Event()
+    stream_release = asyncio.Event()
+    original_stream = gateway.stream_chat
+
+    async def held_stream(*args, **kwargs):
+        async for chunk in original_stream(*args, **kwargs):
+            yield chunk
+        streaming.set()
+        await stream_release.wait()
+
+    monkeypatch.setattr(gateway, "stream_chat", held_stream)
+    entered, release, exited = threading.Event(), threading.Event(), threading.Event()
+
+    def finite_read():
+        entered.set()
+        try:
+            assert release.wait(10)
+            return "read returned"
+        finally:
+            exited.set()
+
+    submit = asyncio.create_task(controller.submit_draft("stop the stream"))
+    read = None
+    try:
+        await asyncio.wait_for(streaming.wait(), 5)
+        read = asyncio.create_task(
+            run_preparation_read(
+                finite_read,
+                creator=controller,
+                session_id=(
+                    None
+                    if read_scope == "app"
+                    else session_id
+                    if read_scope == "same-session"
+                    else "other-session"
+                ),
+                reads=controller._preparation_reads,
+                require_current=lambda: None,
+            )
+        )
+        assert await asyncio.to_thread(entered.wait, 5)
+        (record,) = controller._preparation_reads
+        assert controller.stop_active_run()
+        assert read.cancelling() == (read_scope != "other-session")
+        assert not record.retired.done() and not exited.is_set()
+        assert controller.run_state.status is ConsoleRunStatus.STOPPED
+        controller.stop_active_run()
+        assert [
+            message.content for message in store.messages_for_session(session_id)
+        ].count("Response stopped by user.") == 1
+        assert not record.retired.done() and not exited.is_set()
+    finally:
+        release.set()
+        stream_release.set()
+        tasks = [submit] + ([read] if read is not None else [])
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await controller.shutdown()
+        db.close()
+    assert exited.is_set() and record.retired.done()
+    assert not controller._preparation_reads

@@ -1,5 +1,26 @@
 # Agent runs & tools — what happens when a reply uses tools, skills, and sub-agents
 
+## Run a phased workflow in this chat
+
+Workflow runs start disabled. Enable **Workflow runs** in **F4 Settings → Console behavior**. Open a local Console chat in a workspace with a ready folder binding. Use `/workflow new` or **New workflow** in the Console palette. Enter the goal, select the folder, and review the planner, execution targets and limits. The current chat selection is the default. Choosing a named preset captures the displayed provider/model choices and fallbacks. Change Review shows the existing workspace consent and readiness; excluded files and capture failures can limit later evidence. Existing uncommitted files are inputs.
+
+**Prepare plan** spends a planning attempt. Review the returned plan revision, each task's scope, dependencies, outputs and checks. **Approve plan and start** authorizes its first phase. The same detail view shows task progress, remaining allowance, the active-time limit and saved result/check evidence. Use **Fleet** for task inspection or steering, **Review pending tool decision** for an existing approval, and **Open Changes** for the selected recorded snapshot.
+
+At a phase boundary, accept the phase result and review the next phase before approving it. **Revise remaining plan** takes an instruction and spends another planning attempt. At final review choose **Accept result** or request a revision. **Pause** prevents further launches while admitted work returns. **Resume** requests fresh review. **Stop** preserves edits. **Recovery required** means physical execution or accounting remains unresolved; quality acceptance cannot clear it.
+
+Use `/workflow` for this chat's saved history. Selecting a record only opens its detail. Escape closes the view while accepted work continues. The compact workflow line opens the exact workflow needing attention, including one in another chat. Refresh detail if the plan revision, folder inputs or runtime state have changed. Existing composer drafts and attachments stay with their chat.
+
+Required checks retain their executable identity, exact input/output manifests
+and actual exit code. A failed command remains in history after an explicitly
+approved correction and fresh passing check. Detailed run logging can be off.
+Shell checks also require normal Raw CLI arming and tool approval. After a
+clean restart, open the saved chat and workflow and choose **Resume** for fresh
+review. Restored or imported records require current permissions and folder
+availability. Unknown execution stays in **Recovery required**.
+
+[Qualification receipts and limits](../../superpowers/qa/2026-11-01-native-phased-agent-workflows/README.md)
+record tested source versions and supported-platform evidence.
+
 ## Running the Watchlists workflow from Console
 
 You can ask the Console agent to create feeds, group them into a Watchlist, check the sources, generate a briefing, save a recurrence, and read a completed briefing. The agent discovers and loads the required local tools, while each approval remains explicit and auditable.

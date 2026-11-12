@@ -1,23 +1,9 @@
-"""TldwCli's lifecycle, shutdown and quit flow: ``LifecycleMixin``.
+"""TldwCli lifecycle, shutdown, maintenance and quit flow through LifecycleMixin.
 
-Moved verbatim from ``app.py`` (TASK-33011, PR-F): recovery and backup
-maintenance, the shutdown request and worker settling, the app-owned
-lifecycle shutdown (``_shutdown_app_owned_lifecycles``, the ``_shutdown`` and
-``_handle_exception`` overrides), artifact share, ``on_unmount``, worker-state
-and media cleanup, the workbench actions and workflow session, and the quit
-flow (``action_quit`` / ``_confirm_and_quit`` and the quit persistence
-helpers). ``TldwCli`` mixes the class in before ``App``, so its overrides of
-``App`` methods still win; the two members Textual dispatches by decorator or
-that tests require on ``TldwCli`` itself (``on_splash_screen_closed``,
-``on_app_focus``) stay in ``app.py``.
-
-Patch the names this code reads (``persist_event``, ``get_cli_setting`` and so
-on) HERE: the bodies resolve free names through this module's globals, so a
-patch on ``tldw_chatbook.app`` alone no longer reaches them. Where ``app.py``
-still reads the same name, patch both modules (``Tests/app_module_patches.py``).
-``Tests/Architecture/test_app_extracted_patch_targets.py`` fails on an
-app-module patch that can only have been meant for code that moved out.
-"""
+The mixin precedes App, preserving its overrides. Textual-decorated members
+on_splash_screen_closed and on_app_focus remain on TldwCli in app.py.
+Patch defining globals here; patch app.py too when it reads the same name.
+Tests/Architecture/test_app_extracted_patch_targets.py guards moved patch targets."""
 
 import asyncio
 import contextlib
@@ -806,6 +792,9 @@ class LifecycleMixin:
         await self._shutdown_raw_cli_runtime()
         await self._shutdown_terminal_session_manager()
         await self._shutdown_console_settings_durability()
+        change_review = getattr(self, "change_review_consent_service", None)
+        if change_review is not None:
+            change_review.begin_close()
         await self._shutdown_console_runtime()
         change_review = getattr(self, "change_review_consent_service", None)
         if change_review is not None:
@@ -1587,6 +1576,7 @@ class LifecycleMixin:
             from datetime import timedelta
 
             from .DB.base_db import operation_owned_connection
+            from .Backup_Recovery.participants import run_finite_local_worker
             from .Utils.timestamps import to_utc_iso, utc_now
 
             # Shared UTC helper (ADR-173 ratchet): same canonical
@@ -1602,7 +1592,7 @@ class LifecycleMixin:
                 db = getattr(self, attr, None)
                 if db is None:
                     continue
-                pruned = await asyncio.to_thread(prune, db)
+                pruned = await asyncio.to_thread(run_finite_local_worker, prune, db)
                 if pruned:
                     self.loguru_logger.info(
                         f"Sync-log retention pruned {pruned} rows older than "

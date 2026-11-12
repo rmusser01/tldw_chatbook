@@ -2,21 +2,22 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
-import threading
 
 import pytest
 from textual.widgets import Button, Static
 
+import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+from tldw_chatbook.UI.Console_Modules import review_selection
 from Tests.UI.app_factory import _build_test_app
-from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_console_narrow_layout import _compositor_text
+from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
@@ -99,13 +100,13 @@ def _row(row_id: int, root: Path, **overrides) -> dict:
 
 
 def _prepare(provider: _Provider):
-    prepare = getattr(chat_screen_module, "_prepare_console_turn_undo", None)
+    prepare = getattr(review_selection, "prepare_console_turn_undo", None)
     assert callable(prepare), "turn-level Undo All planner is missing"
     return prepare(provider, "run-1")
 
 
 def _apply(provider: _Provider, plan):
-    apply_plan = getattr(chat_screen_module, "_apply_console_turn_undo", None)
+    apply_plan = getattr(review_selection, "apply_console_turn_undo", None)
     assert callable(apply_plan), "turn-level Undo All executor is missing"
     return apply_plan(provider, plan)
 
@@ -163,7 +164,7 @@ def test_prepare_refuses_duplicate_root_windows_before_any_diff_or_preflight(tmp
             2: [ChangedFile(path="second.txt", status="A", adds=1, dels=0)],
         },
     )
-    ambiguous = getattr(chat_screen_module, "_ConsoleTurnUndoAmbiguousError", None)
+    ambiguous = getattr(review_selection, "ConsoleTurnUndoAmbiguousError", None)
     assert ambiguous is not None, "ambiguous-window refusal type is missing"
 
     with pytest.raises(ambiguous, match="multiple change windows"):
@@ -176,7 +177,7 @@ def test_prepare_refuses_duplicate_root_windows_before_any_diff_or_preflight(tmp
 
 def test_prepare_refuses_tracking_error_and_active_run_without_mutation(tmp_path):
     root = tmp_path / "workspace"
-    unavailable = getattr(chat_screen_module, "_ConsoleTurnUndoUnavailableError", None)
+    unavailable = getattr(review_selection, "ConsoleTurnUndoUnavailableError", None)
     assert unavailable is not None, "safe Undo All refusal type is missing"
 
     errored = _Provider(
@@ -209,7 +210,7 @@ def test_prepare_refuses_a_background_run_targeting_any_turn_root(tmp_path):
         },
     )
     provider.active_roots.add(str(root_b))
-    unavailable = chat_screen_module._ConsoleTurnUndoUnavailableError
+    unavailable = review_selection.ConsoleTurnUndoUnavailableError
 
     with pytest.raises(unavailable, match="finish or stop"):
         _prepare(provider)
@@ -228,7 +229,7 @@ def test_apply_rechecks_preflight_and_refuses_new_edits_before_any_revert(tmp_pa
     )
     plan = _prepare(provider)
     provider.preflight_by_row = {1: ["a.txt"]}
-    stale = getattr(chat_screen_module, "_ConsoleTurnUndoStalePreflightError", None)
+    stale = getattr(review_selection, "ConsoleTurnUndoStalePreflightError", None)
     assert stale is not None, "stale-confirmation refusal type is missing"
 
     with pytest.raises(stale, match="changed while the confirmation was open"):
@@ -248,7 +249,7 @@ def test_apply_refuses_when_an_already_warned_file_changes_again(tmp_path):
     provider.disk_state_by_row = {1: {"a.txt": "sha256:first"}}
     plan = _prepare(provider)
     provider.disk_state_by_row = {1: {"a.txt": "sha256:second"}}
-    stale = chat_screen_module._ConsoleTurnUndoStalePreflightError
+    stale = review_selection.ConsoleTurnUndoStalePreflightError
 
     with pytest.raises(stale, match="changed while the confirmation was open"):
         _apply(provider, plan)
@@ -658,3 +659,34 @@ async def test_mounted_partial_and_provider_failures_name_problem_and_allow_retr
             for message, severity in notices
         )
         assert str(undo.label) == "Undo All"
+
+
+@pytest.mark.parametrize("kind", ["refused", "unexpected", "partial"])
+def test_undo_notifications_render_external_text_literally(kind):
+    from rich.text import Text
+
+    from tldw_chatbook.Workspaces.change_revert import RevertRefusedError
+
+    sentinel = "[bold]literal[/bold]"
+    rendered, finished = [], []
+
+    def notify(message, *, markup=True, **kwargs):
+        rendered.append(Text.from_markup(message).plain if markup else message)
+
+    screen = SimpleNamespace(
+        app_instance=SimpleNamespace(notify=notify),
+        _finish_console_turn_undo=lambda *args, **kwargs: finished.append(kwargs),
+    )
+    error = (
+        RevertRefusedError(sentinel)
+        if kind == "refused"
+        else RuntimeError(sentinel)
+        if kind == "unexpected"
+        else None
+    )
+    outcomes = [RevertOutcome(path=sentinel, ok=False, error=sentinel)]
+    chat_screen_module.ChatScreen._publish_console_turn_undo(
+        screen, "token", None, SimpleNamespace(total_files=1), outcomes, error
+    )
+    assert sentinel in rendered[0]
+    assert finished == [{"success": False}]

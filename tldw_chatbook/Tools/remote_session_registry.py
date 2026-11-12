@@ -99,6 +99,12 @@ class RemoteSessionRegistry:
         """
         from tldw_chatbook.Tools.remote_session_worker import SessionStartError
         from tldw_chatbook.Tools.remote_workspace_transport import TransportFailureKind
+        from tldw_chatbook.Tools.workspace_tool_executor import (
+            accept_session,
+            session_publication,
+            starting_session,
+            unpublished_session,
+        )
 
         entered = time.monotonic()
         with self._lock:
@@ -113,9 +119,11 @@ class RemoteSessionRegistry:
                 if self._shutdown or key in self._disabled or key[0] in self._closed_keys:
                     return None
                 worker = self._sessions.get(key)
-                if worker is not None and worker.alive:
-                    return worker
+                live = worker is not None and worker.alive
                 failed = self._start_failures.get(key)
+            if live:
+                accept_session(self, key, worker)
+                return worker
             if failed is not None and failed[0] >= entered:
                 # This caller queued behind a start that failed
                 # transport-class: share that failure (a fresh exception per
@@ -136,9 +144,11 @@ class RemoteSessionRegistry:
                     self._restarted.add(key)
                 logger.debug("ssh session worker died; restarting it once for this run")
             worker = create()
+            starting_session(self, key, worker)
             try:
                 worker.start()
             except SessionStartError as error:
+                unpublished_session(self, key, worker)
                 if error.failure is not None and error.failure.kind is TransportFailureKind.MUX_ERROR:
                     # A stale control socket: classifying it already restarted
                     # the master, and nothing was sent, so this call runs
@@ -185,11 +195,16 @@ class RemoteSessionRegistry:
                 closed_meanwhile = self._shutdown or key[0] in self._closed_keys
                 if not closed_meanwhile:
                     self._sessions[key] = worker
+                    acceptance = session_publication(self, key, worker)
+                    if acceptance is not None:
+                        worker._native_acceptance = acceptance
             if closed_meanwhile:
                 # The run (or the app) ended while this start was in flight:
                 # nobody owns it.
                 worker.close()
+                unpublished_session(self, key, worker)
                 return None
+            accept_session(self, key, worker)
             return worker
 
     def close_key(self, session_key: str) -> None:
@@ -259,3 +274,11 @@ def close_all_remote_sessions() -> None:
     goes one-shot instead of opening a session.
     """
     get_session_registry().close_all()
+
+
+_NATIVE_REGISTRY_METHODS = {
+    name: getattr(RemoteSessionRegistry, name)
+    for name in ("acquire", "close_key", "close_all", "reap_idle")
+}
+
+_NATIVE_REGISTRY_GET = get_session_registry

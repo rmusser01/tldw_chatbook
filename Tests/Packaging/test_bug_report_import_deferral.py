@@ -14,13 +14,16 @@ import sys
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.Logs_Window import LogsWindow
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
-for name in ("tldw_chatbook.UI.bug_report_capture", "tldw_chatbook.Widgets.bug_report_dialog"):
+for name in (
+    "tldw_chatbook.app_bug_report",
+    "tldw_chatbook.UI.bug_report_capture",
+    "tldw_chatbook.Widgets.bug_report_dialog",
+):
     assert name not in sys.modules, name
 before = set(sys.modules)
 from textual.app import App
 from tldw_chatbook.UI.Navigation.screen_state_store import RuntimeIdentity
-from tldw_chatbook.app_bug_report import BugReportActions
-class Host(BugReportActions, App):
+class Host(App):
     action_report_bug = TldwCli.action_report_bug
     console_runtime = None
     current_tab = "logs"
@@ -36,6 +39,7 @@ async def check():
         await host.workers.wait_for_complete()
         assert host.console_runtime is None
         assert type(host.screen).__name__ == "BugReportDialog"
+        assert host.screen._capture is not None
 asyncio.run(check())
 for name in ("tldw_chatbook.Chat.console_trace_native_reader", "tldw_chatbook.Chat.trajectory_export", "tldw_chatbook.Chat.trajectory_import", "torch", "transformers"):
     assert name not in set(sys.modules) - before, name

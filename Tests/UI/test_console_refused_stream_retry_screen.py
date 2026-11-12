@@ -49,10 +49,9 @@ def _rows(store, role):
 @pytest.mark.loopback_network
 async def test_a_custom_server_that_refuses_streaming_answers_one_turn_once():
     with _server() as server:
-        app = _build_test_app()
-        attach_chachanotes_db(app)
-        # This harness has no world-books schema for exchange capture (the
-        # same ordinary-send policy the composer send tests use).
+        app = _build_test_app(user_data_dir=config_module.get_user_data_dir())
+        attach_chachanotes_db(app, db_path=config_module.get_chachanotes_db_path())
+        # Exercise reply streaming with exchange capture disabled.
         assert config_module.save_settings_to_cli_config(
             {
                 "console": {"exchange_capture": False},

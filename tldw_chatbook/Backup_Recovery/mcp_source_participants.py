@@ -244,6 +244,16 @@ def complete(state):
     """Publish caller stamps after positive native close, under the source lock."""
     for payload, stamp in state.mcp_payload_updates:
         payload["updated_at"] = stamp
+    publication = getattr(state, "permission_publication", None)
+    if publication is not None:
+        publication.complete()
+
+
+def permission_mutation(source):
+    """Invalidate permission receipts until this original native write closes."""
+    _, state = _operation(source)
+    state.permission_publication = source._permission_publication
+    state.permission_publication.begin()
 
 
 def drain_ready(source):
@@ -283,6 +293,9 @@ def guarded(function):
         except BaseException:
             if state is not None and (state.mcp_effects or state.uncertain):
                 source._mcp_persistence_error = "mcp_persistence_incomplete"
+                publication = getattr(source, "_permission_publication", None)
+                if publication is not None:
+                    publication.fail()
             raise
 
     return wrapped

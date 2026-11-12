@@ -427,6 +427,10 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
         console = ChatScreen(app)
         owner = console._console_runtime()
         assert owner.chat_controller is None
+        # Screen assembly may create a passive store; Stop must also work without it.
+        original_store = owner.chat_store
+        owner.set_chat_store(None)
+        assert owner.chat_store is None
         notices = []
         app.notify = lambda message, **kwargs: notices.append(message)
         try:
@@ -435,6 +439,7 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
             assert owner.chat_store is None
             assert notices == ["No active Console run to stop."]
         finally:
+            owner.set_chat_store(original_store)
             await owner.dispose()
         return
     async with mounted_rules_console(tmp_path) as case:
@@ -553,6 +558,11 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
                     next_timer=time.monotonic(), count=0
                 )
                 assert not expired.is_set(), "credential timer blocked the UI loop"
+                # Exercise passive recovery even before its periodic refresh fires.
+                region = case.console._console_transcript_region_or_none()
+                assert region is not None
+                region.sync_recovery()
+                assert not expired.is_set(), "passive recovery blocked the UI loop"
                 stop.press()
                 async with asyncio.timeout(1):
                     while case.rules.state(case.session_id).phase != "idle" or (

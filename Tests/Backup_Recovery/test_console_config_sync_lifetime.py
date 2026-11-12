@@ -495,7 +495,11 @@ screen.query_one=mode_bar
 import tldw_chatbook.UI.Screens.chat_screen as module
 module.project_instruction_ui.sync_project_instruction_status_for_screen=no_sync
 workers=[]
-screen.run_worker=lambda coro,**kwargs:workers.append(coro)
+def schedule_worker(worker, *, exclusive, group):
+ # Textual receives a callable so unstarted work owns no coroutine.
+ assert callable(worker) and exclusive and group=='console-sync'
+ workers.append(worker)
+screen.run_worker=schedule_worker
 async def main():
  screen._console_sync_requested=True
  await screen._sync_native_console_chat_ui()
@@ -531,7 +535,8 @@ async def main():
   return
  delay,callback=scheduled.pop();callback()
  assert len(workers)==1
- await workers.pop()
+ worker=workers.pop()
+ await worker()
  expected='new external request' if case=='native-worker-external' else 'fixture'
  assert rendered==[(expected,expected)]
  # The refresh recorded the inputs it projected from, chat controller
@@ -545,7 +550,6 @@ finally:
  Admission.pause_requested=original_probe
  cancel.set()
  if thread.ident is not None:thread.join(5)
- for worker in workers:worker.close()
  storage._shutdown()
 assert not errors and not storage._raw_operations
 print('retired and reopened')

@@ -731,15 +731,13 @@ class ConsoleReadinessConfigProjection:
                     self._retry_delay, self._retry
                 )
         if changed:
-            publication = self.screen._sync_native_console_chat_ui()
             try:
                 self.screen.run_worker(
-                    publication,
+                    self.screen._sync_native_console_chat_ui,
                     exclusive=False,
                     group="console-readiness-publication",
                 )
             except BaseException as error:
-                publication.close()
                 if not isinstance(error, Exception):
                     raise
 
@@ -1641,7 +1639,7 @@ class ConsoleContextReadSnapshot:
             and self.refresh is not None
         ):
             self.schedule(
-                self.refresh(), exclusive=False, group="console-context-publication"
+                self.refresh, exclusive=False, group="console-context-publication"
             )
 
 

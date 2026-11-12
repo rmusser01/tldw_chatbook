@@ -194,6 +194,7 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
     def _qualify_issued_read(self, request, frame):
         from functools import partial
 
+        from tldw_chatbook.Backup_Recovery import runtime_producer_lifetime
         from tldw_chatbook.Chat import console_preparation_reads as preparation
 
         assert (
@@ -216,7 +217,7 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
             if frame is None:
                 break
             if frame.f_code is self.preparation_invoke_code:
-                assert frame.f_globals is vars(preparation)
+                assert frame.f_globals is vars(runtime_producer_lifetime)
                 assert frame.f_locals.get("read") is read
                 assert frame.f_locals.get("callback") is request.callback
                 assert frame.f_locals.get("submitted") is True

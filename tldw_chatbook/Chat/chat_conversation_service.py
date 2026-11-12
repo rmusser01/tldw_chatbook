@@ -1811,3 +1811,7 @@ _CONSOLE_BROWSER_SERVICE_SOURCE = (
         )
     ),
 )
+
+
+# Original Library read interfaces; unknown replacements require OPAQUE custody.
+_NATIVE_ORDINARY_LIBRARY_CLASS = ChatConversationService

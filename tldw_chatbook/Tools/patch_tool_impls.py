@@ -522,6 +522,14 @@ def patch_files(diff_text: str, *, workspace_root: Path, dry_run: bool = False) 
             message = f"fs_patch failed [{exc.reason_code}]: {rel_path}"
             if getattr(exc, "detail", None):
                 message += f" — {HINT_LABEL}: {exc.detail}"
+            if summaries and not dry_run:
+                message += f"; earlier effects retained: {'; '.join(summaries)}"
+            raise LocalToolError(message) from exc
+        except (LocalToolError, OSError) as exc:
+            prior = "; ".join(summaries)
+            message = f"fs_patch failed: {rel_path}: {exc}"
+            if prior and not dry_run:
+                message += f"; earlier effects retained: {prior}"
             raise LocalToolError(message) from exc
         summaries.append(f"{'would patch' if dry_run else 'patched'} {rel_path}")
     return "\n".join(summaries)
@@ -534,20 +542,14 @@ def patch_validated_files(
     dry_run: bool = False,
     content_stamps: bool = False,
 ) -> str:
-    """Apply parent-admitted plans through one retained workspace root pin.
+    """Apply ordered parent-admitted patches through one retained root pin.
 
     Args:
-        plans: Parent-admitted patch plans, in order.
-        root: The retained workspace root pin every target resolves through.
-        dry_run: Preview only; nothing is written and no stamp lines are
-            appended.
-        content_stamps: Append one worker-reported CAS stamp line per
-            written target (``sha256 <relpath>: <64 hex> size: <n>``,
-            Task 16 write-path parity with fs_read/fs_write/fs_edit).
-            A patch may touch MANY targets, so unlike the single-path
-            tools each stamp line names its target; the digest is the
-            exact in-memory ``data`` each target's atomic write received,
-            never a post-write re-read.
+        plans: Admitted patch plans in application order.
+        root: Retained workspace root pin for every target.
+        dry_run: Preview without writes or stamp lines.
+        content_stamps: Append each written path's sha256 and byte count from
+            its exact atomic-write input, never a post-write reread.
     """
     summaries: list[str] = []
     stamp_lines: list[str] = []
@@ -569,6 +571,14 @@ def patch_validated_files(
             message = f"fs_patch failed [{exc.reason_code}]: {rel_path}"
             if getattr(exc, "detail", None):
                 message += f" — {HINT_LABEL}: {exc.detail}"
+            if summaries and not dry_run:
+                message += f"; earlier effects retained: {'; '.join(summaries)}"
+            raise LocalToolError(message) from exc
+        except (LocalToolError, OSError) as exc:
+            prior = "; ".join(summaries)
+            message = f"fs_patch failed: {rel_path}: {exc}"
+            if prior and not dry_run:
+                message += f"; earlier effects retained: {prior}"
             raise LocalToolError(message) from exc
         summaries.append(f"{'would patch' if dry_run else 'patched'} {rel_path}")
         if content_stamps and not dry_run:
@@ -628,7 +638,11 @@ def _patch_relative_file(
             target,
             data,
             shown=str(rel_path),
-            expected_sha256=None,
+            expected_sha256=(
+                hashlib.sha256(original.encode("utf-8")).hexdigest()
+                if patch_file.action == "modify"
+                else None
+            ),
             expected_absent=patch_file.action != "modify",
         )
     return hashlib.sha256(data).hexdigest(), len(data)

@@ -1,0 +1,18 @@
+{
+  "bound": 720,
+  "cmd": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py",
+    "/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-p4lh47rj",
+    "restart"
+  ],
+  "deltas": [],
+  "finished": 1793849994.126029,
+  "pgid": 25581,
+  "pid": 25581,
+  "primary": 1,
+  "root": "/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-p4lh47rj",
+  "signals": [],
+  "started": 1793849946.297028,
+  "wait": 1
+}

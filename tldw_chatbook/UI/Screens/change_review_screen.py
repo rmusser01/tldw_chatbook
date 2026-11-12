@@ -52,7 +52,7 @@ from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 from tldw_chatbook.Workspaces.change_review_provider import (
     AgentRunsChangeReviewProvider,
     ReviewTurn,
-    _file_count_noun,
+    _file_count_noun as _file_count_noun,
     _window_labels,
 )
 from tldw_chatbook.Workspaces.change_tracking import (
@@ -633,7 +633,8 @@ class ChangeReviewScreen(Screen):
                 tail, then cleared, so a later turn switch reverts to the
                 first leaf. An unmatched path degrades to the first leaf
                 rather than an empty pane.
-            initial_snapshot_id: When given alongside ``initial_path``,
+            initial_snapshot_id: Without a path, open the first file in this exact
+                snapshot or show its empty/unavailable state. With ``initial_path``,
                 prefer the leaf whose owning ``change_snapshots`` row id
                 equals this -- disambiguates two windows of the SAME run
                 that cover the same path (spec §2's same-run
@@ -1198,141 +1199,12 @@ class ChangeReviewScreen(Screen):
         # diff-text memo so a revert-reload of THIS SAME turn (identical
         # row objects, identical path) refetches instead of serving
         # pre-revert content.
-        self._close_any_open_comment_input()
-        self._diff_cache_generation += 1
-        self._diff_cache_key = None
-        self._diff_cache_text = None
-        self._diff_cache_error = None
-        self._active_turn = turn
-        multi_root = len(turn.rows) > 1
-        window_labels = _window_labels(turn.rows)
-        tree = self.query_one("#change-review-tree", Tree)
-        tree.clear()
-        tree.root.expand()
-        self._leaves = []
-        banners: list[str] = []
-        grouped: dict[str, list[tuple[dict, ChangedFile]]] = {}
-        for row in turn.rows:
-            error = str(row.get("tracking_error") or "")
-            if error:
-                banners.append(f"⚠ tracking failed for {row['root']}: {error}")
-                continue
-            nested_raw = row.get("nested_repos") or "[]"
-            try:
-                import json as _json
+        from . import change_review_loading
 
-                nested = [str(p) for p in _json.loads(nested_raw)]
-            except (ValueError, TypeError):
-                nested = []
-            if nested:
-                # TASK-1976: name the holes — changes inside these repos
-                # are not tracked at all.
-                limit = NESTED_BANNER_NAMED_LIMIT
-                shown = ", ".join(nested[:limit]) + (
-                    f" (+{len(nested) - limit} more)" if len(nested) > limit else ""
-                )
-                plural = "ies" if len(nested) != 1 else "y"
-                banners.append(
-                    f"⚠ {len(nested)} nested repositor{plural} inside "
-                    f"{row['root']} not tracked: {shown}"
-                )
-            oversize = int(row.get("untracked_oversize") or 0)
-            if oversize:
-                # TASK-1975 AC#2: cost bounds are honest, not silent.
-                plural = "s" if oversize != 1 else ""
-                banners.append(
-                    f"⚠ {oversize} oversized file{plural} untracked for "
-                    f"{row['root']} (over the size cap)"
-                )
-            try:
-                for change in self._provider.changed_files(row):
-                    grouped.setdefault(change.status, []).append((row, change))
-            except ChangeTrackingError as exc:
-                if self._provider.snapshots_pruned(row):
-                    banners.append(f"history for {row['root']} was pruned by retention")
-                else:
-                    banners.append(f"⚠ diff unavailable for {row['root']}: {exc}")
-
-        touched_by_row: dict[int, "set[str] | None"] = {}
-
-        def _badged(row: dict, change: ChangedFile) -> bool:
-            rid = id(row)
-            if rid not in touched_by_row:
-                try:
-                    touched_by_row[rid] = self._provider.tool_touched_relpaths(row)
-                except Exception as exc:  # noqa: BLE001 -- badge must never break review
-                    logger.warning(
-                        "change_review: badge derivation failed; rendering without "
-                        "badges operation=badge root_sha256={} exception_type={}",
-                        content_fingerprint(str(row.get("root") or "")),
-                        type(exc).__name__,
-                    )
-                    touched_by_row[rid] = None
-            touched = touched_by_row[rid]
-            if touched is None:
-                return False
-            # Qodo #1262: no file tool can DELETE or RENAME — those rows
-            # badge regardless of path membership (a write_file-created
-            # path later script-deleted must not launder the deletion).
-            if change.status in ("D", "R"):
-                return True
-            return change.path not in touched
-
-        self._populate_tree(
-            tree,
-            grouped,
-            multi_root,
-            _badged,
-            window_labels=window_labels,
+        return change_review_loading._load_turn(
+            self,
+            turn,
         )
-
-        self._turn_banner_lines = banners
-        # A turn view carries no current-mode per-root failures.
-        self._current_root_errors = []
-        self._update_banner()
-        # TASK-16801 arc B: a snapshot turn is showing -- commit goes away,
-        # the snapshot-only affordances come back.
-        self._refresh_mode_affordances()
-
-        totals = self.query_one("#change-review-totals", Static)
-        adds = sum(int(r["adds"] or 0) for r in turn.rows)
-        dels = sum(int(r["dels"] or 0) for r in turn.rows)
-        noun = _file_count_noun(len(self._leaves), repeated_root=bool(window_labels))
-        totals.update(f"{len(self._leaves)} {noun}  +{adds} −{dels}")
-
-        # TASK-18060 Task 3: the initials are constructor state consumed
-        # exactly ONCE -- cleared here, UNCONDITIONALLY, so a later turn
-        # switch (this same method, via select_turn/Select.Changed) reverts
-        # to the first leaf like today. This must happen before the
-        # `self._leaves` branch below: a zero-leaf initial turn (a
-        # tracking-error row, or one whose snapshots were pruned) must not
-        # leave the initials sitting around to hijack focus on the NEXT
-        # `_load_turn` call once a later turn happens to contain a
-        # same-named path (reviewer catch on the first cut of this task).
-        initial_path = self._initial_path
-        initial_snapshot_id = self._initial_snapshot_id
-        self._initial_path = None
-        self._initial_snapshot_id = None
-
-        if self._leaves:
-            # A path that doesn't exist in this turn (stale rail cache, a
-            # revert since) degrades to the first leaf rather than an empty
-            # pane -- select_file itself stays a no-op on an unmatched path
-            # so its legacy behavior (external callers with no fallback
-            # expectation) is untouched.
-            if initial_path is not None and any(
-                change.path == initial_path for _row, change in self._leaves
-            ):
-                self.select_file(initial_path, snapshot_id=initial_snapshot_id)
-            else:
-                self._focus_leaf(0)
-        else:
-            self._show_empty("No file changes in this turn.")
-            # TASK-18060 Task 7: `_focus_leaf` is the strip's usual refresh
-            # choke point, but a zero-leaf turn never reaches it — clear
-            # (hide) any stale strip content from a previously focused
-            # turn explicitly.
-            self._refresh_notes_strip()
 
     def _populate_tree(
         self,
@@ -3355,27 +3227,8 @@ class ChangeReviewScreen(Screen):
         self, rows_paths: list[tuple[dict, list[str]]], total: int
     ) -> None:
         """Read whole-turn overwrite warnings without blocking Textual."""
-        all_edited: list[str] = []
-        for row, paths in rows_paths:
-            preflight = await asyncio.to_thread(
-                self._provider.preflight_revert, row, paths
-            )
-            all_edited.extend(preflight.edited_since)
-
-        def _apply(confirmed: bool | None) -> None:
-            if not confirmed:
-                return
-            self.run_worker(
-                self._revert_rows(rows_paths),
-                group="change-review-revert",
-                exit_on_error=False,
-            )
-
-        self.app.push_screen(
-            ChangeRevertConfirmModal(
-                f"Undo all {total} files from this turn?", all_edited
-            ),
-            callback=_apply,
+        await self._prepare_revert_selection(
+            rows_paths, f"Undo all {total} files from this turn?"
         )
 
     def _confirm_and_revert(self, row: dict, paths: list[str], summary: str) -> None:
@@ -3389,23 +3242,90 @@ class ChangeReviewScreen(Screen):
         self, row: dict, paths: list[str], summary: str
     ) -> None:
         """Prepare one confirmation without hashing files on the UI thread."""
-        preflight = await asyncio.to_thread(self._provider.preflight_revert, row, paths)
+        await self._prepare_revert_selection([(row, paths)], summary)
 
-        def _apply(confirmed: bool | None) -> None:
-            if not confirmed:
+    async def _prepare_revert_selection(self, rows_paths, summary):
+        from tldw_chatbook.Workspaces.change_revert_ownership import capture_undo
+
+        provider = self._provider
+
+        def prepare():
+            return [
+                path
+                for row, paths in rows_paths
+                for path in provider.preflight_revert(row, paths).edited_since
+            ]
+
+        try:
+            undo = capture_undo(provider)
+            edited = (
+                await undo.prepare(
+                    prepare,
+                    marshal=self.app.call_from_thread,
+                    current=lambda: (
+                        self in self.app.screen_stack and self._provider is provider
+                    ),
+                )
+                if undo is not None
+                else await asyncio.to_thread(prepare)
+            )
+        except Exception as exc:  # noqa: BLE001 -- original feature outcome must reach its host
+            self.notify(str(exc), severity="warning")
+            return
+
+        def apply(confirmed):
+            if not confirmed or not self.is_mounted:
+                return
+            try:
+                if undo is not None:
+                    undo.confirm()
+            except Exception as exc:  # noqa: BLE001 -- original feature outcome must reach its host
+                self.notify(str(exc), severity="warning")
                 return
             self.run_worker(
-                self._revert_rows([(row, paths)]),
+                self._revert_rows(rows_paths, undo),
                 group="change-review-revert",
                 exit_on_error=False,
             )
 
-        self.app.push_screen(
-            ChangeRevertConfirmModal(summary, preflight.edited_since), callback=_apply
-        )
+        self.app.push_screen(ChangeRevertConfirmModal(summary, edited), callback=apply)
 
-    async def _revert_rows(self, rows_paths: list[tuple[dict, list[str]]]) -> None:
-        """Apply one confirmed selection off-thread, then update the screen."""
+    async def _revert_rows(self, rows_paths, undo=None) -> None:
+        """Apply the complete confirmed selection, retaining original host return."""
+        if undo is not None:
+            from tldw_chatbook.Workspaces.change_revert import RevertOutcome
+
+            provider = self._provider
+
+            def apply():
+                outcomes = []
+                for row, paths in rows_paths:
+                    try:
+                        outcomes.extend(provider.revert(row, paths))
+                    except Exception as exc:  # noqa: BLE001 -- original feature outcome must reach its host
+                        outcomes.extend(
+                            RevertOutcome(path, False, str(exc)) for path in paths
+                        )
+                return outcomes
+
+            def publish(outcomes, error):
+                if error is not None:
+                    self.notify(str(error), severity="warning")
+                else:
+                    self._report_outcomes(outcomes)
+
+            try:
+                await undo.apply(
+                    apply,
+                    marshal=self.app.call_from_thread,
+                    current=lambda: (
+                        self in self.app.screen_stack and self._provider is provider
+                    ),
+                    publish=publish,
+                )
+            except Exception as exc:  # noqa: BLE001 -- original feature outcome must reach its host
+                self.notify(str(exc), severity="warning")
+            return
         outcomes = []
         for row, paths in rows_paths:
             outcomes.extend(await self._run_revert(row, paths))
@@ -3422,8 +3342,15 @@ class ChangeReviewScreen(Screen):
 
     def _report_outcomes(self, outcomes: list) -> None:
         """Per-path honesty: failures are named, never rolled up silently."""
+        unsettled = [o for o in outcomes if not o.settled]
         failed = [o for o in outcomes if not o.ok]
-        if failed:
+        if unsettled:
+            self.notify(
+                "Undo changed files, but required history or bookkeeping is incomplete. "
+                "Native work remains protected.",
+                severity="error",
+            )
+        elif failed:
             names = ", ".join(f"{o.path} ({o.error})" for o in failed[:5])
             self.notify(
                 f"{len(failed)} file(s) could not be reverted: {names}",

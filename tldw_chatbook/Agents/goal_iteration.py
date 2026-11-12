@@ -12,7 +12,7 @@ import os
 import stat
 import time
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
@@ -94,7 +94,11 @@ def _open_bound(root: str, relative: str):
 
 
 def capture_manifest(
-    root: str, spec: VerificationSpec, *, seconds: float = 2.0
+    root: str,
+    spec: VerificationSpec,
+    *,
+    seconds: float = 2.0,
+    validate_path: Callable[[str], object] | None = None,
 ) -> str | None:
     """Hash declared inputs within 256 entries/16 MiB/2 seconds and exact root."""
     deadline = time.monotonic() + min(2.0, max(0.0, seconds))
@@ -110,6 +114,8 @@ def capture_manifest(
             if relative in visited:
                 continue
             visited.add(relative)
+            if validate_path is not None:
+                validate_path(relative)
             with _open_bound(root, relative) as fd:
                 before = os.fstat(fd)
                 if stat.S_ISDIR(before.st_mode):

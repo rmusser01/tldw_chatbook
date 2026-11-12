@@ -950,22 +950,28 @@ async def test_runtime_dispose_bounds_an_uncooperative_gateway_close():
 async def test_v2_hooks_share_app_loop_viewless_and_seal_before_drain():
     from Tests.Agents.test_hooks_v2_execution import command, event
 
-    runtime = ConsoleRuntime(app=None)
-    assert command().argv
-    assert callable(getattr(runtime, "ensure_hooks_v2", None))
-    first = runtime.ensure_hooks_v2("a", (command(),), lambda *_: True)
-    second = runtime.ensure_hooks_v2("b", (command(),), lambda *_: True)
-    assert first.budget_owner is second.budget_owner
-    assert first.loop is asyncio.get_running_loop()
-    assert (await first.fire_async(event(runtime="a"))).succeeded
-    first.begin_close()
-    assert (await second.fire_async(event(runtime="b"))).succeeded
-    runtime.begin_dispose()
-    assert not (await second.fire_async(event(runtime="b"))).succeeded
-    with pytest.raises(RuntimeError):
-        runtime.ensure_hooks_v2("c", (command(),), lambda *_: True)
-    await runtime.dispose()
-    assert not first.processes.records and not second.processes.records
+    runtime, _controller, bridge, store, session = _runtime_with_fleet()
+    other = store.create_session(ephemeral=True)
+    try:
+        assert command().argv
+        assert callable(getattr(runtime, "ensure_hooks_v2", None))
+        first = runtime.ensure_hooks_v2(session.id, (command(),), lambda *_: True)
+        second = runtime.ensure_hooks_v2(other.id, (command(),), lambda *_: True)
+        assert first.budget_owner is second.budget_owner
+        assert first.loop is asyncio.get_running_loop()
+        assert (await first.fire_async(event(runtime=session.id))).succeeded
+        first.begin_close()
+        assert (await second.fire_async(event(runtime=other.id))).succeeded
+        runtime.begin_dispose()
+        assert not (await second.fire_async(event(runtime=other.id))).succeeded
+        with pytest.raises(RuntimeError):
+            runtime.ensure_hooks_v2("c", (command(),), lambda *_: True)
+        bridge.release.set()
+        await runtime.dispose()
+        assert not first.processes.records and not second.processes.records
+    finally:
+        bridge.release.set()
+        await runtime.dispose()
 
 
 @pytest.mark.bootstrap_profile
@@ -973,27 +979,37 @@ async def test_v2_hooks_share_app_loop_viewless_and_seal_before_drain():
 async def test_v2_dispose_cancellation_retains_cleanup_and_reaps_child():
     from Tests.Agents.test_hooks_v2_execution import command, event
 
-    runtime = ConsoleRuntime(app=None)
+    runtime, _controller, bridge, _store, session = _runtime_with_fleet()
     engine = runtime.ensure_hooks_v2(
-        "a", (command("import time;time.sleep(30)", effects=["deny"]),), lambda *_: True
+        session.id,
+        (command("import time;time.sleep(30)", effects=["deny"]),),
+        lambda *_: True,
     )
-    caller = asyncio.create_task(engine.fire_async(event(runtime="a")))
-    for _ in range(200):
-        jobs = tuple(engine.processes.records.values())
-        if jobs and jobs[0].capture and jobs[0].capture.transport:
-            break
-        await asyncio.sleep(0.01)
-    assert jobs[0].capture.transport is not None
-    disposing = asyncio.create_task(runtime.dispose())
-    await asyncio.sleep(0)
-    disposing.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await disposing
-    await runtime.close_hooks_v2()
-    await caller
-    assert jobs[0].capture.transport.get_returncode() is not None
-    assert not engine.processes.records
-    assert engine.budget_owner.snapshot()["tickets"] == 0
+    caller = asyncio.create_task(engine.fire_async(event(runtime=session.id)))
+    try:
+        for _ in range(200):
+            jobs = tuple(engine.processes.records.values())
+            if jobs and jobs[0].capture and jobs[0].capture.transport:
+                break
+            await asyncio.sleep(0.01)
+        assert jobs[0].capture.transport is not None
+        bridge.release.set()
+        disposing = asyncio.create_task(runtime.dispose())
+        await asyncio.sleep(0)
+        disposing.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await disposing
+        await runtime.close_hooks_v2()
+        await caller
+        assert jobs[0].capture.transport.get_returncode() is not None
+        assert not engine.processes.records
+        assert engine.budget_owner.snapshot()["tickets"] == 0
+    finally:
+        bridge.release.set()
+        if not caller.done():
+            caller.cancel()
+        await asyncio.gather(caller, return_exceptions=True)
+        await runtime.dispose()
 
 
 @pytest.mark.bootstrap_profile
@@ -1068,7 +1084,39 @@ async def test_cancelled_session_hook_drain_still_finalizes_exact_close():
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("refuse_terminal", [True, False])
-async def test_session_fences_include_exact_hook_custody(refuse_terminal):
+async def test_session_fences_include_exact_hook_custody(refuse_terminal, tmp_path):
+    if refuse_terminal:
+        from pathlib import Path
+
+        from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+        with pytest.raises(
+            AssertionError, match="G_HOOK_ORIGINAL_UNCERTAINTY_RETAINED"
+        ):
+            _run(
+                tmp_path,
+                "hook-retained",
+                "native",
+                script=Path(__file__)
+                .with_name("workflow_coordinator_probe.py")
+                .read_text(),
+                timeout=60,
+            )
+    else:
+        await _session_hook_custody_case(False)
+
+
+async def retained_hook_journey(tmp_path, monkeypatch):
+    import os
+
+    await _session_hook_custody_case(True)
+    print(
+        "G_HOOK_ORIGINAL_UNCERTAINTY_RETAINED; no creator-disposal proof.", flush=True
+    )
+    os._exit(17)
+
+
+async def _session_hook_custody_case(refuse_terminal):
     from Tests.Agents.test_hooks_v2_execution import command, event
     from tldw_chatbook.Agents.hooks_v2.ownership import HostProcessOwner
 
@@ -1076,6 +1124,11 @@ async def test_session_fences_include_exact_hook_custody(refuse_terminal):
         refuse = refuse_terminal
 
         def settle_process(self, token, confirmed):
+            if not observed:
+                with engine._native_commands._condition:
+                    (actual,) = tuple(engine._native_commands._events)
+                observed.append(actual)
+                actual.owner.on_drained(drained.append)
             if self.refuse:
                 raise RuntimeError("terminal settlement unavailable")
             super().settle_process(token, confirmed)
@@ -1089,7 +1142,14 @@ async def test_session_fences_include_exact_hook_custody(refuse_terminal):
     second = runtime.ensure_hooks_v2(
         other.id, (command(effects=["deny"]),), lambda *_: True
     )
+    observed, drained = [], []
     await engine.fire_async(event(runtime=session.id))
+    (retained,) = observed
+    if refuse_terminal:
+        with engine._native_commands._condition:
+            assert tuple(engine._native_commands._events) == (retained,)
+        assert retained.owner.is_admitted
+        assert retained.claim.id in runtime.worktree_activity._claims
     bridge.release.set()
     try:
         await runtime.close_session(
@@ -1106,17 +1166,32 @@ async def test_session_fences_include_exact_hook_custody(refuse_terminal):
         assert engine.budget_owner.snapshot(session.id)["tickets"] == int(
             refuse_terminal
         )
-        assert (await second.fire_async(event(runtime=other.id))).succeeded
+        second_result = await second.fire_async(event(runtime=other.id))
+        if refuse_terminal:
+            assert other.id not in controller.fleet_wake._conversation_fences
+            assert not second_result.succeeded
+            assert any(
+                failure.code == "native_admission_refused"
+                for failure in second_result.failures
+            )
+            assert retained.owner.is_admitted and drained == []
+            assert retained.claim.id in runtime.worktree_activity._claims
+            return  # Isolated caller retains the genuine uncertain native custody.
+        else:
+            assert second_result.succeeded
+            assert drained == [True] and not retained.owner.is_admitted
+            assert retained.claim.id not in runtime.worktree_activity._claims
+            assert not engine.processes.records
         await runtime.close_session(
             other.id,
             expected_revision=controller.lifecycle_impact(session_id=other.id).revision,
         )
         assert other.id in bridge.released
     finally:
-        owner.refuse = False
-        await engine.processes.reap_pending()
-        await runtime.close_hooks_v2(session.id)
-        await runtime.dispose()
+        if not refuse_terminal:
+            await engine.processes.reap_pending()
+            await runtime.close_hooks_v2(session.id)
+            await runtime.dispose()
     assert not engine.cleanup_pending and not any(
         engine.budget_owner.snapshot().values()
     )

@@ -1061,6 +1061,9 @@ async def test_app_lifecycle_shutdown_drains_all_owners_in_authority_order() -> 
         calls.append("persona-buddy")
 
     class ChangeReviewOwner:
+        def begin_close(self) -> None:
+            calls.append("change-review-seal")
+
         def shutdown(self, *, timeout: float) -> None:
             assert timeout == 1.0
             calls.append("change-review")
@@ -1100,6 +1103,7 @@ async def test_app_lifecycle_shutdown_drains_all_owners_in_authority_order() -> 
         "raw-cli",
         "terminal-session",
         "console-settings",
+        "change-review-seal",
         "console-runtime",
         "change-review",
         "persona-buddy",

@@ -384,9 +384,7 @@ from tldw_chatbook.app_service_wiring import (
     _wire_notes_sync_services,
 )
 
-# TASK-33011: TldwCli's lifecycle, shutdown and quit flow lives in
-# ``app_lifecycle.py`` (``LifecycleMixin``), a base class of ``TldwCli``.
-from tldw_chatbook.app_bug_report import BugReportActions
+# TASK-33011: TldwCli startup and quit flow live in LifecycleMixin.
 from tldw_chatbook.app_lifecycle import LifecycleMixin, _DIAGNOSTICS_COMPONENT_APP
 from tldw_chatbook.app_navigation import NavigationMixin
 
@@ -819,13 +817,17 @@ class TldwCli(
     LifecycleMixin,
     NavigationMixin,
     FeatureGlueMixin,
-    BugReportActions,
     ThemeVariableDefaultsMixin,  # TASK-33003.6 ruling 15: guard-name fallback
     App[None],
 ):  # Specify return type for run() if needed, None is common
     """A Textual app for interacting with LLMs."""
 
     _runtime_policy_projection_snapshot: tuple[str, str | None] = ("local", None)
+
+    def action_report_bug(self) -> None:
+        """Open the bug report through its lazy app action."""
+        from tldw_chatbook.app_bug_report import BugReportActions
+        BugReportActions.action_report_bug(self)
 
     def action_command_palette(self) -> None:
         """Open the app's stable Textual command palette."""
@@ -2681,11 +2683,9 @@ class TldwCli(
             if service is None or (
                 retry_locked and callable(status) and status().state == "locked"
             ):
-                from .Personal_Context.bootstrap import (
-                    bootstrap_personal_context_service,
-                )
+                from .Chat.console_ordinary_tree import _bootstrap_personal_service
 
-                service = bootstrap_personal_context_service()
+                service = _bootstrap_personal_service(self)
                 self._personal_context_service = service
         return service
 

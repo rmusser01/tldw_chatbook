@@ -40,12 +40,11 @@ from ...Library.library_rag_service import (
     run_library_rag_search,
     scope_empty_recovery_state,
 )
-from ...Library.library_rag_state import library_rag_source_scope_summary
-from ...Widgets.Console.console_library_search_modal import (
+from ...Library.library_rag_state import (
     CONSOLE_LIBRARY_SEARCH_QUERY_MAX_CHARS,
     CONSOLE_RAG_SOURCE_SUMMARY_PREFIX,
-    ConsoleLibrarySearchModal,
     ConsoleLibrarySearchResult,
+    library_rag_source_scope_summary,
     sanitize_console_library_rag_query,
 )
 from ...Widgets.Console.console_retrieval_scope_row import (
@@ -418,6 +417,8 @@ class ConsoleRetrievalController:
 
     def open_library_search(self) -> None:
         """Open one-shot Library search from the current Console state."""
+        from ...Widgets.Console.console_library_search_modal import ConsoleLibrarySearchModal
+
         prefill = self._composer_draft()
         self._push_screen(
             ConsoleLibrarySearchModal(

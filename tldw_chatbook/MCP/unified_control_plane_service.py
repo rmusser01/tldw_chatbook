@@ -370,6 +370,9 @@ class UnifiedMCPControlPlaneService:
         )
         self._execution_log: MCPExecutionLog | None = None
         self._execution_log_init_lock = threading.Lock()
+        # Join bounded Console metadata through its cold publication and audit.
+        self._console_metadata_lock = asyncio.Lock()
+        self._console_metadata_loop = None
         self._bridge_audit_lock = threading.Lock()
         self._bridge_audit_in_flight = False
         self._permission_store: MCPPermissionStore | None = None
@@ -5552,8 +5555,11 @@ class UnifiedMCPControlPlaneService:
         permissions_path = Path(
             getattr(store, "_recovery_original_path", store.path)
         ).with_name("mcp_permissions.json")
-        self._permission_store = MCPPermissionStore(permissions_path)
-        return self._permission_store
+        candidate = MCPPermissionStore(permissions_path)
+        with self._execution_log_init_lock:
+            if self._permission_store is None:
+                self._permission_store = candidate
+            return self._permission_store
 
     def effective_tool_states(
         self,

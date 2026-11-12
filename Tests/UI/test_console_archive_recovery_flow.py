@@ -25,6 +25,8 @@ from Tests.UI.test_console_native_chat_flow import _configure_native_ready_conso
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook import config
+from tldw_chatbook.Agents.builtin_tool_gate import LOCAL_TOOLS_DEFAULT_ENABLED
 from tldw_chatbook.Agents.library_rag_tool_provider import LibraryRagToolProvider
 from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
 from tldw_chatbook.Chat.chat_conversation_scope_service import (
@@ -126,8 +128,10 @@ async def mounted_recovery(
     db.set_conversation_active_leaf(target_id, message_id)
     if prepare is not None:
         prepare(services, target_id, db)
-    app = _build_test_app()
+    app = _build_test_app(user_data_dir=config.get_user_data_dir())
     _configure_native_ready_console(app)
+    # This fixture supplies its configuration directly, outside deferred MCP capture.
+    assert app.unified_mcp_service.permission_store is not None
 
     async def empty_skill_context(**_kwargs):
         return {"available_skills": []}
@@ -218,6 +222,11 @@ async def mounted_recovery(
                 )
                 return replace(
                     captured,
+                    tool_configuration={
+                        **captured.tool_configuration,
+                        "local_tools_enabled": LOCAL_TOOLS_DEFAULT_ENABLED,
+                    },
+                    library_policy_maximum=source.library_policy_holder.snapshot,
                     provider_selection=replace(
                         captured.provider_selection, explicit_model="gpt-4o"
                     ),

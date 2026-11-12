@@ -1,0 +1,9 @@
+{
+  "full_report_read_at": "2026-11-05T01:48:49.741376+00:00",
+  "report_sha256": "a11f53d40b7ad8cb9109a87daaf29a2817762a297eceb0aa336a9241ce35b440",
+  "report_bytes": 24979,
+  "metadata_delivery_audit": "root-task9-ui-delivery-audit.json",
+  "metadata_delivery_audit_sha256": "b4585ce198ec2d4b62efe10fa56e7525ad1a116c4fd53d17e50b642af143d7c4",
+  "report_scope": "18 final focused passes; six captures; separate native/legacydiagnostic/BASE/governance cohorts; retained negatives not creator return; no live/restart/fullsuite",
+  "independent_gate": "not yet accepted; fresh reviewer follows"
+}

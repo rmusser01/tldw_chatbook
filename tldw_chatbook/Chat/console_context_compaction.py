@@ -34,7 +34,6 @@ if TYPE_CHECKING:
 from loguru import logger
 
 from tldw_chatbook.Chat.attachment_core import image_url_part
-from tldw_chatbook.Chat.console_compaction_hooks import _finish_compaction_hooks
 from tldw_chatbook.Chat.console_context_policy import (
     CompactionFailureBehavior,
     ContextCarryForwardMode,
@@ -3833,6 +3832,8 @@ class ConsoleCompactionPreflight:
             for index, snapshot in enumerate(snapshots)
             if snapshot.message_id == planned.plan.boundary_message_id
         )
+        from tldw_chatbook.Chat.console_compaction_hooks import _finish_compaction_hooks
+
         hooks = await self.read_controller__hooks_for_compaction()(
             session_id,
             resolution,

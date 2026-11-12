@@ -20,6 +20,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from enum import Enum, StrEnum
 from pathlib import Path, PurePosixPath
+from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -32,7 +33,6 @@ from typing import (
     TypedDict,
 )
 from uuid import uuid4
-from types import MappingProxyType
 
 from loguru import logger
 
@@ -43,8 +43,8 @@ from tldw_chatbook.Agents.approval_provenance import (
 )
 from tldw_chatbook.Chat.approval_constants import TOOL_DESCRIPTION_CAPTURE_CAP
 from tldw_chatbook.MCP.execution_log import (
-    KILL_SWITCH_DENIED_DECISION,
-    POLICY_DENIED_DECISION,
+    KILL_SWITCH_DENIED_DECISION as KILL_SWITCH_DENIED_DECISION,
+    POLICY_DENIED_DECISION as POLICY_DENIED_DECISION,
     UNRESOLVED_DENIED_DECISION,
 )
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
@@ -524,11 +524,15 @@ class LocalToolSpec:
     #: disk, or network must leave this False.
     gate_exempt: bool = False
     operation: str | None = None
+    # Ordinary physical admission; approval effects remain a separate contract.
+    worktree_effect: str = "opaque"
 
     def __post_init__(self) -> None:
         """Fail closed when descriptor policy is missing or not code-owned."""
         if not isinstance(self.gate_exempt, bool):
             raise ValueError("LocalToolSpec gate_exempt must be a bool")
+        if self.worktree_effect not in {"none", "read", "write", "opaque"}:
+            raise ValueError("LocalToolSpec worktree_effect is invalid")
         if not isinstance(self.exposure, LocalToolExposure):
             raise ValueError("LocalToolSpec exposure must be a LocalToolExposure")
         if not isinstance(self.approval_effects, tuple) or not all(
@@ -827,7 +831,15 @@ class LocalToolProvider:
         ):
             raise ValueError("admitted root aliases must be unique")
         self._path_specs_by_alias: dict[str, dict[str, LocalToolSpec]] = {}
+        self._native_ssh_specs: dict[str, dict[str, LocalToolSpec]] = {}
 
+        from .run_context import (
+            current_planning_preparation,
+        )
+
+        planning = current_planning_preparation()
+        if planning is not None:
+            planning.check_planning_executor(workspace_executor)
         selected_executor = workspace_executor or WorkspaceToolExecutor(workspace_root)
         if specs is not None:
             if self._admitted_roots is not None and any(
@@ -880,6 +892,8 @@ class LocalToolProvider:
                         "executor construction"
                     )
                 try:
+                    if planning is not None:
+                        planning.check_planning_executor(authority.workspace_executor)
                     executor = authority.workspace_executor or WorkspaceToolExecutor(
                         authority.root,
                         user_exclusion_paths=authority.exclusions_provider,
@@ -904,6 +918,10 @@ class LocalToolProvider:
                     for spec in authority_specs
                     if spec.name in _PATH_AUTHORITY_LOCAL_NAMES
                 }
+                if _default_specs is _NATIVE_DEFAULT_SPECS:
+                    self._native_ssh_specs[alias] = dict(
+                        self._path_specs_by_alias[alias]
+                    )
                 usable_roots[alias] = authority
                 if representative_specs is None:
                     representative_specs = authority_specs
@@ -972,6 +990,11 @@ class LocalToolProvider:
                 if LocalApprovalEffect.MUTATES_LOCAL not in spec.approval_effects
             ]
         self._specs = {s.name: s for s in selected_specs}
+        self._native_ordinary_specs = (
+            dict(self._specs)
+            if specs is None and _default_specs is _NATIVE_DEFAULT_SPECS
+            else {}
+        )
         self._resolve_state = resolve_state or (
             lambda hub: EffectiveToolState(state="ask", origin="global_default")
         )
@@ -2359,531 +2382,12 @@ class LocalToolProvider:
         return self._invoke_detailed(tool_id, args)
 
     def _invoke_detailed(self, tool_id: str, args: dict) -> LocalToolInvocationResult:
-        """Execute one tool call. Never raises across the boundary.
+        from . import local_tool_dispatch
 
-        Fail-closed: only an explicit "allow" verdict executes; "deny" and
-        any unrecognized verdict refuse with LOCAL_DENY_REFUSAL when the
-        resolver genuinely said Off (``PERMISSION_OFF``) and with
-        LOCAL_USER_DENY_REFUSAL otherwise -- the user's own card Deny, which
-        used to share the Off string and left the transcript unable to name
-        either authority (Qodo #7). Both mirror
-        MCPToolProvider._apply_verdict's fallthrough, "gate_error" (Fix
-        Round H, Item 1: the permission resolver raised rather than
-        genuinely resolving) with LOCAL_GATE_ERROR_REFUSAL -- a DIFFERENT
-        string from LOCAL_DENY_REFUSAL, since the tool's actual configured
-        state was never determined and LOCAL_DENY_REFUSAL's "set to Off"
-        claim would be false -- "timeout" with LOCAL_TIMEOUT_REFUSAL, and
-        "no_callback" with the constructor's ``no_callback_refusal``
-        override when set (LOCAL_TIMEOUT_REFUSAL otherwise).
-
-        Audit (MCP parity): refusals are recorded via the optional
-        ``record_decision`` seam, and task-32280's fix round gave each
-        REFUSER its own token rather than one flat "denied": ``"denied"``
-        only for a person's card Deny, ``"denied-policy"`` for a configured
-        Off, ``"denied-killswitch"`` for the kill switch,
-        ``"denied-unresolved"`` for a gate that raised instead of
-        resolving, and ``"denied-timeout"`` for timeout/no_callback
-        (matching the refusal copy the model actually saw). Successful
-        executions record nothing: MCPToolProvider records those
-        service-side via execute_hub_tool, which has no local analogue.
-        """
-        from .automatic_work_runtime import current_automatic_work
-        from .automatic_work_budget import AutomaticWorkRefused
-
-        name = tool_id.split(":", 1)[1] if ":" in tool_id else tool_id
-        spec = self._specs.get(name)
-        if spec is None:
-            return LocalToolInvocationResult(
-                result=ToolResult(ok=False, error=f"Unknown local tool: {name}"),
-                final_gate="not_checked",
-                approval_consumed=False,
-                reason_code=LocalToolInvocationReason.UNKNOWN_TOOL,
-                dispatch_started=False,
-                provider_terminal=LocalProviderTerminal.NOT_STARTED,
-            )
-        automatic_work = current_automatic_work()
-        automatic_refusal = None
-        if automatic_work is not None:
-            try:
-                automatic_work.check()
-            except AutomaticWorkRefused as exc:
-                automatic_refusal = f"automatic tool call refused: {exc}"
-            except Exception:
-                automatic_refusal = "automatic tool call refused: chain unavailable"
-            if name == "web_deep_search":
-                automatic_refusal = "web_deep_search is unavailable during automatic follow-up; request it in a manual message"
-        if automatic_refusal is not None:
-            return LocalToolInvocationResult(
-                result=ToolResult.blocked(automatic_refusal),
-                final_gate="not_checked",
-                approval_consumed=False,
-                reason_code=LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-                dispatch_started=False,
-                provider_terminal=LocalProviderTerminal.NOT_STARTED,
-            )
-        try:
-            authority, clean_args = self._select_admitted_root(name, args)
-        except ValueError as exc:
-            return LocalToolInvocationResult(
-                result=ToolResult(ok=False, error=str(exc)),
-                final_gate="not_checked",
-                approval_consumed=False,
-                reason_code=LocalToolInvocationReason.INVALID_ARGUMENTS,
-                dispatch_started=False,
-                provider_terminal=LocalProviderTerminal.NOT_STARTED,
-            )
-        write = self._is_mutating_path_tool(spec)
-        if not self._authority_is_valid(authority, write=write):
-            return LocalToolInvocationResult(
-                result=ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL),
-                final_gate="not_checked",
-                approval_consumed=False,
-                reason_code=LocalToolInvocationReason.ROOT_CHANGED,
-                dispatch_started=False,
-                provider_terminal=LocalProviderTerminal.NOT_STARTED,
-            )
-        if self._kill_switch_engaged():
-            # task-32280 fix round: the switch refused, not the user.
-            self._record_decision_safe(
-                self.hub_tool_for(name), KILL_SWITCH_DENIED_DECISION
-            )
-            return LocalToolInvocationResult(
-                result=ToolResult.blocked(LOCAL_KILL_SWITCH_REFUSAL),
-                final_gate="kill_switch",
-                approval_consumed=False,
-                reason_code=LocalToolInvocationReason.PERMISSION_OFF,
-                dispatch_started=False,
-                provider_terminal=LocalProviderTerminal.NOT_STARTED,
-            )
-        if authority is not None and name in _PATH_AUTHORITY_LOCAL_NAMES:
-            # TASK-28238 P2 T3 review fix: this cache was construction-time
-            # -immutable before agent admit/retire made it mutable
-            # mid-flight, so a retire racing this lookup (the run's mapping
-            # in `_agent_roots` still resolved a moment ago, but its alias
-            # entry here is now gone) is now reachable. Falling back to the
-            # generic `spec` would be dishonest -- it closes over the
-            # PROVIDER's own base root, not `authority.root`, so it would
-            # dispatch a path tool against the wrong root instead of
-            # refusing. An explicit blocked result is the honest one here.
-            # TASK-34351: only a retired agent worktree reaches this branch
-            # (static Console roots are never retired), so the refusal names
-            # the released worktree, not private scratch.
-            authority_specs = self._path_specs_by_alias.get(authority.alias)
-            if authority_specs is None or name not in authority_specs:
-                return LocalToolInvocationResult(
-                    result=ToolResult.blocked(LOCAL_RUN_WORKTREE_RELEASED_REFUSAL),
-                    final_gate="not_checked",
-                    approval_consumed=False,
-                    reason_code=LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-                    dispatch_started=False,
-                    provider_terminal=LocalProviderTerminal.NOT_STARTED,
-                )
-            selected_spec = authority_specs[name]
-        else:
-            selected_spec = spec
-        promotion_invocation = self._invoke_promotion(
-            name,
+        return local_tool_dispatch._invoke_detailed(
+            self,
+            tool_id,
             args,
-            clean_args=dict(clean_args),
-            spec=selected_spec,
-            authority=authority,
-        )
-        if promotion_invocation is not None:
-            promotion_result, approval_consumed = promotion_invocation
-            if promotion_result.ok:
-                return LocalToolInvocationResult(
-                    result=promotion_result,
-                    final_gate="not_checked",
-                    approval_consumed=approval_consumed,
-                    reason_code=LocalToolInvocationReason.HANDLER_RETURNED,
-                    dispatch_started=True,
-                    provider_terminal=LocalProviderTerminal.RETURNED,
-                )
-            return LocalToolInvocationResult(
-                result=promotion_result,
-                final_gate="not_checked",
-                approval_consumed=approval_consumed,
-                reason_code=LocalToolInvocationReason.APPROVAL_REFUSED,
-                dispatch_started=False,
-                provider_terminal=LocalProviderTerminal.NOT_STARTED,
-            )
-        # PR2a Task 5: only the DISPATCHING run's own stamp may resolve
-        # this call. `ToolProvider.invoke` has no run parameter, so the run
-        # id rides `run_context` (bound by `AgentService` around each
-        # invocation); `""` outside any run matches no stamp a review hook
-        # writes, so such a call resolves through the fresh gate below.
-        gate = self._verdict_for(name, args, current_run_id())
-        if gate.verdict == "allow":
-            dispatch_started = False
-            provider_terminal = LocalProviderTerminal.NOT_STARTED
-
-            def _invoke_allowed() -> LocalToolInvocationResult:
-                nonlocal dispatch_started, provider_terminal
-                if not self._authority_is_valid(authority, write=write):
-                    return LocalToolInvocationResult(
-                        result=ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL),
-                        final_gate=gate.verdict,
-                        approval_consumed=gate.approval_consumed,
-                        reason_code=LocalToolInvocationReason.ROOT_CHANGED,
-                        dispatch_started=False,
-                        provider_terminal=LocalProviderTerminal.NOT_STARTED,
-                    )
-                # TASK-34351: resolve the handler once, before any side
-                # effect. The run's worktree may have been retired while its
-                # approval card waited; re-indexing the alias cache at the
-                # handler site raised a bare KeyError whose text (the alias)
-                # reached the model as the error.
-                if authority is not None and name in _PATH_AUTHORITY_LOCAL_NAMES:
-                    handler_spec = self._path_specs_by_alias.get(
-                        authority.alias, {}
-                    ).get(name)
-                    if handler_spec is None:
-                        return LocalToolInvocationResult(
-                            result=ToolResult.blocked(
-                                LOCAL_RUN_WORKTREE_RELEASED_REFUSAL
-                            ),
-                            final_gate=gate.verdict,
-                            approval_consumed=gate.approval_consumed,
-                            reason_code=LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-                            dispatch_started=False,
-                            provider_terminal=LocalProviderTerminal.NOT_STARTED,
-                        )
-                else:
-                    handler_spec = spec
-                # Phase 3c (Task 17): redaction strips the authority's root
-                # locator from results/paths. A local root unwraps to its
-                # Path (byte-identical); a RemoteRoot redacts LEXICALLY
-                # against the descriptor's locator spellings (canonical
-                # locator / remote path / display URI) — no laptop disk,
-                # no wall.
-                if authority is None:
-                    redaction_root: "Path | RemoteRoot | None" = (
-                        self._result_redaction_root
-                    )
-                elif isinstance(authority.root, RemoteRoot):
-                    redaction_root = authority.root
-                else:
-                    redaction_root = local_root_path(
-                        authority.root, site="result redaction"
-                    )
-                if automatic_work is not None:
-                    try:
-                        automatic_work.check()
-                    except Exception as exc:
-                        reason = (
-                            str(exc)
-                            if isinstance(exc, AutomaticWorkRefused)
-                            else "chain unavailable"
-                        )
-                        return LocalToolInvocationResult(
-                            result=ToolResult.blocked(
-                                f"automatic tool call refused: {reason}"
-                            ),
-                            final_gate=gate.verdict,
-                            approval_consumed=gate.approval_consumed,
-                            reason_code=LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-                            dispatch_started=False,
-                            provider_terminal=LocalProviderTerminal.NOT_STARTED,
-                        )
-                dispatch_started = True
-                # Phase 3b (Task 16): the CAS/ledger sites below dispatch
-                # on the authority's root TYPE. A local root keeps the
-                # exact pre-Phase-3b behaviour (provider-side resolve +
-                # laptop hash); a RemoteRoot NEVER reaches a laptop-disk
-                # call -- its stamps come from worker-reported sha256/size
-                # values in the fs_read/fs_write/fs_edit/fs_patch
-                # responses, so the laptop's same-named copy of a remote
-                # path can never be read, hashed, or stamped.
-                ledger_root_source = (
-                    authority.root if authority is not None else self._root
-                )
-                remote_ledger = isinstance(ledger_root_source, RemoteRoot)
-                if remote_ledger:
-                    ledger_root: "Path | RemoteRoot" = ledger_root_source
-                    # Remote roots are constructed with an executor in the
-                    # slot (Phase 3a guards), so this is never None here.
-                    ledger_executor = (
-                        authority.workspace_executor if authority is not None else None
-                    )
-                else:
-                    ledger_root = local_root_path(
-                        ledger_root_source,
-                        site="read/write CAS ledger hashing",
-                    )
-                    ledger_executor = None
-                # ruling 1 (TASK-28238 P1 T3): `clean_args` is read by the
-                # fs_read branch below BEFORE the fs_write branch's
-                # would-be reassignment; assigning to `clean_args` anywhere
-                # in this closure makes Python treat the name as local to
-                # the whole function, and that earlier read would then hit
-                # an unbound local. `dispatch_args` is a separate alias so
-                # the fs_read branch's `clean_args` reads stay closure
-                # reads of the enclosing scope's variable.
-                dispatch_args = clean_args
-                stale_guard = None
-                if name == "fs_read" and not remote_ledger:
-                    try:
-                        self._record_fs_read_observation(clean_args, ledger_root)
-                    except Exception:  # noqa: BLE001 - observation must never affect dispatch
-                        pass
-                elif name == "fs_read":
-                    # Remote: the stamps live in the response the worker
-                    # is ABOUT to produce -- recorded post-dispatch below.
-                    pass
-                elif name == "fs_write":
-                    stale_guard = self._fs_write_guard_injection(
-                        clean_args,
-                        ledger_root,
-                    )
-                    if stale_guard is not None:
-                        dispatch_args = stale_guard[0]
-                elif (
-                    name in {"fs_edit", "fs_patch"}
-                    and clean_args.get("dry_run") is not True
-                ):
-                    # A preview never writes, so there is no clobber risk
-                    # for the pre-check to guard against (fs_write's own
-                    # injection already skips on dry_run the same way).
-                    _stale = self._stale_targets_for(
-                        name,
-                        clean_args,
-                        ledger_root,
-                        executor=ledger_executor,
-                    )
-                    if _stale:
-                        shown, stamp, now = _stale[0]
-                        message = self._stale_write_refusal(shown, stamp, now)
-                        if len(_stale) > 1:
-                            message += f" (+{len(_stale) - 1} more stale targets)"
-                        provider_terminal = LocalProviderTerminal.RETURNED
-                        return LocalToolInvocationResult(
-                            result=ToolResult.blocked(message),
-                            final_gate=gate.verdict,
-                            approval_consumed=gate.approval_consumed,
-                            reason_code=LocalToolInvocationReason.HANDLER_RETURNED,
-                            dispatch_started=True,
-                            provider_terminal=provider_terminal,
-                        )
-                try:
-                    raw_output = handler_spec.handler(dispatch_args)
-                    result = ToolResult(
-                        ok=True,
-                        content=self._bounded_result(
-                            redact_root_locator(
-                                raw_output,
-                                redaction_root,
-                            ),
-                            invocation_id=name,
-                        ),
-                    )
-                    if name == "fs_read" and remote_ledger:
-                        # Phase 3b: record the remote observation from the
-                        # worker's OWN response -- the raw pre-redaction,
-                        # pre-bounding text (a bounded tail cannot be
-                        # parsed). Never affects dispatch.
-                        try:
-                            self._record_fs_read_observation(
-                                clean_args,
-                                ledger_root,
-                                worker_result=_response_result_text(raw_output),
-                            )
-                        except Exception:  # noqa: BLE001 - observation must never affect dispatch
-                            pass
-                    if name in {"fs_write", "fs_edit", "fs_patch"}:
-                        self._update_ledger_after_write(
-                            name,
-                            clean_args,
-                            ledger_root,
-                            result_text=_response_result_text(raw_output),
-                        )
-                    provider_terminal = LocalProviderTerminal.RETURNED
-                    return LocalToolInvocationResult(
-                        result=replace(result, approval_decision=gate.approval_decision)
-                        if result.outcome != "blocked"
-                        else result,
-                        final_gate=gate.verdict,
-                        approval_consumed=gate.approval_consumed,
-                        reason_code=LocalToolInvocationReason.HANDLER_RETURNED,
-                        dispatch_started=True,
-                        provider_terminal=provider_terminal,
-                    )
-                except WorkspaceToolExecutionError as exc:
-                    if (
-                        exc.code == "cleanup_unproven"
-                        and authority is not None
-                        and authority.on_cleanup_unproven is not None
-                    ):
-                        try:
-                            authority.on_cleanup_unproven()
-                        except Exception as observer_exc:  # noqa: BLE001 - preserve refusal
-                            logger.warning(
-                                "Cleanup observer failed (exception_type={})",
-                                type(observer_exc).__name__,
-                            )
-                    if stale_guard is not None and _is_cas_precondition_failure(
-                        str(exc)
-                    ):
-                        provider_terminal = LocalProviderTerminal.RETURNED
-                        return LocalToolInvocationResult(
-                            result=ToolResult.blocked(
-                                self._stale_write_refusal(
-                                    str(clean_args.get("path", "")),
-                                    stale_guard[1],
-                                    _cas_failure_now(stale_guard[2]),
-                                )
-                            ),
-                            final_gate=gate.verdict,
-                            approval_consumed=gate.approval_consumed,
-                            reason_code=LocalToolInvocationReason.HANDLER_RETURNED,
-                            dispatch_started=True,
-                            provider_terminal=provider_terminal,
-                        )
-                    if remote_ledger and name == "fs_read":
-                        self._record_remote_read_failure_safe(
-                            clean_args, ledger_root, str(exc)
-                        )
-                    provider_terminal = LocalProviderTerminal.RAISED
-                    result = _workspace_execution_error_result(
-                        exc,
-                        redaction_root=redaction_root,
-                    )
-                    return LocalToolInvocationResult(
-                        result=replace(result, approval_decision=gate.approval_decision)
-                        if result.outcome != "blocked"
-                        else result,
-                        final_gate=gate.verdict,
-                        approval_consumed=gate.approval_consumed,
-                        reason_code=_workspace_execution_error_reason(exc),
-                        dispatch_started=True,
-                        provider_terminal=provider_terminal,
-                    )
-                except Exception as exc:  # noqa: BLE001 — protocol boundary
-                    if (
-                        remote_ledger
-                        and stale_guard is not None
-                        and _is_cas_precondition_failure(str(exc))
-                    ):
-                        # Phase 3b: the remote transport executor raises its
-                        # own typed error (not WorkspaceToolExecutionError)
-                        # for a worker-side CAS refusal; relabel it with
-                        # the same stale-write refusal the local path gets.
-                        # No fresh worker value exists (failures carry no
-                        # stamps) -- see `_REMOTE_NOW_DISPLAY`.
-                        provider_terminal = LocalProviderTerminal.RETURNED
-                        return LocalToolInvocationResult(
-                            result=ToolResult.blocked(
-                                self._stale_write_refusal(
-                                    str(clean_args.get("path", "")),
-                                    stale_guard[1],
-                                    _REMOTE_NOW_DISPLAY,
-                                )
-                            ),
-                            final_gate=gate.verdict,
-                            approval_consumed=gate.approval_consumed,
-                            reason_code=LocalToolInvocationReason.HANDLER_RETURNED,
-                            dispatch_started=True,
-                            provider_terminal=provider_terminal,
-                        )
-                    if remote_ledger and name == "fs_read":
-                        self._record_remote_read_failure_safe(
-                            clean_args, ledger_root, str(exc)
-                        )
-                    provider_terminal = LocalProviderTerminal.RAISED
-                    error = redact_root_locator(
-                        str(exc) or repr(exc),
-                        redaction_root,
-                    )
-                    return LocalToolInvocationResult(
-                        result=ToolResult(
-                            ok=False,
-                            error=error[:_MAX_ERROR_CHARS],
-                            approval_decision=gate.approval_decision,
-                        ),
-                        final_gate=gate.verdict,
-                        approval_consumed=gate.approval_consumed,
-                        reason_code=LocalToolInvocationReason.HANDLER_RAISED,
-                        dispatch_started=True,
-                        provider_terminal=provider_terminal,
-                    )
-
-            authority_scope = (
-                authority.authority_scope
-                if authority is not None
-                else self._authority_scope
-            )
-            if authority_scope is not None and name in _PATH_AUTHORITY_LOCAL_NAMES:
-                try:
-                    with authority_scope():
-                        return _invoke_allowed()
-                except Exception:  # noqa: BLE001 - lease failure is fail-closed
-                    return LocalToolInvocationResult(
-                        result=ToolResult.blocked(LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
-                        final_gate=gate.verdict,
-                        approval_consumed=gate.approval_consumed,
-                        reason_code=LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-                        dispatch_started=dispatch_started,
-                        provider_terminal=provider_terminal,
-                    )
-            return _invoke_allowed()
-        if gate.verdict == "timeout":
-            self._record_decision_safe(self.hub_tool_for(name), "denied-timeout")
-            result = ToolResult.blocked(LOCAL_TIMEOUT_REFUSAL)
-        elif gate.verdict == "no_callback":
-            self._record_decision_safe(self.hub_tool_for(name), "denied-timeout")
-            refusal = (
-                self._no_callback_refusal
-                if self._no_callback_refusal is not None
-                else LOCAL_TIMEOUT_REFUSAL
-            )
-            result = ToolResult.blocked(refusal)
-        elif gate.verdict == "gate_error":
-            # Fix Round H, Item 1: the resolver raised rather than
-            # genuinely resolving to "deny" -- still fails closed (the tool
-            # does not run), but the reason told to the model is honest:
-            # the permission check itself failed, not a configured Off.
-            #
-            # task-32280 fix round: the AUDIT row now says the same thing
-            # the model was told. It used to record plain "denied", which
-            # Audit renders as "Denied by you" -- a claim about a person
-            # for a gate that never resolved at all.
-            self._record_decision_safe(
-                self.hub_tool_for(name), UNRESOLVED_DENIED_DECISION
-            )
-            result = ToolResult.blocked(LOCAL_GATE_ERROR_REFUSAL)
-        else:
-            # "deny" and any unrecognized verdict fail closed the same way
-            # to the MODEL -- but not to the audit log. task-32280 fix
-            # round: `_verdict_for()` already knows which of the two this
-            # is (`refusal_reason`), and throwing that away here is what
-            # made a configured Off indistinguishable from a person
-            # pressing Deny. PERMISSION_OFF is the configured state; an
-            # unrecognized verdict resolves nothing, so it is neither.
-            # Qodo #7 (lane B): the TEXT names who refused too --
-            # `LOCAL_DENY_REFUSAL` only where the resolver actually said
-            # "deny" (a configured Off), the user's own string everywhere
-            # else, so the bridge renders "blocked (Off)" vs "denied by you".
-            reason = gate.refusal_reason
-            if reason == LocalToolInvocationReason.PERMISSION_OFF:
-                decision = POLICY_DENIED_DECISION
-            elif reason == LocalToolInvocationReason.APPROVAL_REFUSED:
-                decision = "denied"
-            else:
-                decision = UNRESOLVED_DENIED_DECISION
-            self._record_decision_safe(self.hub_tool_for(name), decision)
-            result = ToolResult.blocked(
-                LOCAL_DENY_REFUSAL
-                if reason is LocalToolInvocationReason.PERMISSION_OFF
-                else (gate.denial_refusal or LOCAL_USER_DENY_REFUSAL)
-            )
-        return LocalToolInvocationResult(
-            result=replace(result, approval_decision=gate.approval_decision),
-            final_gate=gate.verdict,
-            approval_consumed=gate.approval_consumed,
-            reason_code=(
-                gate.refusal_reason or LocalToolInvocationReason.APPROVAL_REFUSED
-            ),
-            dispatch_started=False,
-            provider_terminal=LocalProviderTerminal.NOT_STARTED,
         )
 
     def _invoke_promotion(
@@ -2914,6 +2418,12 @@ class LocalToolProvider:
             return ToolResult.blocked(PROMOTION_APPROVAL_REQUIRED), True
 
         def invoke_selected() -> ToolResult:
+            from .workflow_task_scope import check_task_provider
+
+            try:
+                check_task_provider(self, name, args)
+            except Exception:  # noqa: BLE001 - authority failures must refuse
+                return ToolResult.blocked("workflow task scope refused")
             if not self._authority_is_valid(authority, write=True):
                 return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
             if kind == "prepare":
@@ -2964,6 +2474,9 @@ class LocalToolProvider:
             preview_args["dry_run"] = True
             preview_args.pop("expected_sha256", None)
             preview_args.pop("expected_absent", None)
+            from .workflow_task_scope import check_task_provider
+
+            check_task_provider(self, spec.name, args)
             preview_text = spec.handler(preview_args)
             preview = json.loads(preview_text)
             proposal = RepositoryInstructionProposal.build(
@@ -3042,6 +2555,12 @@ class LocalToolProvider:
         invoke_args = {
             key: value for key, value in clean_args.items() if key != "proposal_digest"
         }
+        from .workflow_task_scope import check_task_provider
+
+        try:
+            check_task_provider(self, spec.name, args)
+        except Exception:  # noqa: BLE001 - authority failures must refuse
+            return ToolResult.blocked("workflow task scope refused")
         try:
             content = spec.handler(invoke_args)
         except Exception as error:  # noqa: BLE001 - provider protocol boundary
@@ -3101,6 +2620,13 @@ class LocalToolProvider:
         oversize, transport) -> nothing, a deliberately weaker blind
         write rather than a false stale refusal. Never raises.
         """
+        from .run_context import (
+            current_planning_preparation,
+        )
+
+        planning = current_planning_preparation()
+        if planning is not None:
+            planning.check_local_sources()
         if isinstance(root, RemoteRoot):
             self._record_remote_fs_read_observation(
                 args, root, worker_result=worker_result, worker_failure=worker_failure
@@ -3110,6 +2636,7 @@ class LocalToolProvider:
         from tldw_chatbook.Agents.run_context import current_run_id
         from tldw_chatbook.Tools.local_tool_impls import (
             LocalToolError,
+            _read_bounded_bytes,
             resolve_workspace_path,
         )
 
@@ -3139,11 +2666,13 @@ class LocalToolProvider:
         if not present:
             self._read_ledger.record_absent(run_id, key)
             return
-        hashed = _hash_file(resolved)
-        if hashed is None:
+        try:
+            data = _read_bounded_bytes(resolved)
+        except (LocalToolError, OSError):
             return
-        digest, size = hashed
-        self._read_ledger.record_present(run_id, key, digest, size)
+        self._read_ledger.record_present(
+            run_id, key, hashlib.sha256(data).hexdigest(), len(data)
+        )
 
     def _record_remote_fs_read_observation(
         self,
@@ -4205,77 +3734,67 @@ def _make_ask_user_handler(ask_user: AskUserCallback) -> Callable[[dict], str]:
     return _handler
 
 
-def _default_specs(
-    workspace_root: Path,
-    *,
+# Inert native declarations shared by actual spec construction and early admission.
+# Custom specs keep their opaque default; this table alone grants no source authority.
+_NATIVE_WORKTREE_EFFECTS = MappingProxyType(
+    {
+        "fs_list": "read",
+        "fs_read": "read",
+        "fs_write": "write",
+        "fs_mkdir": "write",
+        "fs_edit": "write",
+        "fs_patch": "write",
+        "fs_glob": "read",
+        "fs_grep": "read",
+        "git_status": "read",
+        "git_diff": "read",
+        "git_log": "read",
+        "git_blame": "read",
+        "git_branches": "read",
+        "web_fetch": "none",
+        "web_search": "none",
+        "web_crawl": "none",
+        "watchlists_list_sources": "none",
+        "watchlists_list_collections": "none",
+        "watchlists_search_items": "none",
+        "watchlists_get_item": "none",
+        "watchlists_list_briefings": "none",
+        "watchlists_get_briefing": "none",
+        "watchlists_get_operations_status": "none",
+        "watchlists_get_operation_status": "none",
+        "watchlists_create_sources": "none",
+        "watchlists_create_collection": "none",
+        "watchlists_update_collection_sources": "none",
+        "watchlists_check_sources": "none",
+        "watchlists_set_briefing_schedule": "none",
+        "watchlists_generate_briefing": "none",
+        "web_deep_search": "none",
+        "ask_user": "none",
+        "todo_create": "none",
+        "todo_update": "none",
+        "todo_get": "none",
+        "todo_list": "none",
+        "character_search": "none",
+        "character_get": "none",
+        "character_save": "none",
+    }
+)
+
+
+def _filesystem_specs(
     workspace_executor: WorkspaceToolExecutor,
-    todo_store: SessionTodoStore | None = None,
-    on_todo_change: TodoChangeCallback | None = None,
-    ask_user: AskUserCallback | None = None,
-    watchlists_service: WatchlistsToolService | None = None,
-    watchlists_command_service: WatchlistsCommandService | None = None,
-    character_service: CharacterToolService | None = None,
 ) -> list[LocalToolSpec]:
-    from tldw_chatbook.Tools.git_tool_impls import GIT_LOG_DEFAULT_COUNT
-    from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
-    from tldw_chatbook.Tools.watchlists_command_service import WatchlistsCommandService
-    from tldw_chatbook.Tools.web_tool_impls import (
-        CRAWL_DEFAULT_MAX_DEPTH,
-        CRAWL_DEFAULT_MAX_PAGES,
-        CRAWL_MAX_DEPTH_CEILING,
-        CRAWL_MAX_PAGES_CEILING,
-        FETCH_MAX_BYTES,
-        SEARCH_DEFAULT_RESULT_COUNT,
-        SEARCH_ENGINES,
-        SEARCH_MAX_RESULT_COUNT,
-        web_crawl,
-        web_fetch,
-        web_search,
+    """Build the shared native filesystem specs without optional tool factories."""
+    from .run_context import (
+        current_planning_preparation,
     )
 
-    if watchlists_service is None:
-        watchlists_service = WatchlistsToolService(
-            db_resolver=lambda: None,
-            runtime_source_loader=lambda: "local",
-        )
-    if watchlists_command_service is None:
-
-        def _unavailable_command(*_args: Any, **_kwargs: Any) -> Any:
-            raise RuntimeError("Watchlists command service unavailable")
-
-        watchlists_command_service = WatchlistsCommandService(
-            runtime_source_loader=lambda: "local",
-            create_sources_batch=_unavailable_command,
-            create_collection=_unavailable_command,
-            update_collection_sources=_unavailable_command,
-        )
-
-    collection_scope_schema = {
-        "oneOf": [
-            {"type": "string", "minLength": 1, "maxLength": 256},
-            {"type": "integer", "minimum": 1, "maximum": 2**63 - 1},
-        ]
-    }
-    source_scope_schema = {
-        "oneOf": [
-            {"type": "string", "minLength": 1, "maxLength": 2_048},
-            {"type": "integer", "minimum": 1, "maximum": 2**63 - 1},
-        ]
-    }
-    page_limit_schema = {
-        "type": "integer",
-        "minimum": 1,
-        "maximum": 50,
-        "default": 10,
-    }
-    cursor_schema = {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 2_048,
-    }
-
-    specs = [
+    planning = current_planning_preparation()
+    if planning is not None:
+        planning.check_planning_executor(workspace_executor)
+    return [
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["fs_list"],
             name="fs_list",
             operation="directory.list",
             description="List a directory's entries (dirs first, then files), relative to the workspace root.",
@@ -4297,6 +3816,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["fs_read"],
             name="fs_read",
             operation="file.read",
             description="Read a text file with 1-based line numbers; pages via offset/limit. Refuses binary files.",
@@ -4327,6 +3847,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["fs_write"],
             name="fs_write",
             operation="file.write",
             description=(
@@ -4421,6 +3942,7 @@ def _default_specs(
             tags=("mutates",),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["fs_mkdir"],
             name="fs_mkdir",
             description=(
                 "Create a directory, including any missing parent "
@@ -4434,8 +3956,7 @@ def _default_specs(
                     "path": {
                         "type": "string",
                         "description": (
-                            "Directory path to create, relative to the "
-                            "workspace root."
+                            "Directory path to create, relative to the workspace root."
                         ),
                     },
                 },
@@ -4449,6 +3970,7 @@ def _default_specs(
             tags=("mutates",),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["fs_edit"],
             name="fs_edit",
             operation="file.edit",
             description="Replace an exact string in a file. Fails unless the match is unique, unless replace_all is true.",
@@ -4483,6 +4005,7 @@ def _default_specs(
             tags=("mutates",),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["fs_patch"],
             name="fs_patch",
             operation="file.edit",
             description=(
@@ -4520,6 +4043,7 @@ def _default_specs(
             tags=("mutates",),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["fs_glob"],
             name="fs_glob",
             operation="file.search",
             description="Match files under the workspace with a glob pattern, newest-mtime first, workspace-relative paths.",
@@ -4546,6 +4070,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["fs_grep"],
             name="fs_grep",
             operation="file.search",
             description="Regex search under the workspace: matching lines (default), file names, or per-file match counts.",
@@ -4577,11 +4102,96 @@ def _default_specs(
             approval_effects=(LocalApprovalEffect.PRIVATE_READ,),
             tags=(),
         ),
+    ]
+
+
+def _default_specs(
+    workspace_root: Path,
+    *,
+    workspace_executor: WorkspaceToolExecutor,
+    todo_store: SessionTodoStore | None = None,
+    on_todo_change: TodoChangeCallback | None = None,
+    ask_user: AskUserCallback | None = None,
+    watchlists_service: WatchlistsToolService | None = None,
+    watchlists_command_service: WatchlistsCommandService | None = None,
+    character_service: CharacterToolService | None = None,
+) -> list[LocalToolSpec]:
+    from .run_context import (
+        current_planning_preparation,
+    )
+
+    planning = current_planning_preparation()
+    if planning is not None:
+        planning.check_planning_executor(workspace_executor)
+        return _filesystem_specs(workspace_executor)
+
+    from tldw_chatbook.Tools.git_tool_impls import GIT_LOG_DEFAULT_COUNT
+    from tldw_chatbook.Tools.watchlists_command_service import WatchlistsCommandService
+    from tldw_chatbook.Tools.watchlists_tool_service import WatchlistsToolService
+    from tldw_chatbook.Tools.web_tool_impls import (
+        CRAWL_DEFAULT_MAX_DEPTH,
+        CRAWL_DEFAULT_MAX_PAGES,
+        CRAWL_MAX_DEPTH_CEILING,
+        CRAWL_MAX_PAGES_CEILING,
+        FETCH_MAX_BYTES,
+        SEARCH_DEFAULT_RESULT_COUNT,
+        SEARCH_ENGINES,
+        SEARCH_MAX_RESULT_COUNT,
+        _deep_search_settings as _deep_search_settings,
+        web_crawl,
+        web_deep_search as web_deep_search,
+        web_fetch,
+        web_search,
+    )
+
+    if watchlists_service is None:
+        watchlists_service = WatchlistsToolService(
+            db_resolver=lambda: None,
+            runtime_source_loader=lambda: "local",
+        )
+    if watchlists_command_service is None:
+
+        def _unavailable_command(*_args: Any, **_kwargs: Any) -> Any:
+            raise RuntimeError("Watchlists command service unavailable")
+
+        watchlists_command_service = WatchlistsCommandService(
+            runtime_source_loader=lambda: "local",
+            create_sources_batch=_unavailable_command,
+            create_collection=_unavailable_command,
+            update_collection_sources=_unavailable_command,
+        )
+
+    collection_scope_schema = {
+        "oneOf": [
+            {"type": "string", "minLength": 1, "maxLength": 256},
+            {"type": "integer", "minimum": 1, "maximum": 2**63 - 1},
+        ]
+    }
+    source_scope_schema = {
+        "oneOf": [
+            {"type": "string", "minLength": 1, "maxLength": 2_048},
+            {"type": "integer", "minimum": 1, "maximum": 2**63 - 1},
+        ]
+    }
+    page_limit_schema = {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 50,
+        "default": 10,
+    }
+    cursor_schema = {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2_048,
+    }
+
+    specs = _filesystem_specs(workspace_executor) + [
         # git_* (phase 3b-ii): read-only over a fixed, allowlisted argv
         # surface, so ADR-302 deliberately applies NO risk tags (no `process`
         # tag) to this set -- the tripwire test lives in
         # Tests/Agents/test_local_tool_provider.py::test_git_specs_carry_no_risk_tags.
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["git_status"],
             name="git_status",
             description=(
                 "Show the workspace repository's status: current branch plus "
@@ -4605,6 +4215,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["git_diff"],
             name="git_diff",
             description=(
                 "Show changes in the workspace repository as a unified diff. "
@@ -4646,6 +4257,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["git_log"],
             name="git_log",
             description=(
                 "Show the workspace repository's commit history, newest "
@@ -4674,6 +4286,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["git_blame"],
             name="git_blame",
             description=(
                 "Show per-line authorship (blame) for a file in the "
@@ -4707,6 +4320,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["git_branches"],
             name="git_branches",
             description=(
                 "List the workspace repository's branches (current branch "
@@ -4725,6 +4339,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["web_fetch"],
             name="web_fetch",
             description=(
                 "Fetch a web page and return its extracted text; PDFs are "
@@ -4760,6 +4375,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["web_search"],
             name="web_search",
             description="Search the web and return formatted results (title, URL, snippet), size-bounded per result and in total. Identical queries are cached for 15 minutes.",
             parameters={
@@ -4795,6 +4411,7 @@ def _default_specs(
             tags=(),  # network-classed, read-only: no risk tags
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["web_crawl"],
             name="web_crawl",
             description=(
                 "Crawl a website breadth-first from a start URL and return a "
@@ -4846,6 +4463,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["watchlists_list_sources"],
             name="watchlists_list_sources",
             description=(
                 "List bounded private local Watchlists source metadata with "
@@ -4876,6 +4494,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["watchlists_list_collections"],
             name="watchlists_list_collections",
             description=(
                 "List bounded private local Watchlists collection metadata with "
@@ -4899,6 +4518,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["watchlists_search_items"],
             name="watchlists_search_items",
             description=(
                 "Search or browse bounded local Watchlists items with literal "
@@ -4977,6 +4597,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["watchlists_get_item"],
             name="watchlists_get_item",
             description=(
                 "Get bounded detail for one canonical local Watchlists item. "
@@ -5001,6 +4622,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["watchlists_list_briefings"],
             name="watchlists_list_briefings",
             description=(
                 "List bounded private local briefing receipts without Markdown "
@@ -5033,6 +4655,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["watchlists_get_briefing"],
             name="watchlists_get_briefing",
             description=(
                 "Read one private generated local briefing with bounded Markdown "
@@ -5059,6 +4682,9 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS[
+                "watchlists_get_operations_status"
+            ],
             name="watchlists_get_operations_status",
             description=(
                 "List bounded private local Watchlists source-check and briefing "
@@ -5081,6 +4707,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["watchlists_get_operation_status"],
             name="watchlists_get_operation_status",
             description=(
                 "Read one exact private local Watchlists source-check or briefing "
@@ -5104,6 +4731,7 @@ def _default_specs(
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["watchlists_create_sources"],
             name="watchlists_create_sources",
             description=(
                 "Create 1-50 local Watchlists sources as one exact-identity batch. "
@@ -5165,6 +4793,7 @@ def _default_specs(
             approval_arguments=watchlists_command_service.approval_source_destinations,
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["watchlists_create_collection"],
             name="watchlists_create_collection",
             description=(
                 "Create one local Watchlists collection with up to 100 source "
@@ -5206,6 +4835,9 @@ def _default_specs(
             tags=("mutates",),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS[
+                "watchlists_update_collection_sources"
+            ],
             name="watchlists_update_collection_sources",
             description=(
                 "Atomically add or remove up to 100 canonical source memberships "
@@ -5256,6 +4888,7 @@ def _default_specs(
             tags=("mutates",),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["watchlists_check_sources"],
             name="watchlists_check_sources",
             description=(
                 "Accept durable checks for 1-50 local Watchlists sources or one "
@@ -5298,6 +4931,9 @@ def _default_specs(
             tags=("mutates",),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS[
+                "watchlists_set_briefing_schedule"
+            ],
             name="watchlists_set_briefing_schedule",
             description=(
                 "Set one local Watchlists collection's briefing interval, then "
@@ -5351,6 +4987,7 @@ def _default_specs(
             tags=("mutates",),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS["watchlists_generate_briefing"],
             name="watchlists_generate_briefing",
             description=(
                 "Accept one durable briefing generation for a local Watchlists "
@@ -5402,6 +5039,7 @@ def _default_specs(
         specs.extend(
             [
                 LocalToolSpec(
+                    worktree_effect=_NATIVE_WORKTREE_EFFECTS['todo_create'],
                     name="todo_create",
                     description=(
                         "Create one pending session task with a stable ID. "
@@ -5422,6 +5060,7 @@ def _default_specs(
                     tags=("mutates",),
                 ),
                 LocalToolSpec(
+                    worktree_effect=_NATIVE_WORKTREE_EFFECTS['todo_update'],
                     name="todo_update",
                     description=(
                         "Update or delete one session task using its stable ID "
@@ -5457,6 +5096,7 @@ def _default_specs(
                     tags=("mutates",),
                 ),
                 LocalToolSpec(
+                    worktree_effect=_NATIVE_WORKTREE_EFFECTS['todo_get'],
                     name="todo_get",
                     description="Get one complete session task record by stable ID.",
                     parameters={
@@ -5471,6 +5111,7 @@ def _default_specs(
                     tags=(),
                 ),
                 LocalToolSpec(
+                    worktree_effect=_NATIVE_WORKTREE_EFFECTS['todo_list'],
                     name="todo_list",
                     description=(
                         "List session task records in creation order with an "
@@ -5545,6 +5186,7 @@ def _web_deep_search_spec() -> LocalToolSpec:
     # already on this whole spec (the provider builds its list once).
     _deep_search_deadline_s = _deep_search_settings()["deep_search_timeout_s"]
     return LocalToolSpec(
+               worktree_effect=_NATIVE_WORKTREE_EFFECTS['web_deep_search'],
         name="web_deep_search",
         description=(
             "Multi-query web research: expands the question into "
@@ -5639,6 +5281,7 @@ def _ask_user_spec(ask_user: AskUserCallback) -> LocalToolSpec:
         ASK_USER_DESCRIPTION,
     )
     return LocalToolSpec(
+               worktree_effect=_NATIVE_WORKTREE_EFFECTS['ask_user'],
         name="ask_user",
         description=description,
         parameters=ASK_USER_PARAMETERS,
@@ -5756,6 +5399,7 @@ def _character_specs(character_service: CharacterToolService) -> list[LocalToolS
     }
     return [
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['character_search'],
             name="character_search",
             description=(
                 "Search or list the user's local character cards. "
@@ -5786,6 +5430,7 @@ def _character_specs(character_service: CharacterToolService) -> list[LocalToolS
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['character_get'],
             name="character_get",
             description=(
                 "Read one local character card's editable fields. Long "
@@ -5807,6 +5452,7 @@ def _character_specs(character_service: CharacterToolService) -> list[LocalToolS
             tags=(),
         ),
         LocalToolSpec(
+            worktree_effect=_NATIVE_WORKTREE_EFFECTS['character_save'],
             name="character_save",
             description=(
                 "Create a local character card (no id), or update one "
@@ -5844,3 +5490,69 @@ def _character_specs(character_service: CharacterToolService) -> list[LocalToolS
             approval_arguments=character_service.approval_summary,
         ),
     ]
+
+
+# Construction-time stock sources for sticky native SSH attachment.
+_NATIVE_DEFAULT_SPECS = _default_specs
+_NATIVE_SSH_PROVIDER_METHODS = {
+    name: getattr(LocalToolProvider, name)
+    for name in (
+        "invoke",
+        "invoke_detailed",
+        "_invoke_detailed",
+        "_select_admitted_root",
+        "_invoke_promotion",
+        "_prepare_repository_promotion",
+        "_apply_repository_promotion",
+        "_authority_is_valid",
+        "_stale_targets_for",
+        "_remote_stale_targets",
+        "_remote_now_stamp",
+        "_fs_write_guard_injection",
+    )
+}
+
+# Definition-time originals: ordinary admission never invokes a source to qualify it.
+_ORDINARY_NATIVE_PROVIDER = LocalToolProvider
+_ORDINARY_NATIVE_PROVIDER_METHODS = tuple(
+    (name, descriptor)
+    for name, descriptor in vars(LocalToolProvider).items()
+    if callable(descriptor)
+    or isinstance(descriptor, (staticmethod, classmethod, property))
+)
+
+_ORDINARY_NATIVE_FUNCTIONS = tuple(
+    (
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+    )
+    for function in (
+        _default_specs,
+        _filesystem_specs,
+        _character_specs,
+        *(
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor.fget
+            if isinstance(descriptor, property)
+            else descriptor
+            for _name, descriptor in _ORDINARY_NATIVE_PROVIDER_METHODS
+        ),
+    )
+    if hasattr(function, "__code__")
+)
+
+
+def is_native_local_provider(provider: object) -> bool:
+    """Recognize the original local provider class."""
+    return type(provider) is _ORDINARY_NATIVE_PROVIDER
+
+
+def native_worktree_effects() -> Mapping[str, str]:
+    """Return the immutable effect declarations shared with native tool specs."""
+    return _NATIVE_WORKTREE_EFFECTS

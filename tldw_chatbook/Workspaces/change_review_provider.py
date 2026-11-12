@@ -129,6 +129,8 @@ class AgentRunsChangeReviewProvider:
         conversation_id: str,
         diff_display_max_lines: int | None = None,
         run_active: "Callable[[], bool] | None" = None,
+        undo_native=None,
+        native_undo_expected: bool = False,
     ) -> None:
         """Create a provider over one conversation's recorded turns.
 
@@ -139,6 +141,8 @@ class AgentRunsChangeReviewProvider:
             diff_display_max_lines: Per-file render cap; ``None`` reads the
                 flat ``[change_review]`` config section (default 2000).
         """
+        self._undo_native = undo_native
+        self._native_undo_expected = native_undo_expected or undo_native is not None
         self._db = db
         self._service = service
         self._conversation_id = conversation_id
@@ -360,7 +364,13 @@ class AgentRunsChangeReviewProvider:
         """
         from tldw_chatbook.Workspaces.change_revert import preflight_revert
 
-        return preflight_revert(self._service, row, paths)
+        result = preflight_revert(self._service, row, paths)
+        from tldw_chatbook.Workspaces.change_revert_ownership import native_undo_call
+
+        call = native_undo_call()
+        if call is not None:
+            call.record_preflight(self, row, paths, result)
+        return result
 
     def revert(self, row: dict, paths: list[str]) -> list[RevertOutcome]:
         """Restore ``paths`` to the turn's baseline.
@@ -375,8 +385,21 @@ class AgentRunsChangeReviewProvider:
         Raises:
             RevertRefusedError: A run is active on this workspace.
         """
-        from tldw_chatbook.Workspaces.change_revert import revert_paths
+        from tldw_chatbook.Workspaces.change_revert import (
+            RevertRefusedError,
+            revert_paths,
+        )
+        from tldw_chatbook.Workspaces.change_revert_ownership import native_undo_call
 
+        if self._native_undo_expected:
+            call = native_undo_call()
+            if (
+                call is None
+                or self._undo_native is None
+                or call.source.provider is not self
+                or call.source.issuer is not self._undo_native
+            ):
+                raise RevertRefusedError("original confirmed Undo operation required")
         return revert_paths(
             self._service,
             self._db,

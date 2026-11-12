@@ -305,7 +305,14 @@ def test_app_pass_prunes_both_stores(
         "UPDATE sync_log SET timestamp = ?", (OLD_TS,), commit=True
     )
 
+    original_handles = {
+        db: set(db._maintenance_participant.connections) for db in (chacha_db, media_db)
+    }
     _run_pass(monkeypatch, _fake_app(chachanotes_db=chacha_db, media_db=media_db), 90)
+    for db, handles in original_handles.items():
+        assert set(db._maintenance_participant.connections) == handles, (
+            "retention left a worker-owned native connection after executor join"
+        )
 
     # The contract: NOTHING older than the window survives in either store.
     # (A fresh profile's per-thread connection may legitimately seed new

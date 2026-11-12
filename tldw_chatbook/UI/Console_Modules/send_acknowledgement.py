@@ -537,7 +537,7 @@ def request_visible_send(
     stash = composer.capture_draft_for_send() if composer is not None else None
     request = _Request(
         session_id, stash, guard,
-        received_inputs=_pressed_inputs(screen, session_id, stash),
+        received_inputs=capture_visible_send_inputs(screen, session_id, stash),
     )
     flight = _flight(screen)
     if screen._console_pending_send is not None or flight.tasks or flight.deferred:
@@ -545,7 +545,8 @@ def request_visible_send(
     elif _record_draft(screen, request):
         if request.received_inputs is None:
             request = replace(
-                request, received_inputs=_pressed_inputs(screen, session_id, stash)
+                request,
+                received_inputs=capture_visible_send_inputs(screen, session_id, stash),
             )
         _schedule(screen, flight, request)
 
@@ -583,7 +584,7 @@ def _flight(screen: Any) -> _SendFlight:
     return flight
 
 
-def _pressed_inputs(screen: Any, session_id: str, stash: Any) -> Any:
+def capture_visible_send_inputs(screen: Any, session_id: str, stash: Any) -> Any:
     """Retain stock resident inputs at the press, before acknowledgement paint."""
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 
@@ -682,7 +683,7 @@ def _defer(screen: Any, flight: _SendFlight, request: _Request) -> None:
         if request.received_inputs is None:
             request = replace(
                 request,
-                received_inputs=_pressed_inputs(screen, request.session_id, stash),
+                received_inputs=capture_visible_send_inputs(screen, request.session_id, stash),
             )
         flight.deferred = request
 

@@ -139,6 +139,12 @@ from ..Console_Modules.agent import (
 )
 from ..Console_Modules.prompt_queue import ConsolePromptQueueRegion
 from ..Console_Modules.realtime import CONSOLE_REALTIME_CHIP_MESSAGES
+from ..Console_Modules.review_selection import (
+    ConsoleTurnUndoAmbiguousError,
+    ConsoleTurnUndoUnavailableError,
+    run_console_turn_undo,
+    prepare_console_turn_undo,
+)
 from ..Console_Modules.dispatch_recovery import ConsoleDispatchRecoveryRegion
 from ..Console_Modules.left_rail import (
     CONSOLE_DISCARD_DEFAULT_RETRY_ID,
@@ -283,6 +289,7 @@ from ...Chat.console_command_grammar import (
     KIND_UNKNOWN,
     PREFILL_COMMAND_HANDLER_ID,
     GOAL_COMMAND_HANDLER_ID,
+    WORKFLOW_COMMAND_HANDLER_ID,
     RESEARCH_COMMAND_HANDLER_ID,
     HELP_COMMAND_HANDLER_ID,
     CONSOLE_ACTION_COMMAND_HANDLER_ID,
@@ -620,7 +627,7 @@ from ...Widgets.Console.console_citation_sources_modal import (
 )
 from ...Widgets.Console.console_generation_card import generation_card_signature
 from ...Widgets.Console.console_video_card import video_card_signature
-from ...Widgets.Console.console_library_search_modal import (
+from ...Library.library_rag_state import (
     CONSOLE_RAG_DEFAULT_SOURCE_TYPES,
     normalize_console_rag_source_types,
 )
@@ -975,180 +982,6 @@ def _spawn_os_notification_thread(notify: Callable[[], object]) -> None:
     except RuntimeError:
         # Optional desktop delivery must not suppress the bridge's in-app toast.
         logger.debug("OS notification skipped: thread_start_failed (RuntimeError)")
-
-
-class _ConsoleTurnUndoUnavailableError(RuntimeError):
-    """A card-level Undo All cannot proceed without touching disk."""
-
-
-class _ConsoleTurnUndoAmbiguousError(_ConsoleTurnUndoUnavailableError):
-    """One run has multiple snapshot windows for the same canonical root."""
-
-
-class _ConsoleTurnUndoStalePreflightError(_ConsoleTurnUndoUnavailableError):
-    """New edited-since files appeared after the user saw the confirmation."""
-
-
-@dataclass(frozen=True, slots=True)
-class _ConsoleTurnUndoPlan:
-    """Exact rows, paths, and warnings behind one card confirmation."""
-
-    rows_paths: tuple[tuple[dict, tuple[str, ...]], ...]
-    root_labels: tuple[str, ...]
-    edited_since: tuple[str, ...]
-    edited_keys: frozenset[tuple[str, str]]
-    disk_state: tuple[tuple[str, str, str], ...]
-    total_files: int
-
-
-def _console_turn_undo_run_active(provider: Any, roots: tuple[str, ...]) -> bool:
-    """Read the provider's root-aware run probe with legacy fallback."""
-    root_probe = getattr(provider, "run_active_for_root", None)
-    if callable(root_probe):
-        return any(bool(root_probe(root)) for root in roots)
-    probe = getattr(provider, "run_active", None)
-    return bool(probe()) if callable(probe) else False
-
-
-def _prepare_console_turn_undo(provider: Any, run_id: str) -> _ConsoleTurnUndoPlan:
-    """Build one safe whole-turn revert plan.
-
-    This synchronous function performs provider/git reads and is therefore
-    called only through ``asyncio.to_thread`` by the mounted screen.
-    Duplicate-root windows are refused before any diff or preflight read: the
-    compact card does not expose enough baseline ordering to consent safely.
-    """
-    turn = provider.turn_for_run(run_id)
-    if turn is None or not turn.rows:
-        raise _ConsoleTurnUndoUnavailableError(
-            "Undo All is unavailable because this turn has no change snapshots."
-        )
-
-    seen_roots: set[str] = set()
-    for row in turn.rows:
-        root = str(row.get("root") or "")
-        if not root:
-            raise _ConsoleTurnUndoUnavailableError(
-                "Undo All is unavailable because a change snapshot has no workspace."
-            )
-        canonical = os.path.normcase(os.path.normpath(root))
-        if canonical in seen_roots:
-            raise _ConsoleTurnUndoAmbiguousError(
-                "This turn has multiple change windows for the same workspace."
-            )
-        seen_roots.add(canonical)
-    roots = tuple(str(row["root"]) for row in turn.rows)
-    if _console_turn_undo_run_active(provider, roots):
-        raise _ConsoleTurnUndoUnavailableError(
-            "A run is active on this workspace — finish or stop the run first."
-        )
-
-    rows_paths: list[tuple[dict, tuple[str, ...]]] = []
-    for row in turn.rows:
-        tracking_error = str(row.get("tracking_error") or "").strip()
-        if tracking_error:
-            raise _ConsoleTurnUndoUnavailableError(
-                f"Undo All is unavailable: {tracking_error}"
-            )
-        changes = provider.changed_files(row)
-        paths = tuple(dict.fromkeys(str(change.path) for change in changes))
-        if paths:
-            rows_paths.append((row, paths))
-    if not rows_paths:
-        raise _ConsoleTurnUndoUnavailableError(
-            "Undo All is unavailable because no changed files can be restored."
-        )
-
-    multi_root = len(rows_paths) > 1
-    leaf_labels = [
-        Path(str(row["root"])).name or str(row["root"]) for row, _ in rows_paths
-    ]
-    root_labels = tuple(
-        str(row["root"]) if leaf_labels.count(label) > 1 else label
-        for (row, _paths), label in zip(rows_paths, leaf_labels)
-    )
-    edited_keys: set[tuple[str, str]] = set()
-    edited_labels: list[str] = []
-    disk_state: list[tuple[str, str, str]] = []
-    for (row, paths), root_label in zip(rows_paths, root_labels):
-        root = str(row["root"])
-        preflight = provider.preflight_revert(row, list(paths))
-        disk_state.extend(
-            (root, str(path), str(fingerprint))
-            for path, fingerprint in preflight.disk_state.items()
-        )
-        for path in preflight.edited_since:
-            key = (root, str(path))
-            if key in edited_keys:
-                continue
-            edited_keys.add(key)
-            edited_labels.append(f"{root_label}/{path}" if multi_root else str(path))
-    return _ConsoleTurnUndoPlan(
-        rows_paths=tuple(rows_paths),
-        root_labels=root_labels,
-        edited_since=tuple(edited_labels),
-        edited_keys=frozenset(edited_keys),
-        disk_state=tuple(disk_state),
-        total_files=sum(len(paths) for _row, paths in rows_paths),
-    )
-
-
-def _apply_console_turn_undo(provider: Any, plan: _ConsoleTurnUndoPlan) -> list:
-    """Revalidate a confirmed plan, then invoke the existing revert engine."""
-    from tldw_chatbook.Workspaces.change_revert import RevertOutcome
-
-    roots = tuple(str(row["root"]) for row, _paths in plan.rows_paths)
-    if _console_turn_undo_run_active(provider, roots):
-        raise _ConsoleTurnUndoUnavailableError(
-            "A run is active on this workspace — finish or stop the run first."
-        )
-
-    current_edited: set[tuple[str, str]] = set()
-    current_disk_state: list[tuple[str, str, str]] = []
-    for row, paths in plan.rows_paths:
-        root = str(row["root"])
-        preflight = provider.preflight_revert(row, list(paths))
-        current_edited.update((root, str(path)) for path in preflight.edited_since)
-        current_disk_state.extend(
-            (root, str(path), str(fingerprint))
-            for path, fingerprint in preflight.disk_state.items()
-        )
-    if (
-        current_edited - plan.edited_keys
-        or tuple(current_disk_state) != plan.disk_state
-    ):
-        raise _ConsoleTurnUndoStalePreflightError(
-            "Files changed while the confirmation was open. Open Review and try again."
-        )
-
-    outcomes: list = []
-    multi_root = len(plan.rows_paths) > 1
-    for index, ((row, paths), root_label) in enumerate(
-        zip(plan.rows_paths, plan.root_labels)
-    ):
-        try:
-            row_outcomes = provider.revert(row, list(paths))
-        except Exception as exc:  # noqa: BLE001 - retain earlier disk outcomes
-            error = f"not processed: {str(exc)[:240]}"
-            for (_pending_row, pending_paths), pending_label in zip(
-                plan.rows_paths[index:], plan.root_labels[index:]
-            ):
-                outcomes.extend(
-                    RevertOutcome(
-                        path=(f"{pending_label}/{path}" if multi_root else str(path)),
-                        ok=False,
-                        error=error,
-                    )
-                    for path in pending_paths
-                )
-            break
-        outcomes.extend(
-            replace(outcome, path=f"{root_label}/{outcome.path}")
-            if multi_root
-            else outcome
-            for outcome in row_outcomes
-        )
-    return outcomes
 
 
 def _consume_console_roleplay_writer_completion(
@@ -4278,7 +4111,7 @@ class ChatScreen(BaseAppScreen):
         if store.active_session_id == session_id:
             self._sync_console_identity_surfaces()
             self.run_worker(
-                self._sync_native_console_chat_ui(),
+                self._sync_native_console_chat_ui,
                 exclusive=True,
                 group="console-sync",
             )
@@ -5565,7 +5398,7 @@ class ChatScreen(BaseAppScreen):
         if store.active_session_id == result.live_commit.session_id:
             self._sync_console_identity_surfaces()
             self.run_worker(
-                self._sync_native_console_chat_ui(),
+                self._sync_native_console_chat_ui,
                 exclusive=True,
                 group="console-sync",
             )
@@ -14740,12 +14573,20 @@ class ChatScreen(BaseAppScreen):
         # re-reads config, which waits out a config rebuild (TASK-35444).
         return ConsoleTranscriptRegion(
             session_surface_builder=lambda: self._ensure_console_session_surface(),
-            recovery_message_builder=lambda: (
-                self._console_chat_controller or self._ensure_console_chat_controller()
-            ).provider_continuation_recovery_message(),
-            recovery_replay_available_builder=lambda: (
-                self._console_chat_controller or self._ensure_console_chat_controller()
-            ).provider_continuation_replay_available(),
+            recovery_message_builder=(
+                lambda: (
+                    controller.provider_continuation_recovery_message()
+                    if (controller := self._console_chat_controller) is not None
+                    else None
+                )
+            ),
+            recovery_replay_available_builder=(
+                lambda: (
+                    controller.provider_continuation_replay_available()
+                    if (controller := self._console_chat_controller) is not None
+                    else False
+                )
+            ),
             on_recovery_action=(
                 lambda action, message_id, version: (
                     self._ensure_console_chat_controller().recover_provider_continuation(
@@ -15220,6 +15061,10 @@ class ChatScreen(BaseAppScreen):
             status_chips_position = resolve_status_chips_position(
                 getattr(self.app_instance, "app_config", {}) or {}
             )
+            if wiring.workflows_enabled():
+                from ..Console_Modules.workflows import ConsoleWorkflowLine
+
+                yield ConsoleWorkflowLine()
             temporary, temporary_capture_on = temporary_segment_state(self)
             status_chips = ConsoleStatusChips(
                 control_state,
@@ -15853,6 +15698,9 @@ class ChatScreen(BaseAppScreen):
 
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
+        workflow_ui = self.__dict__.pop("_workflow_ui", None)
+        if workflow_ui is not None:
+            await workflow_ui.detach()
         self._hooks.cancel_pending()
         self._release_claimed_conversation_settings_return()
         runtime = self._console_runtime()
@@ -17699,7 +17547,7 @@ class ChatScreen(BaseAppScreen):
             self._console_sync_requested = False
             if not _console_screen_is_torn_down(self):
                 self.run_worker(
-                    self._sync_native_console_chat_ui(),
+                    self._sync_native_console_chat_ui,
                     exclusive=True,
                     group="console-sync",
                 )
@@ -17975,7 +17823,7 @@ class ChatScreen(BaseAppScreen):
                 # outlives the screen that owns it.
                 if not _console_screen_is_torn_down(self):
                     self.run_worker(
-                        self._sync_native_console_chat_ui(),
+                        self._sync_native_console_chat_ui,
                         exclusive=True,
                         group="console-sync",
                     )
@@ -18010,6 +17858,11 @@ class ChatScreen(BaseAppScreen):
                         store = self._ensure_console_chat_store()
                         sessions = store.sessions()
                         active_session_id = store.active_session_id
+                    if (
+                        self.query("#console-workflow-line")
+                        and self._console_runtime().chat_controller is not None
+                    ):
+                        self._workflows.select_chat(active_session)
                     membership = tuple((session.id, session) for session in sessions)
                     controller = getattr(self, "_console_chat_controller", None)
                     streaming_session_id = (
@@ -18066,7 +17919,7 @@ class ChatScreen(BaseAppScreen):
                         or len(current_sessions) != len(membership)
                         or any(
                             current is not captured or current.id != session_id
-                            for (session_id, captured), current in zip(membership, current_sessions)
+                            for (session_id, captured), current in zip(membership, current_sessions, strict=False)
                         )
                     ):
                         continue
@@ -18398,19 +18251,37 @@ class ChatScreen(BaseAppScreen):
             return False
         if self._session.refuse_send_from_unbound_composer():  # TASK-33622.7
             return False
-        stash, composer, draft, raw_cli_handled = raw_cli_ui.prepare_visible_send(
-            stash,
-            self._console_composer_or_none,
-            self._raw_cli.start_user_command,
-            commit_captured=partial(_commit_captured_console_draft, self, session_id),
-            captured=pending_send_token is not None,
-        )
+        try:
+            stash, composer, draft, raw_cli_handled = raw_cli_ui.prepare_visible_send(
+                stash,
+                self._console_composer_or_none,
+                self._raw_cli.start_user_command,
+                commit_captured=partial(
+                    _commit_captured_console_draft, self, session_id
+                ),
+                captured=pending_send_token is not None,
+                raw_capture_scope=lambda: (
+                    self._console_runtime()._first_send_source_scope()
+                ),
+            )
+        except RuntimeError as error:
+            if str(error) != "Console configuration is being saved; Send again.":
+                raise
+            self.app_instance.notify(str(error), severity="warning")
+            return False
         if raw_cli_handled:
             return False
         if not draft.strip() and self._console_pending_image_attachment() is None:
             self._focus_console_composer_if_needed(force=True)
             return False
         self._dismiss_console_guidance()
+        from ..Console_Modules.hooks import in_worker_task
+
+        spoken_capture = pending_send_token is None and in_worker_task()
+        if spoken_capture and (stash is not None or not draft):
+            received_inputs = _send_acknowledgement().capture_visible_send_inputs(
+                self, session_id, stash
+            )
 
         # Command parsing runs before any readiness/blocked gating: a
         # recognized command dispatch (or an unknown-command hint) never
@@ -18514,6 +18385,13 @@ class ChatScreen(BaseAppScreen):
                 "Console chat changed before send; the draft was kept in its original chat.",
                 severity="warning",
             )
+            return False
+        if (
+            spoken_capture
+            and received_inputs is not None
+            and composer is not None
+            and composer.captured_draft_spent(stash)
+        ):
             return False
         return await self._dispatch_console_draft_send(
             draft, stash=stash, session_id=session_id,
@@ -18630,6 +18508,7 @@ class ChatScreen(BaseAppScreen):
             STOP_COMMAND_HANDLER_ID: partial(run_controls.stop_command, self),
             RESEARCH_COMMAND_HANDLER_ID: self._console_command_research,
             GOAL_COMMAND_HANDLER_ID: self._console_command_goal,
+            WORKFLOW_COMMAND_HANDLER_ID: partial(wiring.dispatch_console_workflow, self),
             HELP_COMMAND_HANDLER_ID: self._console_command_help,
             DOCTOR_COMMAND_HANDLER_ID: self._console_command_doctor,
             CONSOLE_ACTION_COMMAND_HANDLER_ID: self._console_command_run_action,
@@ -18931,6 +18810,8 @@ class ChatScreen(BaseAppScreen):
                 "prefilled sends."
             )
         return
+
+    _workflows = property(wiring.console_workflows_for_screen)
 
     @property
     def _goals(self):
@@ -19952,9 +19833,10 @@ class ChatScreen(BaseAppScreen):
                 pressed row's file so the screen opens focused on it
                 instead of the turn's first leaf. ``None`` for every other
                 (pre-existing) caller -- byte-compatible default.
-            initial_snapshot_id: Paired with ``initial_path`` -- disambiguates
-                two windows of the SAME run covering the same path (spec
-                §2). ``None`` when the caller has no snapshot row to pin to.
+            initial_snapshot_id: Open that exact recorded window. With
+                ``initial_path``, disambiguate two windows covering the same
+                path. Without a path, focus the window's first file or show
+                its empty/unavailable state. ``None`` uses the ordinary turn view.
             initial_current_mode: task-13. Open straight onto the WORKING
                 TREE rather than a recorded turn (Task 12's screen param).
                 Set only by the Environment panel's "Commit or push" row,
@@ -20038,17 +19920,31 @@ class ChatScreen(BaseAppScreen):
         token = object()
         self._console_turn_undo_token = token
         try:
-            plan = await asyncio.to_thread(
-                _prepare_console_turn_undo, provider, event.run_id
+            from tldw_chatbook.Workspaces.change_revert_ownership import capture_undo
+
+            undo = capture_undo(provider)
+            plan = (
+                await undo.prepare(
+                    lambda: prepare_console_turn_undo(provider, event.run_id),
+                    marshal=self.app.call_from_thread,
+                    current=lambda: (
+                        self in self.app.screen_stack
+                        and self._console_turn_undo_token is token
+                    ),
+                )
+                if undo is not None
+                else await asyncio.to_thread(
+                    prepare_console_turn_undo, provider, event.run_id
+                )
             )
-        except _ConsoleTurnUndoAmbiguousError as exc:
+        except ConsoleTurnUndoAmbiguousError as exc:
             self._finish_console_turn_undo(token, card, success=False)
             self.app_instance.notify(
                 f"{exc} Opening Review to undo safely.", severity="warning"
             )
             self._open_change_review(event.run_id)
             return
-        except _ConsoleTurnUndoUnavailableError as exc:
+        except ConsoleTurnUndoUnavailableError as exc:
             self._finish_console_turn_undo(token, card, success=False)
             self.app_instance.notify(str(exc), severity="warning")
             return
@@ -20073,8 +19969,25 @@ class ChatScreen(BaseAppScreen):
             if not self.is_mounted:
                 self._finish_console_turn_undo(token, card, success=False)
                 return
+            try:
+                if undo is not None:
+                    undo.confirm()
+            except Exception as exc:  # noqa: BLE001 -- original feature outcome must reach its host
+                self._finish_console_turn_undo(token, card, success=False)
+                self.app_instance.notify(str(exc), severity="warning")
+                return
             self.run_worker(
-                self._run_console_turn_undo(token, card, provider, plan),
+                run_console_turn_undo(
+                    provider,
+                    plan,
+                    undo,
+                    marshal=self.app.call_from_thread,
+                    current=lambda: (
+                        self in self.app.screen_stack
+                        and self._console_turn_undo_token is token
+                    ),
+                    publish=partial(self._publish_console_turn_undo, token, card, plan),
+                ),
                 group="console-turn-undo-all",
                 exit_on_error=False,
             )
@@ -20087,40 +20000,41 @@ class ChatScreen(BaseAppScreen):
             callback=_confirmed,
         )
 
-    async def _run_console_turn_undo(
-        self,
-        token: object,
-        card: ConsoleTurnFileCard,
-        provider: Any,
-        plan: _ConsoleTurnUndoPlan,
-    ) -> None:
-        """Apply a confirmed plan off-thread and publish honest outcomes."""
-        try:
-            outcomes = await asyncio.to_thread(_apply_console_turn_undo, provider, plan)
-        except _ConsoleTurnUndoUnavailableError as exc:
-            self.app_instance.notify(str(exc), severity="warning")
-            self._finish_console_turn_undo(token, card, success=False)
-            return
-        except Exception as exc:  # noqa: BLE001 -- provider failure must degrade
+    def _publish_console_turn_undo(self, token, card, plan, outcomes, error):
+        if error is not None:
             from tldw_chatbook.Workspaces.change_revert import RevertRefusedError
 
-            if isinstance(exc, RevertRefusedError):
-                self.app_instance.notify(str(exc), severity="warning")
+            if isinstance(
+                error, (ConsoleTurnUndoUnavailableError, RevertRefusedError)
+            ):
+                self.app_instance.notify(str(error), severity="warning", markup=False)
             else:
-                logger.opt(exception=True).warning(
+                logger.opt(exception=error).warning(
                     "Console turn-card Undo All apply failed."
                 )
                 self.app_instance.notify(
-                    f"Undo All failed before completion: {str(exc)[:240]}",
+                    f"Undo All failed before completion: {str(error)[:240]}",
                     severity="error",
+                    markup=False,
                 )
             self._finish_console_turn_undo(token, card, success=False)
             return
-
+        unsettled = [outcome for outcome in outcomes if not outcome.settled]
         failed = [outcome for outcome in outcomes if not outcome.ok]
         succeeded = [outcome for outcome in outcomes if outcome.ok]
-        success = bool(outcomes) and not failed and len(outcomes) == plan.total_files
-        if failed:
+        success = (
+            bool(outcomes)
+            and not failed
+            and not unsettled
+            and len(outcomes) == plan.total_files
+        )
+        if unsettled:
+            self.app_instance.notify(
+                "Undo changed files, but required history or bookkeeping is incomplete. "
+                "Native work remains protected.",
+                severity="error",
+            )
+        elif failed:
             detail = ", ".join(
                 f"{outcome.path} ({outcome.error})" for outcome in failed[:5]
             )
@@ -20128,9 +20042,10 @@ class ChatScreen(BaseAppScreen):
                 f"{len(succeeded)} file(s) reverted; "
                 f"{len(failed)} file(s) not reverted: {detail}",
                 severity="error",
+                markup=False,
             )
         elif success:
-            self.app_instance.notify(f"Reverted {len(outcomes)} file(s).")
+            self.app_instance.notify(f"Reverted {len(outcomes)} file(s).", markup=False)
         else:
             self.app_instance.notify(
                 "Undo All did not return a complete result. Open Review and try again.",
@@ -24310,7 +24225,7 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             self._console_agent_drilldown_run_id = None
             self.run_worker(
-                self._sync_native_console_chat_ui(),
+                self._sync_native_console_chat_ui,
                 exclusive=True,
                 group="console-sync",
             )

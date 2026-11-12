@@ -1,292 +1,151 @@
-"""Physical lifetime shared by finite Console preparation reads."""
+"""Console source preparation and compatibility names for finite reads."""
 
 from __future__ import annotations
 
 import asyncio
-import os
-import threading
-from collections.abc import Callable, Coroutine
-from contextvars import ContextVar, copy_context
-from dataclasses import dataclass, field
-from typing import Any
+from contextlib import AbstractContextManager, asynccontextmanager
+from typing import TYPE_CHECKING
 
-
-@dataclass(slots=True, eq=False)
-class ConsolePreparationRead:
-    """One internal read handle; observers share it without admission state."""
-
-    creator: object = field(repr=False)
-    callback: Callable[[], Any] = field(repr=False)
-    source: object = field(repr=False)
-    task: asyncio.Task[Any] = field(repr=False)
-    session_id: str | None
-    retired: asyncio.Future[None] = field(repr=False)
-    _producer: asyncio.Future[Any] | None = field(default=None, repr=False)
-    _observers: tuple[set[ConsolePreparationRead], ...] = field(default=(), repr=False)
-
-
-# Only finite handle bookkeeping is serialized; no callback or await is inside.
-_READS_LOCK = threading.RLock()
-
-_READ_HANDOFF_LIMIT = 0.001
-
-
-def _preparation_handoffs():
-    """Limit GIL convoys only while original finite callback bodies run.
-
-    TASK-38987: the shared owner, so a config write overlapping a read
-    cannot leave the interval lowered. Imported on first use (boot budget).
-    """
-    from tldw_chatbook.Utils.switch_interval import switch_interval_at_most
-
-    return switch_interval_at_most(_READ_HANDOFF_LIMIT)
-
-
-def _observe_locked(read, observer):
-    if not any(observer is existing for existing in read._observers):
-        read._observers += (observer,)
-        observer.add(read)
-
-
-def observe_preparation_reads(
-    reads: set[ConsolePreparationRead], observer: set[ConsolePreparationRead]
-) -> None:
-    """Attach existing standalone reads to an additional creator's teardown."""
-    with _READS_LOCK:
-        for read in tuple(reads):
-            _observe_locked(read, observer)
-
-
-def preparation_reads_for(
-    reads: set[ConsolePreparationRead], session_id: str | None = None
-) -> tuple[ConsolePreparationRead, ...]:
-    """Snapshot exact reads; app-scoped reads also belong to session teardown."""
-    with _READS_LOCK:
-        return tuple(
-            read
-            for read in reads
-            if session_id is None
-            or read.session_id is None
-            or read.session_id == session_id
-        )
-
-
-def preparation_tasks_for(reads, session_id=None):
-    """Return the exact issuing tasks for a creator's retained native reads."""
-    return tuple(
-        dict.fromkeys(read.task for read in preparation_reads_for(reads, session_id))
-    )
-
-
-def _retire(read):
-    with _READS_LOCK:
-        for observer in read._observers:
-            observer.discard(read)
-        read._observers = ()
-    if not read.retired.done():
-        read.retired.set_result(None)
-
-
-@dataclass(slots=True)
-class _HookSourceBinding:
-    read: ConsolePreparationRead
-    process: int
-    thread: threading.Thread
-    task: asyncio.Task[Any] | None
-    active: bool = True
-
-
-_source_binding: ContextVar[_HookSourceBinding | None] = ContextVar(
-    "console_hook_preparation_source", default=None
+from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
+    ConsolePreparationRead as ConsolePreparationRead,
+    _HookSourceBinding as _HookSourceBinding,
+    _READS_LOCK as _READS_LOCK,
+    _current_task as _current_task,
+    _observe_locked as _observe_locked,
+    _retire as _retire,
+    _source_binding as _source_binding,
+    await_finite_read as await_finite_read,
+    drain_preparation_reads as drain_preparation_reads,
+    observe_preparation_reads as observe_preparation_reads,
+    preparation_read_for as preparation_read_for,
+    preparation_reads_for as preparation_reads_for,
+    preparation_source_for as preparation_source_for,
+    preparation_tasks_for as preparation_tasks_for,
+    run_preparation_read as run_preparation_read,
 )
 
-
-def _current_task():
-    try:
-        return asyncio.current_task()
-    except RuntimeError:
-        return None
-
-
-def preparation_source_for(creator: object) -> object | None:
-    """Return pure captured sources only inside this exact worker invocation."""
-    binding = _source_binding.get()
-    if (
-        binding is None
-        or not binding.active
-        or binding.read.creator is not creator
-        or binding.process != os.getpid()
-        or binding.thread is not threading.current_thread()
-        or binding.task is not _current_task()
-    ):
-        return None
-    return binding.read.source
-
-
-async def run_preparation_read[Result](
-    callback: Callable[[], Result],
-    *,
-    creator: object,
-    session_id: str | None,
-    reads: set[ConsolePreparationRead],
-    observers: tuple[set[ConsolePreparationRead], ...] = (),
-    require_current: Callable[[], None],
-    source: object = None,
-) -> Result:
-    """Retire an original hook read before returning or delivering cancellation.
-
-    Args:
-        callback: Captured original synchronous hook read.
-        creator: Original controller or runtime identity.
-        session_id: Session attribution, or None for app-scoped work.
-        reads: Creator's physical-read observer set.
-        observers: Additional sets observing this same exact handle.
-        require_current: Pure source validator, called outside bookkeeping locks.
-        source: Opaque captured source available only inside the worker scope.
-
-    Returns:
-        Original callback result after its native scope has exited.
-
-    Raises:
-        asyncio.CancelledError: Caller cancellation after native retirement and
-            exception consumption; otherwise the original callback's exception.
-        BaseException: Original callback, source or submission failure when the
-            caller was not cancelled.
-    """
-    task = asyncio.current_task()
-    if task is None:
-        raise RuntimeError("A Console hook read requires its issuing task.")
-    require_current()
-    read = ConsolePreparationRead(
-        creator,
-        callback,
-        source,
-        task,
-        session_id,
-        asyncio.get_running_loop().create_future(),
+if TYPE_CHECKING:
+    from tldw_chatbook.Agents.native_source_storage import (
+        NativeAgentSources as _AgentSources,
     )
-    with _READS_LOCK:
-        for observer in (reads, *observers):
-            _observe_locked(read, observer)
-    submit_resolved = threading.Event()
-    submitted = False
 
-    def invoke():
-        # An enqueue-then-raise submission may leave a work item behind.
-        submit_resolved.wait()
-        if not submitted:
-            return None
-        binding = _HookSourceBinding(
-            read, os.getpid(), threading.current_thread(), _current_task()
+
+def current_workflow_preparation(controller=None):
+    from tldw_chatbook.Agents.run_context import current_workflow_preparation as current
+
+    return current(controller)
+
+
+def current_planning_preparation(controller=None):
+    from tldw_chatbook.Agents.run_context import current_planning_preparation as current
+
+    return current(controller)
+
+
+def issuing_agent_sources(controller: object) -> AbstractContextManager[None]:
+    from tldw_chatbook.Agents.run_context import issuing_agent_sources as issue
+
+    return issue(controller)
+
+
+def current_agent_sources(controller: object | None = None) -> _AgentSources | None:
+    from tldw_chatbook.Agents.run_context import current_agent_sources as current
+
+    return current(controller)
+
+
+async def prepare_agent_sources(
+    controller: object, session: object, configuration: object
+) -> None:
+    """Select the original source tuple before the first SessionStart effect."""
+    from .console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.Utils.platform_files import supports_native_process_groups
+
+    from tldw_chatbook.Agents.run_context import current_agent_source_issuance
+
+    holder = current_agent_source_issuance()
+    runtime = getattr(controller, "_hooks_v2_runtime", None)
+    bridge = controller._agent_bridge
+    if (
+        runtime is None
+        or type(bridge) is not ConsoleAgentBridge
+        or not supports_native_process_groups()
+        or not controller._agent_runtime_enabled
+        or session.assistant_kind == "character"
+    ):
+        return
+    if holder is None or holder[:2] != [controller, asyncio.current_task()]:
+        raise RuntimeError("original agent source issuer unavailable")
+    if holder[3] is not None:
+        raise RuntimeError("agent storage already selected")
+    from tldw_chatbook.Agents.native_source_storage import (
+        NativeAgentSources as _AgentSources,
+    )
+
+    source = _AgentSources(controller, runtime, bridge, session, configuration)
+    from .console_received_turn import received_turn_claim_for
+
+    source.received_claim = received_turn_claim_for(controller.store, session.id)
+    await run_preparation_read(
+        source.prepare,
+        creator=controller,
+        session_id=session.id,
+        reads=controller._preparation_reads,
+        observers=(runtime._preparation_reads,),
+        require_current=source.check_memory,
+    )
+    source.check_memory()
+    holder[3] = source
+    holder[2].enter_context(source.activate())
+
+
+class NativePluginHookPreparation:
+    """Sticky original Runtime attachment; construction only retains metadata."""
+
+    def __init__(self, runtime):
+        self.runtime = runtime
+        self.app = runtime._app
+        self.capacity = runtime._execution_capacity
+        self.activity = runtime._worktree_activity
+
+    def pin_resources(self):
+        if self.capacity is None:
+            self.capacity = self.runtime._execution_capacity
+        if self.activity is None:
+            self.activity = self.runtime._worktree_activity
+
+    @asynccontextmanager
+    async def capture(self, source, service, configuration, review):
+        from tldw_chatbook.Agents.hooks_v2.ownership import join_hook_worker
+
+        from .console_plugin_hook_preparation import _Preparation
+
+        request = _Preparation(self, source, service, configuration, review)
+        read = ConsolePreparationRead(
+            self.runtime,
+            request.invoke,
+            source,
+            asyncio.current_task(),
+            source.session_id,
+            asyncio.get_running_loop().create_future(),
         )
-        token = _source_binding.set(binding)
+        with _READS_LOCK:
+            _observe_locked(read, self.runtime._preparation_reads)
+            observer = getattr(source.controller, "_preparation_reads", None)
+            if observer is not None:
+                _observe_locked(read, observer)
         try:
-            with _preparation_handoffs():
-                require_current()
-                result = callback()
-                require_current()
-                return result
-        except StopIteration as error:
-            # asyncio Futures cannot transport StopIteration; convert inside
-            # the worker before its physical outcome crosses to the coroutine.
-            raise RuntimeError("coroutine raised StopIteration") from error
-        finally:
-            binding.active = False
-            _source_binding.reset(token)
-
-    try:
-        try:
-            context = copy_context()
-            read._producer = asyncio.get_running_loop().run_in_executor(
-                None, context.run, invoke
+            # Admission and original release callbacks stay off the host loop.
+            await join_hook_worker(
+                asyncio.create_task(asyncio.to_thread(request.admit)), request.cancel
             )
-            submitted = True
+            read._producer = asyncio.create_task(request.invoke())
+            result = await join_hook_worker(read._producer, request.cancel)
+            request.check(service)
+            yield result, request
+            request.check(service)
         finally:
-            submit_resolved.set()
-        producer = read._producer
-        cancelled = None
-        while not producer.done():
             try:
-                await asyncio.shield(producer)
-            except asyncio.CancelledError as error:
-                # A callback-raised CancelledError is its actual native outcome,
-                # including when this Task retains a prior cancellation count.
-                if (
-                    producer.done()
-                    and not producer.cancelled()
-                    and producer.exception() is error
-                ):
-                    break
-                cancelled = error
-            except BaseException:  # noqa: BLE001 - consume the original producer outcome below.
-                break
-        try:
-            result = producer.result()
-        except BaseException:
-            if cancelled is not None:
-                raise cancelled from None
-            raise
-        if cancelled is not None:
-            raise cancelled
-        require_current()
-        return result
-    finally:
-        _retire(read)
-
-
-async def drain_preparation_reads(
-    reads: set[ConsolePreparationRead], session_id: str | None = None
-) -> bool:
-    """Wait only for physical read retirement, preserving cancellation intent.
-
-    Args:
-        reads: Creator's physical-read observer set.
-        session_id: Selected session; None includes every read. App-scoped reads
-            are always included.
-
-    Returns:
-        Whether this drain's caller was cancelled while exact reads retired.
-        The caller decides when to re-deliver that cancellation.
-
-    Raises:
-        RuntimeError: A read attempts to drain itself or its retirement notice
-            was cancelled instead of establishing physical completion.
-    """
-    cancelled = False
-    while pending := preparation_reads_for(reads, session_id):
-        if any(read.task is _current_task() for read in pending):
-            raise RuntimeError("A Console hook read cannot finalize its own creator.")
-        for read in pending:
-            while not read.retired.done():
-                try:
-                    await asyncio.shield(read.retired)
-                except asyncio.CancelledError:
-                    if read.retired.cancelled():
-                        raise RuntimeError(
-                            "Hook read retirement signal was cancelled."
-                        ) from None
-                    cancelled = True
-            if read.retired.cancelled():
-                raise RuntimeError("Hook read retirement signal was cancelled.")
-            read.retired.result()
-    return cancelled
-
-
-async def await_finite_read[_Result](
-    operation: Coroutine[Any, Any, _Result],
-) -> _Result:
-    """Retire a stock finite read before delivering view-worker cancellation."""
-    worker = asyncio.Task(operation)
-    try:
-        return await asyncio.shield(worker)
-    except asyncio.CancelledError:
-        while not worker.done():
-            try:
-                await asyncio.shield(worker)
-            except asyncio.CancelledError:
-                continue
-            except Exception:  # noqa: BLE001 - cancellation wins.
-                break
-        if not worker.cancelled():
-            worker.exception()
-        raise
+                await join_hook_worker(asyncio.create_task(asyncio.to_thread(request.finish)))
+            finally:
+                _retire(read)

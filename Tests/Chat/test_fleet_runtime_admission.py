@@ -64,6 +64,7 @@ def run(service, conversation, *, max_subagents=2):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_simultaneous_conversations_launch_only_six_real_children(
     tmp_path, monkeypatch
 ):
@@ -133,6 +134,7 @@ def test_simultaneous_conversations_launch_only_six_real_children(
     assert capacity.snapshot().executions == ()
 
 
+@pytest.mark.bootstrap_profile
 def test_terminal_child_with_timed_out_tool_holds_slot_until_tool_finishes(tmp_path):
     capacity = RuntimeCapacity(max_child_executions=1, reserved_manual_children=0)
     db = AgentRunsDB(tmp_path / "runs.db", client_id="admission")
@@ -192,6 +194,7 @@ def test_terminal_child_with_timed_out_tool_holds_slot_until_tool_finishes(tmp_p
 
 
 @pytest.mark.parametrize("failure_site", ["construct", "start"])
+@pytest.mark.bootstrap_profile
 def test_failed_thread_start_releases_capacity_and_spawn_allowance(
     tmp_path, monkeypatch, failure_site
 ):
@@ -242,6 +245,7 @@ def test_failed_thread_start_releases_capacity_and_spawn_allowance(
     assert capacity.snapshot().executions == ()
 
 
+@pytest.mark.bootstrap_profile
 def test_inline_model_start_failure_releases_capacity_and_spawn_allowance(
     tmp_path, monkeypatch
 ):
@@ -281,6 +285,7 @@ def test_inline_model_start_failure_releases_capacity_and_spawn_allowance(
     assert capacity.snapshot().executions == ()
 
 
+@pytest.mark.bootstrap_profile
 def test_inline_mode_cannot_bypass_runtime_admission(tmp_path, monkeypatch):
     pin_agent_settings(monkeypatch, max_live_subagents=1)
     capacity = RuntimeCapacity(max_child_executions=1, reserved_manual_children=0)

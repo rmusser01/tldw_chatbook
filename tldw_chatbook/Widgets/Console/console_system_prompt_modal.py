@@ -16,7 +16,7 @@ from typing import Awaitable, Callable, Optional
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, VerticalScroll
 from textual.css.query import NoMatches, QueryError
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static, TextArea
@@ -84,7 +84,7 @@ class ConsoleSystemPromptModal(SafeModalDismissMixin, ModalScreen[Optional[str]]
 
     def compose(self) -> ComposeResult:
         """Build the editor's text area, name/save row, and action buttons."""
-        with Vertical(id=MODAL_ID):
+        with VerticalScroll(id=MODAL_ID):
             yield Static("Edit system prompt", classes="console-modal-header")
             yield Static(
                 SCOPE_COPY,
@@ -175,6 +175,8 @@ class ConsoleSystemPromptModal(SafeModalDismissMixin, ModalScreen[Optional[str]]
 
     def _set_save_status(self, text: str) -> None:
         try:
-            self.query_one(f"#{SAVE_STATUS_ID}", Static).update(text)
+            status = self.query_one(f"#{SAVE_STATUS_ID}", Static)
+            status.update(text)
+            self.call_after_refresh(status.scroll_visible, animate=False)
         except (NoMatches, QueryError):
             pass

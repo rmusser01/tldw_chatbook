@@ -4,19 +4,66 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import sys
 from dataclasses import dataclass, field, replace
 from types import MethodType
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from tldw_chatbook.app_services import read_app_config
+from tldw_chatbook import config
+from tldw_chatbook.config import first_send_persistence_source_current as _native_config_current
 from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
+from .console_chat_models import ConsoleSubmissionOrigin
+from .console_ordinary_tree import _function_record, _function_unchanged
 from .console_preparation_reads import run_preparation_read
 
 if TYPE_CHECKING:
+    from . import console_runtime as native_host
     from .console_received_intent import ConsoleReceivedTurnIntent
 
+
+def _attachment_receipt(controller, session_id):
+    from .console_received_turn import received_turn_claim_for
+
+    claim = received_turn_claim_for(controller.store, session_id)
+    runtime = controller._hooks_v2_runtime
+    if claim is None or runtime is None:
+        return None
+    record = runtime._turn_custody.get(claim.request_id)
+    if record is None or record.received_claim is not claim:
+        return None
+    runtime._require_received_custody_current(record, controller)
+    return record
+
+
+def received_attachment_metadata(controller, session_id):
+    """Read the original receipt's staged prefix without transferring it."""
+    record = _attachment_receipt(controller, session_id)
+    if record is None:
+        return None
+    if record.inputs.attachments_transferred:
+        return record.inputs.attachments
+    expected = record.request.attachment_ids
+    pending = tuple(record.store.pending_attachments(session_id))[: len(expected)]
+    if tuple(item.attachment_id for item in pending) != expected:
+        raise RuntimeError("Pending attachments changed before physical admission.")
+    return pending
+
+
+def admit_received_attachments(controller, session_id):
+    """Transfer only behind the originating asynchronous physical admission."""
+    record = _attachment_receipt(controller, session_id)
+    if record is None:
+        return None
+    if not record.inputs.attachments_transferred:
+        record.inputs.attachments = record.store.transfer_pending_attachments_to_turn(
+            session_id, record.turn_id, record.request.attachment_ids
+        )
+        record.inputs.attachments_transferred = True
+    return record.inputs.attachments
 
 
 def stock_native_methods(owner: Any, originals: tuple) -> bool:
@@ -409,12 +456,6 @@ async def _run_received_intent_bound(runtime, record, source):
         runtime._note_received_admission_changed(store, record.session_id)
 
     require_received_source(runtime, record, source)
-    attachments = store.transfer_pending_attachments_to_turn(
-        record.session_id,
-        record.turn_id,
-        tuple(item.attachment_id for item in intent.inputs.attachments),
-    )
-    record.inputs.attachments = attachments
     record.inputs.staged_evidence_revision = intent.staged_evidence_revision
     record.request = ConsoleTurnCustodyRequest(
         turn_id=record.turn_id,
@@ -435,6 +476,12 @@ async def _run_received_intent_bound(runtime, record, source):
         goal_authorization=None,
         raise_on_refusal=True,
         hook_read=hook_read,
+        first_send_source=(
+            source.config_identity,
+            source.app_config,
+            source.controller,
+            source.store,
+        ),
     )
 
 
@@ -532,6 +579,394 @@ def accept_received_intent(
     return record.turn_id
 
 
+
+
+def accept_turn(
+    self,
+    request: native_host.ConsoleTurnCustodyRequest,
+    *,
+    origin: native_host.ConsoleSubmissionOrigin = ConsoleSubmissionOrigin.MANUAL,
+    queue_entry_id: str | None = None,
+    queue_authorization: native_host.Any | None = None,
+    wake_authorization: native_host.Any | None = None,
+    goal_authorization: native_host.Any | None = None,
+    chat_start_authorization: native_host.Any | None = None,
+    terminal_callback: native_host.Callable[[bool], None] | None = None,
+    recover_before_acceptance: bool = True,
+) -> str:
+    """Synchronously retain input metadata for asynchronous physical admission."""
+
+    from . import console_runtime as native_host
+    with self._first_send_source_scope():
+        from tldw_chatbook import config
+
+        first_send_source = (
+            config.current_config_identity(),
+            read_app_config(self._app),
+            self._chat_controller,
+            self._chat_store,
+        )
+        self._raise_if_disposed_or_session_fenced(request.session_id)
+        if request.configuration.session_id != request.session_id:
+            raise ValueError("Turn configuration belongs to another session.")
+        store = self._chat_store
+        if store is None:
+            raise RuntimeError("Console chat store is unavailable.")
+        if origin is ConsoleSubmissionOrigin.AGENT_CHAT_START:
+            controller = self._chat_controller
+            if (
+                controller is None
+                or controller._hooks_v2_runtime is not self
+                or controller.store is not store
+                or not controller._chat_start.authorizes(chat_start_authorization, request.session_id)
+                or chat_start_authorization.task is not asyncio.current_task()
+                or chat_start_authorization.request.configuration is not request.configuration
+                or chat_start_authorization.request.opening_prompt != request.draft
+            ):
+                raise PermissionError("Chat Start custody changed.")
+        elif chat_start_authorization is not None:
+            raise ValueError("Chat Start authorization requires its original submission origin.")
+        pressed = request._pressed_inputs
+        if pressed is not None:
+            from .console_received_intent import ConsoleSessionInputSnapshot
+
+            if (
+                type(pressed) is not ConsoleSessionInputSnapshot
+                or pressed._store_ref() is not store
+                or pressed.session_id != request.session_id
+                or not store.session_inputs_are_current(pressed, include_draft=False)
+            ):
+                raise RuntimeError("Pressed Console input changed before admission.")
+        claim = store.claim_received_turn(
+            request.session_id,
+            request.turn_id,
+            origin=origin,
+            draft_revision=pressed.draft_revision
+            if pressed is not None
+            else request.draft_revision,
+            _allow_draft_change=pressed is not None,
+        )
+        if claim is None:
+            raise RuntimeError("Console session already has an admission owner.")
+        attachments = ()
+        try:
+            self._note_received_admission_changed(store, request.session_id)
+            if (
+                origin is native_host.ConsoleSubmissionOrigin.MANUAL
+                and self._response_rules is not None
+            ):
+                self._response_rules.invalidate(request.session_id, "user_input")
+            record = self._register_custody(
+                request,
+                attachments,
+                self._staged_evidence_lease_revision(
+                    request.staged_evidence_launch, request.session_id
+                ),
+                store=store,
+                received_claim=claim,
+            )
+        except BaseException:
+            try:
+                store.restore_transferred_pending_attachments(
+                    request.session_id, attachments
+                )
+            finally:
+                store.release_received_turn(claim)
+            raise
+        if self._archive_recovery is not None:
+            self._archive_recovery.accept_user_proof(
+                request.recovery_user_origin,
+                request.session_id,
+                request.turn_id,
+            )
+        coroutine = self._run_custodied_turn(
+            record,
+            first_send_source=first_send_source,
+            origin=origin,
+            queue_entry_id=queue_entry_id,
+            queue_authorization=queue_authorization,
+            wake_authorization=wake_authorization,
+            goal_authorization=goal_authorization,
+            chat_start_authorization=chat_start_authorization,
+            raise_on_refusal=recover_before_acceptance,
+        )
+        try:
+            record.task = self._create_custody_task(coroutine)
+        except BaseException:
+            coroutine.close()
+            try:
+                store.restore_transferred_pending_attachments(
+                    request.session_id, attachments
+                )
+            finally:
+                self._release_custody(record.turn_id)
+            raise
+        record.task.add_done_callback(
+            native_host.functools.partial(
+                self._finish_custodied_turn,
+                turn_id=record.turn_id,
+                recover_before_acceptance=recover_before_acceptance,
+                terminal_callback=terminal_callback,
+            )
+        )
+        return record.turn_id
+
+
+async def _run_custodied_turn(
+    self,
+    record: native_host._ConsoleTurnCustodyRecord,
+    *,
+    origin: native_host.ConsoleSubmissionOrigin,
+    queue_entry_id: str | None,
+    queue_authorization: native_host.Any | None,
+    wake_authorization: native_host.Any | None,
+    goal_authorization: native_host.Any | None,
+    chat_start_authorization: native_host.Any | None = None,
+    raise_on_refusal: bool,
+    hook_read: native_host.Any = None,
+    first_send_source: tuple,
+) -> native_host.Any:
+    """Run one screen-free turn using only its frozen custody record.
+
+    ``hook_read`` is the received intent's one full hook authority read
+    (``ConsoleHookAttemptRead``); it goes, as an argument, only to this
+    record's own initial submission (ADR-230 decision 3).
+    """
+
+    from . import console_runtime as native_host
+    request = record.request
+    controller = self._chat_controller
+    if request is None or controller is None:
+        raise RuntimeError("Console controller is unavailable for runtime custody.")
+
+    def require_received():
+        self._require_received_custody_current(record, controller)
+
+    require_received()
+    if self._archive_recovery is not None and record.received_intent is not None:
+        self._archive_recovery.accept_user_proof(
+            request.recovery_user_origin,
+            request.session_id,
+            request.turn_id,
+        )
+    if self._archive_recovery is not None and origin in {
+        native_host.ConsoleSubmissionOrigin.MANUAL,
+        native_host.ConsoleSubmissionOrigin.QUEUED,
+    }:
+        await self._archive_recovery.prepare_for_admission(request.session_id)
+        require_received()
+    if record.archive_conversation_id:
+        from tldw_chatbook.Chat.conversation_archive_actions import (
+            conversation_send_refusal,
+        )
+
+        refusal = await conversation_send_refusal(
+            self._app, record.archive_conversation_id
+        )
+        if refusal:
+            notify = getattr(self._app, "notify", None)
+            if callable(notify):
+                notify(refusal, severity="warning")
+            # TASK-33621.2: the parked turn's shelf entry states this
+            # refusal too, like a controller refusal's below.
+            raise native_host._ConsoleTurnRefusedError(
+                "Console conversation is unavailable for submission.",
+                reason=refusal,
+            )
+
+    def mark_durable_acceptance() -> None:
+        publish_received_acceptance(self, record, controller)
+
+    async def submit() -> native_host.Any:
+        require_received()
+        if chat_start_authorization is None:
+            controller.prompt_queue_coordinator.bind_turn_request(request, origin=origin)
+        from .console_received_turn import bind_received_turn_claim
+
+        from .console_chat_controller import ConsoleChatController
+
+        shared = (
+            {"_hook_read": hook_read}
+            if hook_read is not None
+            and getattr(controller.submit_draft, "__func__", None)
+            is ConsoleChatController.submit_draft
+            else {}
+        )
+        issuing_store, issuing_claim = record.store, record.received_claim
+        try:
+            with bind_received_turn_claim(issuing_store, issuing_claim):
+                if chat_start_authorization is not None:
+                    return await controller.submit_draft(
+                        request.draft,
+                        session_id=request.session_id,
+                        origin=origin,
+                        chat_start_authorization=chat_start_authorization,
+                        configuration=request.configuration,
+                        accepted_attachments=(),
+                        custody_acceptance_hook=mark_durable_acceptance,
+                    )
+                return await controller.submit_draft(
+                    request.draft,
+                    session_id=request.session_id,
+                    origin=origin,
+                    queue_entry_id=queue_entry_id,
+                    queue_authorization=queue_authorization,
+                    wake_authorization=wake_authorization,
+                    goal_authorization=goal_authorization,
+                    configuration=native_host.replace(
+                        request.configuration,
+                        recovery_user_origin=request.recovery_user_origin,
+                        skill_context_maximum={
+                            **request.configuration.skill_context_maximum,
+                            "plugin_turn_id": request.turn_id,
+                        },
+                    ),
+                    accepted_attachments=received_attachment_metadata(
+                        controller, request.session_id
+                    ),
+                    captured_one_shot_prefill=request.one_shot_prefill,
+                    captured_one_shot_prefill_revision=(
+                        request.one_shot_prefill_revision
+                    ),
+                    staged_evidence_launch=request.staged_evidence_launch,
+                    staged_evidence_capture=self._capture_frozen_console_staged_rag,
+                    staged_evidence_release=native_host.functools.partial(
+                        self.release_console_staged_evidence,
+                        revision=record.inputs.staged_evidence_revision,
+                        session_id=record.session_id,
+                    ),
+                    custody_acceptance_hook=mark_durable_acceptance,
+                    **shared,
+                )
+        finally:
+            # Nonpromoting routes release after physical submit completion,
+            # before the enclosing prompt chain admits its next request.
+            if issuing_store.release_received_turn(issuing_claim):
+                self._note_received_admission_changed(issuing_store, request.session_id)
+
+    result = (
+        await submit()
+        if origin
+        in {
+            native_host.ConsoleSubmissionOrigin.AGENT_WAKE,
+            native_host.ConsoleSubmissionOrigin.GOAL_ITERATION,
+            native_host.ConsoleSubmissionOrigin.AGENT_CHAT_START,
+        }
+        else await controller.run_prompt_chain(
+            session_id=request.session_id,
+            initial_turn=submit,
+        )
+    )
+    held_preparation_id = getattr(result, "preparation_id", None)
+    if (
+        not bool(getattr(result, "accepted", False))
+        and not record.inputs.durable_accepted
+        and raise_on_refusal
+        # TASK-34350: a send held at the compaction threshold is waiting
+        # on the user's answer in its own card, not refused; recording it
+        # as a turn recovery too showed one send on two surfaces.
+        and not (
+            held_preparation_id is not None
+            and controller.context_compaction_hold(held_preparation_id) is not None
+        )
+    ):
+        from .console_unsent_turn import card_holds_refusal
+
+        raise native_host._ConsoleTurnRefusedError(
+            "Console turn was refused before durable acceptance.",
+            reason=str(getattr(result, "visible_copy", "") or ""),
+            preparation_id=held_preparation_id,
+            card_held=card_holds_refusal(controller, held_preparation_id),
+        )
+    run_state_for = getattr(controller, "run_state_for", None)
+    run_state = run_state_for(request.session_id) if callable(run_state_for) else None
+    if (
+        origin is native_host.ConsoleSubmissionOrigin.MANUAL
+        and bool(getattr(result, "accepted", False))
+        and getattr(run_state, "status", None) is native_host.ConsoleRunStatus.COMPLETED
+    ):
+        await self._record_successful_first_send(first_send_source)
+    return result
+
+
+_NATIVE_CONFIG_CHECK = _function_record(_native_config_current)
+
+
+async def _persist_first_send_when_quiescent(
+    self, config_module, identity, app_config, controller, store
+) -> None:
+    """Run the original one-key save only beyond all original lifetimes."""
+
+    from . import console_runtime as native_host
+    check = _NATIVE_CONFIG_CHECK
+
+    def original_config():
+        return (
+            _native_config_current is check[0]
+            and _function_unchanged(check)
+            and check[0](config)
+        )
+
+    wakeup = self._first_send_wakeup
+    try:
+        while True:
+            wakeup.clear()
+            registry = getattr(controller, "prompt_queue_registry", None)
+            queued = bool(
+                registry is not None
+                and any(state.total_count for state in registry._states.values())
+            )
+            with self._execution_capacity_lock:
+                if (
+                    not self._first_send_sources
+                    and not self._ordinary_turns
+                    and not self._turn_custody
+                    and not queued
+                ):
+                    self._first_send_publishing = True
+                    break
+            await wakeup.wait()
+
+        def current():
+            return (
+                sys.modules.get("tldw_chatbook.config") is config_module
+                and original_config()
+                and vars(self._app).get("console_runtime") is self
+                and vars(self._app).get("app_config") is app_config
+                and self._chat_controller is controller
+                and self._chat_store is store
+                and config_module.current_config_identity() == identity
+            )
+
+        if not current():
+            raise RuntimeError("Original first-send source changed.")
+        producer = native_host.asyncio.create_task(
+            native_host.asyncio.to_thread(
+                config_module.apply_settings_mutation_to_cli_config,
+                {"console.onboarding": {"first_send_completed": True}},
+                mutation_precondition=current,
+            )
+        )
+        cancelled = False
+        while not producer.done():
+            try:
+                await native_host.asyncio.shield(producer)
+            except native_host.asyncio.CancelledError:
+                cancelled = True
+        result = producer.result()
+        if cancelled:
+            raise native_host.asyncio.CancelledError
+        if result.conflict or result.failure_phase is not None:
+            raise RuntimeError("Original first-send persistence failed.")
+    except Exception as exc:  # noqa: BLE001 - the completed turn stays valid
+        native_host.logger.warning(
+            "Failed to persist Console first-send completion (exception_type={})",
+            type(exc).__name__,
+        )
+    finally:
+        with self._execution_capacity_lock:
+            self._first_send_publishing = False
+        self._wake_first_send()
 
 def project_received_input(self, record, *, draft_committed=False) -> None:
     """Project a domain CAS into only the original attached composer."""

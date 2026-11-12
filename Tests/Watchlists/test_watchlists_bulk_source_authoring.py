@@ -979,7 +979,8 @@ async def test_a_load_landing_while_a_rail_is_recreated_reaches_it(monkeypatch, 
                 return [int(row["id"]) for row in tree._watchlists]
 
             expected = [watchlist["id"]]
-        await _until(pilot, lambda: shown() == expected)
+        pane_type = InspectorPane if rail == "right_rail" else WatchlistTree
+        await _until(pilot, lambda: bool(screen.query(pane_type)) and shown() == expected)
         result = shown()
 
     assert landed == [True]

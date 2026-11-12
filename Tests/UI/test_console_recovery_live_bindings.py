@@ -50,7 +50,10 @@ async def test_region_recovery_callbacks_read_live_screen_and_preserve_order(
     events = []
     hold = [object()]
     held = SimpleNamespace(
-        preparation_id="p", executed_draft="held draft", session_id="held"
+        preparation_id="p",
+        executed_draft="held draft",
+        session_id="held",
+        input_draft_revision=7,
     )
 
     def preparation():
@@ -61,14 +64,28 @@ async def test_region_recovery_callbacks_read_live_screen_and_preserve_order(
         events.append("hold")
         return hold[0]
 
+    read_sessions = []
+    original_inputs = SimpleNamespace(draft_revision=7)
+
+    def session_inputs(session_id):
+        read_sessions.append(session_id)
+        assert session_id == "held"
+        return original_inputs
+
     store = SimpleNamespace(
-        active_session_id="held", preparation_by_id=lambda _id: held
+        active_session_id="held",
+        preparation_by_id=lambda _id: held,
+        session_input_snapshot=session_inputs,
     )
+    message = object()
     controller = SimpleNamespace(
+        provider_continuation_recovery_message=lambda: message,
+        provider_continuation_replay_available=lambda: True,
         trace_call_recovery_preparation=preparation,
         context_compaction_hold=context_hold,
         store=store,
     )
+    screen._console_chat_controller = controller
     screen._ensure_console_chat_controller = lambda: controller
     screen._console_terminal_open = False
     region = screen._build_console_center()
@@ -94,7 +111,14 @@ async def test_region_recovery_callbacks_read_live_screen_and_preserve_order(
         events.append("dispatch")
         assert actual_controller is controller
         assert (actual_action, preparation_id) == (action, "p")
-        assert kwargs == {"on_started": started, "on_finished": finished}
+        on_result = kwargs.pop("on_result")
+        assert callable(on_result)
+        assert kwargs == {
+            "on_started": started,
+            "on_finished": finished,
+            "restore_draft": True,
+        }
+        on_result(result)
         if cleared:
             hold[0] = None
         # The conversation the composer shows when the action ends.
@@ -105,6 +129,7 @@ async def test_region_recovery_callbacks_read_live_screen_and_preserve_order(
     monkeypatch.setattr(chat_screen, "dispatch_trace_call_recovery_action", dispatch)
     assert await callback(action, "p") is result
     assert events[:4] == ["held", "hold", "dispatch", "composer"]
+    assert read_sessions == ["held"]
     assert loaded == (
         ["held draft"]
         if action == "cancel" and cleared and not draft and shown == "held"
@@ -112,14 +137,14 @@ async def test_region_recovery_callbacks_read_live_screen_and_preserve_order(
     )
     state = object()
 
-    def project(actual_preparation, *, context_hold):
+    def project(actual_preparation, *, context_hold, provider_contact=None):
         assert actual_preparation is held
+        assert provider_contact is None
         assert context_hold is hold[0]
         return state
 
     monkeypatch.setattr(chat_screen, "trace_call_recovery_state", project)
-    # TASK-35444: the state read takes the live controller; it ensures one
-    # only when there is none yet, as the first open always did.
+    # Passive state reads take the installed controller without ensuring it.
     live = [controller]
     monkeypatch.setattr(
         chat_screen.ChatScreen,
@@ -130,22 +155,34 @@ async def test_region_recovery_callbacks_read_live_screen_and_preserve_order(
         "the recovery state read ensured a live controller"
     )
     assert state_callback() is state
-    live[0] = None
-    screen._ensure_console_chat_controller = lambda: controller
-    assert state_callback() is state
-    # The continuation reads follow the same rule.
-    message = object()
-    controller.provider_continuation_recovery_message = lambda: message
-    controller.provider_continuation_replay_available = lambda: True
-    for builder, expected in (
-        (region._recovery_message_builder, message),
-        (region._recovery_replay_available_builder, True),
+    # Continuation readers must never ensure a controller, including first display.
+    for builder, expected, absent in (
+        (region._recovery_message_builder, message, None),
+        (region._recovery_replay_available_builder, True, False),
     ):
         live[0] = controller
         screen._ensure_console_chat_controller = lambda: pytest.fail(
-            "a continuation read ensured a live controller"
+            "passive continuation must not initialize a controller"
         )
         assert builder() is expected
         live[0] = None
-        screen._ensure_console_chat_controller = lambda: controller
-        assert builder() is expected
+        assert builder() is absent
+
+    from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
+        trace_call_recovery_state,
+    )
+
+    monkeypatch.setattr(chat_screen, "trace_call_recovery_state", trace_call_recovery_state)
+    assert state_callback() is None
+
+
+def test_passive_recovery_before_controller_creation_has_no_state():
+    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+
+    session = ConsoleSessionController.__new__(ConsoleSessionController)
+    session._current_chat_controller_accessor = lambda: None
+    session._ensure_console_chat_controller_fn = lambda: pytest.fail(
+        "passive recovery must not initialize a controller"
+    )
+    session._read_trace_recovery_state = lambda: chat_screen.trace_call_recovery_state
+    assert session._console_trace_recovery_state() is None

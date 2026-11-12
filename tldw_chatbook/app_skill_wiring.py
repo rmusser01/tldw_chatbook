@@ -6,6 +6,51 @@ from typing import (  # noqa: UP035 - preserve original public annotation object
 
 from . import app_service_wiring as _source_wiring
 
+from .Skills_Interop.skill_trust_models import (
+    _SkillTrustPublisher,
+    _skill_publisher_identity,
+    _skill_trust_publisher as _skill_trust_publisher,
+)
+
+
+def record_native_skill_trust_candidate(app, candidate):
+    """Observe only the original publisher's actual just-assigned candidate."""
+    import inspect
+    import sys
+    from types import FunctionType
+
+    marker = _skill_trust_publisher.get()
+    if type(marker) is not _SkillTrustPublisher or not marker.active:
+        return
+    if _skill_publisher_identity() != (marker.thread_id, marker.task):
+        return
+    source = marker.preparation.trust_source
+    if source is None or source.app is not app or candidate is None:
+        return
+    frame = sys._getframe(1)
+    getter = inspect.getattr_static(type(app), "local_skill_trust_service", None)
+    initializer = inspect.getattr_static(
+        type(app), "ensure_local_skill_trust_service", None
+    )
+    if not (
+        frame.f_locals.get("self") is app
+        and (
+            (
+                isinstance(getter, property)
+                and frame.f_code is getter.fget.__code__
+                and frame.f_locals.get("candidate") is candidate
+            )
+            or (
+                type(initializer) is FunctionType
+                and frame.f_code is initializer.__code__
+                and frame.f_locals.get("service") is candidate
+            )
+        )
+        and vars(app).get("_local_skill_trust_service") is candidate
+    ):
+        return
+    marker.candidate = candidate
+
 
 class _ConsoleSkillTrustSource(NamedTuple):
     """One stock service proof; no UI owner or permission verdict is captured."""
@@ -1090,6 +1135,7 @@ class SkillServiceWiringMixin:
             raise RuntimeError("console_skill_trust_owner_changed")
         if self._local_skill_trust_service is not None:
             return self._local_skill_trust_service
+        published_candidate = None
         async with self._local_skill_trust_service_build_lock:
             if (
                 _owner_current is not None
@@ -1117,4 +1163,8 @@ class SkillServiceWiringMixin:
                 # Another owner may publish while the native builder is held.
                 if self._local_skill_trust_service is None:
                     self._local_skill_trust_service = service
-            return self._local_skill_trust_service
+                    published_candidate = service
+            winner = self._local_skill_trust_service
+        if published_candidate is not None and _skill_trust_publisher.get() is not None:
+            record_native_skill_trust_candidate(self, published_candidate)
+        return winner

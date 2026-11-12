@@ -1,0 +1,24 @@
+................                                                         [100%]
+- generated xml file: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-native_compat1/tests.xml -
+============================= slowest 25 durations =============================
+21.48s call     Tests/Chat/test_console_workflow_scheduling.py::test_enabled_native_workflow_exclusion_and_unrelated_wake_delivery
+10.39s call     Tests/Chat/test_console_workflow_dispatch.py::test_native_failed_run_requires_explicit_repair_preserving_history_and_spend
+8.73s call     Tests/Chat/test_console_workflow_dispatch.py::test_plan_then_duplicate_approval_launches_one_native_task
+6.84s call     Tests/Agents/test_workflow_launch_freshness.py::test_exclusion_after_native_preparation_retains_original_unknown_custody
+6.34s call     Tests/Chat/test_workflow_settlement_delivery.py::test_stop_pending_initial_acceptance_drains_original_cell
+6.26s setup    Tests/Agents/test_workflow_launch_freshness.py::test_dependency_source_change_refuses_before_child_commit[alias-_dependency_plan]
+5.03s call     Tests/Agents/test_workflow_launch_freshness.py::test_preparation_and_launch_cover_real_dependency_shell_and_sources[_dependency_plan]
+4.46s setup    Tests/Agents/test_workflow_launch_freshness.py::test_dependency_source_change_refuses_before_child_commit[shell-_dependency_plan]
+4.38s setup    Tests/Agents/test_workflow_launch_freshness.py::test_preparation_and_launch_cover_real_dependency_shell_and_sources[_dependency_plan]
+4.33s setup    Tests/Agents/test_workflow_launch_freshness.py::test_dependency_source_change_refuses_before_child_commit[replace-_dependency_plan]
+4.30s call     Tests/Agents/test_workflow_launch_freshness.py::test_final_collector_is_owned_before_rows_and_drains_on_refusal[False]
+4.03s setup    Tests/Agents/test_workflow_launch_freshness.py::test_dependency_source_change_refuses_before_child_commit[body-_dependency_plan]
+2.94s call     Tests/Agents/test_workflow_launch_freshness.py::test_contention_retry_keeps_original_reservation_and_duplicate_skips_reads
+2.39s call     Tests/Agents/test_workflow_launch_freshness.py::test_dependency_source_change_refuses_before_child_commit[alias-_dependency_plan]
+1.69s call     Tests/Agents/test_workflow_launch_freshness.py::test_dependency_source_change_refuses_before_child_commit[replace-_dependency_plan]
+1.57s call     Tests/Agents/test_workflow_launch_freshness.py::test_dependency_source_change_refuses_before_child_commit[body-_dependency_plan]
+1.50s call     Tests/Agents/test_workflow_launch_freshness.py::test_final_collector_is_owned_before_rows_and_drains_on_refusal[True]
+1.43s call     Tests/Agents/test_workflow_launch_freshness.py::test_dependency_source_change_refuses_before_child_commit[shell-_dependency_plan]
+
+(7 durations < 1s hidden.)
+16 passed in 100.79s (0:01:40)

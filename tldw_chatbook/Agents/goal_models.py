@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import PurePosixPath
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
 from pydantic import (
     BaseModel,
@@ -17,12 +17,14 @@ from pydantic import (
     model_validator,
 )
 
-from tldw_chatbook.Agents.agent_models import RunOutcome, RunTerminationReason
 from tldw_chatbook.Agents.automatic_work_budget import (
     AutomaticWorkLimits,
     AutomaticWorkSnapshot,
 )
-from tldw_chatbook.Skills_Interop.skill_script_runner import ScriptRunResult
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Agents.agent_models import RunOutcome, RunTerminationReason
+    from tldw_chatbook.Skills_Interop.skill_script_runner import ScriptRunResult
 
 Finite = Annotated[int, Field(ge=0, lt=2**63)]
 Identity = Annotated[str, StringConstraints(min_length=1, max_length=256)]
@@ -364,6 +366,8 @@ class GoalIterationResult:
     observations: tuple[GoalToolObservation, ...] = ()
 
     def __post_init__(self):
+        from tldw_chatbook.Agents.agent_models import RunTerminationReason
+
         if isinstance(self.termination_reason, RunTerminationReason):
             return
         code = self.termination_reason

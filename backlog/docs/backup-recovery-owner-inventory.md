@@ -2774,7 +2774,7 @@ private staged copies. Model lease rows retain their existing cohort status.
 
 | sqlite:recovery.credentials | tldw_chatbook/Backup_Recovery/credentials | _PRIVATE_FILE | disposable credential reconstruction |
 | sqlite:recovery.validation | tldw_chatbook/DB/private_sqlite | _PRIVATE_AND_READ_ONLY | disposable imported candidate validation |
-| sqlite:recovery.validation_schema | tldw_chatbook/Backup_Recovery/sqlite_validation | _MEMORY | installed schema reference |
+| sqlite:recovery.validation_schema | tldw_chatbook/DB/recovery_workflow_schema | _MEMORY | installed schema reference |
 | sqlite:recovery.rag_projection_validation | tldw_chatbook/Backup_Recovery/rag_projection_validation | _READ_ONLY_URI | disposable Chroma candidate validation |
 
 | tldw_chatbook/Backup_Recovery/replacement.py | _copy_verified_payload | ZipFile | 1 | generic_boundary | private rollback verification |
@@ -2801,7 +2801,7 @@ private staged copies. Model lease rows retain their existing cohort status.
 | tldw_chatbook/Backup_Recovery/credentials.py | _rewrite_database | connect_private_sqlite | 1 | disposable | staged credential reconstruction |
 | tldw_chatbook/Backup_Recovery/credentials.py | _rewrite_database | os.replace | 1 | disposable | staged credential reconstruction |
 | tldw_chatbook/Backup_Recovery/credentials.py | _write | atomic_private_write_text | 1 | disposable | staged credential rewrite |
-| tldw_chatbook/Backup_Recovery/sqlite_validation.py | _reference | connect_private_sqlite | 1 | memory | installed schema reference |
+| tldw_chatbook/DB/recovery_workflow_schema.py | open_installed_schema | connect_private_sqlite | 1 | memory | recovery.validation_schema, installed DDL only |
 | tldw_chatbook/Backup_Recovery/rag_projection_validation.py | _native_validate | PersistentClient | 1 | disposable | backup_rag_projection_validation |
 | tldw_chatbook/Backup_Recovery/rag_projection_validation.py | _preflight | connect_private_sqlite | 1 | disposable | backup_rag_projection_validation |
 | tldw_chatbook/Backup_Recovery/rag_projection_validation.py | validate_groups | create_private_file | 1 | disposable | backup_rag_projection_validation |
@@ -3082,6 +3082,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Tools/local_tool_impls.py | _acquire_expected_target_lock | open | 1 | unsupported | external |
 | tldw_chatbook/Tools/local_tool_impls.py | _assert_expected_target_is_current | open | 1 | unsupported | external |
 | tldw_chatbook/Tools/local_tool_impls.py | _edit_relative_file | open | 1 | unsupported | external |
+| tldw_chatbook/Tools/local_tool_impls.py | _read_bounded_bytes | open | 1 | external_input | read-only admitted workspace input |
 | tldw_chatbook/Tools/local_tool_impls.py | _read_relative_descriptor | open | 1 | unsupported | external |
 | tldw_chatbook/Tools/local_tool_impls.py | _read_write_target | open | 1 | unsupported | external |
 | tldw_chatbook/Tools/patch_tool_impls.py | _patch_relative_file | open | 1 | unsupported | external |
@@ -3089,6 +3090,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Tools/remote_worker_bundle.py | _assert_expected_target_is_current | open | 1 | unsupported | external |
 | tldw_chatbook/Tools/remote_worker_bundle.py | _edit_relative_file | open | 1 | unsupported | external |
 | tldw_chatbook/Tools/remote_worker_bundle.py | _patch_relative_file | open | 1 | unsupported | external |
+| tldw_chatbook/Tools/remote_worker_bundle.py | _read_bounded_bytes | open | 1 | external_input | read-only admitted workspace input |
 | tldw_chatbook/Tools/remote_worker_bundle.py | _read_relative_descriptor | open | 1 | unsupported | external |
 | tldw_chatbook/Tools/remote_worker_bundle.py | _read_write_target | open | 1 | unsupported | external |
 | tldw_chatbook/Agents/project_instruction_resolver.py | _read_promotion_target_state | open | 1 | external_input | external-notes-workspace-or-export |
@@ -3518,8 +3520,8 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Utils/private_paths.py | open_private_lock_stream | open | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
 | tldw_chatbook/Utils/private_paths.py | unlink_private_file | open_private_binary | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
 | tldw_chatbook/Utils/private_paths.py | unlink_private_file | os.unlink | 2 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
-| tldw_chatbook/Backup_Recovery/detached_layout.py | _normalize_sqlite | connect | 1 | disposable | private output staging |
-| tldw_chatbook/Backup_Recovery/detached_layout.py | _normalize_sqlite | create_private_file | 2 | disposable | private output staging |
+| tldw_chatbook/Backup_Recovery/detached_layout.py | _normalize_sqlite | create_private_file | 1 | disposable | private input staging |
+| tldw_chatbook/Backup_Recovery/sqlite_validation.py | _write_normalized_candidate | create_private_file | 1 | disposable | private normalized output staging |
 | tldw_chatbook/Backup_Recovery/detached_layout.py | _normalize_sqlite | write | 1 | disposable | private output staging |
 | tldw_chatbook/Backup_Recovery/detached_layout.py | _restored_cache_paths | open | 1 | disposable | private output staging |
 | tldw_chatbook/Backup_Recovery/detached_layout.py | produce_detached_archive | create_private_file | 2 | disposable | private output staging |

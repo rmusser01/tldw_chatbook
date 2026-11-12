@@ -21,6 +21,10 @@ from tldw_chatbook.Backup_Recovery.models import (
 )
 from tldw_chatbook.Backup_Recovery.profile_paths import database_path, user_data_dir
 from tldw_chatbook.DB.recovery_sqlite import _checked_capture, _validate_sqlite
+from tldw_chatbook.DB.recovery_workflow_schema import (
+    WORKFLOW_MIGRATION,
+    workflow_catalog,
+)
 
 
 def _sqlite_inventory_status(
@@ -325,7 +329,12 @@ _AGENT_RUNS_MIGRATION_18_21 = (
 class _AgentRunsAdapter(_SQLiteDeclaration):
     def _validate_connection(self, connection):
         from .recovery_goal_schema import validate_goal_rows
-        return validate_goal_rows(connection)
+        from .recovery_workflow_schema import validate_workflow_rows
+
+        legacy = _legacy_workflow_version(connection)
+        return validate_goal_rows(connection) + validate_workflow_rows(
+            connection, schema_version=None if legacy is None else legacy + 1
+        )
 
     def schema_policy(self) -> SchemaPolicy:
         return SchemaPolicy(
@@ -338,6 +347,12 @@ class _AgentRunsAdapter(_SQLiteDeclaration):
                 (22, 23, _AGENT_RUNS_MIGRATION_22_23),
                 (23, 24, GOAL_MIGRATION),
                 (24, 25, REVIEW_BOUNDARY_MIGRATION),
+                (25, 26, WORKFLOW_MIGRATION),
+                (26, 27, WORKFLOW_ADMISSION_MIGRATION),
+                (27, 28, WORKFLOW_CHECKPOINT_MIGRATION),
+                (28, 29, WORKFLOW_WINDOW_MIGRATION),
+                (29, 30, WORKFLOW_REPAIR_INPUT_MIGRATION),
+                (30, 31, WORKFLOW_RECOVERY_REVIEW_MIGRATION),
             ),
         )
 
@@ -355,6 +370,7 @@ class _AgentRunsAdapter(_SQLiteDeclaration):
                     self.versions,
                     self.schemas,
                     version_query="SELECT MAX(version) FROM schema_version",
+                    allow_statistics=True,
                 )
         except (OSError, ValueError, sqlite3.Error):
             return ("operational_validation_unavailable",)
@@ -1380,8 +1396,8 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             "db.agent_runs",
             None,
             "agent_runs.db",
-            (18, 21, 22, 23, 24, 25),
-            _AGENT_RUNS_SCHEMA,
+            (18, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31),
+            (*_AGENT_RUNS_SCHEMA, *_LEGACY_WORKFLOW_SCHEMAS),
             ("db.chachanotes.primary",),
             optional_default=True,
         ),
@@ -1753,3 +1769,143 @@ _AGENT_RUNS_SCHEMA += tuple(
 # Keep every previously qualified physical lineage at both supported versions.
 _SUBSCRIPTIONS_SCHEMA = tuple((3, schema) for version, schema in _SUBSCRIPTIONS_SCHEMA
                               if version == 2) + _SUBSCRIPTIONS_SCHEMA
+
+
+
+_AGENT_RUNS_SCHEMA += tuple(
+    (26, workflow_catalog(catalog))
+    for version, catalog in _AGENT_RUNS_SCHEMA
+    if version == 25
+)
+
+
+from .recovery_workflow_schema import (
+    WORKFLOW_ADMISSION_MIGRATION,
+    workflow_admission_catalog,
+)
+
+_AGENT_RUNS_SCHEMA += tuple(
+    (27, workflow_admission_catalog(catalog))
+    for version, catalog in _AGENT_RUNS_SCHEMA
+    if version == 26
+)
+
+from .recovery_workflow_schema import (
+    WORKFLOW_CHECKPOINT_MIGRATION,
+    workflow_checkpoint_catalog,
+)
+
+_AGENT_RUNS_SCHEMA += tuple(
+    (28, workflow_checkpoint_catalog(catalog))
+    for version, catalog in _AGENT_RUNS_SCHEMA
+    if version == 27
+)
+
+
+from .recovery_workflow_schema import WORKFLOW_WINDOW_MIGRATION, workflow_window_catalog
+
+_AGENT_RUNS_SCHEMA += tuple(
+    (29, workflow_window_catalog(catalog))
+    for version, catalog in _AGENT_RUNS_SCHEMA
+    if version == 28
+)
+
+
+from .recovery_workflow_schema import (
+    WORKFLOW_REPAIR_INPUT_MIGRATION,
+    workflow_repair_input_catalog,
+)
+
+_AGENT_RUNS_SCHEMA += tuple(
+    (30, workflow_repair_input_catalog(catalog))
+    for version, catalog in _AGENT_RUNS_SCHEMA
+    if version == 29
+)
+
+
+from .recovery_workflow_schema import (
+    WORKFLOW_RECOVERY_REVIEW_MIGRATION,
+    workflow_recovery_review_catalog,
+)
+
+_AGENT_RUNS_SCHEMA += tuple(
+    (31, workflow_recovery_review_catalog(catalog))
+    for version, catalog in _AGENT_RUNS_SCHEMA
+    if version == 30
+)
+
+
+# Standalone pre-integration workflow versions used a different v25 meaning.
+# Freeze their exact catalogs separately; numeric labels never choose this bridge.
+def _build_legacy_workflow_schemas():
+    schemas = []
+    for catalog25 in dict.fromkeys(
+        workflow_catalog(catalog)
+        for version, catalog in _AGENT_RUNS_SCHEMA
+        if version == 24
+    ):
+        legacy_catalog = catalog25
+        for legacy_version, transform in enumerate(
+            (
+                None,
+                workflow_admission_catalog,
+                workflow_checkpoint_catalog,
+                workflow_window_catalog,
+                workflow_repair_input_catalog,
+                workflow_recovery_review_catalog,
+            ),
+            start=25,
+        ):
+            if transform is not None:
+                legacy_catalog = transform(legacy_catalog)
+            schemas.append((legacy_version, legacy_catalog))
+    return tuple(dict.fromkeys(schemas))
+
+
+_LEGACY_WORKFLOW_SCHEMAS = _build_legacy_workflow_schemas()
+
+
+def _legacy_workflow_version(connection):
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_schema WHERE type='table'"
+        )
+    }
+    if "workflow_runs" not in tables or "automatic_review_boundary_claims" in tables:
+        return None
+    row = connection.execute("SELECT MAX(version) FROM schema_version").fetchone()
+    if row is None or type(row[0]) is not int:
+        return None
+    catalog = tuple(
+        item[0]
+        for item in connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
+        )
+    )
+    return row[0] if (row[0], catalog) in _LEGACY_WORKFLOW_SCHEMAS else None
+
+
+def _legacy_workflow_upgrade(connection):
+    """Return one installed additive bridge only for an exact legacy catalog."""
+    version = _legacy_workflow_version(connection)
+    if version is None:
+        return None
+    statements = list(REVIEW_BOUNDARY_MIGRATION[:-1])
+    # Normalize the existing attempt-kind column order after adding review state.
+    if version >= 26:
+        statements.extend(WORKFLOW_ADMISSION_MIGRATION[:4])
+    for prior, migration in (
+        (26, WORKFLOW_ADMISSION_MIGRATION),
+        (27, WORKFLOW_CHECKPOINT_MIGRATION),
+        (28, WORKFLOW_WINDOW_MIGRATION),
+        (29, WORKFLOW_REPAIR_INPUT_MIGRATION),
+        (30, WORKFLOW_RECOVERY_REVIEW_MIGRATION),
+    ):
+        if version < prior:
+            statements.extend(migration[:-1])
+    statements.extend(
+        f"INSERT OR IGNORE INTO schema_version(version) VALUES ({current})"
+        for current in range(26, 32)
+    )
+    return 31, tuple(statements)

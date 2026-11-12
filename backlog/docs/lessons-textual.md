@@ -2570,3 +2570,21 @@ The fix patches nothing of Textual's.
 **Incident.** `test_dialog_validation_is_coalesced_owned_and_drained[close]` hung in 4 of 19 serial runs, and once past `--timeout` it kept pytest alive in teardown for 26 minutes. `PortraitRegionEditor.retire()` dismissed only `if self.is_mounted`. `push_screen` puts the editor on the stack (`app.screen` is the editor) at once, but its Compose and Mount run later on its own task, so a `controller.close()` that landed in that window set `_retired`, skipped the dismiss, and left the editor on top for good. The regions worker stayed parked in `push_screen_wait`, and `close()` (awaited on a runtime-backend change and on Personas unmount) waited on that worker forever. A class-level async stand-in for `on_mount` that awaits an event holds the editor in exactly that window, and made the hang deterministic: 4 of 4 cases red in 5 s each.
 
 **What to do.** A retire or close that may run before the modal mounts must not drop its dismissal. Queue it to run after mount (`self.call_later(self.retire)`: the Callback message is handled after `_pre_process` sets `_is_mounted`), rather than gating on `is_mounted`. To test the window, hold `on_mount` on the class (Textual dispatches it from `cls.__dict__`), wait with plain `asyncio.wait(..., timeout=...)` rather than Pilot, and dismiss a leftover modal in the cleanup so a red case still ends.
+
+
+## Trace the coroutine allocation and follow stored refresh aliases (TASK-39435, 2026-11-05)
+
+The native mounted workflow warning printed textual/cache.py, but coroutine
+origin tracking and tracemalloc identified ChatScreen's finally replay as the
+allocation site. An uninstrumented run passed, while actual Textual cancellation
+before worker entry deterministically left three eager native refresh coroutines
+unawaited. Pass async callables for view-refresh work; Textual invokes them only
+inside its worker. Synchronous lambdas returning coroutines need an async
+late-binding forwarder, preserving the original result.
+
+The first review found another exact native callback stored as
+ConsoleContextReadSnapshot.refresh. Name-only searching missed it. Its real-worker
+cancellation case failed before the same one-line correction and passed afterward,
+with a separate admitted-publication control. Follow the callback binding and
+consumer, capture warnings/GC inside child processes, and preserve distinct failed
+and passing source epochs; the printed warning receiver is not allocation proof.

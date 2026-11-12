@@ -1,0 +1,265 @@
+{
+  "head": "8fc02744869122f961cb92af0b069fccb7b7d6f2",
+  "files": [
+    {
+      "path": "Docs/Architecture/agent-runtime.md",
+      "matches_head": true,
+      "matches_final_covering": null
+    },
+    {
+      "path": "Tests/DB/test_workflow_active_time.py",
+      "matches_head": true,
+      "matches_final_covering": true
+    },
+    {
+      "path": "Tests/DB/test_workflow_admission_boundaries.py",
+      "matches_head": true,
+      "matches_final_covering": true
+    },
+    {
+      "path": "Tests/DB/test_workflow_attempts.py",
+      "matches_head": true,
+      "matches_final_covering": true
+    },
+    {
+      "path": "Tests/DB/test_workflow_runs.py",
+      "matches_head": true,
+      "matches_final_covering": true
+    },
+    {
+      "path": "Tests/UI/test_workflow_existing_admission.py",
+      "matches_head": true,
+      "matches_final_covering": true
+    },
+    {
+      "path": "tldw_chatbook/Agents/workflow_models.py",
+      "matches_head": true,
+      "matches_final_covering": true
+    },
+    {
+      "path": "tldw_chatbook/DB/automatic_work.py",
+      "matches_head": true,
+      "matches_final_covering": true
+    },
+    {
+      "path": "tldw_chatbook/DB/workflow_runs.py",
+      "matches_head": true,
+      "matches_final_covering": true
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/workflows.py",
+      "matches_head": true,
+      "matches_final_covering": true
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Console/console_workflow_setup.py",
+      "matches_head": true,
+      "matches_final_covering": true
+    }
+  ],
+  "cohorts": [
+    {
+      "name": "db-red",
+      "exit": 1,
+      "duration": 3.4765444579534233,
+      "changed": [],
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "11",
+          "skipped": "0",
+          "tests": "19",
+          "time": "1.864",
+          "timestamp": "2026-11-04T22:05:55.226831-08:00",
+          "hostname": "Roberts-MacBook-Pro-2.local"
+        }
+      ],
+      "failed": [
+        {
+          "name": "test_decision_and_all_result_reservations_share_capacity[1-WORKFLOW_BYTES-initial]",
+          "message": "Failed: DID NOT RAISE <class 'ValueError'>",
+          "text": "n=\"ready\" if kind == \"initial\" else \"remaining_ready\",\n        )\n        with db.connection() as conn:\n            retained = _retained(conn, snapshot.id if ceiling == \"WORKFLOW_BYTES\" else None)\n        limit = retained + 2 * RECORD_BYTES + len(decision.canonical_json().encode()) - shortfall\n        monkeypatch.setattr(workflow_runs, ceiling, limit)\n        args = dict(\n            revision_id=2, phase_id=\"phase-1\", purpose=\"execution\", owner_id=owner,\n            session_id=\"session\", command_id=\"joint-capacity-command\",\n            **{\"_\" + kind: decision},\n        )\n        before = _rows(db)\n        if shortfall:\n>           with pytest.raises(ValueError, match=\"^workflow_payload_capacity$\"):\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE           Failed: DID NOT RAISE <class 'ValueError'>\n\nTests/DB/test_workflow_admission_boundaries.py:99: Failed"
+        },
+        {
+          "name": "test_decision_and_all_result_reservations_share_capacity[1-WORKFLOW_BYTES-remaining]",
+          "message": "Failed: DID NOT RAISE <class 'ValueError'>",
+          "text": "n=\"ready\" if kind == \"initial\" else \"remaining_ready\",\n        )\n        with db.connection() as conn:\n            retained = _retained(conn, snapshot.id if ceiling == \"WORKFLOW_BYTES\" else None)\n        limit = retained + 2 * RECORD_BYTES + len(decision.canonical_json().encode()) - shortfall\n        monkeypatch.setattr(workflow_runs, ceiling, limit)\n        args = dict(\n            revision_id=2, phase_id=\"phase-1\", purpose=\"execution\", owner_id=owner,\n            session_id=\"session\", command_id=\"joint-capacity-command\",\n            **{\"_\" + kind: decision},\n        )\n        before = _rows(db)\n        if shortfall:\n>           with pytest.raises(ValueError, match=\"^workflow_payload_capacity$\"):\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE           Failed: DID NOT RAISE <class 'ValueError'>\n\nTests/DB/test_workflow_admission_boundaries.py:99: Failed"
+        },
+        {
+          "name": "test_decision_and_all_result_reservations_share_capacity[1-TOTAL_BYTES-initial]",
+          "message": "Failed: DID NOT RAISE <class 'ValueError'>",
+          "text": "n=\"ready\" if kind == \"initial\" else \"remaining_ready\",\n        )\n        with db.connection() as conn:\n            retained = _retained(conn, snapshot.id if ceiling == \"WORKFLOW_BYTES\" else None)\n        limit = retained + 2 * RECORD_BYTES + len(decision.canonical_json().encode()) - shortfall\n        monkeypatch.setattr(workflow_runs, ceiling, limit)\n        args = dict(\n            revision_id=2, phase_id=\"phase-1\", purpose=\"execution\", owner_id=owner,\n            session_id=\"session\", command_id=\"joint-capacity-command\",\n            **{\"_\" + kind: decision},\n        )\n        before = _rows(db)\n        if shortfall:\n>           with pytest.raises(ValueError, match=\"^workflow_payload_capacity$\"):\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE           Failed: DID NOT RAISE <class 'ValueError'>\n\nTests/DB/test_workflow_admission_boundaries.py:99: Failed"
+        },
+        {
+          "name": "test_decision_and_all_result_reservations_share_capacity[1-TOTAL_BYTES-remaining]",
+          "message": "Failed: DID NOT RAISE <class 'ValueError'>",
+          "text": "n=\"ready\" if kind == \"initial\" else \"remaining_ready\",\n        )\n        with db.connection() as conn:\n            retained = _retained(conn, snapshot.id if ceiling == \"WORKFLOW_BYTES\" else None)\n        limit = retained + 2 * RECORD_BYTES + len(decision.canonical_json().encode()) - shortfall\n        monkeypatch.setattr(workflow_runs, ceiling, limit)\n        args = dict(\n            revision_id=2, phase_id=\"phase-1\", purpose=\"execution\", owner_id=owner,\n            session_id=\"session\", command_id=\"joint-capacity-command\",\n            **{\"_\" + kind: decision},\n        )\n        before = _rows(db)\n        if shortfall:\n>           with pytest.raises(ValueError, match=\"^workflow_payload_capacity$\"):\n                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE           Failed: DID NOT RAISE <class 'ValueError'>\n\nTests/DB/test_workflow_admission_boundaries.py:99: Failed"
+        },
+        {
+          "name": "test_only_terminal_workflows_allow_another_launch_in_the_chat[awaiting_plan]",
+          "message": "Failed: DID NOT RAISE <class 'RuntimeError'>",
+          "text": "rkflow_runs.create(request, launch_id=\"first\") == first\n            assert _rows(db) == before\n            with pytest.raises(ValueError, match=\"launch_payload_conflict\"):\n                db.workflow_runs.create(request.model_copy(update={\"objective\": \"different\"}), launch_id=\"first\")\n            if status in {\"stopped\", \"completed\", \"closed\", \"removed\"}:\n                second = db.workflow_runs.create(request, launch_id=\"second\")\n                assert second.id != first.id and second.chain_id != first.chain_id\n                assert db.workflow_runs.get(first.id) == first\n            else:\n>               with pytest.raises(RuntimeError, match=\"^workflow_already_exists$\") as refused:\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE               Failed: DID NOT RAISE <class 'RuntimeError'>\n\nTests/DB/test_workflow_admission_boundaries.py:144: Failed"
+        },
+        {
+          "name": "test_only_terminal_workflows_allow_another_launch_in_the_chat[awaiting_approval]",
+          "message": "Failed: DID NOT RAISE <class 'RuntimeError'>",
+          "text": "rkflow_runs.create(request, launch_id=\"first\") == first\n            assert _rows(db) == before\n            with pytest.raises(ValueError, match=\"launch_payload_conflict\"):\n                db.workflow_runs.create(request.model_copy(update={\"objective\": \"different\"}), launch_id=\"first\")\n            if status in {\"stopped\", \"completed\", \"closed\", \"removed\"}:\n                second = db.workflow_runs.create(request, launch_id=\"second\")\n                assert second.id != first.id and second.chain_id != first.chain_id\n                assert db.workflow_runs.get(first.id) == first\n            else:\n>               with pytest.raises(RuntimeError, match=\"^workflow_already_exists$\") as refused:\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE               Failed: DID NOT RAISE <class 'RuntimeError'>\n\nTests/DB/test_workflow_admission_boundaries.py:144: Failed"
+        },
+        {
+          "name": "test_only_terminal_workflows_allow_another_launch_in_the_chat[running]",
+          "message": "Failed: DID NOT RAISE <class 'RuntimeError'>",
+          "text": "rkflow_runs.create(request, launch_id=\"first\") == first\n            assert _rows(db) == before\n            with pytest.raises(ValueError, match=\"launch_payload_conflict\"):\n                db.workflow_runs.create(request.model_copy(update={\"objective\": \"different\"}), launch_id=\"first\")\n            if status in {\"stopped\", \"completed\", \"closed\", \"removed\"}:\n                second = db.workflow_runs.create(request, launch_id=\"second\")\n                assert second.id != first.id and second.chain_id != first.chain_id\n                assert db.workflow_runs.get(first.id) == first\n            else:\n>               with pytest.raises(RuntimeError, match=\"^workflow_already_exists$\") as refused:\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE               Failed: DID NOT RAISE <class 'RuntimeError'>\n\nTests/DB/test_workflow_admission_boundaries.py:144: Failed"
+        },
+        {
+          "name": "test_only_terminal_workflows_allow_another_launch_in_the_chat[paused]",
+          "message": "Failed: DID NOT RAISE <class 'RuntimeError'>",
+          "text": "rkflow_runs.create(request, launch_id=\"first\") == first\n            assert _rows(db) == before\n            with pytest.raises(ValueError, match=\"launch_payload_conflict\"):\n                db.workflow_runs.create(request.model_copy(update={\"objective\": \"different\"}), launch_id=\"first\")\n            if status in {\"stopped\", \"completed\", \"closed\", \"removed\"}:\n                second = db.workflow_runs.create(request, launch_id=\"second\")\n                assert second.id != first.id and second.chain_id != first.chain_id\n                assert db.workflow_runs.get(first.id) == first\n            else:\n>               with pytest.raises(RuntimeError, match=\"^workflow_already_exists$\") as refused:\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE               Failed: DID NOT RAISE <class 'RuntimeError'>\n\nTests/DB/test_workflow_admission_boundaries.py:144: Failed"
+        },
+        {
+          "name": "test_only_terminal_workflows_allow_another_launch_in_the_chat[recovery_required]",
+          "message": "Failed: DID NOT RAISE <class 'RuntimeError'>",
+          "text": "rkflow_runs.create(request, launch_id=\"first\") == first\n            assert _rows(db) == before\n            with pytest.raises(ValueError, match=\"launch_payload_conflict\"):\n                db.workflow_runs.create(request.model_copy(update={\"objective\": \"different\"}), launch_id=\"first\")\n            if status in {\"stopped\", \"completed\", \"closed\", \"removed\"}:\n                second = db.workflow_runs.create(request, launch_id=\"second\")\n                assert second.id != first.id and second.chain_id != first.chain_id\n                assert db.workflow_runs.get(first.id) == first\n            else:\n>               with pytest.raises(RuntimeError, match=\"^workflow_already_exists$\") as refused:\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE               Failed: DID NOT RAISE <class 'RuntimeError'>\n\nTests/DB/test_workflow_admission_boundaries.py:144: Failed"
+        },
+        {
+          "name": "test_only_terminal_workflows_allow_another_launch_in_the_chat[awaiting_resume]",
+          "message": "Failed: DID NOT RAISE <class 'RuntimeError'>",
+          "text": "rkflow_runs.create(request, launch_id=\"first\") == first\n            assert _rows(db) == before\n            with pytest.raises(ValueError, match=\"launch_payload_conflict\"):\n                db.workflow_runs.create(request.model_copy(update={\"objective\": \"different\"}), launch_id=\"first\")\n            if status in {\"stopped\", \"completed\", \"closed\", \"removed\"}:\n                second = db.workflow_runs.create(request, launch_id=\"second\")\n                assert second.id != first.id and second.chain_id != first.chain_id\n                assert db.workflow_runs.get(first.id) == first\n            else:\n>               with pytest.raises(RuntimeError, match=\"^workflow_already_exists$\") as refused:\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE               Failed: DID NOT RAISE <class 'RuntimeError'>\n\nTests/DB/test_workflow_admission_boundaries.py:144: Failed"
+        },
+        {
+          "name": "test_concurrent_new_launches_serialize_the_same_chat_predicate",
+          "message": "AssertionError: assert ['created', 'created'] == ['created', 'refused']\n  \n  At index 1 diff: 'created' != 'refused'\n  Use -v to get more diff",
+          "text": "2)\n        request = make_workflow_request(tmp_path)\n    \n        def create(launch):\n            with closing(AgentRunsDB(path)) as db:\n                entered.wait(5)\n                try:\n                    return \"created\", db.workflow_runs.create(request, launch_id=launch).id\n                except RuntimeError as error:\n                    assert str(error) == \"workflow_already_exists\"\n                    return \"refused\", error.workflow_id\n    \n        with ThreadPoolExecutor(max_workers=2) as workers:\n            outcomes = list(workers.map(create, (\"one\", \"two\")))\n>       assert sorted(kind for kind, _ in outcomes) == [\"created\", \"refused\"]\nE       AssertionError: assert ['created', 'created'] == ['created', 'refused']\nE         \nE         At index 1 diff: 'created' != 'refused'\nE         Use -v to get more diff\n\nTests/DB/test_workflow_admission_boundaries.py:174: AssertionError"
+        }
+      ]
+    },
+    {
+      "name": "ui-red",
+      "exit": 1,
+      "duration": 11.46460891701281,
+      "changed": [],
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "2",
+          "skipped": "0",
+          "tests": "2",
+          "time": "10.037",
+          "timestamp": "2026-11-04T22:07:19.880270-08:00",
+          "hostname": "Roberts-MacBook-Pro-2.local"
+        }
+      ],
+      "failed": [
+        {
+          "name": "test_existing_workflow_is_the_actionable_refusal_target[public]",
+          "message": "AssertionError: re/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py\", line 691, in run_until_complete\n      return future.result()\n             ^^^^^^^^^^^^^^^\n    File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Tests/UI/test_workflow_existing_admission.py\", line 113, in existing_journey\n      await rig.close()\n    File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Tests/Chat/workflow_rig.py\", line 186, in close\n      assert self.runtime.execution_capacity.snapshot().executions == ()\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py\", line 1906, in execution_capacity\n      return self._get_execution_capacity()\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py\", line 1949, in _get_execution_capacity\n      raise RuntimeError(\"runtime capacity is disposed\")\n  RuntimeError: runtime capacity is disposed\n  \nassert 1 == 0\n +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python', '-X', 'utf8', '-c', '\\nim...sting_journey(Path(os.environ[\"XDG_DATA_HOME\"]).parent, sys.argv[2]))\\n', 'workflow-existing', 'public'], returncode=1).returncode",
+          "text": "^^^^^^^^\nE           File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py\", line 1906, in execution_capacity\nE             return self._get_execution_capacity()\nE                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE           File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py\", line 1949, in _get_execution_capacity\nE             raise RuntimeError(\"runtime capacity is disposed\")\nE         RuntimeError: runtime capacity is disposed\nE         \nE       assert 1 == 0\nE        +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python', '-X', 'utf8', '-c', '\\nim...sting_journey(Path(os.environ[\"XDG_DATA_HOME\"]).parent, sys.argv[2]))\\n', 'workflow-existing', 'public'], returncode=1).returncode\n\nTests/Backup_Recovery/test_home_citation_retirement.py:332: AssertionError"
+        },
+        {
+          "name": "test_existing_workflow_is_the_actionable_refusal_target[mounted]",
+          "message": "AssertionError: re/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py\", line 691, in run_until_complete\n      return future.result()\n             ^^^^^^^^^^^^^^^\n    File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Tests/UI/test_workflow_existing_admission.py\", line 113, in existing_journey\n      await rig.close()\n    File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Tests/Chat/workflow_rig.py\", line 186, in close\n      assert self.runtime.execution_capacity.snapshot().executions == ()\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py\", line 1906, in execution_capacity\n      return self._get_execution_capacity()\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py\", line 1949, in _get_execution_capacity\n      raise RuntimeError(\"runtime capacity is disposed\")\n  RuntimeError: runtime capacity is disposed\n  \nassert 1 == 0\n +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python', '-X', 'utf8', '-c', '\\nim...ting_journey(Path(os.environ[\"XDG_DATA_HOME\"]).parent, sys.argv[2]))\\n', 'workflow-existing', 'mounted'], returncode=1).returncode",
+          "text": "^^^^^^^^\nE           File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py\", line 1906, in execution_capacity\nE             return self._get_execution_capacity()\nE                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE           File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py\", line 1949, in _get_execution_capacity\nE             raise RuntimeError(\"runtime capacity is disposed\")\nE         RuntimeError: runtime capacity is disposed\nE         \nE       assert 1 == 0\nE        +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python', '-X', 'utf8', '-c', '\\nim...ting_journey(Path(os.environ[\"XDG_DATA_HOME\"]).parent, sys.argv[2]))\\n', 'workflow-existing', 'mounted'], returncode=1).returncode\n\nTests/Backup_Recovery/test_home_citation_retirement.py:332: AssertionError"
+        }
+      ]
+    },
+    {
+      "name": "ui-red2",
+      "exit": 1,
+      "duration": 23.838796499883756,
+      "changed": [],
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "2",
+          "skipped": "0",
+          "tests": "2",
+          "time": "22.470",
+          "timestamp": "2026-11-04T22:08:14.973637-08:00",
+          "hostname": "Roberts-MacBook-Pro-2.local"
+        }
+      ],
+      "failed": [
+        {
+          "name": "test_existing_workflow_is_the_actionable_refusal_target[public]",
+          "message": "AssertionError: b1 thread=8461753728.\n  retired and reopened\n  Traceback (most recent call last):\n    File \"<string>\", line 11, in <module>\n    File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py\", line 195, in run\n      return runner.run(main)\n             ^^^^^^^^^^^^^^^^\n    File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py\", line 118, in run\n      return self._loop.run_until_complete(task)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py\", line 691, in run_until_complete\n      return future.result()\n             ^^^^^^^^^^^^^^^\n    File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Tests/UI/test_workflow_existing_admission.py\", line 72, in existing_journey\n      assert \"workflow_already_exists\" in message\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  AssertionError\n  \nassert 1 == 0\n +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python', '-X', 'utf8', '-c', '\\nim...sting_journey(Path(os.environ[\"XDG_DATA_HOME\"]).parent, sys.argv[2]))\\n', 'workflow-existing', 'public'], returncode=1).returncode",
+          "text": "    File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py\", line 691, in run_until_complete\nE             return future.result()\nE                    ^^^^^^^^^^^^^^^\nE           File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Tests/UI/test_workflow_existing_admission.py\", line 72, in existing_journey\nE             assert \"workflow_already_exists\" in message\nE                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nE         AssertionError\nE         \nE       assert 1 == 0\nE        +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python', '-X', 'utf8', '-c', '\\nim...sting_journey(Path(os.environ[\"XDG_DATA_HOME\"]).parent, sys.argv[2]))\\n', 'workflow-existing', 'public'], returncode=1).returncode\n\nTests/Backup_Recovery/test_home_citation_retirement.py:332: AssertionError"
+        },
+        {
+          "name": "test_existing_workflow_is_the_actionable_refusal_target[mounted]",
+          "message": "AssertionError: python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py\", line 118, in run\n      return self._loop.run_until_complete(task)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py\", line 691, in run_until_complete\n      return future.result()\n             ^^^^^^^^^^^^^^^\n    File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Tests/UI/test_workflow_existing_admission.py\", line 100, in existing_journey\n      await until(pilot, lambda: isinstance(host.screen, ConsoleWorkflowStatus))\n    File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Tests/UI/test_workflow_existing_admission.py\", line 82, in until\n      async with asyncio.timeout(8):\n                 ^^^^^^^^^^^^^^^^^^\n    File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py\", line 115, in __aexit__\n      raise TimeoutError from exc_val\n  TimeoutError\n  \nassert 1 == 0\n +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python', '-X', 'utf8', '-c', '\\nim...ting_journey(Path(os.environ[\"XDG_DATA_HOME\"]).parent, sys.argv[2]))\\n', 'workflow-existing', 'mounted'], returncode=1).returncode",
+          "text": "it until(pilot, lambda: isinstance(host.screen, ConsoleWorkflowStatus))\nE           File \"/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Tests/UI/test_workflow_existing_admission.py\", line 82, in until\nE             async with asyncio.timeout(8):\nE                        ^^^^^^^^^^^^^^^^^^\nE           File \"/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py\", line 115, in __aexit__\nE             raise TimeoutError from exc_val\nE         TimeoutError\nE         \nE       assert 1 == 0\nE        +  where 1 = CompletedProcess(args=['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python', '-X', 'utf8', '-c', '\\nim...ting_journey(Path(os.environ[\"XDG_DATA_HOME\"]).parent, sys.argv[2]))\\n', 'workflow-existing', 'mounted'], returncode=1).returncode\n\nTests/Backup_Recovery/test_home_citation_retirement.py:332: AssertionError"
+        }
+      ]
+    },
+    {
+      "name": "green",
+      "exit": 0,
+      "duration": 18.14699804200791,
+      "changed": [],
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "21",
+          "time": "16.667",
+          "timestamp": "2026-11-04T22:09:18.634924-08:00",
+          "hostname": "Roberts-MacBook-Pro-2.local"
+        }
+      ],
+      "failed": []
+    },
+    {
+      "name": "covering",
+      "exit": 0,
+      "duration": 65.09953333297744,
+      "changed": [],
+      "suites": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "149",
+          "time": "63.714",
+          "timestamp": "2026-11-04T22:10:43.323442-08:00",
+          "hostname": "Roberts-MacBook-Pro-2.local"
+        }
+      ],
+      "failed": []
+    }
+  ],
+  "children": [
+    {
+      "path": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/final-fix-covering-child0.log",
+      "hash_matches": true,
+      "retirement_marker": true
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/final-fix-covering-child1.log",
+      "hash_matches": true,
+      "retirement_marker": true
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/final-fix-covering-child2.log",
+      "hash_matches": true,
+      "retirement_marker": true
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/final-fix-covering-child3.log",
+      "hash_matches": true,
+      "retirement_marker": true
+    }
+  ],
+  "db_red_product_matches_base": {
+    "tldw_chatbook/Agents/workflow_models.py": true,
+    "tldw_chatbook/DB/automatic_work.py": true,
+    "tldw_chatbook/DB/workflow_runs.py": true,
+    "tldw_chatbook/UI/Console_Modules/workflows.py": true,
+    "tldw_chatbook/Widgets/Console/console_workflow_setup.py": true
+  },
+  "static_base_input_hashes_verified": true
+}

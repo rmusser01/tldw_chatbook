@@ -1,0 +1,754 @@
+{
+  "selector": [
+    "task-1",
+    "task-2",
+    "task-3",
+    "task-4",
+    "task-5",
+    "task-6",
+    "task-7",
+    "task-8"
+  ],
+  "suffixes": [
+    "-report.md",
+    "-review.md"
+  ],
+  "count": 81,
+  "bytes": 1990976,
+  "task10_names": [
+    "task-10-report.md",
+    "task-10-review.md"
+  ],
+  "existing_exact_lookup_count": 6,
+  "sources": [
+    {
+      "file": "task-1-report.md",
+      "sha256": "d76eabcace6af4e460be89a085c7c0bf0fb42ea563a066a8b914dd4ae26b038d",
+      "bytes": 18804,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-1-review.md",
+      "sha256": "a112a304fd11ae1f3df35d5a1390e8e5d16dbc458249efdfdbf2f8c1811b5d6f",
+      "bytes": 7023,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-10-report.md",
+      "sha256": "7b48554a9ccf711767c55bde0ca22f84933c2362317bcf91ca6dc087bb431d07",
+      "bytes": 39728,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": true,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-10-review.md",
+      "sha256": "310931472fb9e279a490058f4b15aa8b2cc40c65216ab35f91d910c6d9865965",
+      "bytes": 19333,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": true,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-2-report.md",
+      "sha256": "b46496b699fadc479095049995d66f6bb6be1ebb234c93d1ff90c4fbe76b496f",
+      "bytes": 25606,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-2-review.md",
+      "sha256": "5f5e6e70c1e6e09d0a2d05c84a8616056f7bdb56240973fcdeba7b5f74b848ff",
+      "bytes": 9574,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-3-report.md",
+      "sha256": "82273ab5e9dcedce99f8ede67fad10e28ec1c6ac8102015b1e2f31777f226a38",
+      "bytes": 17802,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-3-review.md",
+      "sha256": "4063b959ea08fdb24594b18884d6493ea8cb8e4aa45c9c021137ff52143f2ec4",
+      "bytes": 6930,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-4-report.md",
+      "sha256": "46c25c12d9e831fc31d6f016d7dcee7fe91b6ed5ee29a2967f9fba5dc2266e8d",
+      "bytes": 20670,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-4-review.md",
+      "sha256": "ec6dcc906b76ce206cec99da21eab1535b66ae682465ff24b7bdceebdfdd3931",
+      "bytes": 8867,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-5-report.md",
+      "sha256": "b6ba13c01bb5e085a6aeabd512764d644ae677aeec97db6bf422f7967505627b",
+      "bytes": 23205,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-5-review.md",
+      "sha256": "623a220dcffe42cecaf6d27b0f3be86bbaf63aa14b676a1256068d2a7a8f429e",
+      "bytes": 12309,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-6-report.md",
+      "sha256": "6249247f403528e7fc9a8338ff13a018f1afd8ec2ab434084e9ab097116a7c43",
+      "bytes": 25894,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-6-review.md",
+      "sha256": "5039af374dcfcfc2572bf63ad180e733aac891c2a432915610addb42acb4090e",
+      "bytes": 7370,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-7-report.md",
+      "sha256": "7a27b0fae6fcad2aa02e82d6aaafae1a75dd987a9d73248e7989ad3e6dc8648e",
+      "bytes": 27144,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-7-review.md",
+      "sha256": "91fd88f3e293233cd998bacc25b62035c68e1268dcb3656c8d00a5f192c39bb9",
+      "bytes": 10911,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8-controller-recovery-report.md",
+      "sha256": "5462fcd6a1bd161db6b8a6954519a38bef5cd1fcb439158db905ea4f7d31e799",
+      "bytes": 165881,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8-controller-report.md",
+      "sha256": "87b9ed6b4e834aa791849018d62eb7eea225cbcabc46487750e4ceff8a086002",
+      "bytes": 163254,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8-report.md",
+      "sha256": "e4b22d4fcd331a8c1d3df50578ebfdea41c37d9ebff645c9946a1b1aca6079ce",
+      "bytes": 12379,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8-stop-source-helper-report.md",
+      "sha256": "cb8b6bc33b7f56931e89ba94a778ad27d9198a2dad4bf6a066da0117540a546d",
+      "bytes": 18963,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8-whole-fix1-report.md",
+      "sha256": "fcdfe60757ff6aea703acbb9e0b1ebc923a9685b6733e237b329444220283107",
+      "bytes": 16808,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": true,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8-whole-fix1-review.md",
+      "sha256": "c2ad4c91386b204aa6eddd0b4488cd61e42289c379676413528f49e251c59ccc",
+      "bytes": 14104,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": true,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8-whole-review.md",
+      "sha256": "a98463f6c59356e1af7a0d0ab34dfb624b94015910d9231936570826df4bce73",
+      "bytes": 25175,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8a-report.md",
+      "sha256": "12cc88c8b6156f1b1c116338f44d7586778e99ebc2fa15b127f07ccc16d0da54",
+      "bytes": 12045,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8a-review.md",
+      "sha256": "162d90a5bcd6b28842a92df8711b95122aad2d4c7c673b017b0ddfc29dbeaa5b",
+      "bytes": 7078,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8b-report.md",
+      "sha256": "98bf331df284c33b8e7301025ddefd55b6cdc468971cc492c42e899d3e43ba83",
+      "bytes": 24575,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8b-review.md",
+      "sha256": "86bd9289ade581d53535f3fe6219d6c2808f34ae7a8fe8e2825e898eeafb4f38",
+      "bytes": 11304,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8c-report.md",
+      "sha256": "17c289620028472848504c9b8471f2d46d3831740e2ccc17ce33e08c8a3613bc",
+      "bytes": 15668,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8c-review.md",
+      "sha256": "d2e80727c222ba6d6daad6e61eb96c36dffa289a906154dbcc29f58493927bd5",
+      "bytes": 7298,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d1-report.md",
+      "sha256": "3bc9bacf44cb811b285099dd198ba838db187a428dbaf90e5d9e2e7bbcccf038",
+      "bytes": 33324,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d1-review.md",
+      "sha256": "aa70fbf316fa0954db949f7d39535a3fa1727cded56f7155de3a2b21840586a2",
+      "bytes": 15598,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2-confirmed-undo-report.md",
+      "sha256": "6c3016007292a45e9270a7a36a77d458946a9746a11ab3c3f2ba26e513bf8e92",
+      "bytes": 21699,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2-confirmed-undo-review.md",
+      "sha256": "01311469837dffd17389497b577af824996b29ec7c85b7560a435d6678c18fc2",
+      "bytes": 19234,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2-git-custody-report.md",
+      "sha256": "476288059f0dccee3ad2aea0b22ab75424613911fce85bdd7ebf579b65f4456c",
+      "bytes": 15880,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2-git-custody-review.md",
+      "sha256": "f88bb9c340299b5dfbd55ee7f8265351bcf1331d1451702c42dbc8afc0e37623",
+      "bytes": 12134,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2-ordinary-integration-fix1-report.md",
+      "sha256": "3b44d4081b28891d2c24907bad47e812a83fa6387379c96cdf275c4a05e46b28",
+      "bytes": 13183,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2-ordinary-integration-fix2-report.md",
+      "sha256": "6ab328e248fe8ec725a44e153dd2043eeebbeebc4b940a2b5a3d266bee631d99",
+      "bytes": 10116,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2-ordinary-integration-report.md",
+      "sha256": "c021f127bd6c1bfe96fffd13aa7436a2fbf3ffb04dfdec09f302fb5e744b329e",
+      "bytes": 80817,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2-ordinary-integration-review.md",
+      "sha256": "df89847a1eb48431a6c1f83758ed4eb203836123ab67eb52fe5d502e3398287c",
+      "bytes": 29783,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2-ordinary-physical-report.md",
+      "sha256": "b5fe0e8c578105e7f3bb092280a9c4eed717cecda70a0a5182961cc9a8e2a9d4",
+      "bytes": 2730,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2-ordinary-source-report.md",
+      "sha256": "7da0acb5d0526e8f9a70c1a83a57b9c3a44ed9c71dd2577a9eac62a6e8dc6fda",
+      "bytes": 24831,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2-ordinary-source-review.md",
+      "sha256": "57ffc57a948e9463f384ffc34d1ccbb8b4bfad79fa1a92d449970f8f8e49d35f",
+      "bytes": 13185,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2-raw-cli-report.md",
+      "sha256": "522b0858403489657961cc178a3aaeea7d2bd45597b20ab6e07f08c34f602990",
+      "bytes": 30728,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2-raw-cli-review.md",
+      "sha256": "26cf759890feabcadd59de3e26250b4a3fd13b8335732d4bfe3b782fbdc36d16",
+      "bytes": 14726,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2-ssh-request-report.md",
+      "sha256": "82183a5105f83f1d04fdb2c9d049f1eae1f96872b849b70f3e5caf554a804114",
+      "bytes": 38903,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2-ssh-request-review.md",
+      "sha256": "c5c3df6f6219a75dcf12e7cf57b7ff711dd7dedd3ab4ee5360682da96fcb5734",
+      "bytes": 18425,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2-wave-fix1-report.md",
+      "sha256": "efa32bd006bb633d443fb43c0b77134663c3b911deeab638f54bd7432151326d",
+      "bytes": 6256,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2-wave-fix2-report.md",
+      "sha256": "2bc1c0ef0a0f6d66b52dbbfa34507b1047f9b6937385ca99654236288f22786a",
+      "bytes": 7551,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2-wave-report.md",
+      "sha256": "bc71438edd109a9d3c15cc63b1603badc771f28782f6e4e9955e41ced70ed51f",
+      "bytes": 13085,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2-wave-review.md",
+      "sha256": "3902d8c0063865bf22b820427e7d22cc5d376f5369af79713bb9f4d6240317a2",
+      "bytes": 22158,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2a-report.md",
+      "sha256": "37e89e743a1ae4d5de74498c3a5b9f752ed6d616a955dff8a32da9107a675979",
+      "bytes": 25298,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2a-review.md",
+      "sha256": "7cf090468ae7fb60ac87d9a67639576d45f65b5e6a5f5fdb7838e3556e526828",
+      "bytes": 12945,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2b-report.md",
+      "sha256": "7457dc3b14cf12844a2ceacf0948688a43953374af6da51ec1553281d291e3fb",
+      "bytes": 23969,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2b1-review.md",
+      "sha256": "1644543ecc4332c60d1014bc310257e3f16b49b211b3e789c083c69c2a24690b",
+      "bytes": 10539,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2b2-report.md",
+      "sha256": "3ce50680b7aecfb2d7618ed2810d43699a953f8059f807720e5b8eecbbe0996e",
+      "bytes": 25963,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2b2a-review.md",
+      "sha256": "2d40aed49fa7bdd36b6215d0fab6b7b2e064ef0c8b007ff46cbdbe0ddcfd2144",
+      "bytes": 11982,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2b2b-report.md",
+      "sha256": "51f390e46e5a0ae12d4f2e06efe09957afdfcdce750210e7169197dfaaa5e8bb",
+      "bytes": 20215,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2b2b1-review.md",
+      "sha256": "5b9ffe7882cfbf90111b9093199d779ddf7224032b60e31fed73f193e00588c6",
+      "bytes": 15692,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2b2b2-report.md",
+      "sha256": "a87f285ea04296094165516ab4ce1e9a9cfb5fea69f7e1c8432736b811f8e166",
+      "bytes": 44580,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2b2b2-review.md",
+      "sha256": "e8033be7cee238b754eef849c22c4c150628a0e861774f0f8dcefe4b923b655a",
+      "bytes": 12698,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2c-references-report.md",
+      "sha256": "80f4968f12d4234e6bdab34f056c5e1089a924efed0b4acc54030967de8cff13",
+      "bytes": 26055,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8d2c-references-review.md",
+      "sha256": "634f6842f3a6fcc9878685f5720f0b24cfc4ac59085cd9f7fb886ef64c584487",
+      "bytes": 18057,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8e-fix1-report.md",
+      "sha256": "a19a02dae06ca8cfc42c0c44ef88ed66a89fad0bd1b3ae2f0faaaaf2a91cc298",
+      "bytes": 12757,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8e-fix2-report.md",
+      "sha256": "83e5bb83cd50949a191ab051b0d1582a17683ea96b3c2d88752c431f2b35b80c",
+      "bytes": 8459,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8e-report.md",
+      "sha256": "911e5a3f6a3d6d8ef6189082ab1def72173ff6671f3ae4807f133044899cb817",
+      "bytes": 13008,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8e-review.md",
+      "sha256": "c0b042a31171b6a6c5d07e642c293f895d84b994f104490577dc00da4fa7c72e",
+      "bytes": 31469,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8f-fix1-report.md",
+      "sha256": "906e98a376691038c04efd65ea5bb7d34ad21c5cafc86ad29f409e19fed06df0",
+      "bytes": 23499,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8f-fix1-review.md",
+      "sha256": "35318fe73c928a66d50aa458df3c06b7ede2ea23959269e28cc884c274c0687e",
+      "bytes": 36616,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8f-fix2-review.md",
+      "sha256": "9397f137cc0bad3126be04f8c66389af49358bb3839eed30ed80a299b6f6936d",
+      "bytes": 15046,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8f-report.md",
+      "sha256": "1d9fe0253b2fcc2289ef51ef91b4d3d3fd778c317a5218388063c4bfdf0d2e77",
+      "bytes": 24253,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8f-review.md",
+      "sha256": "89ddf70d620f526a6f572332c3aa209fc459d0b7802fc72ae0d2dd9202d8882e",
+      "bytes": 33138,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8g-fix1-final-report.md",
+      "sha256": "8e24ffb8862407cb3de3c98a89d41649b700ce38b8bb86cc81bb06d642e04460",
+      "bytes": 16177,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8g-fix1-q1-self-review.md",
+      "sha256": "fdcd086fdaf58429b283babf0bf806868af4c8660715c307ec2d807caf251bee",
+      "bytes": 7189,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8g-fix1-report.md",
+      "sha256": "f52dd695f82fbc13140e679f75b31eb743fb3d6fac473837cc5bcb8b1b924b55",
+      "bytes": 166818,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8g-fix1-review.md",
+      "sha256": "813924bda92e6477885f520380f6cc03313b8dcd5a748499276107e113d53933",
+      "bytes": 12500,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": true,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8g-fix2-final-report.md",
+      "sha256": "a058e46c49a8eb7da873c1e1bee2efd0455ec2fd90c6c42d3ca1ee5e55253848",
+      "bytes": 12602,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8g-fix2-review.md",
+      "sha256": "8a917921e1b6162cd452c075b7acd299d077961b50fed14a6bdea4a66abad91b",
+      "bytes": 7908,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": true,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8g-fix3-final-report.md",
+      "sha256": "7a423b7acaf2fb1581a17d3cf619c083c48ca6876547ca3d8bed167868dfd6e7",
+      "bytes": 17933,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8g-fix3-review.md",
+      "sha256": "f231675fba40591e84931cccee2a182c9d09e9338104d0a4555d6ffa8415f4d4",
+      "bytes": 7415,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8g-report.md",
+      "sha256": "d837ec154b0bb647b5f167354d2e00c4a80ee29ce0db8b11eaf0e275cd97d6e0",
+      "bytes": 35119,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    },
+    {
+      "file": "task-8g-review.md",
+      "sha256": "680a020018004283c0f062d18ded4c8eeb34f94e3e1888ddca3b22c7576a8e53",
+      "bytes": 41029,
+      "selection_rule": "Immediate scratch basename starts literally with task-1 through task-8 and ends -report.md or -review.md; includes the two task-10 basenames by this literal rule.",
+      "current_capture": "Complete current appended/full report or review; no reconstructed historical first-reviewed identity.",
+      "already_exact_index_lookup": false,
+      "old_basename_conflict": false
+    }
+  ]
+}

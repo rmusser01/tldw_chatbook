@@ -288,6 +288,9 @@ def make_call_model(
             ),
             continuation_owner_key=continuation_owner_key or "id",
         )
+        planning = getattr(self, "_workflow_planning_preparation", None)
+        if planning is not None:
+            planning.require_seed_in_payload(payload)
         if continuation_owner_key is not None and not gateway_prepares_continuation:
             payload = [
                 {
@@ -604,6 +607,12 @@ def make_invoke_tool(
     actor = run_actor or runtime.CurrentRunActor("primary", run_id, None)
 
     owner = current_execution_owner()
+    from .workflow_task_scope import current_task_authorization
+
+    task_authorization = current_task_authorization()
+    from .run_context import current_planning_preparation
+
+    planning = current_planning_preparation()
 
     def invoke_tool(call: ToolCall) -> ToolResult:
         if config.review_binding is not None and call.name not in {
@@ -626,10 +635,42 @@ def make_invoke_tool(
         if refusal is not None:
             return refusal
 
+        from ..Tools.workspace_tool_executor import capture_model_ssh
+
+        ssh_call = capture_model_ssh(self.registry, call.name)
+        raw_cli_call = None
+        if call.name == "shell_exec":
+            from ..Tools.raw_cli_executor import capture_model_raw_cli
+
+            raw_cli_call = capture_model_raw_cli(self.registry, call.name)
+
         def _invoke() -> ToolResult:
             from .automatic_work_runtime import current_automatic_work
 
-            with runtime.use_run_actor(actor), runtime.use_tool_call_id(call.call_id):
+            with (
+                runtime.use_run_actor(actor),
+                runtime.use_tool_call_id(call.call_id),
+                task_authorization.scope()
+                if task_authorization
+                else runtime.contextlib.nullcontext(),
+                planning.activate_source()
+                if planning is not None
+                else contextlib.nullcontext(),
+                owner.activate()
+                if (task_authorization or planning is not None) and owner
+                else runtime.contextlib.nullcontext(),
+            ):
+                from .execution_capacity import current_ordinary_tree
+
+                ordinary = current_ordinary_tree()
+                if ordinary is not None and self.registry in ordinary.catalogs:
+                    selected = self.registry.resolve_owner_for_name(call.name)
+                    try:
+                        if selected is None:
+                            raise RuntimeError("ordinary tool owner unavailable")
+                        ordinary.check_catalog_call(self.registry, call.name, selected[1])
+                    except RuntimeError as error:
+                        return runtime.ToolResult.blocked(str(error))
                 automatic_work = current_automatic_work()
                 if automatic_work is not None:
                     from .automatic_work_budget import AutomaticWorkRefused
@@ -691,40 +732,50 @@ def make_invoke_tool(
             result = runtime.ToolResult(
                 ok=False, error=f"tool call failed: {call.name}"
             )
-            try:
+            with (
+                ssh_call.activate(operation)
+                if ssh_call
+                else contextlib.nullcontext()
+            ):
                 try:
-                    result = _invoke()
-                except BaseException:  # noqa: BLE001 - protocol boundary
-                    # This branch runs synchronously after the approved
-                    # mutation has started.  Every terminal -- including
-                    # control-flow BaseExceptions raised by a provider --
-                    # must collapse to one scrubbed result instead of
-                    # escaping the agent loop or being mistaken for the
-                    # pre-start cooperative-cancel outcome above.
-                    result = runtime.ToolResult(
-                        ok=False,
-                        error=f"tool call failed: {call.name}",
-                        dispatch_state="settled",
-                    )
-                return result
-            finally:
-                try:
-                    if install_post_checkpoint is not None:
-                        install_post_checkpoint(call, result)
+                    try:
+                        with (
+                            raw_cli_call.activate(operation)
+                            if raw_cli_call
+                            else contextlib.nullcontext()
+                        ):
+                            result = _invoke()
+                    except BaseException:  # noqa: BLE001 - protocol boundary
+                        # This branch runs synchronously after the approved
+                        # mutation has started.  Every terminal -- including
+                        # control-flow BaseExceptions raised by a provider --
+                        # must collapse to one scrubbed result instead of
+                        # escaping the agent loop or being mistaken for the
+                        # pre-start cooperative-cancel outcome above.
+                        result = runtime.ToolResult(
+                            ok=False,
+                            error=f"tool call failed: {call.name}",
+                            dispatch_state="settled",
+                        )
+                    return result
                 finally:
-                    if operation is not None:
-                        operation.finish()
-                self._notify_tool_terminal(
-                    run_id,
-                    call.call_id or call.name,
-                    call.name,
-                )
-                self._notify_tool_result_terminal(
-                    run_id,
-                    call.call_id or call.name,
-                    call.name,
-                    result,
-                )
+                    try:
+                        if install_post_checkpoint is not None:
+                            install_post_checkpoint(call, result)
+                    finally:
+                        if operation is not None and ssh_call is None:
+                            operation.finish()
+                    self._notify_tool_terminal(
+                        run_id,
+                        call.call_id or call.name,
+                        call.name,
+                    )
+                    self._notify_tool_result_terminal(
+                        run_id,
+                        call.call_id or call.name,
+                        call.name,
+                        result,
+                    )
 
         timeout = self.registry.timeout_for(call.name) or (
             config.budget.max_tool_call_seconds
@@ -774,6 +825,8 @@ def make_invoke_tool(
                     execution_owner=self,
                     clamped_by_wall_budget=clamped_by_wall_budget,
                     owner=owner,
+                    raw_cli_call=raw_cli_call,
+                    ssh_call=ssh_call,
                 )
             finally:
                 runtime._clear_tool_call_inflight(run_id)
@@ -786,9 +839,17 @@ def make_invoke_tool(
                 dispatch_state="not_started",
             )
         try:
-            return _invoke()
+            with (
+                raw_cli_call.activate(operation)
+                if raw_cli_call
+                else contextlib.nullcontext(),
+                ssh_call.activate(operation)
+                if ssh_call
+                else contextlib.nullcontext(),
+            ):
+                return _invoke()
         finally:
-            if operation is not None:
+            if operation is not None and (ssh_call is None or not ssh_call.finished):
                 operation.finish()
 
     check_owner = self.registry.resolve_owner_for_name("code_review_read")

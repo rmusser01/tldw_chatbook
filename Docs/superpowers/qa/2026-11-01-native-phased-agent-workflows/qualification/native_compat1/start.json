@@ -1,0 +1,26 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "--tb=short",
+    "Tests/Agents/test_workflow_launch_freshness.py",
+    "Tests/Chat/test_console_workflow_dispatch.py::test_plan_then_duplicate_approval_launches_one_native_task",
+    "Tests/Chat/test_console_workflow_dispatch.py::test_native_failed_run_requires_explicit_repair_preserving_history_and_spend",
+    "Tests/Chat/test_console_workflow_scheduling.py::test_enabled_native_workflow_exclusion_and_unrelated_wake_delivery",
+    "Tests/Chat/test_workflow_settlement_delivery.py::test_stop_pending_initial_acceptance_drains_original_cell",
+    "Tests/Workspaces/test_worktree_activity.py::test_opaque_conflicts_runtime_wide_even_on_disjoint_roots",
+    "Tests/Workspaces/test_worktree_activity.py::test_alias_and_nested_root_claim_the_same_canonical_target",
+    "--basetemp",
+    "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/t10-native_compat1-l4n8herg/pytest",
+    "--junitxml",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-native_compat1/tests.xml"
+  ],
+  "basetemp": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/t10-native_compat1-l4n8herg",
+  "pgid": 27766,
+  "pid": 27766,
+  "signals": [],
+  "started": 1793850136.9248798,
+  "whole_bound": 260
+}

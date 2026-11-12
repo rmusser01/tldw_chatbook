@@ -1,0 +1,44 @@
+{"event": "ready", "label": "whole-mounted-chat", "pid": 60033, "time": 1793851908.1157131}
+{"conversation": "ae1ec498-db9b-4162-85e4-5e17a198aeab", "event": "chat", "pid": 60033, "session": "1c8a3092-4266-4805-8a89-561e41ec4f0e", "time": 1793851908.3100421}
+{"event": "ready", "label": "named-chat-tab", "pid": 60033, "time": 1793851910.562996}
+{"base": "http://127.0.0.1:8010", "event": "native-provider", "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0", "pid": 60033, "provider": "llama_cpp", "ready": true, "time": 1793851910.823297}
+{"event": "ready", "label": "typed workflow command", "pid": 60033, "time": 1793851912.315066}
+{"active": "1c8a3092-4266-4805-8a89-561e41ec4f0e", "disabled": false, "event": "draft", "pid": 60033, "session": "1c8a3092-4266-4805-8a89-561e41ec4f0e", "time": 1793851912.3153138}
+{"event": "ready", "label": "#console-send-message", "pid": 60033, "time": 1793851912.3156521}
+{"event": "clicked", "id": "#console-send-message", "pid": 60033, "region": [116, 52, 14, 1], "time": 1793851912.693142}
+{"event": "ready", "label": "setup", "pid": 60033, "time": 1793851912.693423}
+{"event": "ready", "label": "#workflow-plan", "pid": 60033, "time": 1793851912.748652}
+{"event": "clicked", "id": "#workflow-plan", "pid": 60033, "region": [80, 49, 43, 1], "time": 1793851912.924522}
+{"event": "ready", "label": "detail", "pid": 60033, "time": 1793851914.6023512}
+{"begins_json": true, "content_length": 2676, "ends_json": true, "event": "completion", "finish": "stop", "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0", "pid": 60033, "reasoning_length": 0, "time": 1793851930.5616581, "tool_names": [], "usage": {"completion_tokens": 881, "completion_tokens_details": {"reasoning_tokens": 0}, "prompt_tokens": 3202, "prompt_tokens_details": {"cached_tokens": 0}, "total_tokens": 4083}}
+{"begins_json": true, "content_length": 2676, "ends_json": true, "event": "completion", "finish": "stop", "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0", "pid": 60033, "reasoning_length": 0, "time": 1793851930.5647821, "tool_names": [], "usage": {"completion_tokens": 881, "completion_tokens_details": {"reasoning_tokens": 0}, "prompt_tokens": 3202, "prompt_tokens_details": {"cached_tokens": 0}, "total_tokens": 4083}}
+{"begins_json": true, "content_length": 2676, "ends_json": true, "event": "completion", "finish": "stop", "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0", "pid": 60033, "reasoning_length": 0, "time": 1793851930.5649998, "tool_names": [], "usage": {"completion_tokens": 881, "completion_tokens_details": {"reasoning_tokens": 0}, "prompt_tokens": 3202, "prompt_tokens_details": {"cached_tokens": 0}, "total_tokens": 4083}}
+{"event": "ready", "label": "plan terminal", "pid": 60033, "time": 1793851931.707496}
+{"event": "plan-disposition", "pid": 60033, "plans": 1, "spend": {"child_launch": 0, "generation": 1, "model_call": 1, "tokens": 4083}, "status": "awaiting_phase_review", "time": 1793851931.707662, "workflow": "f705d137-066e-4aaf-a53b-2726bd109f62"}
+{"event": "ready", "label": "#workflow-approve", "pid": 60033, "time": 1793851931.708405}
+{"event": "clicked", "id": "#workflow-approve", "pid": 60033, "region": [37, 49, 28, 1], "time": 1793851931.8950121}
+{"begins_json": false, "content_length": 109, "ends_json": false, "event": "completion", "finish": "stop", "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0", "pid": 60033, "reasoning_length": 0, "time": 1793851936.687375, "tool_names": [], "usage": {"completion_tokens": 44, "completion_tokens_details": {"reasoning_tokens": 0}, "prompt_tokens": 908, "prompt_tokens_details": {"cached_tokens": 0}, "total_tokens": 952}}
+{"begins_json": false, "content_length": 109, "ends_json": false, "event": "completion", "finish": "stop", "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0", "pid": 60033, "reasoning_length": 0, "time": 1793851936.687574, "tool_names": [], "usage": {"completion_tokens": 44, "completion_tokens_details": {"reasoning_tokens": 0}, "prompt_tokens": 908, "prompt_tokens_details": {"cached_tokens": 0}, "total_tokens": 952}}
+{"begins_json": false, "content_length": 109, "ends_json": false, "event": "completion", "finish": "stop", "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0", "pid": 60033, "reasoning_length": 0, "time": 1793851936.687656, "tool_names": [], "usage": {"completion_tokens": 44, "completion_tokens_details": {"reasoning_tokens": 0}, "prompt_tokens": 908, "prompt_tokens_details": {"cached_tokens": 0}, "total_tokens": 952}}
+{"event": "ready", "label": "#workflow-refresh", "pid": 60033, "time": 1793851936.9135098}
+{"event": "clicked", "id": "#workflow-refresh", "pid": 60033, "region": [54, 46, 17, 1], "time": 1793851937.2097962}
+{"event": "ready", "label": "pending decision visible", "pid": 60033, "time": 1793851937.3738902}
+{"event": "ready", "label": "#workflow-pending", "pid": 60033, "time": 1793851937.374253}
+{"event": "clicked", "id": "#workflow-pending", "pid": 60033, "region": [37, 41, 30, 1], "time": 1793851938.228244}
+{"event": "ready", "label": "actual approval card", "pid": 60033, "time": 1793851938.231264}
+{"event": "pending-call", "pid": 60033, "rows": [{"arguments": {"path": "value.txt", "root_alias": "folder-000c90c36159"}, "call_id": "turn-1-call-0", "description": "Read a text file with 1-based line numbers; pages via offset/limit. Refuses binary files.", "effects": ["private_read"], "execution_policy": "bounded_abandonable", "full_command": "", "llm_name": "fs_read", "options": ["approve_once", "approve_session", "always_allow", "deny"], "path_precheck_failed": false, "rationale": "", "reason": "ask", "scope_notice": "", "server_key": "local:__local__", "server_label": "Local workspace, web, and Watchlists", "tool_name": "fs_read", "warning": ""}], "time": 1793851938.233481}
+{"event": "ready", "label": "#approval-fast-approve-9-0", "pid": 60033, "time": 1793851938.234705}
+{"event": "clicked", "id": "#approval-fast-approve-9-0", "pid": 60033, "region": [61, 15, 14, 1], "time": 1793851939.407485}
+{"event": "ready", "label": "tool approval accepted", "pid": 60033, "time": 1793851939.407845}
+{"admitted_aliases": ["folder-000c90c36159"], "args": {"path": "value.txt", "root_alias": "folder-000c90c36159"}, "code_name": "_invoke_detailed", "dispatch": false, "error": "workflow task scope refused", "event": "local-tool-return", "ok": false, "pid": 60033, "reason": "LocalToolInvocationReason.AUTHORITY_UNAVAILABLE", "root": "/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-16h20h3t/project", "terminal": "LocalProviderTerminal.NOT_STARTED", "time": 1793851939.898762, "tool": "local:fs_read"}
+{"event": "ready", "label": "dismiss preserved command popup", "pid": 60033, "time": 1793851940.5488908}
+{"event": "ready", "label": "#console-workflow-line", "pid": 60033, "time": 1793851940.551456}
+{"event": "clicked", "id": "#console-workflow-line", "pid": 60033, "region": [0, 49, 160, 1], "time": 1793851941.075936}
+{"event": "ready", "label": "detail after approval", "pid": 60033, "time": 1793851941.291696}
+{"event": "stage-failed", "kind": "TimeoutError", "label": "native diagnostic read", "message": "", "pid": 60033, "screen": "ConsoleWorkflowStatus", "time": 1793851986.8964522}
+{"event": "ready", "label": "#workflow-stop", "pid": 60033, "time": 1793851986.913056}
+{"event": "clicked", "id": "#workflow-stop", "pid": 60033, "region": [105, 46, 18, 1], "time": 1793851987.146772}
+{"event": "ready", "label": "actual Stop returned", "pid": 60033, "time": 1793851987.579966}
+{"event": "stop-after-stage-failure", "label": "native diagnostic read", "pid": 60033, "time": 1793851987.58023}
+{"event": "monitor-released", "pid": 60033, "time": 1793851987.8096561}
+{"event": "creator-refused", "kind": "AssertionError", "pid": 60033, "reason": "{'fixture_creator_not_settled': 'db.media.primary', 'participant_closed': False, 'handles': [{'thread': 'asyncio_1', 'transaction': False, 'live_lease': True}]}", "time": 1793851987.810339}

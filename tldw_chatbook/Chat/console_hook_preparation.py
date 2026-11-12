@@ -162,6 +162,9 @@ class _HookPreparationSource:
     context_provider: Any = field(repr=False)
 
 def capture_hook_preparation_source(self, session_id, permissions):
+    native = self._native_plugin_hook_preparation
+    if native is not None:
+        native.pin_resources()
     store, controller, app = self._chat_store, self._chat_controller, self._app
     session = (
         next((row for row in store.sessions() if row.id == session_id), None)
@@ -199,16 +202,14 @@ def require_hook_preparation_source(self, source):
     try:
         self._raise_if_disposed_or_session_fenced(source.session_id)
     except RuntimeError as error:
-        # TASK-38751: a close fence or disposal that lands mid-check voids it.
         raise HookCheckOwnerChanged(str(error)) from error
-    session = (
-        next(
-            (row for row in source.store.sessions() if row.id == source.session_id),
-            None,
-        )
-        if source.store is not None
-        else None
-    )
+    if not hook_preparation_source_current(self, source):
+        raise HookCheckOwnerChanged("Console hook preparation owner changed.")
+
+
+def hook_preparation_source_current(self, source):
+    """Original direct-reference fence, safe at actual worker queue publication."""
+    session = source.store._sessions.get(source.session_id) if source.store else None
     reader = getattr(source.controller, "_hook_authority_values", None)
     same_reader = reader is source.authority_reader or (
         inspect.ismethod(reader)
@@ -216,8 +217,10 @@ def require_hook_preparation_source(self, source):
         and reader.__self__ is source.authority_reader.__self__
         and reader.__func__ is source.authority_reader.__func__
     )
-    if (
-        self._app is not source.app
+    return not (
+        self._disposed
+        or source.session_id in self._admission_fenced_sessions
+        or self._app is not source.app
         or self._chat_store is not source.store
         or self._chat_controller is not source.controller
         or self._hook_permissions is not source.permissions
@@ -254,8 +257,7 @@ def require_hook_preparation_source(self, source):
                 )
             )
         )
-    ):
-        raise HookCheckOwnerChanged("Console hook preparation owner changed.")
+    )
 
 
 async def read_hook_preparation(self, callback, source):
@@ -298,6 +300,7 @@ def hooks_v2_context_key(self, session_id: str):
         raise RuntimeError("Console hook preparation session changed.")
     # Only the stock finite callback gains Workspace connection ownership.
     # Custom/injected callbacks retain the original call and cleanup shape.
+    from tldw_chatbook.Agents.activation import callable_source_current
     from tldw_chatbook.Chat import console_chat_controller as controller_module
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
     from tldw_chatbook.DB.base_db import operation_owned_connection
@@ -305,6 +308,7 @@ def hooks_v2_context_key(self, session_id: str):
     from tldw_chatbook.Workspaces import registry_service as registry_module
     from tldw_chatbook.Workspaces.change_review_consent import (
         ChangeReviewConsentService,
+        hook_workspace_readers_current,
     )
 
     app = source.app if isinstance(source, _HookPreparationSource) else self._app
@@ -324,9 +328,8 @@ def hooks_v2_context_key(self, session_id: str):
         else getattr(app, "change_review_consent_service", None)
     )
     hook_anchor = controller_module._HOOK_AUTHORITY_VALUES_ORIGINAL
-    controller_class, name, function, code, defaults, kwdefaults, closure = (
-        hook_anchor
-    )
+    controller_class, name, source_record = hook_anchor
+    function = source_record[0]
     reader_anchors = registry_module._HOOK_WORKSPACE_READERS
     registry_class = reader_anchors[0][0]
 
@@ -338,23 +341,44 @@ def hooks_v2_context_key(self, session_id: str):
             and registry_module._HOOK_WORKSPACE_READERS is reader_anchors
             and inspect.getattr_static(type(controller), name) is function
             and name not in vars(controller)
-            and function.__code__ is code
-            and function.__defaults__ is defaults
-            and function.__kwdefaults__ is kwdefaults
-            and function.__closure__ is closure
+            and callable_source_current(source_record)
             and function.__globals__ is controller_module.__dict__
-            and all(
-                owner is registry_class
-                and inspect.getattr_static(type(registry), label) is reader
-                and label not in vars(registry)
-                and reader.__code__ is reader_code
-                and reader.__defaults__ is reader_defaults
-                and reader.__kwdefaults__ is reader_kwdefaults
-                and reader.__closure__ is reader_closure
-                and reader.__globals__ is registry_module.__dict__
-                for owner, label, reader, reader_code, reader_defaults, reader_kwdefaults, reader_closure in reader_anchors
+            and hook_workspace_readers_current(
+                registry, registry_class, reader_anchors, registry_module.__dict__
             )
         )
+
+    def project_key(values):
+        authority = values["project_authority"]
+        (
+            snapshot_type,
+            capture,
+            capture_code,
+            capture_defaults,
+            capture_kwdefaults,
+            capture_closure,
+        ) = controller_module._HOOK_PROJECT_AUTHORITY_ORIGINAL
+        if (
+            type(controller) is controller_class
+            and controller._turn_context_provider is None
+            and type(registry) is registry_class
+            and bindings_current()
+            and controller_module.capture_project_instruction_authority is capture
+            and capture.__code__ is capture_code
+            and capture.__defaults__ is capture_defaults
+            and capture.__kwdefaults__ is capture_kwdefaults
+            and capture.__closure__ is capture_closure
+            and type(authority) is snapshot_type
+        ):
+            # Validated first-folder adoption and consent record these existing
+            # choices later. Full effective authority still revokes on change.
+            return (
+                authority.workspace_id,
+                authority.enabled,
+                authority.selected,
+                authority.options,
+            )
+        return authority
 
     stock = (
         type(self) is _HOOK_CONTEXT_KEY_ORIGINAL_OWNER
@@ -390,7 +414,7 @@ def hooks_v2_context_key(self, session_id: str):
             return (
                 session.workspace_id,
                 values["workspace_roots"],
-                values["project_authority"],
+                project_key(values),
             )
 
     chat_database = getattr(store.persistence, "db", None)
@@ -444,8 +468,397 @@ def hooks_v2_context_key(self, session_id: str):
         result = (
             workspace_id,
             values["workspace_roots"],
-            values["project_authority"],
+            project_key(values),
         )
     # Retirement can run callbacks; refuse a redirected result afterwards too.
     require_current()
     return result
+
+
+def attempt_v2_configuration_for(permissions, session_id, hook_read):
+    """Project only a standing read from the same Send and consent owner."""
+    shared = None
+    authority = (
+        hook_read.authority_for(permissions, session_id)
+        if hook_read is not None
+        else None
+    )
+    if authority is not None:
+        from tldw_chatbook.Agents.hook_permissions import HookPermissions
+
+        # A replaced reader keeps its original call (ADR-230 decision 8).
+        if (
+            "v2_configuration" not in vars(permissions)
+            and type(permissions).v2_configuration is HookPermissions.v2_configuration
+        ):
+            shared = permissions.attempt_v2_configuration(authority)
+    return shared
+
+
+@contextmanager
+def submission_origin(controller, session, configuration, origin):
+    """Bind only the original validated submission task, never event labels."""
+    from tldw_chatbook.Agents.run_hooks import native_hook_submission as _submission
+
+    token = _submission.set(
+        (asyncio.current_task(), controller, session, configuration, origin)
+    )
+    try:
+        yield
+    finally:
+        _submission.reset(token)
+
+
+async def prepare_hooks_v2(
+    self,
+    session_id: str,
+    *,
+    reason="startup",
+    initiator="manual",
+    configuration=None,
+    _hook_read=None,
+    test_only=False,
+    _standalone_compaction=False,
+):
+    """Initialize only at validated execution admission, never at view access.
+
+    ``_hook_read`` is the submitting attempt's own earlier full consent
+    read (``ConsoleHookAttemptRead``). While it stands for this session
+    and owner, and only when it answers "no v2 hook to prepare"
+    (``_hook_read_prepares_nothing``), it replaces the
+    ``v2_configuration()`` re-read (ADR-230 decision 3). Everything that
+    builds, keeps or replaces an engine still reads fresh, as before.
+    """
+    from tldw_chatbook.Agents.hooks_v2.lifecycle import HookSessionLifecycle
+    from tldw_chatbook.Agents.run_hooks import load_hooks_config
+
+    from . import console_runtime as native_host
+
+    self._raise_if_disposed_or_session_fenced(session_id)
+    permissions = self.ensure_hook_permissions()
+    source = self._capture_hook_preparation_source(session_id, permissions)
+    shared = attempt_v2_configuration_for(permissions, session_id, _hook_read)
+    if shared is not None and self._hook_read_prepares_nothing(
+        session_id, shared[0], configuration
+    ):
+        # The early return below, reached without the re-read: nothing in
+        # the attempt's read or this session's state needs an engine.
+        self._require_hook_preparation_source(source)
+        self._raise_if_disposed_or_session_fenced(session_id)
+        return None
+    review, targets = await self._read_hook_preparation(
+        permissions.v2_configuration, source
+    )
+    self._require_hook_preparation_source(source)
+    configured = load_hooks_config(
+        {"hooks": review.config.section} if review.config.section_present else {}
+    )
+    engine = self.get_hooks_v2(session_id)
+    native = getattr(engine, "native_plugins", None) if configuration is None else None
+    plugin_request = None
+    hook_configuration = configuration
+    async with native_host.contextlib.AsyncExitStack() as preparation_handoff:
+        if configuration is not None:
+            maximum = configuration.skill_context_maximum
+            if maximum.get("_plugin_requirement_ceiling") or any(
+                row.get("plugin_owned") for row in maximum.get("available_skills", ())
+            ):
+                local = getattr(
+                    self._chat_controller._skills_service, "local_service", None
+                )
+                service = getattr(local, "plugin_service", None)
+                if service is None:
+                    raise PermissionError("plugin_hook_authority_unavailable")
+                if self._native_plugin_hook_preparation_required:
+                    preparation = self._native_plugin_hook_preparation
+                    if preparation is None:
+                        raise RuntimeError(
+                            "Native plugin hook preparation unavailable."
+                        )
+                    (
+                        native,
+                        plugin_request,
+                    ) = await preparation_handoff.enter_async_context(
+                        preparation.capture(source, service, configuration, review)
+                    )
+                    if (
+                        _standalone_compaction
+                        and configuration.mcp_capture_pending
+                        and configuration.mcp_definition_capture == "captured"
+                        and any(handler.type == "mcp_tool" for handler in native.definitions)
+                    ):
+                        hook_configuration = await plugin_request.resolve_compaction_mcp()
+                else:
+                    native = await service.hook_configuration(
+                        maximum,
+                        scratch_manager=self._scratch_spaces,
+                        scratch_snapshot=self._scratch_spaces.snapshot(session_id),
+                    )
+                self._require_hook_preparation_source(source)
+        signature = (
+            configured,
+            targets,
+            native.signature if native is not None else None,
+        )
+        engine = self.get_hooks_v2(session_id)
+        previous = self._hooks_v2_configured.get(session_id)
+        if (
+            review.ready
+            and not configured.v2_handlers
+            and not configured.v2_invalid_admissions
+            and (native is None or not native.definitions)
+            and engine is None
+            and session_id not in self._hooks_v2_engines
+            and session_id not in self._hooks_v2_lifecycles
+            and session_id not in self._hooks_v2_configured
+        ):
+            self._require_hook_preparation_source(source)
+            return None
+        context_key = await self._read_hook_preparation(
+            native_host.functools.partial(self._hooks_v2_context_key, session_id),
+            source,
+        )
+        self._require_hook_preparation_source(source)
+        self._raise_if_disposed_or_session_fenced(session_id)
+        owner = self._hooks_v2_lifecycles.get(session_id)
+        context_changed = owner is not None and owner.context_key != context_key
+        if context_changed and native is not None and configuration is None:
+            raise PermissionError("plugin_hook_workspace_admission_required")
+        if (
+            test_only
+            and engine is not None
+            and (
+                previous != signature
+                or context_changed
+                or owner is None
+                or not owner.live
+                or owner.turn_scope is not None
+            )
+        ):
+            raise PermissionError("plugin_test_requires_compatible_idle_hook_session")
+        if (previous is not None and previous != signature) or context_changed:
+            # The controller owns a reversible validation slot at this point.
+            owner = self._hooks_v2_lifecycles.get(session_id)
+            if owner is not None and getattr(owner, "turn_scope", None) is not None:
+                raise RuntimeError("hook replacement requires idle session")
+            await self.close_hooks_v2(session_id)
+            self._require_hook_preparation_source(source)
+            if self._hooks_v2_lifecycles.get(session_id) is owner:
+                self._hooks_v2_lifecycles.pop(session_id, None)
+            if context_changed and previous is None and engine is not None:
+                # Host-injected definitions retain their authority resolver.
+                engine = self.ensure_hooks_v2(
+                    session_id,
+                    engine.definitions,
+                    engine.authority_check,
+                    _native_preparation=plugin_request,
+                    enabled=engine.enabled,
+                    invalid_admissions=engine.invalid_admissions,
+                    process_owner=engine.processes.owner,
+                    process_owner_for=engine._process_owner_for,
+                    environment=engine._environment,
+                    host_environment=engine._host_environment,
+                    command_launch=engine._command_launch,
+                    dependency_required=engine._dependency_required,
+                    event_projector=engine._event_projector,
+                    launch_guard=engine.processes._launch_guard,
+                    effect_authority_check=engine._effect_authority_check,
+                )
+            else:
+                engine = None
+            reason = "configuration_changed"
+        if plugin_request is not None:
+            plugin_request.check(service)
+        if engine is None:
+            if not review.ready:
+                raise RuntimeError("Review enabled hooks before execution.")
+            if (
+                not configured.v2_handlers
+                and not configured.v2_invalid_admissions
+                and (native is None or not native.definitions)
+            ):
+                return None
+            captured = {target.spec.id: target for target in targets}
+
+            def session_end_current(handler, event):
+                owner = getattr(engine, "lifecycle_owner", None)
+                return bool(
+                    self._disposed
+                    and handler.type == "command"
+                    and handler.event == "SessionEnd"
+                    and not handler.effects
+                    and not handler.required
+                    and owner is not None
+                    and self.get_hooks_v2(session_id) is engine
+                    and owner._session_end_current(event)
+                )
+
+            def authority(handler, _event, _stage):
+                if native is not None and handler.id in native.owners:
+                    return (
+                        not self._disposed
+                        and permissions.configuration_current(review)
+                        and native.authority(handler, _event, _stage)
+                        and permissions.configuration_current(review)
+                    )
+                target = captured.get(handler.id)
+                return bool(
+                    target is not None
+                    and (
+                        not self._disposed
+                        and permissions.target_current(target)
+                        or session_end_current(handler, _event)
+                        and permissions._session_end_current(
+                            review, target, lambda: session_end_current(handler, _event)
+                        )
+                    )
+                )
+
+            def effects_current(handler, _event, _stage):
+                if native is not None and handler.id in native.owners:
+                    return (
+                        not self._disposed
+                        and permissions.configuration_current(review)
+                        and native.effects_current(handler, _event, _stage)
+                    )
+                target = captured.get(handler.id)
+                return bool(
+                    target is not None
+                    and not self._disposed
+                    and permissions.configuration_current(review)
+                    and permissions.target_current(target, refresh=False)
+                )
+
+            @native_host.contextlib.contextmanager
+            def launch_guard(handler, event):
+                if native is not None and handler.id in native.owners:
+                    from tldw_chatbook import config
+
+                    with config.locked_hooks_config_snapshot() as current:
+                        if (
+                            current.section_stamp != review.config.section_stamp
+                            or not effects_current(handler, event, "launch")
+                        ):
+                            raise PermissionError("plugin_hook_authority_changed")
+                        yield
+                else:
+                    target = captured[handler.id]
+                    guard = (
+                        permissions._session_end_launch_guard(
+                            review, target, lambda: session_end_current(handler, event)
+                        )
+                        if session_end_current(handler, event)
+                        else permissions.launch_guard(target, tool_name=None)
+                    )
+                    with guard:
+                        yield
+
+            engine = self.ensure_hooks_v2(
+                session_id,
+                (configured.v2_handlers if configured.enabled else ())
+                + (native.definitions if native is not None else ()),
+                authority,
+                _native_preparation=plugin_request,
+                _native_plugins=native,
+                _configured_signature=signature,
+                process_owner=native,
+                process_owner_for=native.process_owner if native is not None else None,
+                host_environment=native.host_environment
+                if native is not None
+                else None,
+                event_projector=native.project_event if native is not None else None,
+                command_launch=native.command_launch if native is not None else None,
+                dependency_required=native.dependency_required
+                if native is not None
+                else None,
+                launch_guard=launch_guard,
+                effect_authority_check=effects_current,
+                enabled=configured.enabled or bool(native and native.definitions),
+                invalid_admissions=(
+                    configured.v2_invalid_admissions if configured.enabled else ()
+                ),
+            )
+            if test_only:
+                created = getattr(self, "_plugin_test_created_engines", None)
+                if created is None:
+                    created = self._plugin_test_created_engines = {}
+                created[native_host.asyncio.current_task()] = engine
+    lifecycle = self._hooks_v2_lifecycles.get(session_id)
+    if lifecycle is None:
+
+        def current():
+            try:
+                return (
+                    not self._disposed
+                    and self.get_hooks_v2(session_id) is engine
+                    and self._hooks_v2_context_key(session_id) == context_key
+                    and (
+                        session_id not in self._hooks_v2_configured
+                        or permissions.configuration_current(review)
+                        and all(
+                            permissions.target_current(target, refresh=False)
+                            for target in targets
+                        )
+                    )
+                )
+            except Exception:  # noqa: BLE001 -- hook boundary
+                return False
+
+        lifecycle = HookSessionLifecycle(
+            engine,
+            session_id,
+            current=current,
+            render_context=native.render_context if native is not None else None,
+        )
+        lifecycle.context_key = context_key
+        self._hooks_v2_lifecycles[session_id] = lifecycle
+        engine.lifecycle_owner = lifecycle
+    pending_scope = None
+    if configuration is not None:
+        pending_scope = lifecycle.open_scope()
+        lifecycle.turn_scope = pending_scope
+        self._chat_controller._hooks_v2_submissions[
+            native_host.asyncio.current_task()
+        ] = (
+            lifecycle,
+            pending_scope,
+            session_id,
+        )
+        try:
+            if engine.mcp_executor is not None:
+                if hook_configuration is not configuration:
+                    plugin_request.require_original_mcp()
+                context = await self._chat_controller.compose_prospective_hook_context(
+                    hook_configuration, lifecycle, pending_scope
+                )
+                self._require_hook_preparation_source(source)
+                if hook_configuration is not configuration:
+                    plugin_request.require_original_mcp()
+                engine.mcp_executor.bind_context(context)
+        except BaseException:
+            lifecycle.close_scope(pending_scope)
+            lifecycle.turn_scope = None
+            raise
+    if not lifecycle.live:
+        start_event = lifecycle.event(
+            "SessionStart", data={"reason": reason}, initiator=initiator
+        )
+        if test_only:
+            start_event = start_event.model_copy(update={"origin": "host_plugin_test"})
+        token = lifecycle.reserve(start_event)
+        try:
+            await lifecycle.initialize(token)
+            self._require_hook_preparation_source(source)
+            lifecycle.publish(token)
+        except BaseException:
+            lifecycle.cancel(token)
+            if pending_scope is not None:
+                lifecycle.close_scope(pending_scope)
+                lifecycle.turn_scope = None
+            # A failed provisional initialization has no live session effects.
+            if self._hooks_v2_lifecycles.get(session_id) is lifecycle:
+                self._hooks_v2_lifecycles.pop(session_id, None)
+            raise
+    if configuration is not None and engine.mcp_executor is not None:
+        engine.mcp_executor.retain_runtime(session_id)
+    return lifecycle

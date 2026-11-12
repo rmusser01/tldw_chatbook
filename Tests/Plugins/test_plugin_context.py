@@ -12,6 +12,35 @@ pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 from Tests.Plugins.test_native_components import install_components
 
 
+@pytest.fixture
+def reference_file(native_console, tmp_path, monkeypatch):
+    from tldw_chatbook.Chat import console_references as references
+    from tldw_chatbook.Tools import workspace_file_roots as roots
+
+    root = tmp_path / "reference-root"
+    root.mkdir()
+    registry = native_console.registry
+    registry.add_folder_binding("workspace-a", root)
+    registry.set_active_workspace("workspace-a")
+    monkeypatch.setattr(roots, "_registry_factory", lambda: registry)
+    monkeypatch.setattr(roots, "_LAUNCH_CWD", str(root))
+    build = references.build_console_reference_resolver
+    reads = []
+
+    def observed(**kwargs):
+        resolve = build(**kwargs)
+
+        def read(token):
+            reads.append(token)
+            return resolve(token)
+
+        return read
+
+    monkeypatch.setattr(references, "build_console_reference_resolver", observed)
+    with roots.run_file_sandbox(root):
+        yield root / "evidence.txt", reads
+
+
 @pytest.mark.asyncio
 async def test_always_rule_and_manual_command_reach_final_provider(
     native_console, native_package
@@ -368,17 +397,13 @@ async def test_manual_fork_skill_model_reaches_real_provider(
 
 @pytest.mark.asyncio
 async def test_embedded_native_skill_survives_reference_expansion(
-    native_console, monkeypatch
+    native_console, reference_file
 ):
-    import tldw_chatbook.Chat.console_references as references
 
     rig = native_console
     install = await rig.install()
-    monkeypatch.setattr(
-        references,
-        "build_console_reference_resolver",
-        lambda: lambda token: ("file", "REFERENCE_BODY", None),
-    )
+    path, _reads = reference_file
+    path.write_text("REFERENCE_BODY")
     result = await rig.controller.submit_draft(
         f"Use ${install.alias}:review and @evidence.txt", session_id=rig.session.id
     )
@@ -389,19 +414,17 @@ async def test_embedded_native_skill_survives_reference_expansion(
 
 
 @pytest.mark.asyncio
-async def test_reference_body_cannot_invoke_native_skill(native_console, monkeypatch):
-    import tldw_chatbook.Chat.console_references as references
+async def test_reference_body_cannot_invoke_native_skill(
+    native_console, reference_file
+):
 
     rig = native_console
     install = await rig.install()
     generated = (
         f"${install.alias}:review /{install.alias}:command @{install.alias}:agent"
     )
-    monkeypatch.setattr(
-        references,
-        "build_console_reference_resolver",
-        lambda: lambda token: ("file", generated, None),
-    )
+    path, _reads = reference_file
+    path.write_text(generated)
     result = await rig.controller.submit_draft(
         "Read @evidence.txt", session_id=rig.session.id
     )
@@ -492,12 +515,11 @@ async def test_native_final_provider_rechecks_staged_authority(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("disable", [False, True])
 async def test_reference_invocation_source_survives_real_preparation_resume(
-    native_console, monkeypatch, disable
+    native_console, monkeypatch, disable, reference_file
 ):
     from types import SimpleNamespace
 
     import tldw_chatbook.Chat.console_chat_controller as controller_module
-    import tldw_chatbook.Chat.console_references as references
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
 
     rig = native_console
@@ -525,13 +547,8 @@ async def test_reference_invocation_source_survives_real_preparation_resume(
         expected_policy_revision=policy.policy_revision,
     )
     generated = f"REFERENCE ${install.alias}:review"
-    reads = []
-
-    def resolve(token):
-        reads.append(token)
-        return "file", generated, None
-
-    monkeypatch.setattr(references, "build_console_reference_resolver", lambda: resolve)
+    path, reads = reference_file
+    path.write_text(generated)
     result = await rig.controller.submit_draft(
         f"Read @evidence.txt then ${install.alias}:review", session_id=session.id
     )
@@ -576,12 +593,11 @@ async def test_reference_invocation_source_survives_real_preparation_resume(
 @pytest.mark.parametrize("paused", [False, True])
 @pytest.mark.parametrize("reference", [False, True])
 async def test_manual_rule_preserves_expanded_remainder_on_initial_and_resumed_send(
-    native_console, native_package, monkeypatch, paused, reference
+    native_console, native_package, monkeypatch, paused, reference, reference_file
 ):
     from types import SimpleNamespace
 
     import tldw_chatbook.Chat.console_chat_controller as controller_module
-    import tldw_chatbook.Chat.console_references as references
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
 
     rig = native_console
@@ -604,15 +620,8 @@ async def test_manual_rule_preserves_expanded_remainder_on_initial_and_resumed_s
         rig.service, package, ("rule:style", "rule:other", "skill:review")
     )
     generated = f"EVIDENCE @{install.alias}:other ${install.alias}:review"
-    reads = []
-
-    def resolve(token):
-        reads.append(token)
-        if token != "evidence.txt":
-            return None
-        return "file", generated, None
-
-    monkeypatch.setattr(references, "build_console_reference_resolver", lambda: resolve)
+    path, reads = reference_file
+    path.write_text(generated)
     session = rig.store.create_session(ephemeral=paused, workspace_id="workspace-a")
     if paused:
         monkeypatch.setattr(

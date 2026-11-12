@@ -556,7 +556,7 @@ def _install_collections_source(_source_wiring):
 
 
     # Definition-time compatibility boundary for the finite Collections initializer.
-    from tldw_chatbook.Chat.console_preparation_reads import (
+    from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
         run_preparation_read as _COLLECTIONS_RUN_PREPARATION,
     )
     vars(_source_wiring).update({'_COLLECTIONS_RUN_PREPARATION': _COLLECTIONS_RUN_PREPARATION})

@@ -773,6 +773,78 @@ async def test_native_unicode_projection_fits_entire_envelope_without_skipping_r
 
 
 @pytest.mark.asyncio
+async def test_ordinary_archive_provider_requires_the_original_turn(recovery_stores):
+    from tldw_chatbook.Agents.tool_catalog import (
+        SEARCH_ARCHIVED_CONVERSATIONS,
+        ToolCatalogRegistry,
+    )
+    from tldw_chatbook.Chat.console_chat_models import ConsoleSubmissionOrigin
+    from tldw_chatbook.Chat.console_ordinary_tree import _OrdinaryTurn
+
+    app, _, _ = recovery_stores
+    owner = ConsoleRuntime(app)
+    store = ConsoleChatStore()
+    session = store.create_session()
+    controller = ConsoleChatController(store=store, provider_gateway=None)
+    owner.set_chat_store(store)
+    owner.set_chat_controller(controller)
+    recovery = owner.ensure_archive_recovery()
+    recovery.is_answerable = lambda session_id: session_id == session.id
+    configuration = _execution_configuration(session.id)
+    library = SimpleNamespace(
+        policy=_allowed_candidate(allowed=True), direct_library_tools=True
+    )
+
+    def registered_provider_for(turn_id):
+        proof = recovery.issue_user_proof(session.id)
+        assert recovery.accepted_user_turn(proof, session.id) is None
+        recovery.accept_user_proof(proof, session.id, turn_id)
+        assert recovery.accepted_user_turn(proof, session.id) == turn_id
+        assert recovery.accepted_user_turn(replace(proof), session.id) is None
+        assert recovery.accepted_user_turn(proof, "other-session") is None
+        provider = recovery.admit(
+            SimpleNamespace(
+                configuration=replace(configuration, recovery_user_origin=proof),
+                library_authority=library,
+            ),
+            session,
+        )
+        assert provider is not None
+        assert recovery.accepted_user_turn(proof, session.id) is None
+        registry = ToolCatalogRegistry()
+        assert registry.register_archive_recovery_provider(provider, provider.authority)
+        return registry, provider
+
+    try:
+        registry, original = registered_provider_for("original")
+        other_registry, _ = registered_provider_for("other-turn")
+        tree = _OrdinaryTurn(
+            controller,
+            session,
+            configuration,
+            ConsoleSubmissionOrigin.MANUAL,
+            None,
+            True,
+        )
+        tree.archive_recovery = (recovery, "original")
+        name = SEARCH_ARCHIVED_CONVERSATIONS
+        tree.other_maximum["archive_recovery"] = frozenset({name})
+        tree.bind_catalog(registry, (name,))
+        tree.check_catalog_call(registry, name, original)
+        with pytest.raises(
+            RuntimeError, match="ordinary archive recovery custody changed"
+        ):
+            tree.bind_catalog(other_registry, (name,))
+        await recovery.close_session(session.id)
+        with pytest.raises(
+            RuntimeError, match="ordinary archive recovery custody changed"
+        ):
+            tree.check_catalog_call(registry, name, original)
+    finally:
+        await owner.dispose()
+
+
+@pytest.mark.asyncio
 async def test_console_terminal_session_close_revokes_recovery_state(recovery_stores):
     app, _, _ = recovery_stores
     owner = ConsoleRuntime(app)

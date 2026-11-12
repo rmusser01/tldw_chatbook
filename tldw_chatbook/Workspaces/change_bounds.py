@@ -247,3 +247,13 @@ def scan_root(
         oversized=tuple(oversized),
         nested_repos=tuple(nested),
     )
+
+
+_NATIVE_ORDINARY_CAPABILITY_READS = tuple(
+    (name, globals()[name], globals()[name].__code__)
+    for name in (
+        "read_change_review_capability",
+        "_change_review_enabled_setting",
+        "_coerce_change_review_enabled",
+    )
+)

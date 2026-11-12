@@ -1,6 +1,5 @@
 """Native invocation projection behind the current Console controller methods."""
 
-import asyncio
 import json
 from dataclasses import replace
 
@@ -327,6 +326,7 @@ async def _prepare_native_references(
     configuration,
     *,
     origin,
+    session,
     machine_input,
     resumed_preparation,
     prepared_continuation,
@@ -379,59 +379,41 @@ async def _prepare_native_references(
         and not native_literal_arguments
     ):
         try:
-            from tldw_chatbook.Chat.console_references import (
-                ReferenceExpansion,
-                build_console_reference_resolver,
-                expand_references,
-                find_reference_candidates,
-                run_git_reference,
-            )
+            from .console_references import _native_reference_candidates
 
-            candidates = find_reference_candidates(clean_draft)
-            if native_kind == "rule":
-                start = len(clean_draft) - len(clean_draft.lstrip())
-                candidates = [
-                    candidate
-                    for candidate in candidates
-                    if not (candidate.start == start and candidate.raw == first_word)
-                ]
+            candidates = tuple(_native_reference_candidates(clean_draft))
+            excluded = (
+                (len(clean_draft) - len(clean_draft.lstrip()), first_word)
+                if native_kind == "rule"
+                else None
+            )
             if candidates:
+                from .console_reference_preparation import prepare_reference_expansion
 
-                def _expand():
-                    resolver = build_console_reference_resolver()
-                    chunks, records, offsets = [], [], []
-                    previous = 0
-                    for candidate in candidates:
-                        expansion = expand_references(
-                            candidate.raw,
-                            resolve=resolver,
-                            git_runner=run_git_reference,
-                        )
-                        chunks.extend(
-                            (
-                                clean_draft[previous : candidate.start],
-                                expansion.expanded_text,
-                            )
-                        )
-                        records.extend(expansion.records)
-                        offsets.append(
-                            (
-                                candidate.end,
-                                len(expansion.expanded_text) - len(candidate.raw),
-                            )
-                        )
-                        previous = candidate.end
-                    chunks.append(clean_draft[previous:])
-                    return ReferenceExpansion("".join(chunks), records), tuple(offsets)
-
-                expansion, reference_offsets = await asyncio.to_thread(_expand)
-                executed_draft_text = expansion.expanded_text
-                reference_records = tuple(expansion.records)
-        except Exception:  # noqa: BLE001 - references must never block a send
-            _owner.logger.opt(exception=True).warning(
-                "@-reference expansion failed; sending the raw draft"
+                async with prepare_reference_expansion(
+                    self,
+                    session,
+                    origin,
+                    clean_draft,
+                    candidates,
+                    excluded_candidate=excluded,
+                ) as expansion:
+                    executed_draft_text = expansion.expanded_text
+                    reference_records = tuple(expansion.records)
+                    reference_offsets = expansion.offsets
+        except Exception:  # noqa: BLE001 - keep raw text and visible refusal records
+            from .console_references import (
+                ReferenceRecord,
+                _native_reference_candidates,
             )
+
             executed_draft_text = clean_draft
-            reference_records = ()
+            reference_records = tuple(
+                ReferenceRecord(
+                    candidate.raw, "refused", False, "reference source unavailable"
+                )
+                for candidate in _native_reference_candidates(clean_draft)
+                if native_kind != "rule" or (candidate.start, candidate.raw) != excluded
+            )
             reference_offsets = ()
     return clean_draft, executed_draft_text, reference_records, reference_offsets

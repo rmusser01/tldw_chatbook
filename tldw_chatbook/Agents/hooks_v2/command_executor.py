@@ -16,7 +16,7 @@ from tldw_chatbook.Utils.path_validation import validate_existing_absolute_direc
 
 from .budgets import HookTicket
 from .models import HookEvent, HookHandler, HookResult
-from .ownership import HookProcessOwner
+from .ownership import HookProcessOwner, join_hook_worker
 from .validation import decode_result
 
 STDOUT_BYTES = 16 * 1024
@@ -93,6 +93,9 @@ class CommandJob:
     owner: HookProcessOwner | None = None
     task: asyncio.Task | None = None
     cleanup_deadline: float | None = None
+    native_target: object | None = None
+    native_terminal: bool = False
+    native_cancelled: bool = False
 
     def stop(self) -> None:
         if not self.cancel.is_set():
@@ -139,7 +142,13 @@ class CommandExecutor:
         process_owner_factory: Callable | None = None,
         command_launch: Callable | None = None,
     ) -> CommandJob:
-        job = CommandJob(uuid4().hex, ticket)
+        from ..legacy_hook_ownership import current_target
+
+        target = current_target()
+        job = CommandJob(uuid4().hex, ticket, native_target=target)
+        if target is not None:
+            target.process_attempted()
+            target.retain_callback()
         job.owner = (
             process_owner_factory(job.stop) if process_owner_factory else None
         ) or self.owner
@@ -156,6 +165,13 @@ class CommandExecutor:
                 command_launch,
             )
         )
+        if target is not None:
+
+            def returned(done):
+                target.process_terminal(job.native_terminal)
+                target.callback_returned()
+
+            job.task.add_done_callback(returned)
         return job
 
     async def wait(self, job: CommandJob, deadline: float) -> CommandResult:
@@ -178,6 +194,18 @@ class CommandExecutor:
         except asyncio.CancelledError:
             job.stop()
             raise
+
+    async def _thread_call(self, job: CommandJob, callback, *args):
+        if job.native_target is None:
+            return await asyncio.to_thread(callback, *args)
+        task = asyncio.create_task(asyncio.to_thread(callback, *args))
+        try:
+            return await join_hook_worker(task, job.stop)
+        except asyncio.CancelledError:
+            # The original worker has returned. Preserve its token/transport
+            # result so cancellation can settle the actual resource it created.
+            job.native_cancelled = True
+            return task.result()
 
     async def _run(
         self,
@@ -202,10 +230,10 @@ class CommandExecutor:
                 terminal = True
                 outcome.failure = "unsupported_platform"
                 return outcome
-            job.token = await asyncio.to_thread(job.owner.reserve_launch, event)
+            job.token = await self._thread_call(job, job.owner.reserve_launch, event)
             baseline = dict(os.environ)
             launch_values = (
-                await asyncio.to_thread(command_launch, handler, event, baseline)
+                await self._thread_call(job, command_launch, handler, event, baseline)
                 if command_launch
                 else None
             )
@@ -213,7 +241,7 @@ class CommandExecutor:
                 launch_values = CommandLaunchValues(
                     handler.argv,
                     handler.cwd,
-                    await asyncio.to_thread(environment, handler, event),
+                    await self._thread_call(job, environment, handler, event),
                 )
             if not isinstance(launch_values, CommandLaunchValues):
                 raise TypeError("invalid command launch values")
@@ -226,7 +254,9 @@ class CommandExecutor:
             cwd = launch_values.cwd
             if cwd is not None:
                 current_cwd = str(
-                    await asyncio.to_thread(validate_existing_absolute_directory, cwd)
+                    await self._thread_call(
+                        job, validate_existing_absolute_directory, cwd
+                    )
                 )
                 if current_cwd != cwd:
                     raise ValueError("hook cwd changed")
@@ -234,7 +264,9 @@ class CommandExecutor:
                 outcome.failure = "cancelled"
                 terminal = True  # reserve succeeded, no launch attempted
                 return outcome
-            if not await asyncio.to_thread(authority_check, handler, event, "launch"):
+            if not await self._thread_call(
+                job, authority_check, handler, event, "launch"
+            ):
                 outcome.failure = "authority_refused"
                 terminal = True
                 return outcome
@@ -272,7 +304,7 @@ class CommandExecutor:
                                 launch(), loop
                             ).result()
 
-                    transport, _ = await asyncio.to_thread(guarded_launch)
+                    transport, _ = await self._thread_call(job, guarded_launch)
                 launched = True
             except (OSError, ValueError):
                 # subprocess_exec has positively reported no child; a transport
@@ -280,7 +312,8 @@ class CommandExecutor:
                 terminal = capture.transport is None
                 outcome.failure = "launch_failed"
                 return outcome
-            await asyncio.to_thread(
+            await self._thread_call(
+                job,
                 job.owner.publish_process,
                 job.token,
                 {
@@ -311,8 +344,8 @@ class CommandExecutor:
                     outcome.failure = "nonzero_exit"
                 elif capture.stdout_overflow:
                     outcome.failure = "stdout_overflow"
-                elif not await asyncio.to_thread(
-                    authority_check, handler, event, "accept"
+                elif not await self._thread_call(
+                    job, authority_check, handler, event, "accept"
                 ):
                     outcome.failure = "authority_refused"
                 elif time.monotonic() >= deadline or job.cancel.is_set():
@@ -354,16 +387,20 @@ class CommandExecutor:
                 terminal = await self._terminate(job)
             if job.token is not None:
                 try:
-                    await asyncio.to_thread(
-                        job.owner.settle_process, job.token, terminal
+                    await self._thread_call(
+                        job, job.owner.settle_process, job.token, terminal
                     )
                 except Exception:  # noqa: BLE001
                     # Any owner failure preserves unresolved custody.
                     terminal = False
                     outcome.failure = outcome.failure or "settlement_failed"
+            if job.native_cancelled:
+                outcome.result = None
+                outcome.failure = outcome.failure or "cancelled"
             outcome.stderr_bytes = len(capture.stderr)
             outcome.stderr_truncated = capture.stderr_truncated
             outcome.cleanup_pending = not terminal
+            job.native_terminal = terminal
             if terminal:
                 job.ticket.release()
                 self.records.pop(job.id, None)
@@ -434,13 +471,21 @@ class CommandExecutor:
                     try:
                         os.killpg(capture.transport.get_pid(), 0)
                     except ProcessLookupError:
+                        if job.native_target is not None:
+                            job.native_target.retain_callback()
                         try:
-                            await asyncio.to_thread(
-                                job.owner.settle_process, job.token, True
+                            await self._thread_call(
+                                job, job.owner.settle_process, job.token, True
                             )
                         except Exception:  # noqa: BLE001, S112
                             # Retained metadata is the diagnostic.
                             continue
+                        finally:
+                            if job.native_target is not None:
+                                job.native_target.callback_returned()
                         capture.transport.close()
                         job.ticket.release()
                         self.records.pop(job.id, None)
+                        if job.native_target is not None:
+                            job.native_target.process_terminal(True)
+                            job.native_target.event.reconcile()
