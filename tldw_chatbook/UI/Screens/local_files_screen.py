@@ -21,6 +21,7 @@ from textual.message import Message
 from textual.widgets import Button, Input, OptionList, Select, Static
 from textual.widgets.option_list import Option
 
+from ...app_services import read_workspace_registry
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 
@@ -191,7 +192,7 @@ class LocalFilesScreen(BaseAppScreen):
     def on_mount(self) -> None:
         if self.app.is_web:
             return
-        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        registry = read_workspace_registry(self.app_instance)
         if registry is not None:
             self._unsubscribe = registry.subscribe_project_index_changes(
                 lambda binding_id: self.post_message(self.BindingChanged(binding_id))
@@ -221,7 +222,7 @@ class LocalFilesScreen(BaseAppScreen):
             project_index_registry_connections,
         )
 
-        registry = getattr(self.app_instance, "workspace_registry_service", None)
+        registry = read_workspace_registry(self.app_instance)
         if registry is None:
             return []
         with project_index_registry_connections(registry.db):
