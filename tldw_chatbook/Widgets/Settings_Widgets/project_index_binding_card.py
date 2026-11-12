@@ -312,9 +312,11 @@ class ProjectIndexBindingCard(Vertical):
             semantic_actions.add("semantic-retry-cleanup")
         for button in self.query(".project-semantic-action"):
             button.display = button.name in semantic_actions
-        self.query_one(".project-semantic-model", Input).disabled = (
-            not self.available or not self.supported or semantic is None or self._semantic_read_failed
-        )
+        model_input = self.query_one_optional(".project-semantic-model", Input)
+        if model_input is not None:
+            model_input.disabled = (
+                not self.available or not self.supported or semantic is None or self._semantic_read_failed
+            )
 
     def _keyword_inputs(self) -> tuple[Input, Input]:
         return (
@@ -600,8 +602,12 @@ class ProjectIndexBindingCard(Vertical):
                 elif self.semantic_status and not self.semantic_status.enabled:
                     self._semantic_destination = ""
                 if self.semantic_status and self.semantic_status.settings:
-                    model_input = self.query_one(".project-semantic-model", Input)
-                    if model_input.value == (submitted_model if semantic_action and semantic_action.action == "stage" else self._painted_semantic_model):
+                    model_input = self.query_one_optional(".project-semantic-model", Input)
+                    if model_input is not None and model_input.value == (
+                        submitted_model
+                        if semantic_action and semantic_action.action == "stage"
+                        else self._painted_semantic_model
+                    ):
                         model_input.value = self.semantic_status.settings.model_id
                         self._painted_semantic_model = model_input.value
                 elif semantic_action and semantic_action.action == "disable":

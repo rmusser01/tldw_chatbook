@@ -18,7 +18,7 @@ async def test_service_retires_actual_registry_handles_before_model_entry_and_cl
     from Tests.Workspaces.test_project_index_service import Rig
     from Tests.Workspaces.test_project_semantic_generations import seed_keyword_ready
     from Tests.Workspaces.test_project_semantic_settings import digest, settings
-    from tldw_chatbook.Backup_Recovery.participants import _core_cached_connection
+    from tldw_chatbook.Backup_Recovery.participants import core_cached_connection
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
     from tldw_chatbook.RAG_Search.simplified import embeddings_wrapper
     from tldw_chatbook.Workspaces.project_index import semantic
@@ -48,7 +48,7 @@ async def test_service_retires_actual_registry_handles_before_model_entry_and_cl
         return Carrier()
 
     def closed(connection):
-        assert _core_cached_connection(database, connection) is None
+        assert core_cached_connection(database, connection) is None
         with pytest.raises(sqlite3.ProgrammingError):
             sqlite3.Connection.in_transaction.__get__(connection)
 
@@ -101,7 +101,7 @@ async def test_service_retires_actual_registry_handles_before_model_entry_and_cl
 async def test_semantic_registry_callback_retires_each_owned_handle_and_preserves_borrowed(
     tmp_path, request, monkeypatch
 ):
-    from tldw_chatbook.Backup_Recovery.participants import _core_cached_connection
+    from tldw_chatbook.Backup_Recovery.participants import core_cached_connection
     from tldw_chatbook.DB import store_kernel
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
     from tldw_chatbook.RAG_Search.projection_scope import ProjectProjectionRequired
@@ -116,13 +116,13 @@ async def test_semantic_registry_callback_retires_each_owned_handle_and_preserve
         with project_index_registry_connections(database) as retire:
             first = database._held_connection()
             retire()
-            assert _core_cached_connection(database, first) is None
+            assert core_cached_connection(database, first) is None
             with pytest.raises(sqlite3.ProgrammingError):
                 sqlite3.Connection.in_transaction.__get__(first)
             second = database._held_connection()
             assert second is not first
             retire()
-            assert _core_cached_connection(database, second) is None
+            assert core_cached_connection(database, second) is None
             with pytest.raises(sqlite3.ProgrammingError):
                 sqlite3.Connection.in_transaction.__get__(second)
 
@@ -134,7 +134,7 @@ async def test_semantic_registry_callback_retires_each_owned_handle_and_preserve
             assert borrowed.in_transaction
         database.close()
 
-        original = store_kernel._core_closing
+        original = store_kernel.core_closing
 
         @contextmanager
         def denied(repository, connection):
@@ -142,12 +142,12 @@ async def test_semantic_registry_callback_retires_each_owned_handle_and_preserve
                 yield False if repository is database else allowed
 
         with monkeypatch.context() as patch:
-            patch.setattr(store_kernel, "_core_closing", denied)
+            patch.setattr(store_kernel, "core_closing", denied)
             with pytest.raises(ProjectIndexRetirementUnproven):
                 with project_index_registry_connections(database) as retire:
                     retained = database._held_connection()
                     retire()
-            assert _core_cached_connection(database, retained) is retained
+            assert core_cached_connection(database, retained) is retained
             assert sqlite3.Connection.in_transaction.__get__(retained) is False
     finally:
         database.close()

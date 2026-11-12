@@ -33,6 +33,60 @@ def test_fresh_v4_has_exact_semantic_tables_and_read_only_off(tmp_path):
     store.close_native()
 
 
+def test_semantic_publish_path_check_uses_covering_index_without_statistics(tmp_path):
+    store = open_semantic_store(tmp_path)
+    namespace = make_index_key(tmp_path).namespace
+    generations = (("staging", "Staging", "src"), ("previous", "Ready", "excluded"))
+    member_count = 96
+    policy = ProjectIndexPolicy(("src",), (".py",))
+    try:
+        with store.transaction() as conn:
+            conn.executemany(
+                "INSERT INTO semantic_generations VALUES(?, ?, 1, 1, 1, "
+                "'local', 'test', 'dest', 'config', 'artifact', 'float32-le-v1', "
+                "1, 1, NULL, NULL, ?, ?)",
+                (
+                    (generation, namespace, state, member_count)
+                    for generation, state, _ in generations
+                ),
+            )
+            conn.executemany(
+                "INSERT INTO semantic_members VALUES(?, ?, ?, 'id', 'digest', "
+                "1, 1, X'0000803f')",
+                (
+                    (generation, ordinal, f"{folder}/file-{ordinal // 3}.py")
+                    for generation, _, folder in generations
+                    for ordinal in range(1, member_count + 1)
+                ),
+            )
+            conn.create_function(
+                "index_path_allowed",
+                1,
+                store._eligibility_predicate(policy, ()),
+            )
+            # Mirror semantic_publish's forbidden-member lookup.
+            sql = (
+                "SELECT 1 FROM semantic_members WHERE generation_id=? "
+                "AND index_path_allowed(relative_path)=0 LIMIT 1"
+            )
+            assert (
+                conn.execute(
+                    "SELECT 1 FROM sqlite_schema WHERE name='sqlite_stat1'"
+                ).fetchone()
+                is None
+            )
+            plan = " ".join(
+                row[3]
+                for row in conn.execute("EXPLAIN QUERY PLAN " + sql, ("staging",))
+            )
+            index = "semantic_members_path"
+            assert f"USING COVERING INDEX {index} (generation_id=?)" in plan, plan
+            assert conn.execute(sql, ("staging",)).fetchone() is None
+            assert tuple(conn.execute(sql, ("previous",)).fetchone()) == (1,)
+    finally:
+        store.close_native()
+
+
 def test_v3_to_v4_preserves_keyword_policy_frontier_claim_and_rows(tmp_path):
     store = open_semantic_store(tmp_path)
     key = make_index_key(tmp_path)
