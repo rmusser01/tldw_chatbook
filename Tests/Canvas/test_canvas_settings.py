@@ -376,14 +376,15 @@ def test_execution_kill_switch_uses_full_policy_strict_boolean_contract(
 
 def test_canvas_settings_persist_and_reload_from_disk(monkeypatch, tmp_path) -> None:
     target = tmp_path / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
-    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    from Tests.Backup_Recovery.config_test_support import select_config_source
 
-    assert config_module.save_settings_to_cli_config(
+    source = select_config_source(monkeypatch, target)
+
+    assert source.save_settings_to_cli_config(
         {"canvas": {"enabled": False, "auto_open_on_create": False}}
     )
 
-    reloaded = config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    reloaded = source.load_cli_config_and_ensure_existence(force_reload=True)
     policy = canvas_config_policy_module.build_canvas_config_policy(reloaded)
     assert policy.enabled is False
     assert policy.auto_open_on_create is False
