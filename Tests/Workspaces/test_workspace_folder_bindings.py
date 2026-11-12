@@ -18,7 +18,7 @@ from tldw_chatbook.Workspaces.registry_service import (
 )
 
 
-def build_registry(tmp_path: Path) -> LocalWorkspaceRegistryService:
+def build_registry(tmp_path: Path, request) -> LocalWorkspaceRegistryService:
     """Build a registry backed by a fresh ``WorkspaceDB`` under ``tmp_path``.
 
     Real callers always place ``WorkspaceDB`` under ``get_user_data_dir()``,
@@ -32,14 +32,14 @@ def build_registry(tmp_path: Path) -> LocalWorkspaceRegistryService:
     caller's directory is guaranteed to exist.
     """
     tmp_path.mkdir(parents=True, exist_ok=True)
-    return LocalWorkspaceRegistryService(
-        WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="folder-tests")
-    )
+    db = WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="folder-tests")
+    request.addfinalizer(db.close)
+    return LocalWorkspaceRegistryService(db)
 
 
 @pytest.fixture()
-def service(tmp_path: Path) -> LocalWorkspaceRegistryService:
-    registry = build_registry(tmp_path)
+def service(tmp_path: Path, request) -> LocalWorkspaceRegistryService:
+    registry = build_registry(tmp_path, request)
     registry.ensure_default_workspace()
     registry.create_workspace(workspace_id="ws-a", name="Client A")
     return registry
@@ -185,7 +185,7 @@ def test_add_folder_binding_rejects_default_workspace(
 
 
 def test_add_folder_binding_rejects_duplicates_and_nesting(
-    service: LocalWorkspaceRegistryService, tmp_path: Path
+    service: LocalWorkspaceRegistryService, tmp_path: Path, request
 ) -> None:
     parent = tmp_path / "parent"
     child = parent / "child"
@@ -198,7 +198,7 @@ def test_add_folder_binding_rejects_duplicates_and_nesting(
         service.add_folder_binding("ws-a", child)  # nested under existing
 
     # And the reverse direction: existing child blocks a new parent root.
-    other = build_registry(tmp_path / "second-db")
+    other = build_registry(tmp_path / "second-db", request)
     other.create_workspace(workspace_id="ws-b", name="Client B")
     other.add_folder_binding("ws-b", child)
     with pytest.raises(WorkspaceRegistryServiceError):

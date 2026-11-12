@@ -862,13 +862,13 @@ def test_end_turn_survives_a_still_running_discovery_thread(tracked):
 
 
 class TestChangeReviewGating:
-    def _registry(self, tmp_path):
+    def _registry(self, tmp_path, request):
         from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
         from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 
-        return LocalWorkspaceRegistryService(
-            WorkspaceDB(tmp_path / "workspaces.db", client_id="t")
-        )
+        db = WorkspaceDB(tmp_path / "workspaces.db", client_id="t")
+        request.addfinalizer(db.close)
+        return LocalWorkspaceRegistryService(db)
 
     def _bound_workspace(self, registry, tmp_path):
         root = tmp_path / "wsroot"
@@ -878,10 +878,10 @@ class TestChangeReviewGating:
         return root
 
     @pytest.mark.bootstrap_profile
-    def test_global_kill_knob_empties_the_root_list(self, tmp_path, monkeypatch):
+    def test_global_kill_knob_empties_the_root_list(self, tmp_path, monkeypatch, request):
         import tldw_chatbook.Tools.workspace_file_roots as wfr
 
-        registry = self._registry(tmp_path)
+        registry = self._registry(tmp_path, request)
         root = self._bound_workspace(registry, tmp_path)
         registry.set_change_review_enabled("ws-1", True)
         monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
@@ -893,10 +893,10 @@ class TestChangeReviewGating:
         )
 
     @pytest.mark.bootstrap_profile
-    def test_workspace_toggle_gates_only_that_workspace(self, tmp_path, monkeypatch):
+    def test_workspace_toggle_gates_only_that_workspace(self, tmp_path, monkeypatch, request):
         import tldw_chatbook.Tools.workspace_file_roots as wfr
 
-        registry = self._registry(tmp_path)
+        registry = self._registry(tmp_path, request)
         self._bound_workspace(registry, tmp_path)
         other_root = tmp_path / "other"
         other_root.mkdir()
@@ -913,10 +913,10 @@ class TestChangeReviewGating:
         assert wfr.folder_binding_roots("ws-2") == (other_root.resolve(),)
 
     @pytest.mark.bootstrap_profile
-    def test_reenabling_restores_tracking_without_restart(self, tmp_path, monkeypatch):
+    def test_reenabling_restores_tracking_without_restart(self, tmp_path, monkeypatch, request):
         import tldw_chatbook.Tools.workspace_file_roots as wfr
 
-        registry = self._registry(tmp_path)
+        registry = self._registry(tmp_path, request)
         root = self._bound_workspace(registry, tmp_path)
         monkeypatch.setattr(wfr, "_registry_factory", lambda: registry)
 

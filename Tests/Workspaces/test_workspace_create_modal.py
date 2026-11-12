@@ -29,8 +29,9 @@ async def _click_visible(pilot, selector):
     assert await pilot.click(selector)
 
 
-def _registry(tmp_path):
+def _registry(tmp_path, request):
     db = WorkspaceDB(tmp_path / "ws.sqlite", client_id="create-modal-tests")
+    request.addfinalizer(db.close)
     return LocalWorkspaceRegistryService(db)
 
 
@@ -98,7 +99,7 @@ class _HarnessApp(App[None]):
 async def test_explainer_describes_private_scratch_and_optional_folders(
     request, tmp_path
 ):
-    app = _HarnessApp(_registry(tmp_path))
+    app = _HarnessApp(_registry(tmp_path, request))
     async with app.run_test() as pilot:
         await pilot.pause()
         explainer = app.screen.query_one("#workspace-create-explainer", Static)
@@ -112,7 +113,7 @@ async def test_explainer_describes_private_scratch_and_optional_folders(
 @pytest.mark.asyncio
 @private_profile_test
 async def test_browse_pushes_picker_and_fills_path(request, tmp_path):
-    app = _HarnessApp(_registry(tmp_path))
+    app = _HarnessApp(_registry(tmp_path, request))
     async with app.run_test() as pilot:
         await pilot.pause()
         modal = app.screen
@@ -133,7 +134,7 @@ async def test_browse_pushes_picker_and_fills_path(request, tmp_path):
 @pytest.mark.asyncio
 @private_profile_test
 async def test_escape_dismisses_with_none(request, tmp_path):
-    app = _HarnessApp(_registry(tmp_path))
+    app = _HarnessApp(_registry(tmp_path, request))
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.press("escape")
@@ -144,7 +145,7 @@ async def test_escape_dismisses_with_none(request, tmp_path):
 @pytest.mark.asyncio
 @private_profile_test
 async def test_invalid_folder_shows_inline_error(request, tmp_path):
-    app = _HarnessApp(_registry(tmp_path))
+    app = _HarnessApp(_registry(tmp_path, request))
     async with app.run_test() as pilot:
         await pilot.pause()
         modal = app.screen
@@ -161,7 +162,7 @@ async def test_invalid_folder_shows_inline_error(request, tmp_path):
 @pytest.mark.asyncio
 @private_profile_test
 async def test_create_with_folder_returns_result_and_binds(request, tmp_path):
-    registry = _registry(tmp_path)
+    registry = _registry(tmp_path, request)
     project = tmp_path / "project"
     project.mkdir()
     app = _HarnessApp(registry)
@@ -189,7 +190,7 @@ async def test_create_with_folder_returns_result_and_binds(request, tmp_path):
 @pytest.mark.asyncio
 @private_profile_test
 async def test_duplicate_name_error_keeps_modal_open(request, tmp_path):
-    registry = _registry(tmp_path)
+    registry = _registry(tmp_path, request)
     registry.create_workspace(workspace_id="workspace-local-9", name="Video Tool")
     app = _HarnessApp(registry)
     async with app.run_test() as pilot:
@@ -206,7 +207,7 @@ async def test_duplicate_name_error_keeps_modal_open(request, tmp_path):
 @pytest.mark.asyncio
 @private_profile_test
 async def test_make_active_checkbox_carried_on_result(request, tmp_path):
-    app = _HarnessApp(_registry(tmp_path))
+    app = _HarnessApp(_registry(tmp_path, request))
     async with app.run_test() as pilot:
         await pilot.pause()
         modal = app.screen
@@ -221,7 +222,7 @@ async def test_make_active_checkbox_carried_on_result(request, tmp_path):
 async def test_profile_interview_offer_is_opt_in_and_carried_on_result(
     request, tmp_path
 ):
-    app = _HarnessApp(_registry(tmp_path))
+    app = _HarnessApp(_registry(tmp_path, request))
     async with app.run_test() as pilot:
         await pilot.pause()
         modal = app.screen
@@ -245,7 +246,7 @@ async def test_double_submit_creates_exactly_one_workspace_no_crash(request, tmp
     "Workspace 2"), so the registry's duplicate-name rejection does not
     incidentally save the unguarded code from creating two workspaces.
     """
-    registry = _registry(tmp_path)
+    registry = _registry(tmp_path, request)
     app = _HarnessApp(registry)
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -274,7 +275,7 @@ async def test_add_folder_empty_input_clears_stale_error(request, tmp_path):
     the same button in quick succession silently drop the second one -- an
     unrelated Textual debounce, not the seam this test is pinning.
     """
-    app = _HarnessApp(_registry(tmp_path))
+    app = _HarnessApp(_registry(tmp_path, request))
     async with app.run_test() as pilot:
         await pilot.pause()
         modal = app.screen
@@ -298,7 +299,7 @@ async def test_add_folder_empty_input_clears_stale_error(request, tmp_path):
 async def test_remove_folder_clears_stale_error(request, tmp_path):
     """Finding 5: removing a bound folder must not leave a prior invalid-
     folder error rendered."""
-    registry = _registry(tmp_path)
+    registry = _registry(tmp_path, request)
     project = tmp_path / "project"
     project.mkdir()
     app = _HarnessApp(registry)
@@ -329,7 +330,7 @@ async def test_overlong_name_shows_inline_error_and_creates_nothing(request, tmp
     """Finding 2: a name sanitize_string(raw, 100) would truncate/strip must
     be rejected inline at the boundary rather than silently mangled into the
     registry."""
-    registry = _registry(tmp_path)
+    registry = _registry(tmp_path, request)
     app = _HarnessApp(registry)
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -351,7 +352,7 @@ async def test_registry_read_failure_still_mounts_usable_modal(request, tmp_path
     (list_workspaces() failing) must not crash the modal before it can even
     mount -- it falls back to an empty suggested name and shows an inline
     error so the user can still type a name and retry."""
-    stub = _RaisingListWorkspacesRegistry(_registry(tmp_path))
+    stub = _RaisingListWorkspacesRegistry(_registry(tmp_path, request))
     app = _HarnessApp(stub)
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -375,7 +376,7 @@ async def test_identity_failure_at_create_resets_committed_for_retry(
     It must now reset _committed so a subsequent Create succeeds."""
     import tldw_chatbook.Widgets.workspace_create_modal as wcm_module
 
-    registry = _registry(tmp_path)
+    registry = _registry(tmp_path, request)
     app = _HarnessApp(registry)
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -411,7 +412,7 @@ async def test_folder_binding_failure_keeps_modal_open_and_retries(request, tmp_
     dismiss the modal or lose the already-created workspace -- it renders
     the failure inline, and a subsequent Create press retries only the
     remaining folder(s) without creating a second workspace."""
-    inner = _registry(tmp_path)
+    inner = _registry(tmp_path, request)
     stub = _FlakyBindRegistry(inner)
     project = tmp_path / "project"
     project.mkdir()
@@ -455,7 +456,7 @@ async def test_escape_after_partial_create_returns_partial_result(request, tmp_p
     """Finding 7: cancel after a partial create is a fact, not something
     Cancel/Escape can undo -- it must deliver the partial result instead of
     None so callers still sync their workspace list."""
-    inner = _registry(tmp_path)
+    inner = _registry(tmp_path, request)
     stub = _FlakyBindRegistry(inner)
     project = tmp_path / "project"
     project.mkdir()
@@ -491,7 +492,7 @@ async def test_escape_after_partial_create_returns_partial_result(request, tmp_p
 @pytest.mark.asyncio
 @private_profile_test
 async def test_folder_with_skills_annotated_and_carried_on_result(request, tmp_path):
-    registry = _registry(tmp_path)
+    registry = _registry(tmp_path, request)
     project = tmp_path / "project"
     skill = project / ".SKILLS" / "alpha-skill"
     skill.mkdir(parents=True)
@@ -540,7 +541,7 @@ async def test_kill_switch_suppresses_folder_discovery_scan(
         _recorder,
     )
 
-    registry = _registry(tmp_path)
+    registry = _registry(tmp_path, request)
     project = tmp_path / "project"
     skill = project / ".SKILLS" / "alpha-skill"
     skill.mkdir(parents=True)
@@ -567,7 +568,7 @@ async def test_removed_and_rescanned_folder_clears_stale_discovery(request, tmp_
     CLEAR any previously-recorded entry for that same locator, not merely
     leave the old one in place (assign-or-pop, not assign-only).
     """
-    registry = _registry(tmp_path)
+    registry = _registry(tmp_path, request)
     project = tmp_path / "project"
     skill = project / ".SKILLS" / "alpha-skill"
     skill.mkdir(parents=True)
@@ -621,7 +622,7 @@ async def test_enter_key_on_name_input_submits_via_real_keypress(request, tmp_pa
     task-17961 blind-spot lesson: a synthetic call can pass while the real
     focus/keypress path is broken.
     """
-    registry = _registry(tmp_path)
+    registry = _registry(tmp_path, request)
     app = _HarnessApp(registry)
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -651,7 +652,7 @@ async def test_real_toctou_folder_deleted_before_create_shows_inline_failure(
     -- ``failed_folders`` must come from the real ``add_folder_binding()``
     call raising, not a synthetic result object or a stubbed registry.
     """
-    registry = _registry(tmp_path)
+    registry = _registry(tmp_path, request)
     project = tmp_path / "project"
     project.mkdir()
     app = _HarnessApp(registry)
@@ -690,7 +691,7 @@ async def test_make_active_checkbox_survives_folder_add_recompose(request, tmp_p
     reset the checkbox back to checked -- ``_stash_form_state`` is what
     preserves it across the rebuild.
     """
-    registry = _registry(tmp_path)
+    registry = _registry(tmp_path, request)
     project = tmp_path / "project"
     project.mkdir()
     app = _HarnessApp(registry)
@@ -721,7 +722,7 @@ async def test_surface_description_is_carried_onto_created_record(request, tmp_p
     is pinned in their own handler tests / by inspection; this test pins
     the modal's own plumbing all three share).
     """
-    registry = _registry(tmp_path)
+    registry = _registry(tmp_path, request)
     # Mirrors what Console's _create_console_workspace passes into the
     # shared modal's constructor.
     app = _HarnessApp(registry, description="Local workspace created from Console.")
@@ -744,7 +745,7 @@ async def test_surface_description_is_carried_onto_created_record(request, tmp_p
 async def test_default_description_used_when_surface_passes_none(request, tmp_path):
     """Without an explicit ``description``, the modal falls back to its own
     generic wording rather than an empty string."""
-    registry = _registry(tmp_path)
+    registry = _registry(tmp_path, request)
     app = _HarnessApp(registry)
     async with app.run_test() as pilot:
         await pilot.pause()
