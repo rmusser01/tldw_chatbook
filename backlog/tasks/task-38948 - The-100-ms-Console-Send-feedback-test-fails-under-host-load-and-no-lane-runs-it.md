@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-05 21:35
-updated_date: 2026-11-12 17:36
+updated_date: 2026-11-12 18:49
 labels:
 - follow-up
 - console
@@ -339,11 +339,19 @@ AC#1 is met on that tree. AC#4 remains open pending hosted qualification and re-
 - **The other 34 files that touch the acknowledgement:** 946 passed, 20 failed, at load 14-21.
   - 18 are the same 18 as before.
   - `test_console_library_pause_recovery.py::…[stream]` fails alone on cd7d3aa10e and d583254ddd too, so it is not from this round.
-  - `test_console_sync_tick_storage.py::test_sync_ticks_during_a_run_check_the_character_scope_once_a_second` fails now and then on its last check ("outside a run every sync checks": `32 >= 34`), when the host is loaded.
-    - Plain runs: 4 of 24 on the reorder versions (d583254ddd and later) at load 8-20, against 0 of 28 on cd7d3aa10e.
-    - It passed 0 failures in 16 runs at load 3-7, and in 36 runs with a probe attached.
-    - The reorder shifts a run's timing by about a frame. The failing state (no scope read in two ticks after the run) could not be caught under the probe.
-    - This file is on no PR lane; it is listed as a follow-up.
+  - `test_console_sync_tick_storage.py::test_sync_ticks_during_a_run_check_the_character_scope_once_a_second` failed now and then on its last check (`32 >= 34`).
+    - **This round's first reading was wrong.** It blamed the reorder (4 of 24 on the reorder versions against 0 of 28 on cd7d3aa10e, sampled at different times and loads).
+    - **Review r13n-rev4 ran an interleaved A/B.** It used cd7d3aa10e's and d640ccadee's `send_acknowledgement.py`, alternated per iteration under the same load. They failed 20 of 64 and 17 of 64, so the reorder is not the cause.
+    - **The real cause, from 35 caught failures.** At the first idle tick, `_console_control_bar_replay_whole_sync` and `_console_sync_requested` were both True.
+      - `config_sync.sync_console_core_state` (`config_sync.py:530`) sets them when another thread holds both config locks (`cold=True`).
+      - Both of the test's ticks then returned False at `_sync_native_console_chat_ui`'s entry guard and never reached the Character presentation work.
+      - That is the designed TASK-35645 / TASK-36511 whole-sync replay, and the test did not wait it out.
+    - **Fixed in the test (review r13n-rev4).** `_tick` now also waits for no owed or scheduled replay: `_settled` checks `_console_sync_in_progress`, `_console_control_bar_replay_whole_sync` and `_console_control_bar_sync_scheduled`. The reviewer measured it fixed at 0 of 48 against 17 of 48 unfixed, at load 14-31. My 10 runs of the file at `-n 4` passed 10 of 10 (2 of 2 tests each) at load 7-8; low load was the condition the flake did not need, so the reviewer's loaded A/B is the stronger evidence.
+    - The file is still on no PR lane; laning it is a follow-up.
 - **Size ratchets:** 224 passed. Preimport payload budget and first-send preimport: 25 passed.
 - **Preflight:** passes. The diagnostic inventory verified with no change this round.
+### Round 13, review r13n-rev4 (2026-11-12)
+- **The sync-tick failure is not from the reorder.** The Round 13 "Runs" note above now gives the real cause and the reviewer's interleaved A/B (20 of 64 against 17 of 64), and `Tests/UI/test_console_sync_tick_storage.py::_tick` waits out an owed or scheduled whole-sync replay.
+- **Two wrappers return the paint's result now.** `test_console_send_resend_guard.py`'s `held_paint` and this file's `paint_then_whole_sync` used to drop `paint_acknowledgement`'s returned row mount, so they ran the degraded path. Their own assertions are unchanged.
+- **Covering runs, `-n 4`, load 7-9.** The acknowledgement core, extended, resend guard, received-intent and sync-tick files: 68 passed. Preflight passes.
 <!-- SECTION:NOTES:END -->

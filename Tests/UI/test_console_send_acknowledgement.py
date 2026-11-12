@@ -515,12 +515,13 @@ async def test_a_whole_sync_before_the_rows_frame_does_not_mount_the_row(monkeyp
     real_paint = module.paint_acknowledgement
 
     async def paint_then_whole_sync(screen, session_id):
-        await real_paint(screen, session_id)
+        mount = await real_paint(screen, session_id)
         await screen._sync_native_console_chat_ui()
         row_id = module.acknowledgement_for(screen).pending_row_id(session_id)
         mounted_by_sync.append(
             bool(row_id and list(screen.query(f"#console-message-{row_id}")))
         )
+        return mount  # The hand-off still waits for the row's own mount.
 
     monkeypatch.setattr(module, "paint_acknowledgement", paint_then_whole_sync)
     host, gateway, _timeline = build()
