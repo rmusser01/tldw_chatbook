@@ -1,5 +1,5 @@
 ---
-id: TASK-40127
+id: TASK-40290
 title: Use the DeepSeek environment credential in Library RAG answers
 status: Done
 assignee: []
