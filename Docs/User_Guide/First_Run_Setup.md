@@ -253,7 +253,9 @@ Below the navigation buttons, one quiet row holds **Reduce motion** and
 buttons on purpose: Tab goes from the track list to **Next** first. Reduce
 motion takes effect at once for the animations already running (Buddy and
 character expressions) and is saved when you press Next, only if you changed
-it; once saved, the splash plays still from the next launch.
+it; once saved, the splash plays still from the next launch. Skip or exit setup
+before pressing Next and the change is undone, so nothing you did not save stays
+in effect.
 
 A profile's first launch plays no splash screen, so Welcome appears as soon as
 the app has loaded; warnings from optional dependencies go to the log file, not
