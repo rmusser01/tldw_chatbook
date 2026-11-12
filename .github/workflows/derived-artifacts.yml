@@ -1755,3 +1755,16 @@ jobs:
             --timeout=180 \
             --durations=0 --durations-min=0 \
             --tb=short
+
+      # TASK-38948 (owner decision 2026-11-10, "Off the gate, reorder next"):
+      # the 100 ms Send-feedback nodes left the required UI lane; they keep
+      # running here on every push to dev until CI shows them passing.
+      - name: Watch the 100 ms Send-feedback nodes
+        if: ${{ !cancelled() && strategy.job-index == 0 }}
+        run: |
+          pytest \
+            "Tests/UI/test_console_received_intent_feedback.py::test_actual_send_paints_sending_and_accepts_input_within_100ms[enter]" \
+            "Tests/UI/test_console_received_intent_feedback.py::test_actual_send_paints_sending_and_accepts_input_within_100ms[send-button]" \
+            --timeout=180 \
+            --durations=0 --durations-min=0 \
+            --tb=short

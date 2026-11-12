@@ -354,4 +354,6 @@ AC#1 is met on that tree. AC#4 remains open pending hosted qualification and re-
 - **The sync-tick failure is not from the reorder.** The Round 13 "Runs" note above now gives the real cause and the reviewer's interleaved A/B (20 of 64 against 17 of 64), and `Tests/UI/test_console_sync_tick_storage.py::_tick` waits out an owed or scheduled whole-sync replay.
 - **Two wrappers return the paint's result now.** `test_console_send_resend_guard.py`'s `held_paint` and this file's `paint_then_whole_sync` used to drop `paint_acknowledgement`'s returned row mount, so they ran the degraded path. Their own assertions are unchanged.
 - **Covering runs, `-n 4`, load 7-9.** The acknowledgement core, extended, resend guard, received-intent and sync-tick files: 68 passed. Preflight passes.
+
+**Dev-push watch committed (2026-11-12 restack).** The step "Watch the 100 ms Send-feedback nodes" is the last step of `library-shell-dev` in `.github/workflows/derived-artifacts.yml` (first shard only, the UI lane's flags; not in the required aggregate), pinned by `Tests/CI/test_derived_artifacts_workflow.py::test_library_shell_runs_by_node_on_dev_pushes_only_and_is_never_required`.
 <!-- SECTION:NOTES:END -->
