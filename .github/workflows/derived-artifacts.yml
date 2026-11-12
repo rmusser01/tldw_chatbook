@@ -1259,6 +1259,7 @@ jobs:
             Tests/Architecture/test_profile_owned_path_inventory.py::test_shared_asset_exceptions_are_explicit \
             Tests/Architecture/test_profile_owned_path_inventory.py::test_base_data_dir_census_detects_qualified_and_aliased_consumers \
             Tests/Architecture/test_profile_owned_path_inventory.py::test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners \
+            Tests/Architecture/test_profile_owned_path_inventory.py::test_python_outside_the_package_and_tests_parses \
             Tests/Architecture/test_progress_widget_clock_guard.py \
             Tests/Architecture/test_recovery_entrypoints.py \
             Tests/Architecture/test_task2062_3_legacy_downloader_retirement.py \
