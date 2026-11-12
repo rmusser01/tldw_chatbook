@@ -958,6 +958,10 @@ MINIMUM_FILES = 1919
 # TASK-39169 review r13p-rev2 (2026-11-10): append five more Settings focus
 # and region-batch nodes at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 1924
+# Round 13 (2026-11-10): TASK-39154's MCP approval file, TASK-39158's resize
+# node and 69 of TASK-39170's destination visual-parity functions join the
+# tail. The floor is the measured entry count.
+MINIMUM_FILES = 1995
 
 
 def read_census(path: Path) -> list[str]:
