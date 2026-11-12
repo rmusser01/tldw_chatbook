@@ -1461,3 +1461,55 @@ inline read retires older Library publication and that the resumed
 callback issues a worker that completes the full sync. The user chose
 independent code review for this PR. Exact PR-head required CI remains
 part of AC23.
+
+### Merged integration and hosted qualification
+
+[PR #3480](https://github.com/rmusser01/tldw_chatbook/pull/3480) merged into
+`dev` at `e10ce63fe8bbd03104849aae007835e82c88f719` on November 12, 2026 UTC.
+The reviewed PR head was `fe08463ab15b2396f143fac26cb56895f8294019`, rebased
+onto `7775edb5677695d819bb72ef59e0963c3c193420`. The documentation conflict
+preserved both lessons. Independent review cleared the rebased integration
+and the mounted-ready Send timing fixture. All review threads were resolved.
+
+The final head passed 15 local preflight checks, 18 startup and Send checks,
+and all three targeted Notes cases. The Send fixture waits for the existing
+mount discovery worker before timing. Both original routes passed six fresh
+runs and a mixed run. An injected 150 ms loop delay failed both routes. The
+timing applies to the mounted-ready Console. The broader Notes diagnostic
+had unclassified failures when stopped, and the configuration-reader
+fixture failures reproduced on both the prior and final heads.
+
+The [required pull_request run](https://github.com/rmusser01/tldw_chatbook/actions/runs/43148114307)
+had zero jobs. The user-approved, SHA-specific local status temporarily
+replaced the required check while auto-merge landed the PR. The original
+GitHub Actions check, strict base enforcement, admin enforcement, and
+conversation resolution were verified after restoration.
+
+The [post-merge dev push run](https://github.com/rmusser01/tldw_chatbook/actions/runs/43150809776)
+passed preflight and the Derived Artifacts aggregate. Twelve PR-only jobs
+were skipped on this push event. AC23 remains open because it requires the
+actual pull_request gate on the reviewed head. The earlier targeted local
+and platform results retain their documented scope.
+
+[PR #3411](https://github.com/rmusser01/tldw_chatbook/pull/3411) was closed as
+superseded after its replacement merged. Its branch and review history
+remain available.
+
+### Salvage comparison after merge
+
+The prompt editor's seven mounted controls pass after assigning stable test
+parameter IDs. The earlier Apply IDs contained spaces and failed child pytest
+selection before mounting. No production layout change is needed for the
+covered resize and long-feedback cases.
+
+[PR #3490](https://github.com/rmusser01/tldw_chatbook/pull/3490) identified
+additional work around native refresh scheduling and the first recovery card.
+The follow-up defers coroutine allocation at presentation publication and
+Terminal return. It renders recovery after the existing controller setup in
+an actual transcript sync. Passive projection still returns no recovery
+state before the controller exists, as required by AC22. ADR-094 and the
+existing recovery contract cover these corrections. No new ADR is required.
+
+The broader TASK-40128 fixture conversion and TASK-40131 full-suite and
+no-frame-introspection criteria were not established by the merge. Both
+records remain available on the salvage branch for separate disposition.

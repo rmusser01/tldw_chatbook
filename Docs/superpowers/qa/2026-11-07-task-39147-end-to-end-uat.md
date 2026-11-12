@@ -1794,3 +1794,15 @@ inline read retires older Library publication and that the resumed
 callback issues a worker that completes the full sync. The user chose
 independent code review for this PR. Exact PR-head required CI remains
 part of AC23.
+
+### Final merge receipt
+
+The independently reviewed `fe08463ab15b2396f143fac26cb56895f8294019`
+merged to `dev` as `e10ce63fe8bbd03104849aae007835e82c88f719` through the
+approved exact-SHA local status. The final head passed 15 local preflight
+checks, 18 startup and Send checks, and the three targeted Notes cases.
+The original hosted requirement and strict protection were restored.
+The [final pull_request run](https://github.com/rmusser01/tldw_chatbook/actions/runs/43148114307)
+had zero jobs. The [dev push run](https://github.com/rmusser01/tldw_chatbook/actions/runs/43150809776)
+passed preflight and the aggregate with twelve PR-only jobs skipped.
+This evidence leaves the PR-head CI requirement in AC23 open.
