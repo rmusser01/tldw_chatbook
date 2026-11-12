@@ -3026,11 +3026,18 @@ async def test_served_shell_assets_are_declared_for_wheel_and_source_archive() -
     root = Path(__file__).resolve().parents[3]
     project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     package_data = project["tool"]["setuptools"]["package-data"]
-    assert set(package_data["tldw_chatbook.Web_Server"]) == {
+    package_root = root / "tldw_chatbook" / "Web_Server"
+    selected_files = {
+        path.relative_to(package_root).as_posix()
+        for pattern in package_data["tldw_chatbook.Web_Server"]
+        for path in package_root.glob(pattern)
+        if path.is_file()
+    }
+    assert {
         "static/served_shell.html",
         "static/served_shell.css",
         "static/served_shell.js",
-    }
+    } <= selected_files
     manifest = (root / "MANIFEST.in").read_text(encoding="utf-8")
     assert "recursive-include tldw_chatbook/Web_Server/static *" in manifest
 
