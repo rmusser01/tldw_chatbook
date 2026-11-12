@@ -167,6 +167,7 @@ def test_tavily_optional_domain_filters_still_reach_the_request(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_tavily_error_string_carries_no_credential(
     tavily_key: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

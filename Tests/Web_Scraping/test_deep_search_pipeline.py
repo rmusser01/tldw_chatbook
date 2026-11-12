@@ -548,6 +548,7 @@ def test_aggregate_multi_chunk_synthesizes_from_chunk_summaries(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_relevance_scrape_failure_keeps_result_with_fallback(monkeypatch):
     monkeypatch.setattr(
         WebSearch_APIs,
@@ -589,6 +590,7 @@ async def test_relevance_cancel_event_stops_loop(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_relevance_llm_timeout_counts_as_not_relevant(monkeypatch):
     import asyncio
 
@@ -607,6 +609,7 @@ async def test_relevance_llm_timeout_counts_as_not_relevant(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_relevance_refuses_private_url_scrape(monkeypatch):
     # Pre-scrape SSRF guard (task-1356): a relevant result pointing at a
     # cloud metadata IP must never be navigated to by scrape_article --
@@ -637,6 +640,7 @@ async def test_relevance_refuses_private_url_scrape(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_relevance_guard_does_not_block_event_loop(monkeypatch):
     # CRITICAL 2 (task-1356 re-review): is_public_http_url does synchronous
     # DNS resolution (socket.getaddrinfo). Calling it directly inside this
@@ -688,6 +692,7 @@ async def test_relevance_guard_does_not_block_event_loop(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_relevance_guard_timeout_falls_back_like_scrape_failure(monkeypatch):
     # CRITICAL 2 continued: a guard that doesn't resolve within
     # scrape_timeout_s must be treated as a refusal -- same fallback path
@@ -726,6 +731,7 @@ async def test_relevance_guard_timeout_falls_back_like_scrape_failure(monkeypatc
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_relevance_guard_runs_on_dedicated_dns_guard_executor(monkeypatch):
     """task-3220: the pre-scrape SSRF guard (`is_public_http_url`) must be
     offloaded through the dedicated DNS-guard executor, not
@@ -758,6 +764,7 @@ async def test_relevance_guard_runs_on_dedicated_dns_guard_executor(monkeypatch)
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_dns_guard_executor_saturation_does_not_starve_default_executor_offloads(
     monkeypatch,
 ):
@@ -880,6 +887,7 @@ def test_dns_guard_executor_saturation_does_not_starve_default_executor_offloads
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_relevance_robots_disallowed_skips_scrape_others_proceed(monkeypatch):
     """respect_robots_txt=True must skip scraping a robots-disallowed host
     (keeping its existing snippet/title/url fallback content, never
@@ -970,6 +978,7 @@ async def test_relevance_robots_disallowed_skips_scrape_others_proceed(monkeypat
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_relevance_robots_off_by_default_makes_no_robots_fetch(monkeypatch):
     """Parity pin: respect_robots_txt defaults to False when the caller
     doesn't pass it -- the dead-wired research-service caller never sets
@@ -1020,6 +1029,7 @@ async def test_relevance_robots_off_by_default_makes_no_robots_fetch(monkeypatch
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_relevance_robots_unreachable_fails_open_and_scrapes(monkeypatch):
     """A robots.txt that cannot be fetched (network error) must fail OPEN
     and proceed to scrape -- deliberately the OPPOSITE of the SSRF guard's
@@ -1519,6 +1529,7 @@ async def test_zero_relevant_with_cancel_keeps_empty(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_zero_relevant_with_unevaluated_results_keeps_empty(monkeypatch):
     import time as _t
 
