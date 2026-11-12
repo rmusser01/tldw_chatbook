@@ -1471,7 +1471,7 @@ jobs:
         run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging
       - name: Qualify actual SQLite runtime
         run: |
-          python -c "import sqlite3; from tldw_chatbook.Workspaces.project_index.allocation import _SOURCE_ID; c=sqlite3.connect(':memory:'); source=c.execute('SELECT sqlite_source_id()').fetchone()[0]; options={row[0] for row in c.execute('PRAGMA compile_options')}; print('SQLite version:',sqlite3.sqlite_version,'source:',source,'options:',sorted(options)); assert sqlite3.sqlite_version == '3.49.1' and source == _SOURCE_ID and {'TEMP_STORE=1','MAX_PAGE_SIZE=65536','THREADSAFE=1'} <= options, 'unqualified SQLite source/options'"
+          python -c "import sqlite3; from tldw_chatbook.DB.project_index_allocation import _SOURCE_ID; c=sqlite3.connect(':memory:'); source=c.execute('SELECT sqlite_source_id()').fetchone()[0]; options={row[0] for row in c.execute('PRAGMA compile_options')}; print('SQLite version:',sqlite3.sqlite_version,'source:',source,'options:',sorted(options)); assert sqlite3.sqlite_version == '3.49.1' and source == _SOURCE_ID and {'TEMP_STORE=1','MAX_PAGE_SIZE=65536','THREADSAFE=1'} <= options, 'unqualified SQLite source/options'"
       - name: Run project index contracts
         # Mounted stage/cancel and local128/native32 need qualified SQLite allocation.
         # The mounted node is deliberately absent from the Ubuntu UI census.

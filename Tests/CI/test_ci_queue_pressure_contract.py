@@ -1158,7 +1158,8 @@ def test_project_index_required_lane_has_real_pinned_sqlite_and_bounded_targets(
     ]
     runtime = _named_step(job, "Qualify actual SQLite runtime")["run"]
     assert "sqlite_source_id()" in runtime and "PRAGMA compile_options" in runtime
-    assert "_SOURCE_ID" in runtime and "3.49.1" in runtime
+    assert "from tldw_chatbook.DB.project_index_allocation import _SOURCE_ID" in runtime
+    assert "3.49.1" in runtime
     run = _named_step(job, "Run project index contracts")["run"]
     assert shlex.split(run) == (
         ["pytest", *PROJECT_INDEX_TARGETS, "--timeout=180", "--tb=short"]
