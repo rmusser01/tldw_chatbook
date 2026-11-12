@@ -2677,8 +2677,9 @@ async def test_tools_hub_embeds_mcp_workbench(request):
     host = _ToolsPaneHarness()
 
     async with host.run_test(size=(180, 50)) as pilot:
-        await pilot.pause(0.1)
         pane = host.query_one("#settings-tools-hub", ToolsHubPanel)
+        await _wait_for_visible_text(pane, pilot, "Off (opt-in)")
+        await _wait_for_selector(pane, pilot, "#mcp-rail-source SelectOverlay")
 
         workbench = pane.query_one(MCPWorkbench)
         assert workbench is pane.workbench
