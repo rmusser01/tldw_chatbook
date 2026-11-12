@@ -29,7 +29,7 @@ import threading
 import pytest
 
 from Tests.private_profile import private_profile_test
-from Tests.UI.test_console_config_sync_cadence import _install_clock
+from Tests.UI.test_console_config_sync_cadence import _install_clock, _replay_pending
 from Tests.UI.test_console_send_acknowledgement import (
     build,
     eager_tasks,
@@ -339,12 +339,24 @@ async def test_a_context_snapshot_published_during_a_run_projects_on_the_next_ti
             monkeypatch.setattr(snapshot, "schedule", recording_run_worker)
             cadence = config_sync._cadence(console)
             published = getattr(cadence, "published", 0)  # (None on the base.)
-            seen: list[int] = []  # The publication count each projection saw.
+            owed_at_publication: list[bool] = []
+            publish = snapshot.publish
+            assert publish is not None
+
+            def observe_publication():
+                publish()
+                owed_at_publication.append(cadence.owed)
+
+            monkeypatch.setattr(snapshot, "publish", observe_publication)
+            seen: list[int] = []  # The publication count each render saw.
             real_project = console._sync_console_rail_and_controls
 
             def counting_project():
-                seen.append(getattr(cadence, "published", 0))
-                return real_project()
+                publication = cadence.published
+                result = real_project()
+                if result is True:
+                    seen.append(publication)
+                return result
 
             monkeypatch.setattr(
                 console, "_sync_console_rail_and_controls", counting_project
@@ -362,10 +374,19 @@ async def test_a_context_snapshot_published_during_a_run_projects_on_the_next_ti
             assert getattr(cadence, "published", 0) == published + 1
             _objects, after = config_sync._projection_inputs(console)
             assert after != before, "the publication is not a cadence input"
-            assert cadence.owed, "a poll stopping now would not render it"
+            assert owed_at_publication == [True], (
+                "the publication did not leave a final render owed"
+            )
 
-            # Freshness: the next tick (or a sync before it) projects it.
-            await until(lambda: not console._console_sync_in_progress, timeout=30)
+            # Freshness: the next eligible tick (or a sync before it) projects it.
+            # A queued whole replay or presentation read still owns this render.
+            await until(
+                lambda: (
+                    not console._console_sync_in_progress
+                    and not _replay_pending(console)
+                ),
+                timeout=30,
+            )
             await timer._callback()
             assert published + 1 in seen, (
                 "no projection rendered the published snapshot by the next tick"
@@ -1745,7 +1766,7 @@ async def test_a_full_sync_asked_for_during_a_pause_runs_once_after_resume(
             console, _composer = await ready_console(host, pilot, gateway)
             await pilot.pause(1.0)
             loop = asyncio.get_running_loop()
-            refusing, _warms, armed, _fulls, _during, _delays = _refused_warm_up(
+            refusing, _warms, armed, fulls, _during, _delays = _refused_warm_up(
                 monkeypatch, console
             )
             console.run_worker(
@@ -1774,6 +1795,18 @@ async def test_a_full_sync_asked_for_during_a_pause_runs_once_after_resume(
             # CORE can independently request another replay during this FULL.
             # Follow the replacement scheduled by resume and the old timer.
             launched = []
+            deferred_rail_reads = set()
+            sync_rail_visibility = config_sync.sync_console_rail_visibility
+
+            def observe_rail_visibility(screen):
+                result = sync_rail_visibility(screen)
+                if result is False:
+                    deferred_rail_reads.add(asyncio.current_task())
+                return result
+
+            monkeypatch.setattr(
+                config_sync, "sync_console_rail_visibility", observe_rail_visibility
+            )
             replay = console._run_coalesced_control_bar_sync
             after_refresh = console.call_after_refresh
 
@@ -1809,7 +1842,14 @@ async def test_a_full_sync_asked_for_during_a_pause_runs_once_after_resume(
                 f"out to its pending {delay} s backoff"
             )
             async with asyncio.timeout_at(resumed + 30):
-                assert await worker.wait() is True
+                if await worker.wait() is not True:
+                    # FULL already projected. Its later rail read can defer
+                    # independently while storage is busy.
+                    assert worker._task in deferred_rail_reads
+                    await until(
+                        lambda: any(ok for when, ok in fulls if when >= started_at),
+                        timeout=30,
+                    )
             await pilot.pause(max(0.0, armed_at + delay + 0.5 - loop.time()))
             assert len(launched) == 1, (
                 f"the paused request replayed {len(launched)} times after resume"

@@ -1282,7 +1282,10 @@ class ChatPersistenceService:
         from .console_prompt_mixin_service import MixinAttemptContribution
         from .console_transaction_contribution import _scoped_console_transaction_writer
 
-        with operation_owned_connection(self.db), self.db.transaction() as cursor:
+        with (
+            operation_owned_connection(self.db),
+            self.db.transaction(immediate=True) as cursor,
+        ):
             if pending_assistant is not None:
                 if (
                     native_message_ids.get(batch.assistant_message_id)

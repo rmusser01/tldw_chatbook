@@ -649,6 +649,56 @@ async def test_stopped_empty_resend_uses_original_attempt(trace_harness, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_failed_turn_resend_saves_original_mixins_during_a_competing_write(
+    trace_harness, monkeypatch
+):
+    import sqlite3
+    from contextlib import closing
+
+    from tldw_chatbook.Chat.console_turn_resend import resend_turn
+    from tldw_chatbook.DB import console_prompt_mixins as repository
+
+    h = trace_harness
+    capture_mode(monkeypatch, False)
+    select(h, monkeypatch)
+    h.adapter_error = True
+    first = await h.controller.submit_draft("input", session_id="session-1")
+    assert len(h.entries) == 1
+    original = h.store.get_message(first.assistant_message_id).metadata.mixin_attempt_id
+    conversation = h.store._sessions["session-1"].persisted_conversation_id
+    metadata = repository._metadata
+    competing_writes = []
+
+    def after_anchor_read(raw):
+        if not competing_writes:
+            # An independent writer attempts to commit after the replay has
+            # read its anchors and before it inserts the new receipt.
+            with closing(sqlite3.connect(h.db.db_path, timeout=0)) as other:
+                try:
+                    other.execute(
+                        "UPDATE conversations SET title=? WHERE id=?",
+                        ("Concurrent rename", conversation),
+                    )
+                    other.commit()
+                except sqlite3.OperationalError as exc:
+                    assert exc.sqlite_errorcode == sqlite3.SQLITE_BUSY
+                    competing_writes.append("waiting for replay")
+                else:
+                    competing_writes.append("committed")
+        return metadata(raw)
+
+    monkeypatch.setattr(repository, "_metadata", after_anchor_read)
+    h.adapter_error = False
+    result = await resend_turn(h.controller, first.user_message_id)
+
+    assert len(h.entries) == 2, (result, competing_writes)
+    assert h.entries[-1][-1]["content"] == "body A\n\ninput"
+    assert competing_writes == ["waiting for replay"]
+    reply = h.store.get_message(first.assistant_message_id)
+    assert reply.metadata.mixin_attempt_id != original
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("trace_harness", [False, True], indirect=True)
 @pytest.mark.parametrize("capture", [False, True])
 async def test_real_agent_tool_loop_reuses_once_composed_request(

@@ -394,6 +394,9 @@ async def test_actual_settings_open_waits_for_shared_cold_checked_policy(
     )
     screen._console_derivation_memo = None
     screen._console_config_snapshot_is_disk_loaded = lambda _: True
+    # This constructor-free fixture has no composer or runtime-owned launch.
+    screen._context_spend._console_composer_or_none = lambda: None
+    screen._context_spend._pending_launch = lambda: None
     try:
         assert await asyncio.wait_for(screen._open_console_settings(), 5)
         assert len(pushed) == 1
