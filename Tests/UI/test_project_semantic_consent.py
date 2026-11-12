@@ -522,7 +522,7 @@ async def test_semantic_read_error_preserves_last_known_state_and_retry_guidance
 )
 @private_profile_test
 async def test_actual_settings_semantic_controls_are_focusable_in_mounted_pane(
-    tmp_path, request, theme, size
+    tmp_path, request, monkeypatch, theme, size
 ):
     from Tests.UI.app_factory import _build_test_app
     from Tests.UI.test_library_rag_result_focus import _assert_painted
@@ -541,15 +541,20 @@ async def test_actual_settings_semantic_controls_are_focusable_in_mounted_pane(
     root = tmp_path / "project"
     root.mkdir()
     registry.add_folder_binding("semantic-ui", root)
+    boot_worker_started = asyncio.get_running_loop().create_future()
+    start_boot_worker = app._start_boot_worker
+
+    def observe_boot_worker(key):
+        worker = start_boot_worker(key)
+        if key == "chachanotes_fts_backfill" and worker is not None:
+            boot_worker_started.set_result(worker)
+        return worker
+
+    # Retain the real worker even if the app retires it before the pilot runs.
+    monkeypatch.setattr(app, "_start_boot_worker", observe_boot_worker)
     with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
         async with app.run_test(size=size) as pilot:
-            boot_worker = None
-            for _ in range(900):
-                boot_worker = app._boot_worker_handles.get("chachanotes_fts_backfill")
-                if boot_worker is not None:
-                    break
-                await pilot.pause(0.05)
-            assert boot_worker is not None, "chachanotes_backfill_worker_not_admitted"
+            boot_worker = await asyncio.wait_for(boot_worker_started, timeout=120)
             screen = await _wait_for_settings_screen(app, pilot)
             app.theme = theme
             await _wait_for_selector(screen, pilot, "#settings-category-workspaces")
