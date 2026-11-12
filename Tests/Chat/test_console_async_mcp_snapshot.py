@@ -127,6 +127,20 @@ def snapshot_case(catalog_store, mcp_sources, monkeypatch):
     )
 
 
+@pytest.fixture
+def captured_snapshot_case(snapshot_case, monkeypatch):
+    """Use the real snapshot read for a Console with custom composition."""
+    compose = snapshot_case.controller._compose_mcp_provider
+
+    async def compose_mcp_provider(*args, **kwargs):
+        return await compose(*args, **kwargs)
+
+    monkeypatch.setattr(
+        snapshot_case.controller, "_compose_mcp_provider", compose_mcp_provider
+    )
+    return snapshot_case
+
+
 def _loop_projection(case):
     loop = asyncio.get_running_loop()
     thread = threading.current_thread()
@@ -216,9 +230,9 @@ async def test_async_snapshot_joins_sources_and_composes_on_actual_loop(
     "change", ["settings", "session", "service", "configuration", "app_config"]
 )
 async def test_async_snapshot_refuses_changed_actor_before_publication(
-    snapshot_case, change
+    captured_snapshot_case, change
 ):
-    case = snapshot_case
+    case = captured_snapshot_case
     case.app.app_config = {}
     _loop_projection(case)
     probe = _MaximumProbe(case.source, case.permissions, hold=True)
@@ -263,9 +277,9 @@ async def test_async_snapshot_refuses_changed_actor_before_publication(
 
 @pytest.mark.asyncio
 async def test_async_snapshot_wrong_source_during_read_freezes_empty_maximum(
-    snapshot_case, tmp_path
+    captured_snapshot_case, tmp_path
 ):
-    case = snapshot_case
+    case = captured_snapshot_case
     _loop_projection(case)
     old_path = case.source.path
     probe = _MaximumProbe(case.source, case.permissions, hold=True)
