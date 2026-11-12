@@ -210,6 +210,20 @@ def _maybe_run_first_run_import() -> None:
         logger.debug(f"First-run import skipped: {e}")
 
 
+def run_first_run_import_once() -> None:
+    """Run the once-per-process first-run settings import, if not yet attempted.
+
+    TASK-33620.15.41: a keyword-only Library search reads the active profile
+    without building the shared service, so it must run the import that
+    ``get_shared_rag_service`` runs first -- otherwise a user upgrading from
+    before RAG profiles never gets "Imported settings" while searching that
+    way. The same guarded call (see ``_maybe_run_first_run_import``): it can
+    switch the active profile, which resets the shared service, so it must be
+    called with no lock held and, since it writes config, off the event loop.
+    """
+    _maybe_run_first_run_import()
+
+
 def _configured_profile() -> str:
     """Resolve the RAG service profile from config ([rag.service].profile)."""
     try:

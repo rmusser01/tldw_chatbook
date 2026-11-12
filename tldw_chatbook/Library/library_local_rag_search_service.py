@@ -7,7 +7,7 @@ from enum import Enum
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from functools import partial
-from typing import Any, Hashable, Optional
+from typing import Any, Hashable, NamedTuple, Optional
 
 from loguru import logger
 
@@ -96,6 +96,7 @@ from tldw_chatbook.RAG_Search.fusion import interleave_rankings
 # indexing writes to.
 from tldw_chatbook.RAG_Search.ingestion_indexing import (
     get_shared_rag_service,
+    run_first_run_import_once,
     shared_rag_service_generation,
 )
 
@@ -265,7 +266,7 @@ class LibraryLocalRagSearchService:
         self._runtime_build: tuple[int, asyncio.Future[tuple[Any, Any]]] | None = None
         #: TASK-33620.15.41: the active-profile route read (see
         #: `_shared_route_read`), with the generation it was started under.
-        self._route_read: tuple[int, asyncio.Future[tuple[str, str]]] | None = None
+        self._route_read: tuple[int, asyncio.Future[_ProfileRoute]] | None = None
         #: The generation whose failed route read was last warned about.
         self._route_read_warned: int | None = None
 
@@ -306,16 +307,29 @@ class LibraryLocalRagSearchService:
         the runtime built for it then decides (it reads the same active
         profile, after the first-run settings import that may re-point it).
 
+        TASK-33620.15.41 review: a read answers only for the shared-service
+        generation it read under. A profile switch or save resets the shared
+        service, which bumps the generation, so a read that finishes after
+        one (it looked up BM25 Only, the user then picked Hybrid) is stale:
+        it is read again, and if the profile keeps changing the runtime
+        decides. The read also runs the first-run settings import first,
+        which building the runtime used to do (see `_active_profile_route`).
+
         Returns:
             ``(mode, disclosure label)`` read from the active profile, or
-            ``None`` when a runtime is cached or the profile could not be
-            read -- the caller then resolves the runtime as before, so an
-            unreadable profile never turns into a guessed keyword search.
+            ``None`` when a runtime is cached, the profile could not be read,
+            or it kept changing under the read -- the caller then resolves
+            the runtime as before, so an unreadable profile never turns into
+            a guessed keyword search.
         """
         if current_app_rag_service(self._app) is not None:
             return None
         try:
-            return await asyncio.shield(self._shared_route_read())
+            for _attempt in range(_ROUTE_READ_ATTEMPTS):
+                route = await asyncio.shield(self._shared_route_read())
+                if route.generation == shared_rag_service_generation():
+                    return route.mode, route.label
+            return None
         except Exception as exc:  # noqa: BLE001 -- fall back to the runtime
             # Retried on every search, but warned once per generation: a
             # profile that stays unreadable would otherwise log per search.
@@ -334,7 +348,7 @@ class LibraryLocalRagSearchService:
             )
             return None
 
-    def _shared_route_read(self) -> asyncio.Future[tuple[str, str]]:
+    def _shared_route_read(self) -> asyncio.Future[_ProfileRoute]:
         """Return the active-profile route read, starting one if needed.
 
         One read per shared-service generation, joined by every caller and
@@ -345,17 +359,26 @@ class LibraryLocalRagSearchService:
         Console prewarm that gives up (timeout, Stop) must not leave one more
         executor thread behind for each retry. A failed read is not kept.
 
+        A pending read is joined only under the generation it started in; a
+        finished one is kept only for the generation it READ under (its
+        result's), which the first-run import may have moved past the start.
+
         Returns:
-            A future resolving to ``(mode, disclosure label)``.
+            A future resolving to the read's `_ProfileRoute`.
         """
         generation = shared_rag_service_generation()
         started, read = getattr(self, "_route_read", None) or (None, None)
-        if (
-            read is None
-            or started != generation
-            or read.get_loop() is not asyncio.get_running_loop()
-            or (read.done() and (read.cancelled() or read.exception() is not None))
-        ):
+        if read is None or read.get_loop() is not asyncio.get_running_loop():
+            reusable = False
+        elif not read.done():
+            reusable = started == generation
+        else:
+            reusable = (
+                not read.cancelled()
+                and read.exception() is None
+                and read.result().generation == generation
+            )
+        if not reusable:
             # Off the event loop: the first read imports the RAG profile tree
             # (never torch -- see `_active_profile_route`).
             read = asyncio.ensure_future(asyncio.to_thread(_active_profile_route))
@@ -1353,7 +1376,20 @@ def _profile_label(name: Any) -> str:
     return "Active RAG profile"
 
 
-def _active_profile_route() -> tuple[str, str]:
+#: How many times `_runtime_free_route` reads the profile before leaving the
+#: decision to the runtime: once, and once more if a switch landed mid-read.
+_ROUTE_READ_ATTEMPTS = 2
+
+
+class _ProfileRoute(NamedTuple):
+    """One read of the active profile's route, and the generation it read under."""
+
+    generation: int
+    mode: str
+    label: str
+
+
+def _active_profile_route() -> _ProfileRoute:
     """The active profile's search mode and disclosure label, runtime-free.
 
     TASK-33620.15.41 / TASK-3601. Reads the same active profile the shared
@@ -1366,18 +1402,30 @@ def _active_profile_route() -> tuple[str, str]:
     read; ``resolve_active_rag_config``'s ``device == "auto"`` probe is
     exactly what this avoids).
 
+    TASK-33620.15.41 review, in this order:
+
+    1. The first-run settings import runs first. Building the shared runtime
+       used to be what ran it; a keyword-only search builds none, so a user
+       upgrading from before RAG profiles would never get "Imported
+       settings". It is attempted once per process (a no-op after that), and
+       only a genuine upgrader's one import resolves a full config.
+    2. The generation is taken next, so a switch -- including the one that
+       import makes -- that lands after it marks this read stale.
+    3. Mode and name come from one profile read, never from two that could
+       straddle a switch.
+
     Returns:
-        ``(mode, label)``: the normalized search mode (``plain``,
-        ``semantic`` or ``hybrid``) and the disclosure label.
+        The read's generation, normalized search mode (``plain``,
+        ``semantic`` or ``hybrid``) and disclosure label.
     """
     from tldw_chatbook.RAG_Search.simplified.active_config import (
-        resolve_active_rag_profile_name,
-        resolve_active_rag_search_mode,
+        resolve_active_rag_route,
     )
 
-    return resolve_active_rag_search_mode(), _profile_label(
-        resolve_active_rag_profile_name()
-    )
+    run_first_run_import_once()
+    generation = shared_rag_service_generation()
+    mode, name = resolve_active_rag_route()
+    return _ProfileRoute(generation, mode, _profile_label(name))
 
 
 def _with_route_notes(result: Any, notes: Sequence[str]) -> Any:
