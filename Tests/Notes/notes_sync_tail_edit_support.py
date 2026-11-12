@@ -51,6 +51,7 @@ class Vault:
         text: str = VAULT_TEXT,
         *,
         file_bytes: bytes | None = None,
+        file_mode: int | None = None,
     ) -> None:
         """Seed one bound pair.
 
@@ -61,6 +62,7 @@ class Vault:
                 TASK-34000.48 seeds a CRLF file this way: the note keeps the
                 logical text, the file keeps its own line endings, and the
                 binding baseline is the one digest both sides share.
+            file_mode: Explicit starting mode for representation tests.
         """
 
         self.notes_path = tmp_path / "notes.sqlite3"
@@ -69,6 +71,8 @@ class Vault:
         self.root.mkdir()
         self.file = self.root / "quotes.md"
         self.file.write_bytes(text.encode("utf-8") if file_bytes is None else file_bytes)
+        if file_mode is not None:
+            self.file.chmod(file_mode)
         database = CharactersRAGDB(self.notes_path, client_id="task-34000-2-seed")
         folders = LocalNoteFolderRepository(database)
         assert database.add_note("quotes", text, "note-1") == "note-1"

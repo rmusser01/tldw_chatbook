@@ -79,7 +79,7 @@ def _digest(data: bytes) -> str:
 
 @pytest.fixture
 def vault(tmp_path: Path):
-    selected = Vault(tmp_path, NOTE_TEXT, file_bytes=CRLF_BYTES)
+    selected = Vault(tmp_path, NOTE_TEXT, file_bytes=CRLF_BYTES, file_mode=0o644)
     try:
         yield selected
     finally:
@@ -412,6 +412,7 @@ def test_the_filesystem_refuses_a_write_profile_the_reviewed_file_cannot_carry(
     root.mkdir()
     target = root / "note.md"
     target.write_bytes(CRLF_BYTES)
+    target.chmod(0o644)
     with PosixNotesSyncFilesystem(root) as filesystem:
         before = filesystem.observe("note.md")
         for unprovable in (
