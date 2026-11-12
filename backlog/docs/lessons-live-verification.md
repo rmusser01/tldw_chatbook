@@ -1,6 +1,6 @@
 # Lessons: verifying against the real thing
 
-## Verify that a reused RAG fixture still has searchable vectors (TASK-40127, 2026-11-11)
+## Verify that a reused RAG fixture still has searchable vectors (TASK-40290, 2026-11-11)
 
 **Incident.** The reopened UAT profile listed the Juniper media fixture after a Library source refresh. RAG Answer still reported an empty index. Backfill returned zero indexed and one skipped because the tracking DB already had the fixture's timestamp. Reindexing that one disposable media entry restored the paraphrase match, and the Library Run action produced a live DeepSeek answer with a validated citation. [Walkthrough evidence](../../qa/uat-core-workflows-2026-11-11/deepseek-rag-fixed.txt)
 
