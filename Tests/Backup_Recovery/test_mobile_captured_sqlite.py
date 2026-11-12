@@ -752,7 +752,8 @@ def test_authenticated_candidate_stays_bound_to_actual_sqlite_pin(
             cancel=Event(),
         ) as captured:
             reached = []
-            original = mobile_captured_sqlite.open_recovery_validation
+            validation = mobile_captured_sqlite.sqlite_validation
+            original = validation._open_installed_candidate
 
             @contextmanager
             def substitute_before_validation(owner_id, candidate, **kwargs):
@@ -769,8 +770,8 @@ def test_authenticated_candidate_stays_bound_to_actual_sqlite_pin(
 
             if boundary == "validation":
                 monkeypatch.setattr(
-                    mobile_captured_sqlite,
-                    "open_recovery_validation",
+                    validation,
+                    "_open_installed_candidate",
                     substitute_before_validation,
                 )
                 with (
