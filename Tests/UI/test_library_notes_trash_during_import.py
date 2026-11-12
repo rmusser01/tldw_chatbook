@@ -34,6 +34,7 @@ from types import SimpleNamespace
 import pytest
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.library_notes_bulk_support import click_settled, notes_settled
 from Tests.UI.library_quit_guard_support import _NotesProfile
 from Tests.UI.test_library_notes_import_escape_keeps_running import (
     _Gate,
@@ -332,21 +333,28 @@ async def test_restore_during_an_import_says_why_keeps_its_row_then_restores(
                 lambda: screen._notes_state.view == "list",
                 "Escape to the Notes list",
             )
-            await pilot.click("#library-notes-trash-open")
+            await click_settled(
+                host, pilot, screen, "#library-notes-trash-open", "the Trash opener"
+            )
             await _until(
                 pilot,
                 lambda: _focused_id(screen) == "library-notes-trash-restore-0"
                 and _pager(screen) == f"1–20 of {DELETED} · Page 1 of 2",
                 lambda: f"the Trash's first row (focus: {_focused_id(screen)!r})",
             )
+            # PR #3423 CI: every Notes read that lands rebuilds the Trash and
+            # parks focus on a pane grip until the replay returns it, so each
+            # key below waits for a settled screen (``notes_settled``),
+            # confirmed after one full message flush.
             for _ in range(2):
                 await _until(
                     pilot,
                     lambda: not screen._notes_state.trash.loading
-                    and _focused_id(screen) == "library-notes-trash-restore-0",
+                    and _focused_id(screen) == "library-notes-trash-restore-0"
+                    and notes_settled(screen),
                     lambda: f"the Trash to settle (focus: {_focused_id(screen)!r})",
                 )
-                await pilot.pause(0.2)
+                await pilot.pause()
             # A row other than the first, reached by real keys (one Tab stop
             # per row), so the Trash's own first-row fallback cannot pass for
             # the owed row.
@@ -354,7 +362,10 @@ async def test_restore_during_an_import_says_why_keeps_its_row_then_restores(
                 await pilot.press("tab")
                 await _until(
                     pilot,
-                    lambda: _focused_id(screen) == f"library-notes-trash-restore-{index}",
+                    lambda: (
+                        _focused_id(screen) == f"library-notes-trash-restore-{index}"
+                        and notes_settled(screen)
+                    ),
                     lambda: f"Tab to row {index} (focus: {_focused_id(screen)!r})",
                 )
             note_id = str(screen.focused.note_id)
@@ -372,8 +383,14 @@ async def test_restore_during_an_import_says_why_keeps_its_row_then_restores(
             )
             assert seed.deleted() == before
             assert deleted_flag(note_id) == 1, "the note was restored under the fence"
-            assert _focused_id(screen) == "library-notes-trash-restore-2"
             assert note_id in {row.note_id for row in screen._notes_state.trash.rows}
+            # Painting the line rebuilt the Trash; ``x`` waits for the row.
+            await _until(
+                pilot,
+                lambda: _focused_id(screen) == "library-notes-trash-restore-2"
+                and notes_settled(screen),
+                lambda: f"the row after the busy line (focus: {_focused_id(screen)!r})",
+            )
 
             # Residual R-3: x on the same row, still fenced, names its own
             # action -- the line follows the last key pressed -- and opens
@@ -388,7 +405,12 @@ async def test_restore_during_an_import_says_why_keeps_its_row_then_restores(
             )
             assert host.screen is screen, "a confirm opened under the fence"
             assert seed.deleted() == before
-            assert _focused_id(screen) == "library-notes-trash-restore-2"
+            await _until(
+                pilot,
+                lambda: _focused_id(screen) == "library-notes-trash-restore-2"
+                and notes_settled(screen),
+                lambda: f"the row after x's line (focus: {_focused_id(screen)!r})",
+            )
 
             # Textual's reset landing, not yet replayed, as the release's
             # syncs capture it.
@@ -407,14 +429,15 @@ async def test_restore_during_an_import_says_why_keeps_its_row_then_restores(
                     pilot,
                     lambda: not screen.query("#library-notes-trash-notice")
                     and _focused_id(screen) == "library-notes-trash-restore-2"
-                    and not screen._notes_state.trash.loading,
+                    and not screen._notes_state.trash.loading
+                    and notes_settled(screen),
                     lambda: (
                         "the reason cleared with focus still on the row: "
                         f"focus={_focused_id(screen)!r} "
                         f"notice={_painted_in(host, '#library-notes-trash-notice')!r}"
                     ),
                 )
-                await pilot.pause(0.3)
+                await pilot.pause()
             assert deleted_flag(note_id) == 1
 
             # The fence is down: the same key restores the same note.
