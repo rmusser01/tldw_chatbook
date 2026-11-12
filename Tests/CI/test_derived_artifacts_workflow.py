@@ -769,9 +769,8 @@ def test_library_shell_runs_by_node_on_dev_pushes_only_and_is_never_required():
     census = (PROJECT_ROOT / "scripts" / "ui_pr_gate_census.txt").read_text(
         encoding="utf-8"
     )
-    census_entries = set(census.splitlines())
-    assert all(node in census_entries for node in watched)
-    assert "Tests/UI/test_console_received_intent_feedback.py" not in census_entries
+    assert all(census.splitlines().count(node) == 1 for node in watched)
+    assert "Tests/UI/test_console_received_intent_feedback.py\n" not in census
 
 
 def test_library_shell_shards_partition_the_kept_nodes():
