@@ -31,7 +31,7 @@ from __future__ import annotations
 from copy import deepcopy
 import math
 import time
-from typing import TYPE_CHECKING, Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence
 
 from rich.cells import cell_len
 from rich.text import Text
@@ -1145,6 +1145,10 @@ class ChatApprovalCard(Container):
 
         stacked = width > 0 and width < max(required(buttons), required(row_buttons))
         self.set_class(stacked, "approval-stacked")
+        self._apply_compact(stacked, buttons)
+
+    def _apply_compact(self, stacked: bool, buttons: Iterable[Button]) -> None:
+        """Compact when stacked or when the Console shell is ``-console-compact``."""
         compact = stacked or any(
             node.has_class("-console-compact") for node in self.ancestors
         )
@@ -1250,6 +1254,7 @@ class ChatApprovalCard(Container):
         batch_body = self.query_one("#approval-batch-body")
         rows_container = self.query_one("#approval-batch-rows", Vertical)
         single_actions = self.query_one("#approval-single-actions", Horizontal)
+        batch_actions = self.query_one("#approval-batch-actions", Horizontal)
         self._save_presentation()
         self._rows_area = rows_container
         self._presentation_state = presentation_state
@@ -1319,6 +1324,12 @@ class ChatApprovalCard(Container):
 
         self.display = True
         batch_body.display = True
+        # Hidden, the card skipped the shell's compact flips (TASK-39132
+        # hotfix); take the class now, before the first frame and before the
+        # controls below read it. ``ready()`` re-measures ``stacked``.
+        self._apply_compact(
+            self.has_class("approval-stacked"), batch_actions.query(Button)
+        )
         # task-1234 review round 1: a submit-shaped control (Submit, or
         # either fast button) disables itself right after a press to close
         # the double-submit window -- see `_disable_batch_submit_controls`.

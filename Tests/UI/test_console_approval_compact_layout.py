@@ -376,14 +376,24 @@ async def _verify_height_only_resize_reflows_existing_controls(request):
         assert not card.has_class("approval-compact")
         assert card.query_one(Select) is select and select.value == "deny"
         # A hidden card skips the shell's 34/35-row crossing (TASK-39132
-        # hotfix); showing it again must still reflow it to compact.
+        # hotfix); showing it again must paint compact from its first frame.
         console.set_task_resume_state(TaskResumeState())
         await pilot.pause()
         assert not card.display
         await pilot.resize_terminal(80, 24)
         await pilot.pause(0.3)
+        painted: list[bool] = []
+        render_lines = card.render_lines
+
+        def record_paint(crop):
+            painted.append(card.has_class("approval-compact"))
+            return render_lines(crop)
+
+        card.render_lines = record_paint
         _pending_card(console, "shown-after-hidden-crossing")
         await pilot.pause(0.3)
+        del card.render_lines
+        assert painted and all(painted), f"compact per painted frame: {painted[:4]}"
         assert card.display and card.has_class("approval-compact")
 
 
