@@ -427,6 +427,132 @@ def test_configuring_the_app_log_replays_the_held_notices() -> None:
     assert "doesn't match a supported version" not in result.stderr
 
 
+# -- pre-merge review (2026-11-12): commands with no TUI print warnings live ---
+
+
+def _isolated_launch_env(tmp_path: Path) -> dict[str, str]:
+    """A child environment with its own profile (never the shared bootstrap one)."""
+    home = tmp_path / "home"
+    (home / ".config" / "tldw_cli").mkdir(parents=True)
+    (home / ".local" / "share").mkdir(parents=True)
+    env = {k: v for k, v in os.environ.items() if k != "TLDW_VERBOSE_STARTUP"}
+    env.update(
+        HOME=str(home),
+        USERPROFILE=str(home),
+        XDG_CONFIG_HOME=str(home / ".config"),
+        XDG_DATA_HOME=str(home / ".local" / "share"),
+        TLDW_CONFIG_PATH=str(home / ".config" / "tldw_cli" / "config.toml"),
+        PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
+    )
+    return env
+
+
+_RECOVERY_COMMAND = r"""
+import sys
+sys.argv = ["tldw-cli", "recovery", "profiles"]
+from tldw_chatbook.Utils.startup_logging import quiet_startup_stderr
+quiet_startup_stderr()
+import warnings
+warnings.warn("held before the command started", UserWarning)
+from tldw_chatbook.Backup_Recovery import launcher
+
+def fake_recovery_main(argv):
+    import logging
+    from loguru import logger
+    logger.warning("recovery loguru warning")
+    logging.getLogger("recovery.module").warning("recovery stdlib warning")
+    warnings.warn("recovery python warning", UserWarning)
+    sys.stderr.write("--recovering--\n")
+    sys.stderr.flush()
+    return 0
+
+launcher.recovery_main = fake_recovery_main
+from tldw_chatbook import cli
+code = cli.main_cli_runner()
+sys.stderr.write(f"--returned {code}--\n")
+sys.stderr.flush()
+"""
+
+
+def test_a_recovery_command_prints_its_warnings_as_they_happen(tmp_path) -> None:
+    """Pre-merge review (2026-11-12): ``tldw-cli recovery`` opens no TUI and
+    never configures the app's logging, so quiet_startup_stderr()'s hold
+    lasted the whole command -- its warnings printed only at exit (after
+    "--returned"), and past 200 held notices they were dropped. The command
+    releases the hold before it runs: what was held prints first, then each
+    warning as it happens, once."""
+    result = subprocess.run(
+        [sys.executable, "-c", _RECOVERY_COMMAND],
+        cwd=str(REPO_ROOT),
+        env=_isolated_launch_env(tmp_path),
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    during, marker, after = result.stderr.partition("--recovering--")
+    assert marker, result.stderr[-2000:]
+    for notice in (
+        "held before the command started",
+        "recovery loguru warning",
+        "recovery stdlib warning",
+        "recovery python warning",
+    ):
+        assert notice in during, result.stderr[-2000:]
+        assert result.stderr.count(notice) == 1, result.stderr[-2000:]
+    assert "--returned 0--" in after
+
+
+_SERVE_COMMAND = r"""
+import sys
+sys.argv = ["tldw-cli", "--serve", "--host", "127.0.0.1", "--port", "8941"]
+from tldw_chatbook.Utils.startup_logging import quiet_startup_stderr
+quiet_startup_stderr()
+from tldw_chatbook import app_entry
+from tldw_chatbook.Web_Server import serve
+# Never rebuild the tracked CSS bundle from a test child.
+app_entry._generated_css_is_stale = lambda _root: (False, "test")
+
+def fake_run_web_server(**_kwargs):
+    from loguru import logger
+    logger.warning("INSECURE DEVELOPMENT MODE: serve startup warning")
+    sys.stderr.write("--serving--\n")
+    sys.stderr.flush()
+
+serve.check_web_server_available = lambda: True
+serve.run_web_server = fake_run_web_server
+from tldw_chatbook import cli
+cli.main_cli_runner()
+sys.stderr.write("--server-returned--\n")
+sys.stderr.flush()
+"""
+
+
+def test_a_serve_startup_warning_reaches_stderr_before_the_server_exits(
+    tmp_path,
+) -> None:
+    """Pre-merge review (2026-11-12) asked whether ``tldw-cli --serve`` held
+    its warnings until exit. It does not: the entry configures the app's
+    logging (``initialize_early_logging``), which ends the hold, before the
+    serve branch -- so serve.py's insecure-HTTP WARNING prints while the
+    server runs. This pins that order through the real console-script runner
+    (only the server loop itself is stood in for)."""
+    result = subprocess.run(
+        [sys.executable, "-c", _SERVE_COMMAND],
+        cwd=str(REPO_ROOT),
+        env=_isolated_launch_env(tmp_path),
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    serving, marker, after = result.stderr.partition("--serving--")
+    assert marker, result.stderr[-2000:]
+    assert "INSECURE DEVELOPMENT MODE: serve startup warning" in serving
+    assert result.stderr.count("serve startup warning") == 1
+    assert "--server-returned--" in after
+
+
 def test_buddy_holds_still_under_the_environment_override(monkeypatch) -> None:
     """Buddy read reduced motion from the env-folded settings; with the fold
     gone (review F5) it checks the environment where it reads motion."""

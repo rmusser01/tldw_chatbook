@@ -44,7 +44,11 @@ def startup_stderr_is_quiet() -> bool:
 _HELD_NOTICES: list[tuple[str, str]] = []
 _MAX_HELD_NOTICES = 200
 _held_sink_ids: list[int] = []
+#: The ERROR-level loguru stderr sink added beside the holding one.
+_error_sink_ids: list[int] = []
 _held_stdlib_handler: logging.Handler | None = None
+#: ``warnings.showwarning`` before the hold replaced it.
+_original_showwarning: Any = None
 _exit_flush_registered = False
 
 
@@ -123,14 +127,15 @@ def quiet_startup_stderr() -> None:
 
     Errors still reach stderr. Warnings -- loguru's, the standard library's
     and Python's ``warnings`` -- are held for the log file instead
-    (``replay_startup_notices``); if the process exits before that replay
-    (a recovery subcommand, a refused unlock, an early crash), they are
-    printed to stderr at exit instead of dropped.
+    (``replay_startup_notices``). A command that opens no TUI ends the hold
+    itself (``release_startup_hold``); if the process exits before either
+    (a refused unlock, an early crash), they are printed to stderr at exit
+    instead of dropped.
 
     Returns:
         None. Idempotent; safe to call before any tldw_chatbook import.
     """
-    global _held_stdlib_handler, _exit_flush_registered
+    global _held_stdlib_handler, _exit_flush_registered, _original_showwarning
     if os.environ.get(VERBOSE_STARTUP_ENV_VAR, "").strip():
         return
     if not _exit_flush_registered:
@@ -146,7 +151,9 @@ def quiet_startup_stderr() -> None:
         # only if set before loguru's FIRST import, which this module cannot
         # control (task-2119's credential-leak incident, documented in the
         # package __init__). Never rely on the default here.
-        logger.add(sys.stderr, level="ERROR", diagnose=False, backtrace=True)
+        _error_sink_ids[:] = [
+            logger.add(sys.stderr, level="ERROR", diagnose=False, backtrace=True)
+        ]
         _held_sink_ids.append(
             logger.add(
                 lambda message: _hold(
@@ -168,7 +175,52 @@ def quiet_startup_stderr() -> None:
         root.addHandler(_held_stdlib_handler)
     import warnings
 
+    if warnings.showwarning is not _show_warning_held:
+        _original_showwarning = warnings.showwarning
     warnings.showwarning = _show_warning_held
+
+
+def release_startup_hold() -> None:
+    """Print the held notices to stderr now, and stop holding (no TUI follows).
+
+    Pre-merge review (2026-11-12, TASK-34100.13): only the app's logging
+    setup replays the held notices, and ``tldw-cli recovery`` never runs it,
+    so the command's warnings waited for the exit flush (and past
+    ``_MAX_HELD_NOTICES`` were dropped). A command that will not open the
+    TUI calls this once it knows: the held notices print in order, then the
+    terminal is as ``quiet_startup_stderr`` left it before holding existed --
+    WARNING and above as they happen, DEBUG and INFO still quiet. ``--serve``
+    needs no call: its entry configures the app's logging (which replays and
+    ends the hold) before the server starts.
+
+    Returns:
+        None. A no-op when nothing is held (verbose startup, or already
+        replayed or released).
+    """
+    global _held_stdlib_handler
+    if _held_stdlib_handler is None and not _held_sink_ids:
+        return
+    _flush_unreplayed_notices()
+    if _held_stdlib_handler is not None:
+        logging.getLogger().removeHandler(_held_stdlib_handler)
+        _held_stdlib_handler = None
+    try:
+        from loguru import logger
+
+        for sink_id in (*_held_sink_ids, *_error_sink_ids):
+            try:
+                logger.remove(sink_id)
+            except ValueError:
+                pass
+        logger.add(sys.stderr, level="WARNING", diagnose=False, backtrace=True)
+    except Exception:
+        pass
+    _held_sink_ids.clear()
+    _error_sink_ids.clear()
+    import warnings
+
+    if warnings.showwarning is _show_warning_held and _original_showwarning is not None:
+        warnings.showwarning = _original_showwarning
 
 
 def replay_startup_notices() -> None:
@@ -194,6 +246,7 @@ def replay_startup_notices() -> None:
     except Exception:
         pass
     _held_sink_ids.clear()
+    _error_sink_ids.clear()
     # From here on Python warnings go through logging (the log file and the
     # app's own console), never raw stderr under the TUI.
     logging.captureWarnings(True)

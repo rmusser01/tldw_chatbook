@@ -29,7 +29,11 @@ def main_cli_runner() -> Any:
 
     if sys.argv[1:2] == ["recovery"]:
         from tldw_chatbook.Backup_Recovery.launcher import recovery_main
+        from tldw_chatbook.Utils.startup_logging import release_startup_hold
 
+        # No TUI follows: its warnings print as they happen, not at exit
+        # (TASK-34100.13 pre-merge review, 2026-11-12).
+        release_startup_hold()
         return recovery_main(sys.argv[2:])
 
     parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
