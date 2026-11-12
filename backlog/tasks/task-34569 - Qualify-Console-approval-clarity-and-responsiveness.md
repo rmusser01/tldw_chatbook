@@ -208,6 +208,8 @@ ADR required: no. ADR path: backlog/decisions/231-console-polling-and-full-state
 
 Hosted Architecture guard contracts reproduced the same line-budget failure in two tests. The badge patch raised `ChatScreen` from 24,592 to 24,617 lines against the 24,608 ceiling. The existing configuration sync module now captures the terminal projection owner and decides whether to replay or publish the controls after transcript reconciliation. Both guards and six targeted Console tests passed locally. Independent review verified 24,607 lines and the same 741 direct methods. The physical timing criteria still need live evidence. [Hosted guard job](https://github.com/rmusser01/tldw_chatbook/actions/runs/42733632354/job/129586578318)
 
+The hosted Architecture guard passed on the subsequent PR head. Rebase onto dev `7775edb567` added seven upstream screen lines. The transcript module now owns the stock change-review preparation and the teardown checks around its await. Both architecture guards and the mounted badge regression passed on the rebased source. `ChatScreen` has 24,608 lines and 741 direct methods. [Hosted guard job](https://github.com/rmusser01/tldw_chatbook/actions/runs/42756307296/job/129675066630)
+
 ### Terminal transcript and composer settlement
 
 The Windows Edge validation on dev 3a6498ae14 captured two ordered frames with a Ready composer and the final assistant body under a Streaming badge. The saved message was already complete. A mounted regression reproduced the mismatch when the composer restored Send. A second reproduction forced an obsolete change-review marker read, which could leave the transcript stale while controls advanced.

@@ -178,6 +178,7 @@ from ..Console_Modules.retrieval import (
 from ..Console_Modules.transcript import (
     _ConsoleTranscriptReadingState,
     note_console_conversation_painted,
+    prepare_change_review_projection,
     request_console_heap_refreeze,
     request_transcript_sync as _request_transcript_sync,
 )
@@ -16924,15 +16925,8 @@ class ChatScreen(BaseAppScreen):
         Returns:
             False if the transcript read was deferred or the screen closed.
         """
-        from ..Console_Modules.transcript import ConsoleChangeReviewProjection
-
-        if type(self._change_review_projection) is ConsoleChangeReviewProjection:
-            if _console_screen_is_torn_down(self):
-                return False
-            if not await self._change_review_projection.prepare():
-                return False
-            if _console_screen_is_torn_down(self):
-                return False
+        if not await prepare_change_review_projection(self, _console_screen_is_torn_down):
+            return False
         try:
             transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
         except QueryError:
