@@ -24,7 +24,7 @@ import logging
 
 import pytest
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.bootstrap_profile]
 
 
 def _pin_file_log_level(monkeypatch, level_name: str = "INFO") -> None:
@@ -125,14 +125,8 @@ def test_persist_event_reaches_the_persistent_log_through_the_real_sink(
     )
 
 
-def test_no_message_text_reaches_the_persistent_log(tmp_path, monkeypatch):
-    """The boundary this task must not widen.
-
-    Carries a positive control: without proof that *something* reached the
-    file, `"PRIVATE-SENTINEL-VALUE" not in written` would pass identically
-    against an empty file -- exactly the failure shape this whole task exists
-    to catch.
-    """
+def test_credential_text_is_redacted_in_the_persistent_log(tmp_path, monkeypatch):
+    """Keep the diagnostic readable and mask its synthetic credential."""
     from tldw_chatbook.Logging_Config import _configure_private_file_logging
     from tldw_chatbook.Utils.persistent_diagnostics import persist_event
 
@@ -149,7 +143,7 @@ def test_no_message_text_reaches_the_persistent_log(tmp_path, monkeypatch):
         assert _configure_private_file_logging(root) is True
         handler = _installed_handler(root, log_path)
         logging.getLogger("tldw_chatbook.someplace").info(
-            "a user's prompt: PRIVATE-SENTINEL-VALUE"
+            "provider retry postponed api_key=%s", "PRIVATE-SENTINEL-VALUE"
         )
         persist_event("app", "app_started")
         handler.flush()
@@ -160,10 +154,8 @@ def test_no_message_text_reaches_the_persistent_log(tmp_path, monkeypatch):
             handler.close()
         root.setLevel(previous_level)
 
-    # Positive control: the absence assertion below is only meaningful once
-    # this passes -- otherwise an empty file would satisfy it too.
     assert "event=app_started" in written
-
+    assert "provider retry postponed api_key=***REDACTED***" in written
     assert "PRIVATE-SENTINEL-VALUE" not in written
 
 

@@ -161,17 +161,8 @@ def test_third_party_payload_is_file_filtered_but_remains_available_to_ui(
     assert PRIVATE_SENTINEL not in _all_generations(path)
 
 
-# ---------------------------------------------------------------------------
-# TASK-19555: this suite used to prove the metadata-only guarantee by
-# attaching a filtered FILE handler beside an unfiltered ``_CollectingHandler``
-# and asserting only against the file. The app installs exactly such an
-# unfiltered collector -- ``TldwCli._setup_buffered_logging``'s
-# ``PersistentLogHandler``, root logger, level NOTSET -- and
-# ``LogsWindow._on_copy_all`` joins its buffer onto the system clipboard. The
-# collector above is a stand-in that nothing shares with production, so the
-# omission below is the one that mattered: the REAL collector was never
-# asserted against at all.
-# ---------------------------------------------------------------------------
+# ADR-029 applies credential and recognized PII redaction to the real
+# in-app collector and its Copy all buffer.
 
 
 @pytest.mark.parametrize(("operation", "module_name"), DOMAIN_OWNERS)
@@ -179,7 +170,7 @@ def test_remaining_domain_records_stay_out_of_the_clipboard_artifact(
     operation: str,
     module_name: str,
 ) -> None:
-    """The app's own collector, not a stand-in: no sentinel on the share path."""
+    """The real collector retains diagnostics with credentials and PII masked."""
     from tldw_chatbook.app import TldwCli
 
     class _AppStub:
@@ -192,16 +183,17 @@ def test_remaining_domain_records_stay_out_of_the_clipboard_artifact(
     TldwCli._setup_buffered_logging(stub)
     sink_id = loguru_logger.add(_forward_loguru_to_standard, level="DEBUG")
     domain_logger = logging.getLogger(module_name)
+    email = "fixture-reader@example.test"
     try:
-        domain_logger.debug("query=%s", PRIVATE_SENTINEL)
-        domain_logger.info("content=%s", PRIVATE_SENTINEL)
+        domain_logger.debug("query failed api_key=%s", PRIVATE_SENTINEL)
+        domain_logger.info("content check email=%s", email)
         try:
-            raise RuntimeError(PRIVATE_SENTINEL)
+            raise RuntimeError(f"operation failed token={PRIVATE_SENTINEL}")
         except RuntimeError:
-            domain_logger.exception("operation failed: %s", PRIVATE_SENTINEL)
+            domain_logger.exception("operation interrupted")
         _emit_owned_loguru_payload(
             module_name,
-            f"response body and config value: {PRIVATE_SENTINEL}",
+            f"response rejected Authorization: Bearer {PRIVATE_SENTINEL}",
         )
         log_persistent_metadata(
             domain_logger,
@@ -217,13 +209,16 @@ def test_remaining_domain_records_stay_out_of_the_clipboard_artifact(
         root.setLevel(old_level)
 
     shareable = "\n".join(stub._log_buffer)
-    assert PRIVATE_SENTINEL not in shareable
-    assert "sk-not-a-real-key" not in shareable
-    # Not a drop: the schema-validated event and triage metadata survive.
-    assert "event=operation_complete" in shareable
-    assert f"operation={operation}" in shareable
-    assert "exception_type=RuntimeError" in shareable
-    # The live view keeps the payload -- redacting it would empty the Logs
-    # screen of the content it exists to show (see TASK-19555's argument).
     rendered = "\n".join(message for _l, _n, message in stub._log_records)
-    assert PRIVATE_SENTINEL in rendered
+    for artifact in (shareable, rendered):
+        assert PRIVATE_SENTINEL not in artifact
+        assert "sk-not-a-real-key" not in artifact
+        assert email not in artifact
+        assert "query failed api_key=***REDACTED***" in artifact
+        assert "content check" in artifact
+        assert "response rejected" in artifact
+        assert "operation interrupted" in artifact
+        assert "Traceback (most recent call last)" in artifact
+        assert "RuntimeError: operation failed" in artifact
+        assert "event=operation_complete" in artifact
+        assert f"operation={operation}" in artifact
