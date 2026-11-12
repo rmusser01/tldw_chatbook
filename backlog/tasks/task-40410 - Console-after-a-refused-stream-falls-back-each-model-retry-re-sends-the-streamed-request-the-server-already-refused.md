@@ -1,5 +1,5 @@
 ---
-id: TASK-39131
+id: TASK-40410
 title: >-
   Console: after a refused stream falls back, each model retry re-sends the
   streamed request the server already refused
