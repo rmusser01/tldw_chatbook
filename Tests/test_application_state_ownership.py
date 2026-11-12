@@ -224,6 +224,7 @@ RECENT_WORK_SCREEN_PATHS = (
     PRODUCTION_ROOT / "UI" / "Screens" / "home_screen.py",
     PRODUCTION_ROOT / "UI" / "Screens" / "workflows_screen.py",
     PRODUCTION_ROOT / "UI" / "Screens" / "scheduling" / "schedules_workbench.py",
+    PRODUCTION_ROOT / "UI" / "Workflows_Modules" / "console_context.py",
 )
 RETIRED_HANDOFF_FIELDS = (
     "pending_chat_handoff",
@@ -2067,9 +2068,9 @@ def test_recent_work_consumers_use_owner_api_outside_threaded_workers() -> None:
         "tldw_chatbook/UI/Screens/home_screen.py": {
             ("HomeScreen", "_build_dashboard_input"),
         },
-        "tldw_chatbook/UI/Screens/workflows_screen.py": {
-            ("WorkflowsScreen", "on_mount"),
-            ("WorkflowsScreen", "_latest_console_follow_item"),
+        "tldw_chatbook/UI/Screens/workflows_screen.py": set(),
+        "tldw_chatbook/UI/Workflows_Modules/console_context.py": {
+            ("WorkflowConsoleContext", "refresh_context"),
         },
         "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": {
             ("SchedulesWorkbench", "_latest_console_follow_item_from_adapter"),
@@ -2087,12 +2088,24 @@ def test_recent_work_consumers_use_owner_api_outside_threaded_workers() -> None:
                 for node in class_node.body
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
             ):
+                nodes = tuple(ast.walk(method))
+                store_aliases = {
+                    target.id
+                    for node in nodes
+                    if isinstance(node, ast.Assign)
+                    and _constant_dynamic_name(node.value) == "screen_state_store"
+                    for target in node.targets
+                    if isinstance(target, ast.Name)
+                }
                 if any(
                     isinstance(node, ast.Call)
                     and isinstance(node.func, ast.Attribute)
                     and node.func.attr == "has_snapshots"
-                    and _chain(node.func.value).endswith(".screen_state_store")
-                    for node in ast.walk(method)
+                    and (
+                        _chain(node.func.value).endswith(".screen_state_store")
+                        or _chain(node.func.value) in store_aliases
+                    )
+                    for node in nodes
                 ):
                     scoped_calls.add((class_node.name, method.name))
         observed[relative] = scoped_calls
