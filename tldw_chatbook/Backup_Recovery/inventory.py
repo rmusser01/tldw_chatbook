@@ -142,11 +142,30 @@ def _sqlite_sidecars(declared, adapters):
     sidecars = []
     claimed = set()
     declared_paths = {item.path for item in declared if item.path is not None}
+    legacy_execution_locks = {
+        item.path
+        for item in declared
+        if item.owner == "db.agent_runs"
+        and item.logical_id.endswith(":legacy-mobile-execution-lock")
+    }
 
-    def claim(main_path, logical_prefix):
+    def claim(item):
+        main_path = item.path
         main = os.stat(main_path, follow_symlinks=False)
-        for suffix in ("-wal", "-shm"):
-            path = main_path.with_name(main_path.name + suffix)
+        paths = [
+            (
+                main_path.with_name(main_path.name + suffix),
+                "sqlite.transient",
+                ":sqlite" + suffix,
+            )
+            for suffix in ("-wal", "-shm")
+        ]
+        if item.owner == "db.agent_runs":
+            lock = main_path.with_name(f".{main_path.name}.execution.lock")
+            # The legacy inventory already owns its exact lock disposition.
+            if lock not in legacy_execution_locks:
+                paths.append((lock, "recovery.control", ":execution-lock"))
+        for path, owner, label in paths:
             safe = stat.S_ISREG(main.st_mode) and path not in declared_paths
             try:
                 info = os.stat(path, follow_symlinks=False)
@@ -158,15 +177,16 @@ def _sqlite_sidecars(declared, adapters):
                     and stat.S_ISREG(info.st_mode)
                     and info.st_uid == os.geteuid()
                     and info.st_nlink == 1
+                    and (owner != "recovery.control" or info.st_size == 0)
                 )
             claimed.add(path)
             sidecars.append(
                 StorageItem(
-                    "sqlite.transient",
-                    logical_prefix + ":sqlite" + suffix,
+                    owner,
+                    item.logical_id + label,
                     path,
                     "intentionally_excluded" if safe else "unsupported",
-                    (logical_prefix,),
+                    (item.logical_id,),
                 )
             )
 
@@ -181,7 +201,7 @@ def _sqlite_sidecars(declared, adapters):
         # Mirror their capture dispatch; payload names never confer SQLite scope.
         if not sqlite_tree_member(item):
             continue
-        claim(item.path, item.logical_id)
+        claim(item)
     # An unselected store is still constructed at startup, so its sidecars must
     # never resurface as unknown children: claim them from every declared main
     # path of a schema-policy owner that the included-selection pass missed.
@@ -201,7 +221,7 @@ def _sqlite_sidecars(declared, adapters):
             # An absent or unreadable main store gains no sidecar scope;
             # residual lookalikes beside it stay unknown-lookalike blockers.
             continue
-        claim(item.path, item.logical_id)
+        claim(item)
     return tuple(sidecars)
 
 

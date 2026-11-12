@@ -98,6 +98,48 @@ def test_fixed_dispositions_cover_native_schemas_and_refuse_pending_handlers(
         )
 
 
+def test_canonical_workflow_is_preserved_without_importing_its_statistics(
+    tmp_path, monkeypatch
+):
+    from Tests.Backup_Recovery import mobile_consolidation_fixture as fixture
+    from Tests.Backup_Recovery.test_workflow_recovery_schema import saved_result
+
+    original_seed = fixture._seed
+    saved = []
+
+    def seed_runs(db, legacy, _metadata):
+        assert not legacy
+        saved.append(saved_result(db, tmp_path)[-1])
+        with db.connection() as connection:
+            connection.execute("ANALYZE")
+
+    def seed(stores, *, legacy, **kwargs):
+        return original_seed(
+            stores, legacy=legacy, runs_seed=None if legacy else seed_runs, **kwargs
+        )
+
+    monkeypatch.setattr(fixture, "_seed", seed)
+    with workspace_reads(tmp_path, monkeypatch) as reads:
+        plan = reads.plan_manifest()
+        assert not any(row.table.startswith("sqlite_stat") for row in plan.tables)
+        workflow = [row for row in plan.tables if row.table.startswith("workflow_")]
+        assert len(workflow) == 15
+        assert all(
+            (row.purpose, row.family, row.handler)
+            == ("canonical", "runs", "native-preserved")
+            for row in workflow
+        )
+        _connection, restrictions, *_ = reads._connections["canonical", "runs"]
+        assert "sqlite_stat1" in restrictions.workflow_statistics
+        columns, results = reads.page("canonical", "runs", "workflow_results")
+        assert len(results) == len(saved) == 1
+        assert results[0][columns.index("payload_json")] == saved[0].canonical_json()
+        with pytest.raises(ValueError, match="mobile_sqlite_table_invalid"):
+            reads.page("legacy", "runs", "workflow_results")
+        with pytest.raises(ValueError, match="mobile_sqlite_table_invalid"):
+            reads.page("canonical", "runs", "sqlite_stat1")
+
+
 def test_catalog_refuses_copied_retired_and_substituted_native_reads(
     tmp_path, monkeypatch
 ):

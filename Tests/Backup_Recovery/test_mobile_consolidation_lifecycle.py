@@ -464,9 +464,9 @@ def test_private_lifecycle_verifies_fixed_native_partitions_before_owners(
                 key: versions(rollback)[key]
                 for key in ("db.chachanotes.primary", "db.workspaces", "db.agent_runs")
             } == {
-                "db.chachanotes.primary": 82,
-                "db.workspaces": 9,
-                "db.agent_runs": 26,
+                "db.chachanotes.primary": 87,
+                "db.workspaces": 11,
+                "db.agent_runs": 33,
             }
             assert lifecycle.source.path.is_file()
             assert lifecycle.canonical.path.is_file()
