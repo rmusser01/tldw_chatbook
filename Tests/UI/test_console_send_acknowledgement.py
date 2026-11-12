@@ -87,7 +87,10 @@ def paint_state(host) -> Paint:
         header_idle="Ready" in header,
         tab_running=any("●" in line for line in tabs),
         run_chip="Run:" in text,
-        empty_state="No messages yet." in text or "type a message to begin" in text,
+        # Joined across lines: at 80x24 the empty state wraps "type a" /
+        # "message to begin." and a per-line match never saw it (TASK-38948).
+        empty_state="No messages yet." in text
+        or "type a message to begin" in " ".join(line.strip() for line in lines),
         empty_draft_reason="Send disabled: type a message" in text,
     )
 
@@ -400,6 +403,140 @@ async def check_sending_row_before_admission(size: tuple[int, int]) -> None:
     after = [paint for i, paint in pending if i > acknowledged]
     gaps = [i for i, paint in enumerate(after) if not paint.user_row]
     assert len(gaps) <= 1, {"gaps": gaps, "context": timeline.gap_context}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (160, 45)])
+async def test_sending_paints_a_frame_before_the_row_and_the_send_waits_for_it(size):
+    """TASK-38948 (owner ruling 2026-11-10): "Sending…" leads the row by a frame.
+
+    The status line, composer and header show the send first, in a frame of
+    their own; the user row mounts after that frame. Painting both in one
+    frame made the Sending frame a full first-message reflow and render
+    (Sending loop CPU median 56 ms, against 30 ms with the row a frame
+    later). The send still starts only once the row is on screen.
+    """
+    host, gateway, timeline = build()
+    async with host.run_test(size=size) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            at_send = mark_send_start(console, timeline)
+            timeline.install()
+            try:
+                timeline.mark("enter")
+                press(host, "enter", "\r")
+                await until(gateway.validation_started.is_set)
+            finally:
+                gateway.validation_release.set()
+            await until(lambda: gateway.stream_calls == 1)
+            timeline.uninstall()
+
+    enter, send = timeline.index("enter"), timeline.index("send")
+    paints = [
+        (i, value)
+        for i, (kind, value) in enumerate(timeline.entries)
+        if kind == "paint" and i > enter
+    ]
+    sending = next(i for i, paint in paints if paint.run_chip and not paint.header_idle)
+    row = next(i for i, paint in paints if paint.user_row)
+    assert sending < row, ("Sending and the row painted in one frame", paints)
+    first = dict(paints)[sending]
+    assert first.draft_in_composer and not first.empty_draft_reason, first
+    # Owner ruling 2026-11-12 ("Accept the frame"): in a fresh chat the
+    # "Sending…"-only frame still shows the empty transcript, an exception to
+    # TASK-33620.5 AC#2 for that one frame. Clearing it there would put back
+    # much of the CPU the reorder removed. Pinned so a change is deliberate.
+    assert first.empty_state, ("the Sending frame no longer shows the empty state", first)
+    assert not dict(paints)[row].empty_state, ("the row's frame shows the empty state", paints)
+    assert row < send, ("the send started before the row's frame", paints)
+    assert at_send and at_send[0] is not None and at_send[0].user_row, at_send
+
+
+@pytest.mark.asyncio
+async def test_a_batch_holding_the_sending_frame_still_draws_it_before_the_row(
+    monkeypatch,
+):
+    """TASK-38948 review r13n-rev3: the deferred mount waits for the draw.
+
+    Textual 8 runs the screen's after-refresh callbacks on an update tick
+    even while a batch holds the frame back, so the row's mount could run
+    before "Sending…" was drawn. Only the draw-flag check
+    (``_sending_frame_pending``) keeps them apart here: a batch open from
+    the paint until 50 ms after it.
+    """
+    from tldw_chatbook.UI.Console_Modules import send_acknowledgement as module
+
+    real_paint = module.paint_acknowledgement
+    host, gateway, timeline = build()
+
+    async def paint_in_a_batch(screen, session_id):
+        host._begin_batch()
+        try:
+            return await real_paint(screen, session_id)
+        finally:
+            asyncio.get_running_loop().call_later(0.05, host._end_batch)
+
+    monkeypatch.setattr(module, "paint_acknowledgement", paint_in_a_batch)
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            timeline.install()
+            try:
+                timeline.mark("enter")
+                press(host, "enter", "\r")
+                await until(gateway.validation_started.is_set)
+            finally:
+                gateway.validation_release.set()
+            await until(lambda: gateway.stream_calls == 1)
+            timeline.uninstall()
+
+    enter = timeline.index("enter")
+    paints = [
+        (i, value)
+        for i, (kind, value) in enumerate(timeline.entries)
+        if kind == "paint" and i > enter
+    ]
+    sending = next(i for i, paint in paints if paint.run_chip and not paint.header_idle)
+    row = next(i for i, paint in paints if paint.user_row)
+    assert sending < row, ("Sending and the row painted in one frame", paints)
+
+
+@pytest.mark.asyncio
+async def test_a_whole_sync_before_the_rows_frame_does_not_mount_the_row(monkeypatch):
+    """TASK-38948: the row stays out of every projection until its own mount.
+
+    A whole sync that ran between the paint and the row's deferred mount
+    (2 of 24 received-intent sends) projected the pending row and mounted it
+    before "Sending…" was drawn, so both shared one frame again.
+    """
+    from tldw_chatbook.UI.Console_Modules import send_acknowledgement as module
+
+    mounted_by_sync: list[bool] = []
+    real_paint = module.paint_acknowledgement
+
+    async def paint_then_whole_sync(screen, session_id):
+        mount = await real_paint(screen, session_id)
+        await screen._sync_native_console_chat_ui()
+        row_id = module.acknowledgement_for(screen).pending_row_id(session_id)
+        mounted_by_sync.append(
+            bool(row_id and list(screen.query(f"#console-message-{row_id}")))
+        )
+        return mount  # The hand-off still waits for the row's own mount.
+
+    monkeypatch.setattr(module, "paint_acknowledgement", paint_then_whole_sync)
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            try:
+                press(host, "enter", "\r")
+                await until(gateway.validation_started.is_set)
+            finally:
+                gateway.validation_release.set()
+            await until(lambda: gateway.stream_calls == 1)
+            await pilot.pause()
+            assert DRAFT in "\n".join(_painted_lines(host))
+    assert mounted_by_sync == [False]
 
 
 @pytest.mark.asyncio

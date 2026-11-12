@@ -89,6 +89,21 @@ async def wait_for_copy(screen, selector, expected):
             await asyncio.sleep(0.01)
 
 
+async def held_reread_keeps(credential_io, screen, selector, expected):
+    """Wait for the lapsed snapshot's re-read, then hold it past a poll tick.
+
+    TASK-38948: the copy keeps ``expected`` (the last observed state) while
+    the re-read is held, and never shows a "checking" pending state.
+    """
+    async with asyncio.timeout(3):
+        while not credential_io.entered.is_set():
+            await asyncio.sleep(0.01)
+    await asyncio.sleep(0.3)  # More than one 0.25 s readiness poll.
+    rendered = str(screen.query_one(selector, Static).renderable)
+    assert expected in rendered and "check" not in rendered, rendered
+    assert not credential_io.release.is_set()
+
+
 @pytest.mark.asyncio
 @private_profile_test
 async def test_settings_mount_and_overview_refresh_without_another_edit(
@@ -118,10 +133,11 @@ async def test_settings_mount_and_overview_refresh_without_another_edit(
         credential_io.entered.clear()
         credential_io.release.clear()
         credential_io.monotonic_clock[0] = 106.0
-        await wait_for_copy(
-            screen, "#settings-overview-configuration", "Not ready · checking login"
+        # TASK-38948 (owner ruling 2026-11-10): the lapsed snapshot is re-read
+        # while the Overview keeps "Status: Ready"; no "checking login" flicker.
+        await held_reread_keeps(
+            credential_io, screen, "#settings-overview-configuration", "Status: Ready"
         )
-        assert credential_io.entered.is_set()
         assert len(credential_io.readers) == 2
         credential_io.release.set()
         await wait_for_copy(screen, "#settings-overview-configuration", "Status: Ready")
@@ -205,11 +221,12 @@ async def test_settings_provider_check_refreshes_and_preserves_unsaved_fields(
         credential_io.entered.clear()
         credential_io.release.clear()
         credential_io.monotonic_clock[0] = 106.0
-        # TASK-33002.2 round-1 I2: the pending state is the Key row's fact.
-        await wait_for_copy(
-            screen, "#settings-provider-test-result", "Claude subscription, being checked"
+        # TASK-38948: the lapsed snapshot's re-read keeps the last result; the
+        # "being checked" pending copy is only for a never-read credential.
+        await held_reread_keeps(
+            credential_io, screen, "#settings-provider-test-result",
+            "Anthropic is configured",
         )
-        assert credential_io.entered.is_set()
         credential_io.release.set()
         await wait_for_copy(
             screen, "#settings-provider-test-result", "Anthropic is configured"

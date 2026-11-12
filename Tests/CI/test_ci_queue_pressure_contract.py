@@ -551,6 +551,9 @@ RECOVERED_SUITES_TARGETS = (
     # TASK-39172: config participant lifetimes, sandboxed and reading config
     # in-process, so before the bootstrap_profile suites.
     "Tests/Backup_Recovery/test_config_participant_lifetimes.py",
+    # TASK-38948: the subscription background-readiness file (sandboxed,
+    # ~6 s serial), which ran on no PR lane.
+    "Tests/Chat/test_subscription_background_readiness.py",
     # TASK-39142: bootstrap_profile since TASK-38111. TASK-39049's keyword-leg
     # pool retirement file runs beside its four siblings.
     "Tests/Prompt_Management/test_prompt_improvement_service.py",

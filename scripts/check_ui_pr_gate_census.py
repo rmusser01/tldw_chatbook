@@ -981,6 +981,14 @@ MINIMUM_FILES = 2020
 # dialog's restore-mismatch copy test at the tail. The floor is the measured
 # entry count.
 MINIMUM_FILES = 2021
+# TASK-38948 round 13 (2026-11-10): append the skill discovery's eager-factory
+# off-loop node and its superseded-refresh node at the tail. The floor is the
+# measured entry count.
+MINIMUM_FILES = 2023
+# TASK-38948 review r13n-rev1 (2026-11-10): append the four subscription
+# stale-snapshot pins and the eager held-trust-build closing node at the tail.
+# The floor is the measured entry count.
+MINIMUM_FILES = 2028
 
 
 def read_census(path: Path) -> list[str]:

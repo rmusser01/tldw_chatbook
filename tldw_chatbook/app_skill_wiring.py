@@ -580,7 +580,14 @@ def _capture_console_skill_trust_preparation(
                 source.current()
                 and source_current()
                 and owner_current() is True
-                and source.loop.get_task_factory() is None
+                # TASK-38948: App.run_async installs the stock eager factory,
+                # so requiring None refused every real run, and the cold trust
+                # build and skill read then ran on the UI loop at mount.
+                and (
+                    source.loop.get_task_factory() is None
+                    or source.loop.get_task_factory()
+                    is _source_wiring.asyncio.eager_task_factory
+                )
                 and app_fields.get("_local_skill_trust_service") is expected_trust
                 and app_fields.get("_workers") is manager
                 and metadata._plain_fields(

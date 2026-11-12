@@ -35,10 +35,26 @@ from Tests.UI.test_console_send_acknowledgement import (
 pytestmark = pytest.mark.bootstrap_profile
 
 
+def _settled(console) -> bool:
+    """No whole sync in flight, owed or scheduled (TASK-38948 review r13n-rev4).
+
+    A sync that found both config locks held by another thread sets
+    ``_console_control_bar_replay_whole_sync`` and ``_console_sync_requested``
+    (``config_sync.sync_console_core_state``, TASK-35645/36511), and its
+    coalesced replay owns the next whole sync. A tick made meanwhile returned
+    at ``_sync_native_console_chat_ui``'s entry guard and read nothing.
+    """
+    return not (
+        console._console_sync_in_progress
+        or getattr(console, "_console_control_bar_replay_whole_sync", False)
+        or getattr(console, "_console_control_bar_sync_scheduled", False)
+    )
+
+
 async def _tick(console) -> None:
-    """One whole sync tick, after any in-flight (or re-armed) tick settles."""
+    """One whole sync tick, after any in-flight, owed or scheduled sync settles."""
     for _ in range(3):
-        await until(lambda: not console._console_sync_in_progress, timeout=30)
+        await until(lambda: _settled(console), timeout=30)
         await asyncio.sleep(0.01)
     await console._sync_native_console_chat_ui()
 

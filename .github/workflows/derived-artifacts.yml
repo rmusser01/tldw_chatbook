@@ -1382,7 +1382,9 @@ jobs:
       # TASK-39043: the Console config-sync lifetime and Home citation
       # retirement suites (~86 s serial each). TASK-38976: the prompt
       # scope-service and batch suites. TASK-38974: the four Tests/Docs files
-      # (sandboxed, ~8 s serial). Then the bootstrap_profile suites:
+      # (sandboxed, ~8 s serial). TASK-38948: the subscription
+      # background-readiness file (sandboxed, ~6 s), on no lane before.
+      # Then the bootstrap_profile suites:
       # TASK-39142's prompt-improvement and keyword-leg files, with TASK-39049's
       # keyword-leg pool retirement file beside them, and TASK-39049's Library
       # ingest runner. TASK-39124 appends the built-in pixel buddy file
@@ -1426,6 +1428,7 @@ jobs:
             Tests/Chat/test_trace_v2_collaboration.py::test_bare_underscore_keys_are_masked_wherever_sk_dash_keys_are \
             Tests/Chat/test_trace_v2_collaboration.py::test_the_credential_classes_masked_before_are_still_masked \
             Tests/Backup_Recovery/test_config_participant_lifetimes.py \
+            Tests/Chat/test_subscription_background_readiness.py \
             Tests/Prompt_Management/test_prompt_improvement_service.py \
             Tests/RAG_Search/test_keyword_leg_chacha.py \
             Tests/RAG_Search/test_keyword_leg_db_resolution.py \
@@ -1749,6 +1752,19 @@ jobs:
           test "${#SHARD[@]}" -gt 0
           echo "Library shell shard $(( ${{ strategy.job-index }} + 1 ))/${{ strategy.job-total }}: ${#SHARD[@]} nodes."
           pytest "${SHARD[@]}" \
+            --timeout=180 \
+            --durations=0 --durations-min=0 \
+            --tb=short
+
+      # TASK-38948 (owner decision 2026-11-10, "Off the gate, reorder next"):
+      # the 100 ms Send-feedback nodes left the required UI lane; they keep
+      # running here on every push to dev until CI shows them passing.
+      - name: Watch the 100 ms Send-feedback nodes
+        if: ${{ !cancelled() && strategy.job-index == 0 }}
+        run: |
+          pytest \
+            "Tests/UI/test_console_received_intent_feedback.py::test_actual_send_paints_sending_and_accepts_input_within_100ms[enter]" \
+            "Tests/UI/test_console_received_intent_feedback.py::test_actual_send_paints_sending_and_accepts_input_within_100ms[send-button]" \
             --timeout=180 \
             --durations=0 --durations-min=0 \
             --tb=short
