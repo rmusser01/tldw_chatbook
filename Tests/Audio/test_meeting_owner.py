@@ -922,6 +922,33 @@ def test_raising_start_cleans_up_and_leaves_no_session(tmp_path, monkeypatch):
     assert list((tmp_path / "meetings").glob("*")) == []
 
 
+def test_display_name_source_refusal_precedes_meeting_file_allocation(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    monkeypatch.setattr(
+        mo,
+        "resolve_effective_config",
+        lambda: SimpleNamespace(provider="p", model="m", language="en"),
+    )
+
+    def refuse_name():
+        raise RecoveryRequired("raw_source_selection_changed")
+
+    monkeypatch.setattr(mo, "meeting_user_display_name", refuse_name)
+    owner, _, _ = _owner(tmp_path)
+    owner.prepare()
+
+    with pytest.raises(RecoveryRequired, match="raw_source_selection_changed"):
+        owner.start()
+
+    assert owner.session is None
+    assert owner.local_sink is None
+    assert not (tmp_path / "meetings").exists()
+
+
+@pytest.mark.bootstrap_profile
 def test_raising_capture_constructor_leaks_no_folder(tmp_path, monkeypatch):
     """The capture constructor resolves numpy AFTER the folder and its WAV
     handles exist; a raise there must not leave them behind."""

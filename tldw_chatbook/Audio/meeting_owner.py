@@ -1236,6 +1236,7 @@ class MeetingSessionOwner:
                     # I4): both open the microphone, and the rail reads
                     # `is_enrolling` to keep Start disabled meanwhile.
                     raise RuntimeError("enrolling: a voice enrollment is recording")
+                user_display_name = meeting_user_display_name()
                 base = datetime.now().strftime("%Y-%m-%d_%H%M")
                 folder = Path(self.settings.recordings_dir) / base
                 suffix = 1
@@ -1267,7 +1268,7 @@ class MeetingSessionOwner:
                     mic_device=self.settings.mic_device or "default",
                     system_source=self.prepared.tap_mode.reason,
                     provider=self.prepared.provider, model=self.prepared.model,
-                    user_display_name=meeting_user_display_name(),
+                    user_display_name=user_display_name,
                     diarize_mic_channel=self.settings.diarize_mic_channel,
                     # Which engine produced this meeting's labels, and the
                     # vector space its centroids live in (spec §4/§6): stamped
