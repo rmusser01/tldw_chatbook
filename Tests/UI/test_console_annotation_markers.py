@@ -153,6 +153,7 @@ async def test_failed_annotation_write_leaves_the_preview_map_alone():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_restore_rekeys_persisted_annotations_to_native_ids(tmp_path):
     """The restore half, unmocked: annotations written in a previous life of
     the conversation come back keyed to the CURRENT native message ids."""
@@ -165,7 +166,12 @@ async def test_restore_rekeys_persisted_annotations_to_native_ids(tmp_path):
         async with make_console_pilot() as pilot:
             screen = pilot.app.screen
             screen._prompt_queue = _RecordingPromptQueue()
-            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    db,
+                    workspace_registry=screen.app_instance.workspace_registry_service,
+                )
+            )
             screen._console_chat_store = store
             controller = screen._ensure_console_chat_controller()
             controller.store = store
@@ -471,6 +477,7 @@ async def test_edit_then_delete_round_trip_pins_the_sidecar_row(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_delete_of_last_note_removes_the_marker_after_forced_reload(tmp_path):
     """Deleting the only note on a message clears its inline marker: the
     screen's forced reload (``_console_annotation_loaded_conversation =
@@ -483,7 +490,12 @@ async def test_delete_of_last_note_removes_the_marker_after_forced_reload(tmp_pa
     try:
         async with make_console_pilot() as pilot:
             screen = pilot.app.screen
-            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    db,
+                    workspace_registry=screen.app_instance.workspace_registry_service,
+                )
+            )
             screen._console_chat_store = store
             controller = screen._ensure_console_chat_controller()
             controller.store = store
@@ -528,6 +540,7 @@ async def test_delete_of_last_note_removes_the_marker_after_forced_reload(tmp_pa
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_no_review_notes_for_message_toasts_and_never_opens_modal(tmp_path):
     """An empty match (message persisted, but no live annotation rows) toasts
     a warning and never reaches ``push_screen_wait``."""
@@ -539,7 +552,12 @@ async def test_no_review_notes_for_message_toasts_and_never_opens_modal(tmp_path
     try:
         async with make_console_pilot() as pilot:
             screen = pilot.app.screen
-            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    db,
+                    workspace_registry=screen.app_instance.workspace_registry_service,
+                )
+            )
             screen._console_chat_store = store
             controller = screen._ensure_console_chat_controller()
             controller.store = store
@@ -576,6 +594,7 @@ async def test_no_review_notes_for_message_toasts_and_never_opens_modal(tmp_path
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_on_edit_and_on_delete_never_raise_on_db_failure(tmp_path):
     """The DB wrappers log and return False instead of propagating -- a
     broken write must never crash the worker (``exit_on_error=False`` is the
@@ -588,7 +607,12 @@ async def test_on_edit_and_on_delete_never_raise_on_db_failure(tmp_path):
     try:
         async with make_console_pilot() as pilot:
             screen = pilot.app.screen
-            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    db,
+                    workspace_registry=screen.app_instance.workspace_registry_service,
+                )
+            )
             screen._console_chat_store = store
             controller = screen._ensure_console_chat_controller()
             controller.store = store
@@ -716,6 +740,7 @@ async def test_double_trigger_pushes_exactly_one_modal_and_reads_once(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_inflight_latch_releases_after_the_modal_closes(tmp_path):
     """A latched-forever flag would silently kill the feature after its
     first use -- a request made once the first flow has fully finished
@@ -728,7 +753,12 @@ async def test_inflight_latch_releases_after_the_modal_closes(tmp_path):
     try:
         async with make_console_pilot() as pilot:
             screen = pilot.app.screen
-            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    db,
+                    workspace_registry=screen.app_instance.workspace_registry_service,
+                )
+            )
             screen._console_chat_store = store
             controller = screen._ensure_console_chat_controller()
             controller.store = store
@@ -749,12 +779,19 @@ async def test_inflight_latch_releases_after_the_modal_closes(tmp_path):
                 comment="only note",
             )
 
-            pushed = _stub_review_notes_modal(screen, lambda _modal: False)
+            async def dismiss_without_changes(_modal) -> bool:
+                return False
+
+            pushed = _stub_review_notes_modal(screen, dismiss_without_changes)
 
             screen.post_message(
                 ConsoleReviewNotesRequested(anchor_message_id=assistant.id)
             )
-            await _wait_until(pilot, lambda: len(pushed) == 1)
+            await _wait_until(
+                pilot,
+                lambda: len(pushed) == 1 and not screen._console_review_notes_inflight,
+            )
+            assert len(pushed) == 1
             assert not screen._console_review_notes_inflight, (
                 "flag should be released once the first flow's finally runs"
             )
@@ -770,6 +807,7 @@ async def test_inflight_latch_releases_after_the_modal_closes(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_annotation_previews_join_the_transcript_refresh_key():
     """Live-verification catch (task-18515): the marker survived deleting
     its last note because the refresh key ignored annotation previews, so
@@ -784,7 +822,7 @@ async def test_annotation_previews_join_the_transcript_refresh_key():
         assert before is not None
 
         screen._console_annotation_previews = {"m-any": ("a note",)}
-        await screen._sync_native_console_transcript()
+        await screen._sync_native_console_transcript(force=True)
         await pilot.pause()
 
         assert screen._last_native_transcript_refresh_key != before, (
@@ -811,6 +849,7 @@ def test_marker_caps_the_notes_it_lists() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_oversized_note_edit_is_refused(tmp_path):
     """Qodo PR #1820: the edited comment passes the shared validation
     boundary (like the create-note path) before it can reach storage."""
@@ -822,7 +861,12 @@ async def test_oversized_note_edit_is_refused(tmp_path):
     try:
         async with make_console_pilot() as pilot:
             screen = pilot.app.screen
-            store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+            store = ConsoleChatStore(
+                persistence=ChatPersistenceService(
+                    db,
+                    workspace_registry=screen.app_instance.workspace_registry_service,
+                )
+            )
             screen._console_chat_store = store
             screen._ensure_console_chat_controller().store = store
 
