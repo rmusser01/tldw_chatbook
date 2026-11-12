@@ -189,7 +189,7 @@ def test_passive_recovery_before_controller_creation_has_no_state():
 
 @pytest.mark.asyncio
 async def test_transcript_sync_reads_recovery_after_ensuring_the_controller(monkeypatch):
-    """TASK-40130: a cold start's first sync shows the card with Replay available."""
+    """The transcript sync sets up the controller before projecting recovery."""
     from tldw_chatbook.UI.Console_Modules import console_spend_projection
 
     class Stop(Exception):
