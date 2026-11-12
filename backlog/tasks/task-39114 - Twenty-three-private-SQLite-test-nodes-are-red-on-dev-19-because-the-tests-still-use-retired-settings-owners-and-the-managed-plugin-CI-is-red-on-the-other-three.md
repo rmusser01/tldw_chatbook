@@ -100,3 +100,5 @@ Results:
   - Fix: a `sqlite:recovery.detached_layout` row now sits beside `recovery.credentials`, and the `_normalize_sqlite` row's call column reads `connect_private_sqlite`.
   - Before the fix both nodes failed with those messages; after it the file gives 19 passed, serial.
 - **Storage admission (coordinator ruling (a)).** `recovery.detached_layout` still takes storage admission: it is not on `_with_storage_admission`'s bypass list. `recovery.credentials` bypasses admission; adding the new owner to that list was considered and declined as the less conservative choice. The Windows path, which uses `_prepare_artifact` instead of the POSIX helper, is not exercised here.
+
+**2026-11-12 restack:** dev 064d5cb014 routed the normalization output through the existing recovery.validation seam, superseding the C99 owner; AC#4 stays met by dev's change (no raw sqlite3.connect remains); the storage-admission ruling for recovery.detached_layout is moot.
