@@ -10,6 +10,7 @@ import json
 import os
 import time
 from typing import Any, Generator, Union, Dict, Optional, List
+from urllib.parse import urlsplit
 
 import requests
 from urllib3 import Retry
@@ -881,6 +882,20 @@ def chat_with_llama(
     from ..Chat.console_provider_gateway import normalize_llamacpp_base_url
 
     api_base_url = normalize_llamacpp_base_url(api_base_url)
+    if urlsplit(api_base_url).scheme not in {"http", "https"}:
+        # TASK-39151: the normalizer reads only a loopback spelling typed
+        # without a scheme as http://, so a remote one, or any other scheme,
+        # is refused here before anything is sent, not left for requests to
+        # fail as a network error that echoes the URL. The value is never
+        # named: it can carry user info.
+        raise ChatConfigurationError(
+            provider=llama_cpp_config_key_in_api_settings,
+            message=(
+                f"{provider_display_name} API URL must start with http:// or "
+                "https:// (only localhost, 127.0.0.1 and [::1] may leave it out)."
+            ),
+            status_code=None,
+        )
     if api_key_resolved or api_key:
         current_api_key = api_key
     elif record and record.key in {"strata", "polystrata"}:

@@ -529,6 +529,12 @@ RECOVERED_SUITES_TARGETS = (
     "Tests/Docs/test_user_guide_contract.py",
     "Tests/Docs/test_user_guide_conflict_markers.py",
     "Tests/Docs/test_personas_qa_capture_script.py",
+    # TASK-39149: the Trace export's bare sk_/rk_ key masking (red on dev) and
+    # its pin that the credential classes masked before still are (green on
+    # dev), in no PR lane before. Pure, no config read, so among the sandboxed
+    # targets, before the bootstrap_profile ones.
+    "Tests/Chat/test_trace_v2_collaboration.py::test_bare_underscore_keys_are_masked_wherever_sk_dash_keys_are",
+    "Tests/Chat/test_trace_v2_collaboration.py::test_the_credential_classes_masked_before_are_still_masked",
     # TASK-39142: bootstrap_profile since TASK-38111. TASK-39049's keyword-leg
     # pool retirement file runs beside its four siblings.
     "Tests/Prompt_Management/test_prompt_improvement_service.py",

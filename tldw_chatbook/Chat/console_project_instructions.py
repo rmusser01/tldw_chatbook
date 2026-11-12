@@ -313,6 +313,13 @@ def _strict_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 
 def _canonical_hostname(hostname: str) -> str | None:
+    # TASK-39150: the contract refuses a host holding "%", so a zone id
+    # (%25-encoded or raw) is refused here too (owner ruling 2026-11-06).
+    # 127.1, a Unicode IDN and "localhost.." stay accepted on purpose: the
+    # send still uses them from config, and refusing them here would cancel
+    # such a send with project instructions on.
+    if "%" in hostname:
+        return None
     try:
         return str(ip_address(hostname))
     except ValueError:

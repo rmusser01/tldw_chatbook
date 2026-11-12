@@ -1054,7 +1054,7 @@ behaves exactly like that built-in provider pointed at another origin:
 
 | Family | Behavior |
 |---|---|
-| **llama.cpp** | The direct llama.cpp path, with llama-style base-URL normalization. |
+| **llama.cpp** | The direct llama.cpp path, with llama-style base-URL normalization. A base URL typed without `http://` or `https://` is read as `http://` only for `localhost`, `127.0.0.1` or `[::1]`; the editor refuses any other, such as `gpu-box.lan:8080`, and an entry holding one in `config.toml` is skipped, as the other families already were. |
 | **OpenAI-compatible** | The strict hosted-provider engine (see below) pointed at your URL — the same engine Databricks and the inference clouds use. |
 | **Ollama** | The Ollama path, including its model-discovery fallback. |
 

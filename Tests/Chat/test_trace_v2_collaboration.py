@@ -365,6 +365,85 @@ def test_url_userinfo_credentials_are_absent_from_every_profile(profile: str) ->
     assert URL_CREDENTIAL not in json.dumps(payload)
 
 
+#: TASK-39149: bare secret and restricted keys, live and test (synthetic).
+UNDERSCORE_KEYS = (
+    "sk_live_abcdefgh12345678",
+    "sk_test_abcdefgh12345678",
+    "rk_live_abcdefgh12345678",
+    "rk_test_abcdefgh12345678",
+)
+
+
+def _export_bytes_with(secret: str, profile: str) -> tuple[bytes, dict]:
+    snapshot = _snapshot(
+        _record(
+            content_preview=f"Request failed with {secret}",
+            payload={
+                "result": f"key {secret} in a tool result",
+                secret: "credential used as a nested key",
+            },
+        )
+    )
+    payload = _build(snapshot, profile, confirm_full=profile == "full_trace")
+    return json.dumps(payload, ensure_ascii=False).encode("utf-8"), payload
+
+
+@pytest.mark.parametrize("profile", ["safe_summary", "redacted_diagnostic", "full_trace"])
+@pytest.mark.parametrize("secret", UNDERSCORE_KEYS)
+def test_bare_underscore_keys_are_masked_wherever_sk_dash_keys_are(
+    secret: str, profile: str
+) -> None:
+    """TASK-39149 AC#1: the export's one key-prefix pattern was ``sk-``, so a
+    bare ``sk_live_``/``sk_test_``/``rk_live_``/``rk_test_`` key was exported
+    unchanged in every profile."""
+    serialized, payload = _export_bytes_with(secret, profile)
+
+    assert secret.encode() not in serialized
+    assert any(
+        item["reason"] in {"credential", "credential_key"}
+        for item in payload["manifest"]["redaction_provenance"]
+    )
+    for value in ("sk-abcdefgh12345678", secret):
+        assert trajectory_export._credential_text(value) == (
+            "[credential redacted]",
+            True,
+        )
+
+
+#: TASK-39149 AC#2: every class the export masked before, synthetic values.
+_OLD_CREDENTIAL_CLASSES = {
+    "sk-dash": "sk-abcdefgh12345678",
+    "pem": (
+        "-----BEGIN RSA PRIVATE KEY-----\nTOP-SECRET-PEM-BODY\n"
+        "-----END RSA PRIVATE KEY-----"
+    ),
+    "bearer": "Bearer bearer-token-abc123",
+    "basic": "Basic dXNlcjpwYXNzd29yZA==",
+    "aws": "AKIAABCDEFGHIJKLMNOP",
+    "userinfo": "https://alice:hunter2@example.com/private",
+}
+
+
+@pytest.mark.parametrize("profile", ["safe_summary", "redacted_diagnostic", "full_trace"])
+@pytest.mark.parametrize("name", sorted(_OLD_CREDENTIAL_CLASSES))
+def test_the_credential_classes_masked_before_are_still_masked(
+    name: str, profile: str
+) -> None:
+    """TASK-39149 AC#2: ``sk-`` keys, private keys, bearer and basic tokens,
+    AWS key ids and URL user info stay masked in every profile."""
+    secret = _OLD_CREDENTIAL_CLASSES[name]
+    body = {
+        "pem": "TOP-SECRET-PEM-BODY",
+        "bearer": "bearer-token-abc123",
+        "basic": "dXNlcjpwYXNzd29yZA==",
+        "userinfo": "hunter2",
+    }.get(name, secret)
+
+    serialized, _payload = _export_bytes_with(secret, profile)
+
+    assert body.encode() not in serialized
+
+
 def test_preflight_has_one_decision_per_material_field_without_count_drift() -> None:
     snapshot = _snapshot(
         _record(

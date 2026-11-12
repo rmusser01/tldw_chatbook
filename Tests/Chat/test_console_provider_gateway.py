@@ -3625,7 +3625,11 @@ async def test_gateway_attaches_on_device_destination_after_llamacpp_normalizati
     resolved = await gateway.resolve_for_send(
         ConsoleProviderSelection(
             provider="llama_cpp",
-            base_url="127.42.7.9:9099/v1/chat/completions",
+            # TASK-39151: rewritten on purpose with its scheme. Typed without
+            # one, only localhost, 127.0.0.1 and [::1] are read as http://
+            # (the contract's rule, which the save and readiness already
+            # apply), so 127.42.7.9:9099 is now refused before any probe.
+            base_url="http://127.42.7.9:9099/v1/chat/completions",
         )
     )
 

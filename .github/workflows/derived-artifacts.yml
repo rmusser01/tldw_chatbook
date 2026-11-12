@@ -1383,7 +1383,9 @@ jobs:
       # nodes are private-profile tests (each body runs in its own child
       # process) and the goal-dispatch file is bootstrap_profile; the four
       # other fleet-wake nodes stay in pr-fast-lane. Last, the goal recovery file
-      # (bootstrap_profile, 4 tests), which runs on no other lane.
+      # (bootstrap_profile, 4 tests), which runs on no other lane. TASK-39149's
+      # two Trace export credential nodes (pure, no config read, ~5 s serial)
+      # follow the sandboxed prompt suites, before the bootstrap_profile ones.
       - name: Run the recovered suites
         run: |
           pytest \
@@ -1396,6 +1398,8 @@ jobs:
             Tests/Docs/test_user_guide_contract.py \
             Tests/Docs/test_user_guide_conflict_markers.py \
             Tests/Docs/test_personas_qa_capture_script.py \
+            Tests/Chat/test_trace_v2_collaboration.py::test_bare_underscore_keys_are_masked_wherever_sk_dash_keys_are \
+            Tests/Chat/test_trace_v2_collaboration.py::test_the_credential_classes_masked_before_are_still_masked \
             Tests/Prompt_Management/test_prompt_improvement_service.py \
             Tests/RAG_Search/test_keyword_leg_chacha.py \
             Tests/RAG_Search/test_keyword_leg_db_resolution.py \
