@@ -928,7 +928,7 @@ def test_gated_peer_close_uncertainty_retains_connection_and_gate(
     tmp_path, monkeypatch
 ):
     from tldw_chatbook.DB import Workspace_Project_Index_DB as module
-    from tldw_chatbook.Workspaces.project_index import allocation
+    from tldw_chatbook.DB import project_index_allocation as allocation
     from Tests.Workspaces.project_index_support import open_semantic_store
 
     first = open_semantic_store(tmp_path)

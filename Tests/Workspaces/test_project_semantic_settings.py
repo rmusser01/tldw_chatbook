@@ -290,7 +290,7 @@ def test_native_positive_guard_skips_unqualified_runtime_but_keyword_stays_activ
     tmp_path, request, monkeypatch, mismatch
 ):
     import sqlite3
-    from tldw_chatbook.Workspaces.project_index import allocation
+    from tldw_chatbook.DB import project_index_allocation as allocation
     from Tests.Workspaces.project_index_support import open_index_store
 
     if mismatch == "version":
