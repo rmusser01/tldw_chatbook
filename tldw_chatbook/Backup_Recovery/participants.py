@@ -86,6 +86,29 @@ def native_scratch_writer(writer):
     return manager, snapshot
 
 
+def native_prepared_scratch(manager, snapshot, session_id):
+    """Qualify the original held scratch before its writer is created."""
+    from tldw_chatbook.Chat.console_scratch_space import (
+        _SCRATCH_ADMISSION_ORIGINAL,
+        ConsoleScratchSnapshot,
+    )
+
+    if type(snapshot) is not ConsoleScratchSnapshot or not _methods_unchanged(
+        manager, _SCRATCH_ADMISSION_ORIGINAL
+    ):
+        return False
+    manager._check_process()
+    with manager._condition:
+        record = manager._matching_record_locked(snapshot)
+        return (
+            record is not None
+            and record.snapshot is snapshot
+            and record.session_id == session_id
+            and record.leases > 0
+            and manager._identity_matches(snapshot)
+        )
+
+
 class Participant(Protocol):
     owner_id: str
 
