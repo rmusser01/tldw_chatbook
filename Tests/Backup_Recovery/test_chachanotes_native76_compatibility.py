@@ -8,6 +8,7 @@ import pytest
 
 from Tests.DB.test_chachanotes_v77_agent_chat_starts_migration import (
     _legacy_native76,
+    _legacy_subscriptions_v2,
     _seed_legacy_queue_owner,
     _assert_legacy_queue_quarantine,
 )
@@ -114,12 +115,12 @@ def test_native76_staged_upgrade_preserves_machine_receipts(tmp_path, dictionary
         rows = tuple(connection.execute("SELECT * FROM console_dispatch_checkpoints"))
         messages = tuple(connection.execute("SELECT * FROM messages ORDER BY id"))
     assert validation.validate_candidate(_owner(), path, Event(), migrate=True) == ()
-    assert validation.validated_schema_version(_owner(), path, Event()) == 80
+    assert validation.validated_schema_version(_owner(), path, Event()) == 86
     with closing(sqlite3.connect(path)) as connection:
-        assert (
-            tuple(connection.execute("SELECT * FROM console_dispatch_checkpoints"))
-            == rows
-        )
+        # The installed v86 migration appends one nullable receipt field.
+        assert tuple(
+            connection.execute("SELECT * FROM console_dispatch_checkpoints")
+        ) == tuple((*row, None) for row in rows)
         assert (
             tuple(connection.execute("SELECT * FROM messages ORDER BY id")) == messages
         )
@@ -249,14 +250,31 @@ def test_subscription_native_catalog_retains_exact_embedded_stamps(
         connection.commit()
     owner = next(a for a in recovery_adapters() if a.owner_id == "db.subscriptions")
     before = _dump(path)
-    assert validation.validate_candidate(owner, path, Event(), migrate=True) == ()
+    assert validation.validate_candidate(owner, path, Event(), migrate=False) == ()
     assert _dump(path) == before
+    old_stamp = 'INSERT INTO "schema_version" VALUES(2);'
+    new_stamp = 'INSERT INTO "schema_version" VALUES(3);'
+    assert before.count(old_stamp) == 1
+    # The migration recreates the unchanged timestamp trigger after its data update.
+    timestamp_trigger = next(
+        sql for sql in before if sql.startswith("CREATE TRIGGER update_subscriptions_timestamp\n")
+    )
+    assert validation.validate_candidate(owner, path, Event(), migrate=True) == ()
+    after = list(_dump(path))
+    after.remove(timestamp_trigger)
+    assert after == [
+        new_stamp if sql == old_stamp else sql
+        for sql in before
+        if sql != timestamp_trigger
+    ]
     with closing(sqlite3.connect(path)) as connection:
         connection.execute("UPDATE db_schema_version SET version=75")
         connection.commit()
+    before = _dump(path)
     assert validation.validate_candidate(owner, path, Event(), migrate=True) == (
         "unsupported_schema_version",
     )
+    assert _dump(path) == before
 
 
 @pytest.mark.parametrize("failure", ["late_index", "validation", "cancel"])
@@ -534,10 +552,7 @@ def test_repaired77_catalog_admits_only_its_exact_stamp(
 
     path = tmp_path / "fresh.sqlite"
     if subscriptions:
-        from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
-
-        other = SubscriptionsDB(path)
-        other.close()
+        _legacy_subscriptions_v2(path)
     # This control remains about the independently frozen historical v77 shape.
     monkeypatch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 77)
     db = CharactersRAGDB(path, client_id="repaired-stamp")
@@ -587,38 +602,22 @@ def test_repaired77_catalog_admits_only_its_exact_stamp(
 def test_strong_primary_catalog_accepts_historical_stamps(
     tmp_path, dictionary, version
 ):
+    from tldw_chatbook.DB.recovery_core_schema import CHACHANOTES_V86_SCHEMAS
+
     path = tmp_path / "strong.sqlite"
     _legacy_native76(path, dictionary=dictionary)
     with closing(sqlite3.connect(path)) as connection:
-        catalog = tuple(
-            connection.execute(
-                "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
-            )
-        )
         connection.execute("UPDATE db_schema_version SET version=?", (version,))
         connection.commit()
-    from tldw_chatbook.DB.recovery_core_schema import (
-        _browse_order_catalog,
-        _fleet_progress_catalog,
-        _sargable_catalog,
-    )
-
-    catalog = tuple(
-        (sql,)
-        for sql in _browse_order_catalog(
-            _sargable_catalog(_fleet_progress_catalog(tuple(row[0] for row in catalog)))
-        )
-    )
+    catalog = CHACHANOTES_V86_SCHEMAS[2 + int(dictionary)]
     assert validation.validate_candidate(_owner(), path, Event(), migrate=True) == ()
     with closing(sqlite3.connect(path)) as connection:
-        assert (
-            tuple(
-                connection.execute(
-                    "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
-                )
+        assert tuple(
+            row[0]
+            for row in connection.execute(
+                "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
             )
-            == catalog
-        )
+        ) == catalog
         assert connection.execute(
             "SELECT version FROM db_schema_version"
-        ).fetchone() == (80,)
+        ).fetchone() == (86,)
