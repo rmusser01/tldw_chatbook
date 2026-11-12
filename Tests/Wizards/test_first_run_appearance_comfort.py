@@ -296,6 +296,73 @@ def test_summary_shows_splash_off_and_ascii_marks(config, detail) -> None:
     assert row.detail == detail
 
 
+# -- pre-merge review (2026-11-12): a custom splash length is named as saved ------
+
+
+@pytest.mark.parametrize(
+    ("duration", "choice", "detail"),
+    [
+        (4, look.STARTUP_FULL, "full splash (4 s)"),
+        (15.0, look.STARTUP_FULL, "full splash (15 s)"),
+        (1, look.STARTUP_SHORT, "short splash (1 s)"),
+        (0.5, look.STARTUP_SHORT, "short splash (0.5 s)"),
+    ],
+)
+def test_summary_names_a_custom_splash_length_in_its_saved_seconds(
+    duration, choice, detail
+) -> None:
+    """Pre-merge review (2026-11-12): a length saved in Settings ▸ Splash
+    Screen read as one of setup's two -- 4 s or 15 s as "full splash (7 s)",
+    1 s as "short splash (2 s)" -- and a 15 s splash ticked as the default."""
+    splash = {"enabled": True, "duration": duration}
+    rows = {
+        row.label: row
+        for row in wizard_state.build_summary_rows(
+            {"splash_screen": splash}, {}, rag_deps_installed=True
+        )
+    }
+    row = rows["Startup and motion"]
+    assert look.startup_choice(splash) == choice
+    assert row.detail == detail
+    assert row.state == wizard_state.ROW_CONFIGURED
+
+
+@pytest.mark.parametrize(
+    ("duration", "labels"),
+    [
+        (
+            15,
+            ["Off", "Short (2 s)", "Full (15 s, as saved)"],
+        ),
+        (
+            1,
+            [
+                "Off",
+                "Short (1 s, as saved)",
+                f"Full ({float(DEFAULT_SPLASH_DURATION_SECONDS):g} s)",
+            ],
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_the_step_names_a_custom_splash_length_on_its_choice(
+    duration, labels
+) -> None:
+    """The radio row a saved custom length selects says that length, and an
+    untouched step keeps it (writes nothing)."""
+    wizard, step = _step(_raw(splash_screen={"enabled": True, "duration": duration}))
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        shown = [
+            str(button.label)
+            for button in step.query("#setup-startup-choice RadioButton")
+        ]
+        ok, _ = await step.commit()
+    assert shown == labels
+    assert ok
+    wizard.commit_config.assert_not_awaited()
+
+
 # -- AC#14: theme names and the whole shortlist ---------------------------------
 
 
