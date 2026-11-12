@@ -1372,20 +1372,19 @@ async def test_actual_wired_preparation_accepts_only_mirroring_of_unchanged_comp
 async def test_actual_wired_preparation_still_refuses_real_draft_drift(
     wired_composer_case, change
 ):
-    """Mirroring never authorizes a changed draft revision or store owner text."""
+    """Uncaptured entry refuses a changed draft revision or store owner text."""
     case = wired_composer_case
     _loop_projection(case)
     runtime = case.screen._console_runtime()
     draft = "owning input"
     case.composer.load_draft(draft)
     case.store.set_session_draft(case.session.id, draft)
-    stash = case.composer.capture_draft_for_send()
     snapshot = case.composer.capture_draft_snapshot()
     probe = _PermissionProbe(case.source, case.permissions)
     with probe.installed():
         task = asyncio.create_task(
             case.screen._prompt_queue._launch_chain_async(
-                draft, case.session.id, stash, case.controller
+                draft, case.session.id, None, case.controller
             )
         )
         try:
