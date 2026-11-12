@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-10-29 09:47'
-updated_date: '2026-11-12 22:27'
+updated_date: '2026-11-12 23:19'
 labels:
   - console
   - trace
@@ -79,10 +79,12 @@ Out of scope, unchanged: the voice post-dispatch import's own 256-span refusal (
 
 - **The defect, end to end.** The run used the real controller, store, gateway preparation, compaction service and trace runtime (agent path, recorded provider adapter). After 130 exchanges (259 recorded rows), Compact now says "Conversation memory updated", and the next send is BLOCKED. Nothing is reserved and the provider is not called. The refusal is count_or_span with prefix 0, active_changed 259, incoming 3 and span 259. Edit & resend on the first message gives the same refusal and the same numbers. This is the review's repro, unchanged on current dev.
 - **One replacement row wider than 256**, written directly. Every read of the segment then fails with "replacement range may contain at most 256 nodes", including the head recorded before it and the planning of a later send. Any version that enforces 256 would therefore lose the whole conversation's trace on reading a wider bound, not just one call.
-- **A chain of ordinary replacement rows**, each at most 256 sequences, written with today's repository and read with today's reader. Both the 259-row compaction and the 131-live-rows-over-261-sequences shape reconstruct exactly the new request. The old head is unchanged, the next send plans as a plain append, and trace GC sweeps nothing. 1,999 rows need 9 links (11 nodes, 9 replacements, 11 events), and the cold projection reads in 0.02 s.
+- **A chain of ordinary replacement rows**, each at most 256 sequences, written with today's repository and read with today's reader. Both the 259-row compaction and the 131-live-rows-over-261-sequences shape reconstruct exactly the new request. The old head is unchanged, the next send plans as a plain append, and trace GC sweeps nothing. 1,999 rows need 8 links plus the final link (11 nodes, 9 replacements, 11 events), and the cold projection reads in 0.02 s.
 - **The existing pin**, Tests/Chat/test_console_trace_rewritten_tail_planner.py, passes 4 of 4 on 8ae979d81b.
 
 The proposal keeps one secondary limit: the rewritten-tail witness bounds the rows sent after the rewrite point to 256. Neither measured shape reached it. Related but out of scope: the voice post-dispatch import has its own 256-span refusal, post_dispatch_surface_span.
+
+**PR #3515 review follow-up (2026-11-12).** Two tests added: a failure after the binding commit still reconciles a committed chain to the dispatched call (red when reconciliation compares every link's predecessor with the planned head, not just the first link's), and a later chain from the root skips the dead run 2..299 between its links (1..1) and (300..305), with its second link spanning the first chain's placeholders. ADR-337 now counts links one way: a link is one group's replacement row, and the final link is counted separately. Filed TASK-40577 (binding should refuse a link that covers no live row) and TASK-40578 (each link is validated twice while the write lock is held).
 <!-- SECTION:NOTES:END -->
 
 ## Identity correction
