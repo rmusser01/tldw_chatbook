@@ -394,3 +394,7 @@ copies the registry through its own recovery owner, which only the installed
 
 | C99 | tldw_chatbook/Plugins/backup | _Plugins._inspect | recovery.plugins.registry | private_file, read_only_uri | exact installed v5 registry catalog and live plugin-process check | Migrated via `connect_private_sqlite`. Frozen measured catalog; reads only the `processes` states to refuse capture while a plugin process may run. No runtime owner or registry construction. |
 | B41 | tldw_chatbook/Plugins/backup | _Plugins.capture | recovery.plugins.registry | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Holds the plugin runtime lock and the checked maintenance scope; committed WAL frames fold into the snapshot. Restored plugins stay inactive until plugin authority recovery approves them. |
+
+## Light-surface upgrade signals (TASK-34100.5.3.2)
+
+| C100 | tldw_chatbook/Agents/full_agent_tools_upgrade | detect_agent_feature_use | agents.full_agent_tools_upgrade | read_only_uri | one-time agent-use detection | Migrated via `connect_private_sqlite`. The once-per-profile Full agent tools upgrade reads whether an existing sibling runs database holds a live sub-agent definition, a sub-agent run or a non-light tool-call step, without creating, migrating, reconciling or writing it (an absent file is no signal). A progress-handler time budget bounds the read; the read-only WAL view includes committed frames. No backup or recovery authority. |

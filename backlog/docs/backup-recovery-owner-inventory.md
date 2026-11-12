@@ -173,6 +173,7 @@ to the linked source module and the cohorts above; unresolved mappings remain bl
 | sqlite:cookies.firefox | tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner | _READ_ONLY_URI | external/excluded |
 | sqlite:db.base | tldw_chatbook/DB/base_db | _PRIVATE_OR_MEMORY | sqlite/unsupported |
 | sqlite:db.subscriptions.agent_read | tldw_chatbook/DB/Subscriptions_DB | _READ_ONLY_URI | sqlite/unsupported |
+| sqlite:agents.full_agent_tools_upgrade | tldw_chatbook/Agents/full_agent_tools_upgrade | _READ_ONLY_URI | sqlite/unsupported |
 | sqlite:db.subscriptions.site_configs | tldw_chatbook/DB/Subscriptions_DB | _PRIVATE_FILE | sqlite/unsupported |
 | sqlite:db.chachanotes.backup | tldw_chatbook/DB/ChaChaNotes_DB | _PRIVATE_FILE | sqlite/unsupported |
 | sqlite:db.chachanotes.primary | tldw_chatbook/DB/ChaChaNotes_DB | _PRIVATE_OR_MEMORY | sqlite/unsupported |

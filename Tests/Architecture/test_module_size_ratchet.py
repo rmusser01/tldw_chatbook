@@ -1160,7 +1160,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Dreams/track_service.py": 4061,
     # 2026-11-12, restack onto dev e0186fa10a (owner size waiver): dev's
     # 4,030 plus TASK-40132's +5 (the plugin registry owner), measured.
-    "tldw_chatbook/DB/private_sqlite.py": 4035,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.5.3.2 +6 (the
+    # light-surface upgrade's read-only runs-database owner, inventory C100).
+    "tldw_chatbook/DB/private_sqlite.py": 4041,
 }
 
 #: Same tolerance as the Library controller ratchet: loose enough that
