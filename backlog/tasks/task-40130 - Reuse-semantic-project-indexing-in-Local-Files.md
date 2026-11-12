@@ -52,3 +52,4 @@ Let a person find files by meaning or use keyword and semantic retrieval togethe
 - The two mounted Settings theme cases now save screenshots in their pytest temporary profiles. Both passed in a checkout without the original qualification directory.
 - Local Files reads the workspace registry through the existing application service accessor. The UI lookup census and mounted Local Files flows passed.
 - The real-registry search test now waits for Ready through transient native contention. The real-registry and live-file replacement tests passed.
+- Corrected the legacy migration fixture to remove all v4-only tables when constructing v1. Detached reclamation now tests the competing Enable with a scope captured before the native gate is held. Both v1 cases, v3 migration, and detached reclamation passed.

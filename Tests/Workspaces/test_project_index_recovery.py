@@ -228,6 +228,9 @@ def test_v1_cache_migration_preserves_control_and_quarantines_unknown_claim(
         conn.execute("DROP INDEX directories_eligible")
         conn.execute("ALTER TABLE directories DROP COLUMN attempt_revision")
         for table in (
+            "semantic_members",
+            "semantic_generations",
+            "semantic_control",
             "authority_witness",
             "scan_seen",
             "legacy_retirement",
@@ -243,7 +246,7 @@ def test_v1_cache_migration_preserves_control_and_quarantines_unknown_claim(
     try:
         assert reopened.load_status(key).scope == scope
         with reopened.connection() as conn:
-            assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 3
+            assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 4
         if legacy_claim:
             with pytest.raises(ValueError, match="legacy_retirement_unproven"):
                 reopened.assert_native_lifetime()
