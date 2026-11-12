@@ -2730,3 +2730,36 @@ nodes had been red for weeks; a `set_focus` wrapper with a short stack, plus a l
 
 **What to do.** When a seam lands focus on content that its owner repaints in several awaited steps, wait until the owner's whole sequence has ended, not until its data is ready. Here that means the loader worker (`group="library_collections_capture_entry"`) has finished. A later repaint then finds focus set and restores it by id.
 
+---
+
+## Cancelling a worker that `wait()`s on another worker cancels the awaited one too (PR #3441, 2026-11-08)
+
+**Incident.** Roleplay's mode switch (TASK-33910.39/.41/.43, PR #3441) ran
+the kind's read in the exclusive `personas-library-search` worker, which for
+Characters awaited the `roleplay-list-window` worker with `worker.wait()`.
+A second switch cancelled the first search worker, and the characters window
+worker, running in its own thread, was stopped with it. The follow-up
+report recorded this as "through `worker.wait()`, the characters window
+worker (its thread finishes, its result is discarded)", and a test pinned it.
+Nobody had asked for that coupling.
+
+**Cause, read from the installed source (Textual 8.2.8,
+`textual/worker.py`, `Worker.wait`).** After its state checks, `wait()` is
+a bare `await self._task`, in a `try` that catches `asyncio.CancelledError`,
+sets the awaited worker's state to `CANCELLED`, and then raises
+`WorkerCancelled`. Awaiting an `asyncio.Task` directly means that cancelling
+the awaiting task cancels the awaited one too, with no shield between them.
+So cancelling the outer worker cancels the inner, and the outer's own
+cancellation reaches its code as a `WorkerCancelled` exception, not a
+`CancelledError`.
+
+**What to do.**
+- Treat `await other_worker.wait()` as parent and child: cancelling the
+  waiter cancels the awaited worker. If the two must have independent
+  lifetimes, do not wait on the worker. Await a future or an event it sets,
+  or `asyncio.shield` the task.
+- Do not catch `WorkerCancelled` around a `wait()` as if only the inner
+  worker had been cancelled. It also fires when the waiter itself is being
+  cancelled.
+- A test that two switches in a row stop the first read should assert the
+  awaited worker's state, not only the outer one's.
