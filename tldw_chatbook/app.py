@@ -4676,6 +4676,18 @@ class TldwCli(
             ``Worker`` (or ``None`` when there was nothing to start).
         """
 
+        def start_full_agent_tools_upgrade() -> Worker:
+            # TASK-34100.5.3.2: keep Full agent tools on for an upgraded
+            # profile that uses agent features. thread=True: blocking sqlite.
+            return self.run_worker(
+                self._run_full_agent_tools_upgrade,
+                name="_run_full_agent_tools_upgrade",
+                group="full-agent-tools-upgrade",
+                thread=True,
+                exclusive=True,
+                exit_on_error=False,
+            )
+
         def start_actor_pack_recovery() -> Worker:
             return self._start_actor_pack_recovery_worker(self.ensure_actor_pack_recovery)
 
@@ -4729,11 +4741,18 @@ class TldwCli(
             )
 
         return {
+            "full_agent_tools_upgrade": start_full_agent_tools_upgrade,
             "actor_pack_recovery": start_actor_pack_recovery,
             "actor_pack_staging_sweep": start_actor_pack_staging_sweep,
             "chachanotes_fts_backfill": start_chachanotes_fts_backfill,
             "subscriptions_fts_backfill": start_subscriptions_fts_backfill,
         }
+
+    def _run_full_agent_tools_upgrade(self) -> None:
+        """Run the one-time light-surface upgrade check (TASK-34100.5.3.2)."""
+        from tldw_chatbook.Agents.full_agent_tools_upgrade import run_for_app
+
+        run_for_app(self)
 
     def _start_boot_worker(self, key: str) -> Optional[Worker]:
         """Start one staggered boot worker.
