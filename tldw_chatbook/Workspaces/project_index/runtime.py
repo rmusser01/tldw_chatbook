@@ -296,8 +296,8 @@ def project_index_key(
         return key
 
 
-async def close_project_index_service(app) -> None:
-    """Drain actual owners before surfacing cancellation, including composition."""
+async def drain_project_index_service(app) -> asyncio.CancelledError | None:
+    """Return caller cancellation after composition and actual owners retire."""
 
     def snapshot():
         with _composition_lock:
@@ -314,12 +314,18 @@ async def close_project_index_service(app) -> None:
             service._factory.assert_retired()
 
     task = asyncio.create_task(drain())
-    cancelled = False
+    cancellation = None
     while not task.done():
         try:
             await asyncio.shield(task)
-        except asyncio.CancelledError:
-            cancelled = True
+        except asyncio.CancelledError as error:
+            cancellation = cancellation or error
     task.result()
-    if cancelled:
-        raise asyncio.CancelledError
+    return cancellation
+
+
+async def close_project_index_service(app) -> None:
+    """Drain actual owners before surfacing cancellation, including composition."""
+    cancellation = await drain_project_index_service(app)
+    if cancellation is not None:
+        raise cancellation

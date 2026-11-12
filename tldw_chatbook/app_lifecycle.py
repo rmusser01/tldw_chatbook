@@ -760,10 +760,10 @@ class LifecycleMixin:
         tool_profiles = getattr(self, "_tool_profile_operations", None)
         for owner in (tool_profiles, local_config_saves):
             owner.close_admission() if owner is not None else None
-        from .Workspaces.project_index.runtime import close_project_index_service
+        from .Workspaces.project_index.runtime import drain_project_index_service
 
-        await close_project_index_service(self)
-        actor_recovery_cancellation = await self._shutdown_actor_pack_recovery()
+        project_cancel = await drain_project_index_service(self)
+        actor_cancel = await self._shutdown_actor_pack_recovery()
         await self._shutdown_workflow_session()
         if local_config_saves is not None:
             await local_config_saves.close_and_drain()
@@ -771,10 +771,10 @@ class LifecycleMixin:
             # Settle these writes before another owner's failure can advance
             # teardown to the workspace databases used by their final checks.
             await tool_profiles.close_and_drain()
-        recovery_cancellation = await TldwCli._shutdown_recovery_service(self)
-        monitor_cancellation = await TldwCli._stop_backup_maintenance_monitor(self)
-        recovery_cancellation = (
-            actor_recovery_cancellation or recovery_cancellation or monitor_cancellation
+        recovery_cancel = await TldwCli._shutdown_recovery_service(self)
+        monitor_cancel = await TldwCli._stop_backup_maintenance_monitor(self)
+        cancellation = (
+            project_cancel or actor_cancel or recovery_cancel or monitor_cancel
         )
         workflow_error = None
         workflow_authoring = getattr(self, "_workflow_authoring", None)
@@ -831,7 +831,7 @@ class LifecycleMixin:
             close_pooled_default_sessions()
         except Exception as exc:  # noqa: BLE001 - preserve retained owner failures.
             pool_error = exc
-        for error in (recovery_cancellation, lab_error, workflow_error, pool_error):
+        for error in (cancellation, lab_error, workflow_error, pool_error):
             if error is not None:
                 raise error
 
