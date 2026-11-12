@@ -636,7 +636,11 @@ class TaskDetail(Vertical):
             "Select a task from the queue, or press n to schedule one.",
             id="scheduling-task-detail-empty-state",
         )
-        with Vertical(id="scheduling-task-detail-metadata"):
+        with Vertical(id="scheduling-task-detail-metadata") as metadata:
+            # TASK-39170: compose in the empty state `set_task(None)` paints.
+            # Shown before the first `set_task`, this blank form put Follow in
+            # Console 46 rows below the fold at 140x42 while the queue loaded.
+            metadata.display = False
             # UAT display-blocker fix: this row used to be the LAST thing
             # in the pane, after History -- past the fold at every
             # measured width (`_scheduling_uat_remediation` root-causes
@@ -1775,7 +1779,11 @@ class TaskInspector(Vertical):
             "Select a task to see sync, conflict, and run details.",
             id="scheduling-task-inspector-empty-state",
         )
-        with Vertical(id="scheduling-inspector-metadata"):
+        # TASK-39170: compose in the empty state `set_task(None)` paints, as
+        # TaskDetail does; a "-" form and "No conflict" before the first
+        # task described a task nobody selected.
+        with Vertical(id="scheduling-inspector-metadata") as metadata:
+            metadata.display = False
             yield Horizontal(
                 Static("Sync:", classes="scheduling-inspector-label"),
                 Static(
@@ -1800,10 +1808,12 @@ class TaskInspector(Vertical):
                     classes="scheduling-inspector-value",
                 ),
             )
-        yield Vertical(
+        conflict_card = Vertical(
             Static("No conflict", id="scheduling-conflict-text"),
             id="scheduling-conflict-card",
         )
+        conflict_card.display = False
+        yield conflict_card
 
     def set_task(self, task: ReminderTask | ScheduledTask | None) -> None:
         """Update the inspector view for the given task (or clear it)."""

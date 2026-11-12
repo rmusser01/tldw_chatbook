@@ -1281,15 +1281,21 @@ jobs:
     # pull-request lane. A first attempt appended them to pr-fast-lane, whose
     # run then hit its 35-min cap (PR #3399); the job's own note says to add
     # a job, not minutes. Their own job, so no existing lane moves toward its
-    # cap. Sandboxed only (no bootstrap_profile node), one invocation, same
-    # minimal dependency set and serial pytest as the other lanes. All 14 ran
-    # in about 2.5 min locally.
+    # cap: one invocation, same minimal dependency set and serial pytest as
+    # the other lanes. Those 14 ran in about 2.5 min locally.
     # TASK-37173: PR #3494 reached the 35-minute fast-lane cap at 99%.
     # Run the four package-wide AST censuses here, where the same attempt
     # took 2m28s against this job's 20-minute cap.
     # PR #3499's tests finished five seconds before the fast lane was
     # cancelled at 35 minutes. Keep the import, config and CSS guards here
     # under the same per-test limit to give that lane room to exit.
+    #
+    # TASK-39114 appends the private-SQLite registry and inventory files, red
+    # on no required lane before. Tests/DB keeps the bootstrap profile, so they
+    # run last (TASK-32873); with them the step took 5-8 min locally at load
+    # 32-52. The inventory's response-rule node also runs in console-p0-gate,
+    # so the exclusive recovered-suites and Architecture guard jobs cannot
+    # take the file.
     name: PR Fast Lane (architecture-review tests)
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
     runs-on: ubuntu-latest
@@ -1332,6 +1338,8 @@ jobs:
             Tests/test_config_load_settings_table_guard.py \
             Tests/Performance/test_boot_css_byte_budget.py \
             Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet \
+            Tests/DB/test_private_sqlite.py \
+            Tests/DB/test_private_sqlite_inventory.py \
             --timeout=180 \
             --tb=short
 
@@ -1386,6 +1394,12 @@ jobs:
       # (bootstrap_profile, 4 tests), which runs on no other lane. TASK-39149's
       # two Trace export credential nodes (pure, no config read, ~5 s serial)
       # follow the sandboxed prompt suites, before the bootstrap_profile ones.
+      # Round 13:
+      # TASK-39172's config participant lifetimes join the sandboxed block (it
+      # reads config in-process, so it runs before any bootstrap suite); the
+      # Console files of TASK-39154 (rewind/summarize, per-session run state),
+      # TASK-39164 (edit-and-resend, regenerate branching) and TASK-40097's
+      # controller node are bootstrap_profile and go last.
       - name: Run the recovered suites
         run: |
           pytest \
@@ -1400,6 +1414,7 @@ jobs:
             Tests/Docs/test_personas_qa_capture_script.py \
             Tests/Chat/test_trace_v2_collaboration.py::test_bare_underscore_keys_are_masked_wherever_sk_dash_keys_are \
             Tests/Chat/test_trace_v2_collaboration.py::test_the_credential_classes_masked_before_are_still_masked \
+            Tests/Backup_Recovery/test_config_participant_lifetimes.py \
             Tests/Prompt_Management/test_prompt_improvement_service.py \
             Tests/RAG_Search/test_keyword_leg_chacha.py \
             Tests/RAG_Search/test_keyword_leg_db_resolution.py \
@@ -1415,6 +1430,11 @@ jobs:
             Tests/Chat/test_console_goal_dispatch.py::test_a_failed_goal_iteration_reply_is_saved_as_failed \
             Tests/Chat/test_console_goal_dispatch.py::test_a_goal_iteration_reply_is_the_durable_active_leaf \
             Tests/Chat/test_console_goal_recovery.py \
+            Tests/Chat/test_console_rewind_summarize.py \
+            Tests/Chat/test_console_run_state_per_session.py \
+            Tests/Chat/test_console_edit_resend.py \
+            Tests/Chat/test_console_regenerate_branching.py \
+            Tests/Chat/test_console_chat_controller.py::test_review_hook_gives_a_mutating_builtin_the_mutation_effect \
             --storage-lease-guard \
             --timeout=180 \
             --tb=short

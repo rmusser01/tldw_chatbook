@@ -277,11 +277,12 @@ def test_grouped_rows_take_the_first_non_empty_rationale():
     assert _collapse_pending_calls(blanks)[0]["rationale"] == ""
 
 
-# TASK-1845's "colour is never the only carrier of state" contract for the
-# needs-decision flag is exercised end to end (row class AND header text)
-# by the live `_mark_row_needs_decision` mechanism's own tests in
+# TASK-1845's "colour is never the only carrier of state" contract for a row
+# still needing a decision is exercised end to end in
 # ``test_console_mcp_approval.py`` (e.g.
-# ``test_approve_all_leaves_raw_shell_row_on_deny_and_flags_needs_decision``).
+# ``test_review_individually_keeps_raw_shell_row_on_deny_and_requires_its_choice``):
+# since #3036 (a2fcbe61bc) no bulk press partially applies, so that state is
+# the staged review's text hint and disabled Apply, not a row flag.
 # A unit test used to cover the same claim here via a `needs_decision` key
 # on the row entry dict, but no producer ever set that key on a real entry
 # -- `_format_row_header`'s read of it was dead code, removed alongside

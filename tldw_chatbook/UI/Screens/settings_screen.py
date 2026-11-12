@@ -24009,6 +24009,11 @@ class SettingsScreen(BaseAppScreen):
         else:
             yield Static("Impact and boundaries", classes="destination-section")
             yield Static(summary.description)
+        guidance = self._inspector_guidance(summary.category)
+        # TASK-39170: Boundary leads the rows, so it is in view at rest at 140x42.
+        for k, v in guidance:
+            if k == "Boundary":
+                yield self._detail_row(k, v, identifier="settings-boundary-note")
         yield self._detail_row("Runtime owner", ownership.runtime_owner)
         yield self._detail_row(
             "Writes allowed",
@@ -24025,12 +24030,7 @@ class SettingsScreen(BaseAppScreen):
             )
         if ownership.read_only_reason:
             yield self._detail_row("Read-only", ownership.read_only_reason)
-        for label, value in self._inspector_guidance(summary.category):
-            yield self._detail_row(
-                label,
-                value,
-                identifier="settings-boundary-note" if label == "Boundary" else None,
-            )
+        yield from (self._detail_row(k, v) for k, v in guidance if k != "Boundary")
 
     @on(Button.Pressed, "#settings-open-plugins")
     def _open_plugins(self, event: Button.Pressed) -> None:

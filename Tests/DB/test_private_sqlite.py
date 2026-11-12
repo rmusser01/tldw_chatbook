@@ -10,7 +10,7 @@ import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, get_ident
 
 import pytest
 
@@ -94,7 +94,8 @@ COPY_BACKUP_OWNER_IDS = (
     "recovery.core.prompts",
     "recovery.core.library_collections",
     "recovery.core.library_ingest_jobs",
-    "settings.bulk_backup",
+    "recovery.operations.dreams",
+    "recovery.operations.guardian",
     "tts.profile_restore_stage",
 )
 OPEN_CONNECTION_BACKUP_OWNER_IDS = (
@@ -110,21 +111,28 @@ POSIX_PROFILE_MIGRATION_BOUNDARY = pytest.mark.skipif(
 
 
 def test_retired_settings_owner_policies_are_absent() -> None:
-    """Verify retired Settings owners stay absent while bulk owners remain."""
+    """Verify every retired Settings owner stays absent from the registry.
+
+    bd1a4258ea (TASK-33244) retired the bulk-backup, VACUUM and integrity
+    owners with the legacy settings window whose workers were their only
+    callers; the seams they exercised here now run under current owners
+    (`db.media.integrity`, `tts.profile_migration_backup`).
+    """
 
     retired_owner_ids = {
         "settings.schema",
         "settings.single_backup",
         "settings.pre_restore_backup",
         "settings.restore",
-    }
-
-    assert retired_owner_ids.isdisjoint(SQLITE_OWNER_REGISTRY)
-    assert {
         "settings.bulk_backup",
         "settings.vacuum",
         "settings.integrity",
-    } <= SQLITE_OWNER_REGISTRY.keys()
+    }
+
+    assert retired_owner_ids.isdisjoint(SQLITE_OWNER_REGISTRY)
+    assert not [
+        owner_id for owner_id in SQLITE_OWNER_REGISTRY if owner_id.startswith("settings.")
+    ]
 
 
 def test_notes_sync_state_owner_allows_private_and_read_only_without_backup() -> None:
@@ -897,6 +905,7 @@ def test_migration_immutable_failure_retains_complete_destination(
     real_close = os.close
     proxies = []
     attempts = []
+    cleanup_thread = get_ident()
 
     def connect(*args, **kwargs):
         connection = original_connect(*args, **kwargs)
@@ -907,7 +916,11 @@ def test_migration_immutable_failure_retains_complete_destination(
         return connection
 
     def close(fd):
-        if proxies and proxies[0].close_calls:
+        # Count the cleanup's own closes only. A storage-admission hold thread
+        # ("chatbook-storage-admission") closes its registry lock and directory
+        # pin whenever its hold ends; under a per-test profile that landed in
+        # this window and was counted as two more (TASK-39114).
+        if proxies and proxies[0].close_calls and get_ident() == cleanup_thread:
             attempts.append(fd)
         return real_close(fd)
 
@@ -934,8 +947,10 @@ def test_migration_immutable_failure_retains_complete_destination(
         assert failure.value.__cause__ is None
         failure.value.owner.close()
         assert proxies[0].close_calls == 2
-        # Admission also owns two directory pins for a file-backed view.
-        assert len(attempts) == (6 if boundary else 2)
+        # The destination's two pins close in both paths. The boundary path
+        # also retains the closed-view validation's file and parent pins.
+        assert len(attempts) == (4 if boundary else 2)
+        assert len(set(attempts)) == len(attempts)
     finally:
         for proxy in proxies:
             proxy.connection.close()
@@ -1389,7 +1404,7 @@ def test_connection_rejects_owner_target_kind_mismatch(tmp_path):
         connect_private_sqlite("notifications.client", tmp_path / "db.sqlite")
 
     with pytest.raises(ValueError, match="read-only"):
-        connect_private_sqlite("settings.integrity", tmp_path / "db.sqlite")
+        connect_private_sqlite("db.media.integrity", tmp_path / "db.sqlite")
     with pytest.raises(ValueError, match="target kind"):
         connect_private_sqlite("db.base", tmp_path / "db.sqlite", read_only=True)
     with pytest.raises(ValueError, match="read-only memory"):
@@ -1405,7 +1420,7 @@ def test_connection_rejects_nul_uri_override_and_arbitrary_file_uri(tmp_path):
         connect_private_sqlite("db.base", "file:/tmp/db.sqlite")
     with pytest.raises(ValueError, match="file:"):
         connect_private_sqlite(
-            "settings.integrity",
+            "db.media.integrity",
             "file:/tmp/db.sqlite?mode=ro&immutable=1",
             read_only=True,
         )
@@ -2562,7 +2577,7 @@ def test_read_only_uri_preserves_special_filename_identity_and_rejects_writes(
     source.close()
 
     connection = connect_private_sqlite(
-        "settings.integrity",
+        "db.media.integrity",
         target,
         read_only=True,
     )
@@ -2597,7 +2612,7 @@ def test_read_only_owned_file_is_rejected_in_shared_sticky_parent(
 
     with pytest.raises(PrivatePathError) as caught:
         connect_private_sqlite(
-            "settings.integrity",
+            "db.media.integrity",
             target,
             read_only=True,
         )
@@ -2625,7 +2640,7 @@ def test_read_only_wal_open_in_shared_sticky_parent_never_uses_or_creates_shm(
 
         with pytest.raises(PrivatePathError):
             connect_private_sqlite(
-                "settings.integrity",
+                "db.media.integrity",
                 target,
                 read_only=True,
             )
@@ -2637,7 +2652,7 @@ def test_read_only_wal_open_in_shared_sticky_parent_never_uses_or_creates_shm(
         try:
             with pytest.raises(PrivatePathError):
                 connect_private_sqlite(
-                    "settings.integrity",
+                    "db.media.integrity",
                     target,
                     read_only=True,
                 )
@@ -2658,14 +2673,14 @@ def test_read_only_wal_open_in_shared_sticky_parent_never_uses_or_creates_shm(
 def test_read_only_missing_and_unsafe_sources_fail_closed(tmp_path):
     missing = tmp_path / "missing.sqlite"
     with pytest.raises((FileNotFoundError, PrivatePathError)):
-        connect_private_sqlite("settings.integrity", missing, read_only=True)
+        connect_private_sqlite("db.media.integrity", missing, read_only=True)
 
     source = tmp_path / "source.sqlite"
     source.write_bytes(b"sqlite")
     alias = tmp_path / "alias.sqlite"
     os.link(source, alias)
     with pytest.raises(PrivatePathError):
-        connect_private_sqlite("settings.integrity", source, read_only=True)
+        connect_private_sqlite("db.media.integrity", source, read_only=True)
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX read-only source contract")
@@ -2694,7 +2709,7 @@ def test_read_only_rejects_unsafe_source_kinds(tmp_path, monkeypatch, unsafe_kin
         monkeypatch.setattr(private_sqlite.os, "fstat", report_wrong_owner)
 
     with pytest.raises(PrivatePathError):
-        _leaf_prepare_then_connect("settings.integrity", target, read_only=True)
+        _leaf_prepare_then_connect("db.media.integrity", target, read_only=True)
 
 
 @pytest.mark.skipif(
@@ -2712,7 +2727,7 @@ def test_read_only_path_query_characters_are_percent_encoded(tmp_path, monkeypat
 
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", capture_connect)
     connection = connect_private_sqlite(
-        "settings.integrity",
+        "db.media.integrity",
         target,
         read_only=True,
     )
@@ -2853,7 +2868,7 @@ def test_windows_exact_memory_and_read_only_functionality(tmp_path, monkeypatch)
     source.close()
     with pytest.warns(SQLitePrivacyUnverifiedWarning):
         read_only = connect_private_sqlite(
-            "settings.integrity",
+            "db.media.integrity",
             target,
             read_only=True,
         )
@@ -3030,7 +3045,7 @@ def test_copy_private_sqlite_reopens_wal_source_read_only_and_hardens_target(
     )
     try:
         copy_private_sqlite(
-            "settings.bulk_backup",
+            "tts.profile_migration_backup",
             source_path,
             target,
         )
@@ -3038,8 +3053,8 @@ def test_copy_private_sqlite_reopens_wal_source_read_only_and_hardens_target(
         source.close()
 
     assert calls == [
-        ("settings.bulk_backup", source_path, True),
-        ("settings.bulk_backup", target, False),
+        ("tts.profile_migration_backup", source_path, True),
+        ("tts.profile_migration_backup", target, False),
     ]
     assert _read_backup_fixture_value(target) == "wal-visible"
     _assert_private_regular_owned(target)
@@ -3068,7 +3083,7 @@ def test_copy_private_sqlite_rejects_unsafe_destination_before_raw_open(
 
     with pytest.raises(PrivatePathError):
         copy_private_sqlite(
-            "settings.bulk_backup",
+            "tts.profile_migration_backup",
             source_path,
             target,
         )
@@ -3212,7 +3227,7 @@ def test_copy_close_failure_is_independent_and_keeps_committed_target(
 
     with pytest.warns(RuntimeWarning, match="copy close failure"):
         copy_private_sqlite(
-            "settings.bulk_backup",
+            "tts.profile_migration_backup",
             source_path,
             target,
         )

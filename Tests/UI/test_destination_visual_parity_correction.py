@@ -77,6 +77,13 @@ from tldw_chatbook.Widgets.destination_workbench import (
     WorkbenchPane,
 )
 
+# TASK-39170: the harnesses read config through admission (app_factory's
+# `load_settings()` in `_build_test_app`, the Library screen's settings
+# reads). Under the per-test TLDW_CONFIG_PATH redirect each read is refused
+# (RecoveryRequired raw_source_selection_changed). Keep the collection-time
+# sandbox profile; the three @private_profile_test nodes keep their children.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 class ProductionCSSDestinationHarness(DestinationHarness):
     """Mount one destination with the production stylesheet."""
@@ -109,6 +116,10 @@ def _visual_destination_harness(app, route: str) -> DestinationHarness:
     harness_type = {
         "watchlists_collections": WatchlistsVisualHarness,
         "schedules": SchedulesVisualHarness,
+        # TASK-39170: ae9093a714 moved DestinationModeStrip's one-row height
+        # from an inline style to the bundle's `.h-1` utility, so the mode
+        # strip is only one row under the production stylesheet set.
+        "artifacts": ProductionCSSDestinationHarness,
     }.get(route, DestinationHarness)
     return harness_type(app, route)
 
@@ -307,10 +318,13 @@ def _assert_ascii_workbench_contract(
 
 
 def _visible_static_text(screen) -> str:
+    # A Static inside a hidden container is not visible either (review
+    # r13c-rev2): honour every ancestor's display, not only the widget's own.
     return " ".join(
         getattr(widget.renderable, "plain", str(widget.renderable))
         for widget in screen.query(Static)
-        if widget.display and hasattr(widget, "renderable")
+        if hasattr(widget, "renderable")
+        and all(getattr(node, "display", True) for node in widget.ancestors_with_self)
     )
 
 
@@ -700,7 +714,14 @@ async def test_library_source_browser_collections_action_switches_to_collections
         await _wait_for_selector(library, pilot, "#library-row-browse-collections")
 
         library.query_one("#library-row-browse-collections", Button).press()
-        await _wait_for_selector(library, pilot, "#library-collections-reader-shell")
+        # TASK-39170 review r13c-rev1: the shell mounted in 2.5-2.8 s in six
+        # timed runs at load ~46, past the helper's 2 s default (it had failed
+        # 3 of 5 whole-file runs). The factory app has no ChaChaNotes DB, so
+        # the source snapshot fails in passing and failing runs alike; it is
+        # not what delays the shell.
+        await _wait_for_selector(
+            library, pilot, "#library-collections-reader-shell", timeout=15.0
+        )
 
         active_row = library.query_one("#library-row-browse-collections", Button)
         selected_row_id = getattr(library, "_library_selected_row_id")
@@ -759,6 +780,9 @@ async def test_library_source_snapshot_times_out_to_stable_error(monkeypatch):
             media_reading_scope_service=SlowMediaService(),
             chat_conversation_scope_service=SlowConversationService(),
             notes_user_id="default_user",
+            # TASK-39170: since 11b2fa7005 LibraryScreen.__init__ reads its
+            # stored lifecycle from the app's config.
+            app_config={},
         )
     )
 
@@ -814,9 +838,13 @@ async def test_library_source_snapshot_timeout_handles_blocking_async_services(
             time.sleep(0.2)
             return {"items": []}
 
-    class BlockingAsyncConversationService:
+    class OffloadingAsyncConversationService:
+        # TASK-39170: 469935eabc stopped isolating the conversations call in a
+        # worker; it is awaited on the loop because the real scope service
+        # (ChatConversationScopeService.list_conversations, task-283) moves its
+        # own blocking SQLite read to a thread. Model that, not a loop block.
         async def list_conversations(self, **_kwargs):
-            time.sleep(0.2)
+            await asyncio.sleep(0.2)
             return {"items": []}
 
     monkeypatch.setattr(
@@ -828,8 +856,11 @@ async def test_library_source_snapshot_timeout_handles_blocking_async_services(
         SimpleNamespace(
             notes_scope_service=BlockingAsyncNotesService(),
             media_reading_scope_service=BlockingAsyncMediaService(),
-            chat_conversation_scope_service=BlockingAsyncConversationService(),
+            chat_conversation_scope_service=OffloadingAsyncConversationService(),
             notes_user_id="default_user",
+            # TASK-39170: since 11b2fa7005 LibraryScreen.__init__ reads its
+            # stored lifecycle from the app's config.
+            app_config={},
         )
     )
 
@@ -881,11 +912,15 @@ async def test_library_service_call_awaits_coroutine_functions_without_worker(
     async def fail_to_thread(*_args, **_kwargs):  # pragma: no cover - failure path
         raise AssertionError("direct coroutine service calls should not use to_thread")
 
-    monkeypatch.setattr(library_screen_module.asyncio, "to_thread", fail_to_thread)
-
-    result = await library_screen_module.LibraryScreen._run_library_service_call(
-        async_service_call
-    )
+    # TASK-39170: `library_screen_module.asyncio` is the global asyncio module,
+    # so scope the patch to the call. Left for the whole test, it reached the
+    # teardown's Console runtime drain (5f00aa5929), whose real to_thread
+    # raised this AssertionError there and refused the config retirement.
+    with monkeypatch.context() as patch:
+        patch.setattr(library_screen_module.asyncio, "to_thread", fail_to_thread)
+        result = await library_screen_module.LibraryScreen._run_library_service_call(
+            async_service_call
+        )
 
     assert result == "direct-result"
 
@@ -940,9 +975,12 @@ async def test_core_default_empty_or_blocked_states_keep_workbench_geometry(
             # override below 150 cols would waive the three-pane min-width
             # geometry this contract asserts) and wait out the recompose.
             screen.query_one("#console-inspector-rail-open", Button).press()
+            # TASK-39170: the open sets `display` at once and the rail is
+            # laid out a refresh later (Region 0 until then), so wait for
+            # the region the contract measures, not for `display`.
             for _ in range(40):
                 await pilot.pause(0.05)
-                if screen.query_one(panes[2]).display:
+                if screen.query_one(panes[2]).region.width > 0:
                     break
         _assert_ascii_workbench_contract(
             screen,
@@ -1638,14 +1676,21 @@ async def test_destination_pane_titles_are_user_facing_not_ordinal(
         visible_text = _visible_static_text(screen)
 
         if route == "workflows":
-            titles = [
-                str(screen.query_one("#" + identifier).renderable)
-                for identifier in (
-                    "workflow-library-heading",
-                    "workflow-navigator-heading",
-                    "workflow-editor-heading",
-                )
-            ]
+            # TASK-39170: the editor heading reads "Select a workflow" until
+            # the library's first load lands; on a loaded host that can be
+            # after the workbench mounts, so let the load land first.
+            for _ in range(100):
+                titles = [
+                    str(screen.query_one("#" + identifier).renderable)
+                    for identifier in (
+                        "workflow-library-heading",
+                        "workflow-navigator-heading",
+                        "workflow-editor-heading",
+                    )
+                ]
+                if titles == list(expected_titles):
+                    break
+                await pilot.pause(0.05)
         else:
             titles = _visible_workbench_pane_titles(screen, workbench)
         assert titles == list(expected_titles)
@@ -1665,19 +1710,26 @@ async def test_schedules_screen_matches_approved_control_plane_columns():
         await pilot.pause()
 
         visible_text = _visible_static_text(screen)
+        # TASK-39170: 683a73c029 (task-23105) collapses the server plumbing
+        # on a local-only profile: the owner buttons and the pull/push
+        # timestamps hide, and one local note says sync is off.
         for expected in (
-            "Last pull: —",
-            "Last push: —",
+            "Local schedules — no scheduling server connected; sync is off.",
             "Schedule Queue",
             "Task Detail",
             "No scheduled tasks yet",
             "Inspector",
-            "No conflict",
+            "Select a task to see sync, conflict, and run details.",
         ):
             assert expected in visible_text
-        assert {"Local", "Server (unavailable)", "Follow in Console"}.issubset(
-            _visible_button_labels(screen)
-        )
+        # TASK-39170 (review r13c-rev2): with no task the inspector shows its
+        # empty state; the conflict card and its "No conflict" stay hidden.
+        assert "No conflict" not in visible_text
+        assert "Last pull:" not in visible_text
+        assert "Last push:" not in visible_text
+        visible_buttons = _visible_button_labels(screen)
+        assert "Follow in Console" in visible_buttons
+        assert not {"Local", "Server (unavailable)"} & visible_buttons
         assert screen.query_one("#scheduling-owner-server", Button).disabled
         assert screen.query_one("#schedules-follow-in-console", Button).disabled
         assert "Column 1:" not in visible_text
@@ -1707,10 +1759,15 @@ async def test_workflows_screen_matches_approved_authoring_columns():
             "Workflow library",
             "Step navigator",
             "No workflows yet",
-            "Run unavailable",
-            "No active workflow run",
+            # TASK-39170: 12a15a36ea wired session execution into the app,
+            # so with its services present the readiness line offers a run,
+            # and the Console region names the handoff it lacks, not a run.
+            "Run a saved revision · session only · keyless llama.cpp to Local Note.",
+            "No existing Console handoff",
         ):
             assert expected in visible_text
+        assert "Run unavailable" not in visible_text
+        assert "No active workflow run" not in visible_text
         assert screen.query_one("#workflow-run", Button).disabled
         assert not screen.query_one("#workflow-import", Button).disabled
         _assert_horizontal_panes(
@@ -2198,6 +2255,12 @@ async def test_mcp_uses_visible_server_detail_readiness_layout_without_overflow(
     async with host.run_test(size=(140, 42)) as pilot:
         screen = host.query_one("#settings-tools-hub")
         await _wait_for_selector(screen, pilot, "#mcp-hub-workbench")
+        # TASK-39170: the canvas switcher is laid out a refresh after the
+        # workbench mounts (Region 0 until then on a loaded host).
+        for _ in range(100):
+            if screen.query_one("#mcp-hub-canvas").region.width > 0:
+                break
+            await pilot.pause(0.05)
         _assert_strip_compact(screen, "#tools-hub-purpose", max_height=1)
         _assert_ascii_workbench_contract(
             screen,
@@ -2227,6 +2290,12 @@ async def test_mcp_unavailable_or_local_default_state_keeps_workbench_geometry(r
     async with host.run_test(size=(140, 42)) as pilot:
         screen = host.query_one("#settings-tools-hub")
         await _wait_for_selector(screen, pilot, "#mcp-hub-workbench")
+        # TASK-39170: the canvas switcher is laid out a refresh after the
+        # workbench mounts (Region 0 until then on a loaded host).
+        for _ in range(100):
+            if screen.query_one("#mcp-hub-canvas").region.width > 0:
+                break
+            await pilot.pause(0.05)
         _assert_ascii_workbench_contract(
             screen,
             workbench="#mcp-hub-workbench",
@@ -2356,7 +2425,9 @@ async def test_runtime_and_settings_destinations_use_pane_layouts(
     route, strip, workbench, panes, actions
 ):
     app = _build_test_app()
-    host = DestinationHarness(app, route)
+    # TASK-39170: the mode strip's one-row height lives in the bundle since
+    # ae9093a714 (DestinationModeStrip's `.h-1`), so measure production CSS.
+    host = _ProductionDestinationHarness(app, route)
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, workbench)
@@ -2522,10 +2593,20 @@ async def test_settings_inspector_rows_stay_reachable_in_every_category(size):
         await _wait_for_selector(screen, pilot, "#settings-impact-pane-body")
         await host.workers.wait_for_complete()
         for summary in screen._category_summaries():
-            screen._select_category(summary.category.value)
-            await pilot.pause()
-            await pilot.pause()
             category = summary.category.value
+            screen._select_category(category)
+            # TASK-39170: the category's panes swap asynchronously (4fe45538f5,
+            # panel-scoped updates); two pauses held only on an idle host.
+            # Wait for the swap as the shared press helper does.
+            for _ in range(200):
+                if (
+                    screen.active_category == category
+                    and not screen._category_pane_swap_pending
+                ):
+                    break
+                await pilot.pause(0.05)
+            await host.workers.wait_for_complete()
+            await pilot.pause()
             pane, body, header = _inspector_parts(screen)
             inner = pane.content_region
             window = body.scrollable_content_region
@@ -2654,7 +2735,8 @@ async def test_settings_advanced_config_controls_use_action_and_status_rows():
 @pytest.mark.asyncio
 async def test_acp_runtime_blocked_state_uses_setup_and_compatibility_columns():
     app = _build_test_app()
-    host = DestinationHarness(app, "acp")
+    # TASK-39170: production CSS, as above (ae9093a714's `.h-1` strip height).
+    host = _ProductionDestinationHarness(app, "acp")
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#acp-workbench")
@@ -2750,7 +2832,12 @@ COMPACT_DESTINATION_CONTRACTS = {
         # At this compact width the responsive workbench parks the watchlist
         # tree body but keeps its labelled Navigation grip reachable.
         "object": "#wl-grip-left_rail",
-        "detail": "#watchlists-detail-pane",
+        # TASK-39170: 04222fe8eb widened the Feed Items pane's floor from 32
+        # to 42 columns, so at 100 columns Read parks it too (third in
+        # READ_COLLAPSE_PRIORITY): the permanent Reader is the visible
+        # detail and the Items list stays one press away on its grip.
+        "detail": "#watchlists-content-pane",
+        "parked": ("#wl-grip-items",),
         # `#nav-overview` retired with the left-rail navigator -- see the
         # note on the same key in SOURCE_PREP_WORKBENCHES above.
         "actions": (
@@ -2774,37 +2861,17 @@ COMPACT_DESTINATION_CONTRACTS = {
         "detail": "#workflows-editor",
         "actions": ("#workflow-import",),
     },
-    "mcp": {
-        # #mcp-workbench / #mcp-server-tree-pane / #mcp-detail-pane /
-        # #mcp-readiness-pane are all retired (see test_destination_shells.py):
-        # Task 8 replaced the embedded `UnifiedMCPPanel` with the
-        # rail/canvas/inspector `MCPWorkbench` triad, mounted as
-        # #mcp-hub-workbench. Same intent -- rail (server list) as "object",
-        # canvas (server detail/overview) as "detail" -- verified against the
-        # new landmarks. The compact-viewport visible action is the
-        # always-visible rail row: #mcp-adv-run (successor of the retired
-        # #unified-mcp-action-run) sits below the inspector's Advanced scroll
-        # fold at 100x32 (verified), and is covered by
-        # _assert_advanced_run_reachable + the tab-order test instead.
-        "identity": "#mcp-title",
-        "workbench": "#mcp-hub-workbench",
-        "object": "#mcp-hub-rail",
-        "detail": "#mcp-hub-canvas",
-        "actions": ("#mcp-rail-row-0",),
-    },
+    # TASK-39170: no "mcp" or "skills" case. 42a5106c41 (task-35150) retired
+    # the MCP destination screen into Settings > Tools & MCP (ADR-240; the
+    # three MCP tests above measure that pane), and d72984cec6 (task-34893)
+    # retired the Skills screen; both removed their routes from
+    # SCREEN_BY_ROUTE, so these cases failed with KeyError at mount.
     "acp": {
         "identity": "#acp-title",
         "workbench": "#acp-workbench",
         "object": "#acp-list-pane",
         "detail": "#acp-detail-pane",
         "actions": ("#acp-follow-in-console", "#acp-launch-agent"),
-    },
-    "skills": {
-        "identity": "#skills-title",
-        "workbench": "#skills-workbench",
-        "object": "#skills-list-pane",
-        "detail": "#skills-detail-pane",
-        "actions": ("#skills-import-skill", "#skills-attach-to-console"),
     },
     "settings": {
         "identity": "#settings-title",
@@ -2863,6 +2930,13 @@ async def test_top_level_destinations_keep_primary_workbench_visible_at_compact_
                 screen.query_one(contract[required]),
                 height=32,
                 context=f"{route}:{required}:{contract[required]}",
+                viewport_width=100,
+            )
+        for grip in contract.get("parked", ()):
+            _assert_visible_in_viewport(
+                screen.query_one(grip),
+                height=32,
+                context=f"{route}:parked:{grip}",
                 viewport_width=100,
             )
         if route == "schedules":
@@ -2940,16 +3014,9 @@ VISIBLE_FOCUS_TARGETS = {
     },
     "schedules": {"schedules-follow-in-console"},
     "workflows": {"workflow-import"},
-    # #unified-mcp-action-run is retired with the `UnifiedMCPPanel` embed
-    # (Task 8); its direct successor is #mcp-adv-run, the workbench
-    # inspector's Advanced "Run Action" button. It is legitimately disabled
-    # by default (Phase 1's default "Overview" section has no actions --
-    # see _assert_advanced_run_reachable), so #mcp-rail-row-0 ("All
-    # servers", always enabled) is listed alongside it as the genuinely
-    # reachable default primary action.
-    "mcp": {"mcp-rail-row-0", "mcp-adv-run"},
+    # TASK-39170: "mcp" and "skills" retired with their screens (42a5106c41,
+    # d72984cec6); see COMPACT_DESTINATION_CONTRACTS.
     "acp": {"acp-follow-in-console", "acp-launch-agent"},
-    "skills": {"skills-import-skill", "skills-attach-to-console"},
     # Theme and Splash Screen are now first-class sidebar categories, so the
     # primary tab-focusable actions on Settings are the category rail buttons.
     "settings": {"settings-category-overview", "settings-category-providers-models"},
@@ -3057,6 +3124,13 @@ async def test_watchlists_tree_selection_is_visually_distinct_against_the_bundle
     host = _visual_destination_harness(app, "watchlists_collections")
     async with host.run_test(size=(160, 42)) as pilot:
         screen = _active_destination_screen(host)
+        # TASK-39170: run on Overview, the management section this test was
+        # written on. Read has been the landing tab since 66682cf786, and
+        # since 0bde972ca8 a Read tree click only moves the marker once the
+        # Feed Items snapshot commits; this harness's static scope service
+        # serves no items, so on Read the scope never commits.
+        screen.active_section = "overview"
+        await pilot.pause()
         await _wait_for_selector(
             screen, pilot, f"#wl-tree-node-watchlist-{watchlist['id']}"
         )
@@ -3110,11 +3184,16 @@ async def test_watchlists_tree_selection_is_visually_distinct_against_the_bundle
 def _row_reverse_video(strips, region, needle: str) -> bool | None:
     """Whether ANY segment in the row containing `needle` renders reverse
     video, or `None` if `needle` is not on screen inside `region` at all.
+
+    TASK-39170: rows are cropped to `region`'s columns. Uncropped, the
+    Watchlists inspector's "Selected: <name>" line (5c5d3a1c56), painted on
+    the Sources table's header row, matched the needle before the table's
+    own selected row did.
     """
     for y in range(region.y, region.y + region.height):
         if not (0 <= y < len(strips)):
             continue
-        row_segments = strips[y]
+        row_segments = strips[y].crop(region.x, region.right)
         row_text = "".join(segment.text for segment in row_segments)
         if needle in row_text:
             return any(
@@ -3473,14 +3552,15 @@ async def test_watchlists_sources_toolbar_controls_are_actually_visible(size):
         await pilot.pause(0.2)
 
         pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
-        for selector in (
-            "#sources-search-input",
-            "#sources-type-select",
-            "#sources-status-filter",
-            "#sources-active-filter",
-            "#sources-new-button",
-            "#sources-filter-toggle",
-        ):
+        # TASK-39170: 3c1b55f3ca moved the Type/Status/Active filters off the
+        # toolbar into the editor `Filters` discloses (and added "Add
+        # several…"), so the toolbar row carries the search box and the three
+        # buttons, and the filters are checked on the editor row once open.
+        assert not pane.query("#sources-type-select"), (
+            "the filters belong to the closed Filters editor, not the toolbar"
+        )
+
+        def assert_contained(selector: str) -> None:
             widget = pane.query_one(selector)
             assert widget.region.height >= 1, (
                 f"{selector} is clipped to nothing: {widget.region}"
@@ -3503,23 +3583,49 @@ async def test_watchlists_sources_toolbar_controls_are_actually_visible(size):
                 f"{widget.region} vs {pane.region}"
             )
 
-        # Regions are not enough on their own: a three-row control inside a
-        # one-row strip still reports a region while painting only its
-        # border. Every label has to actually reach the screen.
-        strips = screen._compositor.render_strips()
-        strip_row = pane.query_one("#sources-search-input").region.y
-        painted = "".join(seg.text for seg in strips[strip_row])
-        for label in (
-            "Search sources...",  # the search Input's placeholder
-            "All statuses",  # the status Select's current value
-            "New source",  # TASK-2303: the create verb, in its shipped casing
-            "Filters",
+        def assert_painted(row_selector: str, labels: tuple[str, ...]) -> None:
+            # Regions are not enough on their own: a three-row control inside
+            # a one-row strip still reports a region while painting only its
+            # border. Every label has to actually reach the screen.
+            strips = screen._compositor.render_strips()
+            strip_row = pane.query_one(row_selector).region.y
+            painted = "".join(seg.text for seg in strips[strip_row])
+            for label in labels:
+                assert label in painted, (
+                    f"{label!r} never reaches the screen; the Sources toolbar is "
+                    f"still unusable at {size}. Row {strip_row} paints: "
+                    f"{painted.strip()!r}"
+                )
+
+        for selector in (
+            "#sources-search-input",
+            "#sources-new-button",
+            "#sources-add-several-button",
+            "#sources-filter-toggle",
         ):
-            assert label in painted, (
-                f"{label!r} never reaches the screen; the Sources toolbar is "
-                f"still unusable at {size}. Row {strip_row} paints: "
-                f"{painted.strip()!r}"
-            )
+            assert_contained(selector)
+        assert_painted(
+            "#sources-search-input",
+            (
+                "Search sources...",  # the search Input's placeholder
+                "New source",  # TASK-2303: the create verb, in its shipped casing
+                "Filters",
+            ),
+        )
+
+        pane.query_one("#sources-filter-toggle", Button).press()
+        await _wait_for_selector(screen, pilot, "#sources-type-select")
+        await pilot.pause()
+        for selector in (
+            "#sources-type-select",
+            "#sources-status-filter",
+            "#sources-active-filter",
+        ):
+            assert_contained(selector)
+        assert_painted(
+            "#sources-type-select",
+            ("Type", "Status", "All statuses", "Active"),
+        )
 
 
 @pytest.mark.parametrize("size", [(160, 42), (235, 52)])
@@ -3721,7 +3827,10 @@ async def test_watchlists_tree_chevron_shares_a_row_with_its_watchlist(size):
     service.add_source(watchlist["id"], arxiv)
 
     async with app.run_test(size=size) as pilot:
-        await _wait_for_production_screen(app, pilot, ChatScreen)
+        # TASK-39170: a full app boots to the Console in ~7 s on a loaded
+        # host, past the helper's 6 s default; same budget as the MCP
+        # forced-loading test above.
+        await _wait_for_production_screen(app, pilot, ChatScreen, timeout=30.0)
         await app.handle_screen_navigation(NavigateToScreen("watchlists_collections"))
         screen = await _wait_for_production_screen(
             app,

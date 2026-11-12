@@ -3807,12 +3807,6 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
 }
 
 
-.approval-row.needs-decision {
-  border: solid $ds-status-approval-required;
-  background: $ds-status-approval-required 10%;
-}
-
-
 .approval-single #approval-approve-all, .approval-single #approval-deny-all,
 .approval-single #approval-submit, .approval-single #approval-choices-hint {
   display: none;

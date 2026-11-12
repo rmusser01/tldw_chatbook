@@ -509,6 +509,10 @@ ARCH_REVIEW_TARGETS = (
     "Tests/test_config_load_settings_table_guard.py",
     "Tests/Performance/test_boot_css_byte_budget.py",
     "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+    # TASK-39114: the private-SQLite registry and inventory files, red on no
+    # required lane before; last, because Tests/DB keeps the bootstrap profile.
+    "Tests/DB/test_private_sqlite.py",
+    "Tests/DB/test_private_sqlite_inventory.py",
 )
 #: Owner decision (2026-11-06): suites runnable again after being red in no PR
 #: lane, in their own job, serial under --storage-lease-guard. Sandboxed suites
@@ -535,6 +539,9 @@ RECOVERED_SUITES_TARGETS = (
     # targets, before the bootstrap_profile ones.
     "Tests/Chat/test_trace_v2_collaboration.py::test_bare_underscore_keys_are_masked_wherever_sk_dash_keys_are",
     "Tests/Chat/test_trace_v2_collaboration.py::test_the_credential_classes_masked_before_are_still_masked",
+    # TASK-39172: config participant lifetimes, sandboxed and reading config
+    # in-process, so before the bootstrap_profile suites.
+    "Tests/Backup_Recovery/test_config_participant_lifetimes.py",
     # TASK-39142: bootstrap_profile since TASK-38111. TASK-39049's keyword-leg
     # pool retirement file runs beside its four siblings.
     "Tests/Prompt_Management/test_prompt_improvement_service.py",
@@ -566,6 +573,15 @@ RECOVERED_SUITES_TARGETS = (
     # TASK-39119: the goal recovery file (bootstrap_profile, 4 tests, ~19 s
     # serial), which caught a regression this round and ran on no lane.
     "Tests/Chat/test_console_goal_recovery.py",
+    # Round 13, all bootstrap_profile, red on no lane before: TASK-39154's
+    # rewind/summarize and per-session run-state files, TASK-39164's
+    # edit-and-resend and regenerate-branching files, and TASK-40097's
+    # controller node (the rest of the controller file runs on no lane).
+    "Tests/Chat/test_console_rewind_summarize.py",
+    "Tests/Chat/test_console_run_state_per_session.py",
+    "Tests/Chat/test_console_edit_resend.py",
+    "Tests/Chat/test_console_regenerate_branching.py",
+    "Tests/Chat/test_console_chat_controller.py::test_review_hook_gives_a_mutating_builtin_the_mutation_effect",
 )
 DREAMS_ADMISSION_TARGETS = (
     "Tests/Dreams/test_boot_dispatch_admission.py",
