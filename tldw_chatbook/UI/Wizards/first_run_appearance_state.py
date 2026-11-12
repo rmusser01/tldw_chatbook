@@ -12,6 +12,7 @@ run (see ``ascii_checkbox_value``).
 
 from __future__ import annotations
 
+import math
 from typing import Any, Mapping
 
 from tldw_chatbook.Constants import DEFAULT_SPLASH_DURATION_SECONDS
@@ -31,13 +32,31 @@ def _seconds(value: float) -> str:
     return f"{value:g} s"
 
 
-def startup_label(choice: str) -> str:
-    """The radio label for one startup-animation choice."""
+def startup_label(choice: str, splash: Mapping[str, Any] | None = None) -> str:
+    """The radio label for one startup-animation choice.
+
+    Args:
+        choice: One of ``STARTUP_CHOICES``.
+        splash: The saved ``[splash_screen]`` table. A custom length it holds
+            (``custom_splash_seconds``) is named on the choice it selects,
+            "Full (15 s, as saved)", since that choice keeps it.
+
+    Returns:
+        The label.
+    """
     if choice == STARTUP_OFF:
         return "Off"
+    word = "Short" if choice == STARTUP_SHORT else "Full"
+    custom = custom_splash_seconds(splash or {})
+    if custom is not None and startup_choice(splash or {}) == choice:
+        return f"{word} ({_seconds(custom)}, as saved)"
+    return f"{word} ({_seconds(_choice_seconds(choice))})"
+
+
+def _choice_seconds(choice: str) -> float:
     if choice == STARTUP_SHORT:
-        return f"Short ({_seconds(SHORT_SPLASH_SECONDS)})"
-    return f"Full ({_seconds(float(DEFAULT_SPLASH_DURATION_SECONDS))})"
+        return SHORT_SPLASH_SECONDS
+    return float(DEFAULT_SPLASH_DURATION_SECONDS)
 
 
 def _flag(value: Any, default: bool) -> bool:
@@ -46,15 +65,43 @@ def _flag(value: Any, default: bool) -> bool:
     return coerce_bool_setting(value, default)
 
 
+def _saved_seconds(splash: Mapping[str, Any]) -> float:
+    """The saved splash length; the default when unset or unreadable."""
+    try:
+        duration = float(splash.get("duration", DEFAULT_SPLASH_DURATION_SECONDS))
+    except (TypeError, ValueError):
+        return float(DEFAULT_SPLASH_DURATION_SECONDS)
+    return duration if math.isfinite(duration) else float(DEFAULT_SPLASH_DURATION_SECONDS)
+
+
 def startup_choice(splash: Mapping[str, Any]) -> str:
     """Which choice the saved ``[splash_screen]`` table amounts to."""
     if not _flag(splash.get("enabled", True), True):
         return STARTUP_OFF
-    try:
-        duration = float(splash.get("duration", DEFAULT_SPLASH_DURATION_SECONDS))
-    except (TypeError, ValueError):
-        duration = float(DEFAULT_SPLASH_DURATION_SECONDS)
+    duration = _saved_seconds(splash)
     return STARTUP_SHORT if duration <= SHORT_SPLASH_SECONDS else STARTUP_FULL
+
+
+def custom_splash_seconds(splash: Mapping[str, Any]) -> float | None:
+    """A saved splash length that is neither Short's nor the default, else None.
+
+    Pre-merge review (2026-11-12, TASK-34100.13): a length set in Settings ▸
+    Splash Screen (4 s, 15 s, 1 s) read as one of setup's two -- "full splash
+    (7 s)" or "short splash (2 s)". Callers name these seconds instead.
+
+    Args:
+        splash: The saved ``[splash_screen]`` table.
+
+    Returns:
+        The seconds, or None when the splash is off or the length is 2 s or
+        the default.
+    """
+    if startup_choice(splash) == STARTUP_OFF:
+        return None
+    duration = _saved_seconds(splash)
+    if duration in (SHORT_SPLASH_SECONDS, float(DEFAULT_SPLASH_DURATION_SECONDS)):
+        return None
+    return duration
 
 
 def build_startup_commit(*, choice: str, current: str) -> dict[str, dict[str, Any]]:
@@ -190,16 +237,19 @@ def startup_summary(
 ) -> tuple[bool, str]:
     """``(changed_from_defaults, detail)`` for the Summary's startup row."""
     choice = startup_choice(splash)
+    custom = custom_splash_seconds(splash)
     reduce_motion, ascii_glyphs = read_comfort(appearance)
     if choice == STARTUP_OFF:
         parts = ["no splash"]
-    elif choice == STARTUP_SHORT:
-        parts = [f"short splash ({_seconds(SHORT_SPLASH_SECONDS)})"]
     else:
-        parts = [f"full splash ({_seconds(float(DEFAULT_SPLASH_DURATION_SECONDS))})"]
+        word = "short" if choice == STARTUP_SHORT else "full"
+        seconds = _choice_seconds(choice) if custom is None else custom
+        parts = [f"{word} splash ({_seconds(seconds)})"]
     if reduce_motion:
         parts.append("motion reduced")
     if ascii_glyphs:
         parts.append("plain ASCII marks")
-    changed = choice != STARTUP_FULL or reduce_motion or ascii_glyphs
+    changed = (
+        choice != STARTUP_FULL or custom is not None or reduce_motion or ascii_glyphs
+    )
     return changed, " · ".join(parts)
