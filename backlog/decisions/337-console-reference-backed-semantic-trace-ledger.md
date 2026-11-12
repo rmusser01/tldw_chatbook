@@ -901,18 +901,23 @@ Admitting it would reach the over-span fallback, which records an
 every replaced row in the surface, so the trace would stop matching the request.
 Recording a wider replacement changes the durable format (`SurfaceReplacement`
 rejects a wider span when it is read back), so it needs its own owner decision
-(TASK-38298).
+(TASK-38298). Superseded on 2026-11-12: the owner accepted the chained replacement
+recorded in the next amendment, which lifts this limit up to 256 links.
 
 The owner ruled on 2026-10-27 that TASK-33621.7 fixes the edited-branch trace
 defect only, with no remembered per-chat capture bypass. This amendment records
 the mechanism that fix and TASK-33621.29 share. It is recorded with the
 implementing change and is subject to the owner's review of that change.
 
-### Amendment proposed 2026-11-06, awaiting the owner: a rewritten tail wider than 256 stored sequences
+### Amendment 2026-11-06, accepted 2026-11-12: a rewritten tail wider than 256 stored sequences
 
-Status: **awaiting the owner's decision** (TASK-38298 AC#1). Nothing below is
-implemented. Until the owner decides, the known limit of the 2026-10-27 amendment
-stays in force.
+Status: **Accepted.** Owner decision 2026-11-12 (TASK-38298 AC#1): "Approve the
+chain". The owner was asked: "record a rewritten history wider than 256 stored
+rows as a chain of ordinary replacement rows, each at most 256; content-free
+placeholders collapsed by a final link; cap 256 links (about 32,000 exchanges); no
+schema change, today's reader already reconstructs it exactly, old traces
+unaffected". TASK-38298 implements the decision below. It supersedes the known
+limit of the 2026-10-27 amendment.
 
 **Measured on dev `8ae979d81b`** (scratch probes, deleted; their source and output
 are kept with the TASK-38298 evidence):
@@ -939,7 +944,7 @@ are kept with the TASK-38298 evidence):
   history needs 9 links (11 nodes, 9 replacement rows and 11 events), and its cold
   projection reads in 0.02 s.
 
-**Proposed: record it as a chained replacement.** This applies only where the
+**Decision: record it as a chained replacement.** This applies only where the
 rewritten tail is already admitted: FRESH or AGENT_FIRST, the whole tail after the
 matched prefix, messages only, and the same proofs and dispatch-binding recheck.
 The one difference is that the replaced range's stored span exceeds 256.
@@ -997,14 +1002,42 @@ implementation must still re-measure the reservation p95 with a chain.
 The rewritten-tail witness separately bounds the rows sent after the rewrite point
 to 256: 255 saved rows plus the current user. That bound is transient, with no
 durable format, and it did not bind in either measured shape (3 incoming rows).
-This proposal keeps it. A compaction that keeps more than 255 rows after the
-memory boundary would still stop at the card.
+This decision keeps it. A compaction that keeps more than 255 rows after the
+memory boundary still stops at the card.
 
-**Question for the owner.** Do you approve the chained replacement above: links
-of at most 256 stored sequences, content-free placeholders collapsed by a final
-link carrying the first new row, capped at 256 links (about 65,536 stored
-sequences), with no schema change? Or do you choose a format-guarded wider bound,
-or keeping the 256 bound with a cause-specific card?
+**Question put to the owner (2026-11-06).** Do you approve the chained replacement
+above: links of at most 256 stored sequences, content-free placeholders collapsed
+by a final link carrying the first new row, capped at 256 links (about 65,536
+stored sequences), with no schema change? Or do you choose a format-guarded wider
+bound, or keeping the 256 bound with a cause-specific card? The owner approved the
+chain on 2026-11-12.
+
+**Implementation (TASK-38298).** The planner cuts the replaced live rows into links
+by stored sequence and refuses more than `MAX_SURFACE_REPLACEMENT_CHAIN_LINKS`
+(256) links as `count_or_span`. The admission and the verified delta carry the
+links on the replacement range; only a rewritten tail may have them. The writer
+validates every link's range, and that no live row lies between links, in
+preparation and again in the dispatch-binding transaction, then writes the
+placeholders, their links and the final link in that transaction. Placeholder
+sequences precede the new rows, and the warm projection checkpoint records them
+in its lineage as the cold reader does.
+
+Reservation re-measured 2026-11-12 (reserve plus dispatch binding, preparation
+excluded, as the reference gate times it; 20 interleaved rounds per shape on an M4
+Pro under a shared load average of 28 to 48, so wall times are noisy and thread
+CPU is the steadier figure):
+
+| Shape | Links | Wall p50 / p95 | Thread CPU p50 / p95 |
+| --- | --- | --- | --- |
+| Append, 259 recorded rows | 0 | 3.2 / 10.0 ms | 3.2 / 4.9 ms |
+| One replacement, 256 rows | 0 | 7.8 / 20.4 ms | 6.5 / 10.1 ms |
+| Chain, 259 rows | 2 | 11.9 / 55.5 ms | 9.1 / 12.6 ms |
+| Chain, 1,999 rows | 8 | 109 / 146 ms | 73 / 89 ms |
+
+A chain costs about one replacement's time per 256 replaced rows, mostly the
+per-link range reads and the replacement rows' lineage trigger. It is paid once,
+by the send after the rewrite. Ordinary sends, which the 10 ms reservation gate
+measures, take no new work.
 
 ## Renumbering provenance
 
