@@ -54,3 +54,4 @@ Let a person find files by meaning or use keyword and semantic retrieval togethe
 - The real-registry search test now waits for Ready through transient native contention. The real-registry and live-file replacement tests passed.
 - Corrected the legacy migration fixture to remove all v4-only tables when constructing v1. Detached reclamation now tests the competing Enable with a scope captured before the native gate is held. Both v1 cases, v3 migration, and detached reclamation passed.
 - The two real loopback embedding tests use the existing embeddings_rag dependency check. They skip with an explicit reason in the default environment and both passed in the qualified environment with the extra installed.
+- The held-constructor fixture now begins from a v2 catalog without v4 tables. The responsive shutdown check passed while the real migration was held and released.

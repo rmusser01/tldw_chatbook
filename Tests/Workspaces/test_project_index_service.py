@@ -1766,6 +1766,9 @@ async def test_close_stays_responsive_through_held_constructor_migration(
     enabled = rig.enable()
     store = rig.store(rig.key)
     with store.transaction() as conn:
+        conn.execute("DROP TABLE semantic_members")
+        conn.execute("DROP TABLE semantic_generations")
+        conn.execute("DROP TABLE semantic_control")
         conn.execute("DROP TABLE chunk_fts")
         conn.execute("CREATE VIRTUAL TABLE chunk_fts USING fts5(text)")
         conn.execute("DROP INDEX directories_eligible")
