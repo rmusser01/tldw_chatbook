@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from dataclasses import FrozenInstanceError, replace
 from functools import lru_cache
 from pathlib import Path
+from types import SimpleNamespace
 from typing import get_args
 
 import pytest
@@ -942,9 +943,23 @@ def test_windows_network_context_refuses_before_private_or_external_work(
 
         return invoke
 
-    monkeypatch.setattr(git_network.os, "name", "nt")
-    monkeypatch.setattr(git_network.tempfile, "mkdtemp", forbidden("mkdtemp"))
-    monkeypatch.setattr(git_network.shutil, "which", forbidden("which"))
+    monkeypatch.setattr(
+        git_network, "os", SimpleNamespace(**(vars(git_network.os) | {"name": "nt"}))
+    )
+    monkeypatch.setattr(
+        git_network,
+        "tempfile",
+        SimpleNamespace(
+            **(vars(git_network.tempfile) | {"mkdtemp": forbidden("mkdtemp")})
+        ),
+    )
+    monkeypatch.setattr(
+        git_network,
+        "shutil",
+        SimpleNamespace(
+            **(vars(git_network.shutil) | {"which": forbidden("which")})
+        ),
+    )
     monkeypatch.setattr(
         git_network,
         "_pin_git_dispatch_executable",
@@ -4332,7 +4347,9 @@ async def test_push_authorization_windows_refuses_before_grant_context_or_query(
     )
     assert (await service.start_push_review(binding)).state == "ready"
     before = owner.snapshot(binding)
-    monkeypatch.setattr(git_service.os, "name", "nt")
+    monkeypatch.setattr(
+        git_service, "os", SimpleNamespace(**(vars(git_service.os) | {"name": "nt"}))
+    )
 
     result = await _authorize_current_push(service, binding)
 

@@ -262,7 +262,7 @@ def _service(
     barrier: _Barrier | None = None,
     environment: Mapping[str, str] | None = None,
 ) -> FileNotesGitService:
-    executable = shutil.which("git")
+    executable = shutil.which("git", path=os.defpath)
     assert executable is not None
     exec_path = (
         subprocess.run(

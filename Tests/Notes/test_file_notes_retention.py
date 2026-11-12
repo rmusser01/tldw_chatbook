@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sys
 import types
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -27,7 +27,7 @@ from tldw_chatbook.Notes.file_notes_replica import (  # noqa: E402
 )
 from tldw_chatbook.Notes.file_notes_service import FileNotesService  # noqa: E402
 
-NOW = datetime(2026, 10, 4, 12, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 4, 12, 0, 0, tzinfo=UTC)
 
 
 def _digest(raw_bytes: bytes) -> str:
@@ -450,6 +450,7 @@ def test_service_enforces_retention_for_its_own_root(
     (root / "plain.md").write_text("body\n", encoding="utf-8")
     service = FileNotesService(root, replica)
     root_key = service.root_key
+    now = datetime.now(UTC)
     for index in range(MAX_REVISIONS_PER_NOTE + 5):
         _checkpoint(
             replica,
@@ -457,7 +458,7 @@ def test_service_enforces_retention_for_its_own_root(
             "plain.md",
             f"body {index}".encode(),
             f"s-{index:03d}",
-            NOW - timedelta(days=1, minutes=-index),
+            now - timedelta(days=1, minutes=-index),
         )
     before = _revision_count(replica, root_key, "plain.md")
 

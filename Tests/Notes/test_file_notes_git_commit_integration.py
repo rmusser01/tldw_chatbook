@@ -3875,7 +3875,7 @@ async def test_guarded_commit_success_proves_exact_unsigned_commit(
     assert outcome.state == "succeeded"
     assert outcome.commit_object_id is not None
     assert outcome.message == (
-        f"Committed 1 session notes as {outcome.commit_object_id[:12]}; "
+        f"Committed 1 session note as {outcome.commit_object_id[:12]}; "
         "unrelated changes untouched."
     )
     assert outcome.qualification == (

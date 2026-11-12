@@ -1332,6 +1332,7 @@ def test_executor_cancellation_before_first_batch_mutates_no_target(
     assert durable.folder_effects[0].state is ImportEffectState.PENDING
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_cancels_only_between_batches_after_current_target_call_returns(
     target_harness,
     tmp_path: Path,
@@ -1399,6 +1400,7 @@ def test_executor_cancels_only_between_batches_after_current_target_call_returns
     assert durable.items[1].outcome is ImportItemOutcome.PENDING
 
 
+@pytest.mark.bootstrap_profile
 def test_executor_cancels_between_folder_batches_after_current_target_returns(
     target_harness,
     tmp_path: Path,
@@ -1496,6 +1498,7 @@ def test_executor_cancels_between_folder_batches_after_current_target_returns(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_executor_async_offloads_the_whole_execution_and_keeps_loop_responsive(
     real_executor,
     monkeypatch: pytest.MonkeyPatch,

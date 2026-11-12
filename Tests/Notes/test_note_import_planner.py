@@ -1763,6 +1763,7 @@ def test_root_descriptor_errors_are_normalized_without_raw_os_text(
     root.mkdir()
     private_error = "PRIVATE ROOT DESCRIPTOR ERROR"
 
+    monkeypatch.setattr(note_import_discovery, "os", SimpleNamespace(**vars(os)))
     if operation == "fstat":
         monkeypatch.setattr(
             note_import_discovery.os,
@@ -2662,6 +2663,7 @@ def test_unsupported_candidates_are_not_opened_and_have_safe_issues(
     bounds = _discovery_bounds()
     discovery = discover_import_sources([source], bounds)
 
+    monkeypatch.setattr(note_import_discovery, "os", SimpleNamespace(**vars(os)))
     monkeypatch.setattr(
         note_import_discovery.os,
         "open",
@@ -3895,6 +3897,7 @@ def test_missing_nonblocking_leaf_open_capability_fails_closed(
     source.write_text("Body", encoding="utf-8")
     bounds = _discovery_bounds()
     discovery = discover_import_sources([source], bounds)
+    monkeypatch.setattr(note_import_discovery, "os", SimpleNamespace(**vars(os)))
     monkeypatch.delattr(note_import_discovery.os, "O_NONBLOCK")
 
     batch = note_import_planner.parse_import_sources(

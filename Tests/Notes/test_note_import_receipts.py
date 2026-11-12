@@ -498,13 +498,13 @@ def test_notes_sync_state_path_is_profile_local_and_not_a_generic_database_path(
     assert config.get_notes_sync_state_db_path() == (
         tmp_path / "tldw_chatbook_notes_sync_state.db"
     )
-    generic_paths = (
-        Path(__file__).parents[2] / "tldw_chatbook/Chatbooks/database_paths.py"
-    ).read_text(encoding="utf-8")
-    settings_backup = (
-        Path(__file__).parents[2] / "tldw_chatbook/UI/Tools_Settings_Window.py"
-    ).read_text(encoding="utf-8")
-    for source in (generic_paths, settings_backup):
+    package = Path(__file__).parents[2] / "tldw_chatbook"
+    for path in (
+        "Chatbooks/database_paths.py",
+        "Backup_Recovery/settings_backup_helpers.py",
+        "UI/Screens/settings_screen.py",
+    ):
+        source = (package / path).read_text(encoding="utf-8")
         assert "get_notes_sync_state_db_path" not in source
         assert "tldw_chatbook_notes_sync_state.db" not in source
 
