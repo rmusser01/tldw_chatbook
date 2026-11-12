@@ -681,22 +681,28 @@ def wired_case(snapshot_case, monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("route", ["normal", "queued"])
 async def test_actual_screen_wiring_prepares_native_mcp_sources_off_ui_loop(
-    wired_case, route
+    wired_case, route, request
 ):
-    case = wired_case
+    case = request.getfixturevalue("wired_composer_case") if route == "normal" else wired_case
     _loop_projection(case)
     queue = case.screen._prompt_queue
-    probe = _MaximumProbe(case.source, case.permissions)
+    probe = (
+        _PermissionProbe(case.source, case.permissions)
+        if route == "normal"
+        else _MaximumProbe(case.source, case.permissions)
+    )
     runtime = case.screen._console_runtime()
     try:
         with probe.installed():
             if route == "normal":
-                launch = (
-                    getattr(queue, "_launch_chain_async", None) or queue._launch_chain
+                draft = "actual wired input"
+                case.composer.load_draft(draft)
+                case.store.set_session_draft(case.session.id, draft)
+                stash = case.composer.capture_draft_for_send()
+                turn_id = await queue._launch_chain_async(
+                    draft, case.session.id, stash, case.controller
                 )
-                result = launch("actual wired input", case.session.id)
-                if inspect.isawaitable(result):
-                    await result
+                assert runtime._turn_custody[turn_id].request.draft == draft
             else:
                 capture_async = getattr(
                     queue, "_capture_configuration_for_dispatch", None
@@ -715,10 +721,15 @@ async def test_actual_screen_wiring_prepares_native_mcp_sources_off_ui_loop(
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await runtime.dispose(timeout_seconds=3)
-    assert probe.read_threads and probe.permission_threads
+    if route == "normal":
+        assert probe.permission_threads and probe.leases
+        assert all(lease not in storage_admission._live_leases for lease in probe.leases)
+        threads = probe.permission_threads
+    else:
+        assert probe.read_threads and probe.permission_threads
+        threads = probe.read_threads + probe.permission_threads
     assert all(
-        thread is not threading.current_thread()
-        for thread in probe.read_threads + probe.permission_threads
+        thread is not threading.current_thread() for thread in threads
     ), "production ChatScreen wiring still captures MCP sources synchronously before runtime custody"
 
 
