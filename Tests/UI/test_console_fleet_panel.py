@@ -29,6 +29,7 @@ from textual.widgets import Static
 
 from Tests.private_profile import private_profile_test
 
+from Tests.UI.test_console_fleet_targets import _painted_text
 from Tests.UI.test_console_parallel_runs import (
     _assert_painted_at_own_region,
     _assert_widget_and_ancestors_displayed,
@@ -690,28 +691,11 @@ async def test_terminal_budget_tokens_do_not_retain_live_usage(request):
         assert "output tok" not in section.rows[0].secondary_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_live_usage_task_and_count_are_painted_wide_and_narrow():
+async def test_live_usage_task_and_count_are_painted_wide_and_narrow(tmp_path):
     """Responsive rail paint must leave realistic task context and usage visible."""
     import time as _time
-    from xml.etree import ElementTree
-
-    def painted_cells(svg: str) -> list[tuple[str, str]]:
-        root = ElementTree.fromstring(svg)
-        return [
-            (
-                element.attrib.get("x", ""),
-                "".join(element.itertext()).replace("\xa0", " "),
-            )
-            for element in root.iter()
-            if element.tag.endswith("}text") or element.tag == "text"
-        ]
-
-    def assert_usage_cells_are_painted(svg: str) -> None:
-        cells = painted_cells(svg)
-        task_x = next(x for x, text in cells if "compare regional provider" in text)
-        assert any(x == task_x and "128" in text for x, text in cells)
-        assert any(x == task_x and "provider output tok" in text for x, text in cells)
 
     started_at = _time.monotonic() - 12.0
     handle = FleetHandle(
@@ -733,6 +717,16 @@ async def test_live_usage_task_and_count_are_painted_wide_and_narrow():
     )
     app = _ready_test_app()
     host = ConsoleHarness(app)
+
+    def assert_usage_cells_are_painted() -> None:
+        secondary = host.screen.query_one(
+            "#console-inspector-section-agent-fleet-row-0-secondary", Static
+        )
+        _assert_widget_and_ancestors_displayed(secondary)
+        painted = _painted_text(host, secondary)
+        assert handle.task in painted
+        assert "128 provider output tok" in painted
+
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)
         section = console.query_one(
@@ -745,9 +739,9 @@ async def test_live_usage_task_and_count_are_painted_wide_and_narrow():
         )
         host.save_screenshot(
             filename="live-usage-wide-180x48.svg",
-            path=".superpowers/sdd/2026-09-12-live-per-run-usage/task-2-evidence",
+            path=str(tmp_path),
         )
-        assert_usage_cells_are_painted(host.export_screenshot(simplify=True))
+        assert_usage_cells_are_painted()
 
         await pilot.resize_terminal(100, 32)
         await _scroll_into_view(
@@ -755,14 +749,12 @@ async def test_live_usage_task_and_count_are_painted_wide_and_narrow():
         )
         host.save_screenshot(
             filename="live-usage-narrow-100x32.svg",
-            path=".superpowers/sdd/2026-09-12-live-per-run-usage/task-2-evidence",
+            path=str(tmp_path),
         )
-        assert_usage_cells_are_painted(host.export_screenshot(simplify=True))
+        assert_usage_cells_are_painted()
         secondary = console.query_one(
             "#console-inspector-section-agent-fleet-row-0-secondary", Static
         )
-        _assert_widget_and_ancestors_displayed(secondary)
-        _assert_painted_at_own_region(host, secondary)
         assert "regional provider pricing" in str(secondary.renderable)
         assert "128 provider output tok" in str(secondary.renderable)
 
