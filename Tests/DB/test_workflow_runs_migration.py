@@ -437,8 +437,9 @@ def test_shipped_dev25_review_rows_survive_native_workflow_upgrade(
 
 @pytest.mark.parametrize("version", range(25, 31))
 @pytest.mark.parametrize("upgrade", ["constructor", "recovery"])
+@pytest.mark.parametrize("analyzed", [False, True])
 def test_standalone_legacy_workflow_history_remains_unreviewed_after_integration(
-    tmp_path, version, upgrade
+    tmp_path, version, upgrade, analyzed
 ):
     from threading import Event
 
@@ -446,6 +447,13 @@ def test_standalone_legacy_workflow_history_remains_unreviewed_after_integration
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     path, before, owner = _legacy_workflow_fixture(tmp_path, version)
+    if analyzed:
+        with closing(sqlite3.connect(path)) as conn:
+            conn.execute("ANALYZE")
+            conn.commit()
+            assert conn.execute(
+                "SELECT 1 FROM sqlite_schema WHERE name='sqlite_stat1'"
+            ).fetchone()
     if upgrade == "recovery":
         assert validate_candidate(owner, path, Event(), migrate=True) == ()
     else:
@@ -476,7 +484,26 @@ def test_standalone_legacy_workflow_history_remains_unreviewed_after_integration
         assert db.workflow_runs.get("legacy").status == "closed"
 
 
-def _legacy_workflow_fixture(tmp_path, version):
+
+def test_analyzed_standalone_workflow_validates_payload_read_only(tmp_path):
+    from threading import Event
+
+    from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
+
+    path, _before, owner = _legacy_workflow_fixture(
+        tmp_path, 25, invalid_payload=True
+    )
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("ANALYZE")
+        conn.commit()
+    before = path.read_bytes()
+    assert validate_candidate(owner, path, Event(), migrate=False) == (
+        "invalid_workflow_payload",
+    )
+    assert path.read_bytes() == before
+
+
+def _legacy_workflow_fixture(tmp_path, version, *, invalid_payload=False):
     import hashlib
     import json
     from dataclasses import asdict
@@ -518,7 +545,7 @@ def _legacy_workflow_fixture(tmp_path, version):
         conn.execute(
             "INSERT INTO workflow_runs(id,launch_id,payload_hash,request_json,conversation_id,chain_id,status,created_at,updated_at) VALUES ('legacy','legacy-launch',?,?,?,'legacy-chain','closed',1,1)",
             (
-                hashlib.sha256(payload.encode()).hexdigest(),
+                "0" * 64 if invalid_payload else hashlib.sha256(payload.encode()).hexdigest(),
                 payload,
                 request.conversation_id,
             ),

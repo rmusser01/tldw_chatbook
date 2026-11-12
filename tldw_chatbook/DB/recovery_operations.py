@@ -1312,10 +1312,14 @@ _LEGACY_WORKFLOW_SCHEMAS = _build_legacy_workflow_schemas()
 
 
 def _legacy_workflow_version(connection):
+    from tldw_chatbook.Backup_Recovery.mobile_preview_budget import scalar_cost
+
+    scalar_cost(connection, 3)
     tables = {
         row[0]
         for row in connection.execute(
-            "SELECT name FROM sqlite_schema WHERE type='table'"
+            "SELECT name FROM sqlite_schema WHERE type='table' "
+            "AND name IN ('workflow_runs','automatic_review_boundary_claims')"
         )
     }
     if "workflow_runs" not in tables or "automatic_review_boundary_claims" in tables:
@@ -1323,12 +1327,16 @@ def _legacy_workflow_version(connection):
     row = connection.execute("SELECT MAX(version) FROM schema_version").fetchone()
     if row is None or type(row[0]) is not int:
         return None
-    catalog = tuple(
-        item[0]
-        for item in connection.execute(
-            "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
-        )
-    )
+
+    from tldw_chatbook.Backup_Recovery.sqlite_validation import _catalog
+    from tldw_chatbook.DB.recovery_sqlite import _split_statistics
+
+    rows = _catalog(connection, _schemas=_LEGACY_WORKFLOW_SCHEMAS)
+    try:
+        base, _stats = _split_statistics(rows)
+    except ValueError:
+        return None
+    catalog = tuple(item[3] for item in base if item[3] is not None)
     return row[0] if (row[0], catalog) in _LEGACY_WORKFLOW_SCHEMAS else None
 
 
