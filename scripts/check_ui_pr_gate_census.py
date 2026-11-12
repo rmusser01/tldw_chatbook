@@ -948,6 +948,16 @@ MINIMUM_FILES = 1913
 # two 100 ms Send-feedback entries leave the PR gate until the paint reorder
 # passes on CI. The floor is the measured entry count.
 MINIMUM_FILES = 1911
+# TASK-39169 (2026-11-10): append the Settings focus-keeping nodes (three
+# parameter cases and one test) at the tail. The floor is the measured entry
+# count.
+MINIMUM_FILES = 1915
+# TASK-39169 review r13p-rev1 (2026-11-10): append four more Settings focus
+# nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1919
+# TASK-39169 review r13p-rev2 (2026-11-10): append five more Settings focus
+# and region-batch nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1924
 
 
 def read_census(path: Path) -> list[str]:

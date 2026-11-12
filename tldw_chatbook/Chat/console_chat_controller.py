@@ -24567,7 +24567,15 @@ class ConsoleChatController:
         ) if wake_authorization is None else None
         if current_user is None and wake_authorization is not None:
             # The attempt's write was the reply row's only pre-provider save.
-            await self.prompt_mixin_service().save_pending_reply(owner_id, assistant_message_id)
+            try:
+                await self.prompt_mixin_service().save_pending_reply(owner_id, assistant_message_id)
+            except MixinSnapshotUnavailableError:  # The owner moved (TASK-39159).
+                if self._disposed or owner_id not in {s.id for s in self.store.sessions()}:
+                    return self._session_closed_result(session_id=owner_id)
+                return self._block_context_preflight(
+                    session_id=owner_id, assistant_message_id=assistant_message_id,
+                    visible_copy="The chat changed while the reply was being saved; response was not sent.",
+                )
         if current_user is not None:
             attempt_id = mixin_attempt_id or turn_context.library_authority.attempt_id
             assistant_row = self.store.get_message(assistant_message_id)
@@ -25661,6 +25669,7 @@ class ConsoleChatController:
         return bool(
             self._shutdown_requested.is_set()
             or (cancel_event is not None and cancel_event.is_set())
+            or session_id in self._session_close_generations  # TASK-39155
             or not any(row.id == session_id for row in self.store.sessions())
         )
 

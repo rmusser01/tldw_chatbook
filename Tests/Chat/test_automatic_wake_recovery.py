@@ -1,12 +1,22 @@
 """Saved results and uncertain attempts are discovered without attention badges."""
 
+import threading
+
 import pytest
 
 from Tests.Chat.test_automatic_wake_budget import (
     close_rig,
     result_for,
 )
-from Tests.Chat.test_console_fleet_wake import _controller_rig, _settle
+from Tests.Chat.test_console_fleet_wake import (
+    _controller_rig,
+    _drain,
+    _settle,
+    _survivor,
+    _terminal_subagent_run,
+)
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Chat.console_fleet_wake import ConsoleFleetWakeCoordinator
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -168,5 +178,118 @@ async def test_recovery_failure_explains_results_in_a_later_resumed_session(
         assert wake.has_pending(session.id)
         assert wake.pause_reason(session.id) == "history_unavailable"
         assert not await wake.wait_for_recovery()
+    finally:
+        await close_rig(rig)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("move", ["binding", "persistence", "close"])
+async def test_a_wake_whose_owner_moves_during_its_reply_save_is_refused(rig, move):
+    """TASK-39159: a wake's pre-provider reply save (TASK-39119) adopted the
+    saved row only when the chat's binding was unchanged, but went on to the
+    provider either way, so the reply streamed into a row whose saved copy was
+    not linked to it. The save is held while the chat is rebound (or its
+    persistence replaced), as a manual turn's mix-in attempt would be refused.
+    Every turn that reaches the provider must stream into an adopted row.
+    A plain close in that window (review r13p-rev1 M3) ends the turn as a
+    closed session, not as a refusal written into the closed chat."""
+    chacha, _, runs_db, store, session, gateway, _, controller = rig
+    try:
+        persistence = store.persistence
+        real_save = persistence.save_pending_assistant
+        entered, release = threading.Event(), threading.Event()
+        saved: list[str] = []
+
+        def held_save(conversation_id, message_id, *args):
+            real_save(conversation_id, message_id, *args)
+            saved.append(message_id)
+            if len(saved) == 1:
+                entered.set()
+                release.wait(10)
+
+        persistence.save_pending_assistant = held_save
+        adopted_at_entry: list[bool] = []
+
+        def provider_entered():
+            reply = next(
+                row
+                for row in reversed(store.messages_for_session(session.id))
+                if row.role is ConsoleMessageRole.ASSISTANT
+            )
+            adopted_at_entry.append(reply.persisted_message_id is not None)
+
+        gateway.on_stream = provider_entered
+        outcomes: list[object] = []
+        real_submit = controller.submit_draft
+
+        async def recorded_submit(*args, **kwargs):
+            try:
+                result = await real_submit(*args, **kwargs)
+            except BaseException as exc:
+                outcomes.append(exc)
+                raise
+            outcomes.append(result)
+            return result
+
+        controller.submit_draft = recorded_submit
+        _parent, run_id = _terminal_subagent_run(runs_db, session.id)
+        replacement(rig).on_fleet_drained(  # Wired on the test's loop.
+            _drain(session.id, _survivor(run_id, session_id=session.id))
+        )
+        try:
+            assert await _settle(entered.is_set), "the wake never saved its reply row"
+            if move == "binding":
+                store.rebind_persisted_conversation(session.id, None)
+                store.rebind_persisted_conversation(session.id, session.id)
+            elif move == "persistence":
+                store.persistence = ChatPersistenceService(chacha)
+            else:
+                ticket = controller.begin_session_close(
+                    session.id,
+                    expected_revision=controller.lifecycle_impact(
+                        session_id=session.id
+                    ).revision,
+                )
+                controller.finalize_session_close(ticket)
+                assert all(row.id != session.id for row in store.sessions())
+        finally:
+            release.set()
+
+        if move == "close":
+            assert await _settle(lambda: outcomes, 10), "the wake turn never ended"
+            assert adopted_at_entry == [] and gateway.payloads == []
+            (outcome,) = outcomes
+            assert getattr(outcome, "visible_copy", outcome) == "Session closed.", outcome
+            assert outcome.terminal_status is not ConsoleRunStatus.BLOCKED, outcome
+            row = chacha.get_connection().execute(
+                "SELECT conversation_id, content FROM messages WHERE id=?", (saved[0],)
+            ).fetchone()
+            assert tuple(row) == (session.id, ""), row
+            return
+
+        refused = "The chat changed while the reply was being saved; response was not sent."
+
+        def refusal_rows():
+            return [
+                row
+                for row in store.messages_for_session(session.id)
+                if row.role is ConsoleMessageRole.SYSTEM and row.content == refused
+            ]
+
+        await _settle(lambda: adopted_at_entry or refusal_rows())
+        assert adopted_at_entry in ([], [True]) and False not in adopted_at_entry, (
+            f"a wake reached the provider with its reply row unadopted: {adopted_at_entry}"
+        )
+        assert refusal_rows(), (
+            "the moved wake was not refused before the provider: "
+            f"{controller.run_state_for(session.id)!r} "
+            f"{[r.content for r in store.messages_for_session(session.id) if r.role is ConsoleMessageRole.SYSTEM]}"
+        )
+        first = store.get_message(saved[0])
+        assert first.persisted_message_id is None, "the moved save was adopted"
+        row = chacha.get_connection().execute(
+            "SELECT conversation_id, content FROM messages WHERE id=?", (saved[0],)
+        ).fetchone()
+        assert tuple(row) == (session.id, ""), row
     finally:
         await close_rig(rig)

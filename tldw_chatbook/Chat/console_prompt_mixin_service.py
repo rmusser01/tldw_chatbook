@@ -650,6 +650,11 @@ class ConsolePromptMixinService:
         the provider; a failed or interrupted automatic reply then left no row
         to show or retry. This is the same write without the attempt. Best
         effort: such a turn had no pre-provider save before either.
+
+        Raises:
+            MixinSnapshotUnavailableError: ``mixin_attempt_owner_changed`` when
+                the chat's session, binding or persistence moved during the
+                save, as ``accept_attempt`` refuses a manual turn (TASK-39159).
         """
         import asyncio
         from functools import partial
@@ -669,7 +674,11 @@ class ConsolePromptMixinService:
             or getattr(persistence, "db", None) is None
         ):
             return
-        binding = (session.incarnation_id, session.conversation_binding_revision)
+        binding = (
+            session.incarnation_id,
+            session.conversation_binding_revision,
+            session.persisted_conversation_id,
+        )
         callback = partial(
             persistence.save_pending_assistant,
             session.persisted_conversation_id,
@@ -682,11 +691,18 @@ class ConsolePromptMixinService:
         except MixinSnapshotUnavailableError:
             logger.warning("Console reply row could not be saved before provider entry")
             return
-        if self.store._sessions.get(session_id) is session and binding == (
-            session.incarnation_id,
-            session.conversation_binding_revision,
+        if (
+            self.store._sessions.get(session_id) is not session
+            or binding
+            != (
+                session.incarnation_id,
+                session.conversation_binding_revision,
+                session.persisted_conversation_id,
+            )
+            or self.store.persistence is not persistence
         ):
-            self.store.adopt_saved_pending_assistant(assistant.id)
+            raise MixinSnapshotUnavailableError("mixin_attempt_owner_changed")
+        self.store.adopt_saved_pending_assistant(assistant.id)
         if cancelled:
             raise asyncio.CancelledError
 

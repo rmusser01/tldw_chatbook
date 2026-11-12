@@ -3100,10 +3100,32 @@ class SettingsRegion(Vertical):
         super().__init__(**kwargs)
         self._builder = builder
         self._stack_actions_below = stack_actions_below
+        #: TASK-39169: the focused control the last rebuild removed, and where
+        #: Textual's focus reset then put focus (None when it reset nothing).
+        self.focus_reset: tuple[Widget, Widget | None] | None = None
 
     def compose(self) -> ComposeResult:
         """Yield this region's children from the screen's builder."""
         yield from self._builder()
+
+    async def recompose(self) -> None:
+        """Rebuild the children, noting the focus reset their removal makes.
+
+        Textual resets focus synchronously when a removal prunes the focused
+        widget (``App._prune``), and that reset looks exactly like a user's
+        move; the category swap tells the two apart by this record. Inside
+        the region's batch, as Textual's own recompose removes (its lock is
+        re-entrant, so ``super().recompose()`` nests).
+        """
+        if not self.is_attached or self._pruning:
+            return
+        async with self.batch():
+            screen = self.screen
+            focused = screen.focused
+            removal = self.query_children("*").exclude(".-textual-system").remove()
+            self.focus_reset = (focused, screen.focused) if screen.focused is not focused else None
+            await removal
+            await super().recompose()
 
     def on_resize(self, event: Resize) -> None:
         """Stack the action rows while one cannot fit (a Horizontal never wraps).
@@ -4224,6 +4246,8 @@ class SettingsScreen(BaseAppScreen):
         #: after their removal; and whether this swap rebuilt the detail pane.
         self._pending_focus_reset_possible = False
         self._pending_detail_rebuilt = False
+        #: TASK-39169: the category the detail pane was last built for.
+        self._detail_pane_category: str | None = None
         # TASK-33072: entering Theme lands in its list after the swap,
         # unless an F6 pressed mid-swap claimed the focus first.
         self._theme_list_focus_pending = False
@@ -4782,7 +4806,19 @@ class SettingsScreen(BaseAppScreen):
                 focus_id = self._focused_id_in_category_panes()
                 if self._focus_left_pending_origin():
                     self._withdraw_pending_category_focus()
+                # TASK-39169: on a same-category rebuild, park focus off the
+                # control it destroys, so Textual's focus reset (which looks
+                # like a user move) never runs and a focus found afterwards is
+                # one the user chose.
+                parked = bool(
+                    focus_id
+                    and self._pending_category_focus_value is None
+                    and self._detail_pane_category == self.active_category
+                )
+                if parked:
+                    self.set_focus(None)
                 self.release_mouse_capture_for_teardown()
+                reset = None  # the last (removed control, reset target)
                 async with self.batch():
                     for pane_id in ("#settings-detail-pane", "#settings-impact-pane"):
                         try:
@@ -4790,7 +4826,9 @@ class SettingsScreen(BaseAppScreen):
                         except QueryError:
                             # Screen torn down (navigated away) mid-swap.
                             continue
+                        pane.focus_reset = None
                         await pane.recompose()
+                        reset = pane.focus_reset or reset
                         if pane_id == "#settings-detail-pane":
                             self._pending_detail_rebuilt = True
                 # A MouseDown already queued on a child's pump can capture that
@@ -4798,17 +4836,28 @@ class SettingsScreen(BaseAppScreen):
                 self.sweep_stale_mouse_capture()
                 if not getattr(self, "is_mounted", False):
                     return
+                # TASK-39169 review: a focus other than where Textual's reset
+                # put it is the user's own move, even after a reset.
+                moved_since_reset = reset is not None and self.focused is not reset[1]
+                if reset is None or moved_since_reset:
+                    self._pending_focus_reset_possible = False  # nothing reset it here
                 if self._focus_left_pending_origin():
                     # TASK-39135 review r12s-rev2: input keeps running while the
                     # panes rebuild, so a move can land mid-rebuild as well.
                     self._withdraw_pending_category_focus()
                     focus_id = None  # the user's focus stands
+                if parked:
+                    if reset is not None and reset[0] is not None and reset[0].id:
+                        focus_id = reset[0].id  # picked in the old panes meanwhile
+                    if self.focused is not None and (reset is None or moved_since_reset):
+                        focus_id = None  # the user's focus stands
                 category_value = self._pending_category_focus_value
                 if category_value is not None:
                     self._withdraw_pending_category_focus(keep_theme_list=True)
                     self._focus_category(category_value)
-                elif focus_id:
-                    self._restore_category_pane_focus(focus_id)
+                elif focus_id and not self._restore_category_pane_focus(focus_id) and parked:
+                    # The control went with no replacement: the rail row, not nothing.
+                    self._focus_category(self.active_category)
                 self._drain_pane_swap_callbacks()
                 # After a REFRESH, not inline: the hint compares the inspector
                 # body's virtual and container heights, and the pane it belongs
@@ -4856,7 +4905,9 @@ class SettingsScreen(BaseAppScreen):
           removal looks exactly like a move (reviews r12s-rev2 M-a, rev3).
         - In the panes: only after the detail pane was rebuilt, when an
           attached widget there can only be new content someone chose.
-        - Outside them: a move from an origin that is still attached.
+        - Outside them: any move away from the origin, even one the swap
+          removed (a pane opener); the swap rules out Textual's reset from
+          its own record of it (TASK-39169 review r13p-rev2).
         """
         origin, focused = self._pending_category_focus_from, self.focused
         if (
@@ -4869,7 +4920,7 @@ class SettingsScreen(BaseAppScreen):
             return False
         if self._in_category_panes(focused):
             return self._in_new_detail_pane(focused)
-        return origin is not None and origin.is_attached
+        return origin is not None
 
     def _focused_id_in_category_panes(self) -> str | None:
         """The focused widget's id, if this swap is about to destroy it.
@@ -4889,8 +4940,12 @@ class SettingsScreen(BaseAppScreen):
                 return focused.id
         return None
 
-    def _restore_category_pane_focus(self, focus_id: str) -> None:
-        """Re-focus ``focus_id`` if the rebuilt panes still contain it."""
+    def _restore_category_pane_focus(self, focus_id: str) -> bool:
+        """Re-focus ``focus_id`` if the rebuilt panes still contain it.
+
+        Returns:
+            Whether a control (``focus_id`` or its replacement) was focused.
+        """
         try:
             control = self.query_one(f"#{focus_id}")
         except QueryError:
@@ -4902,12 +4957,12 @@ class SettingsScreen(BaseAppScreen):
                 "settings-workspace-archive-undo": "settings-workspace-set-active",
             }.get(focus_id)
             if replacement is None:
-                return
+                return False
             try:
                 control = self.query_one(f"#{replacement}")
             except QueryError:
-                return
-        control.focus()
+                return False
+        self.set_focus(control)  # At once, as `_focus_category` (TASK-39169).
 
         def reveal() -> None:
             # The new pane has no final geometry when focus is restored.
@@ -4921,6 +4976,7 @@ class SettingsScreen(BaseAppScreen):
                 control.scroll_visible(animate=False, immediate=True)
 
         self.call_after_refresh(reveal)
+        return self.focused is control
 
     def _after_category_panes(self, callback: Callable[..., object], *args) -> None:
         """Run ``callback`` once the new category's panes are on screen.
@@ -24096,6 +24152,7 @@ class SettingsScreen(BaseAppScreen):
         region-scoped rebuilds a category switch now drives), so the pane can
         never render a stale category.
         """
+        self._detail_pane_category = self.active_category
         active_summary = self._active_summary()
         detail_pane_container = (
             Vertical
@@ -24191,7 +24248,9 @@ class SettingsScreen(BaseAppScreen):
         if self._single_pane_now() and not self._single_pane_list_open:
             selector = "#settings-single-pane-back"  # TASK-38953: rail hidden
         try:
-            self.query_one(selector, Button).focus()
+            # TASK-39169: at once, not `Button.focus()`, which defers to an app
+            # `call_later` and would override a key or click handled first.
+            self.set_focus(self.query_one(selector, Button))
         except QueryError:
             logger.debug("Unable to focus Settings category button: %s", category_value)
 

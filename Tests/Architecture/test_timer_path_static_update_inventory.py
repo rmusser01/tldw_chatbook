@@ -285,12 +285,15 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
     ),
     (
         "tldw_chatbook/Widgets/Console/console_composer_bar.py",
-        "ConsoleComposerBar.set_voice_status",
-        "chip",
+        "ConsoleComposerBar._sync_raw_cli_state",
+        "status",
     ): (
-        "NEEDS-LAYOUT: the voice chip's width is computed and assigned "
-        "inline on the same path (styles.width / display), so its box "
-        "changes with the content it is being handed."
+        "NOT-PER-TICK: equality-gated on `label == "
+        "self._raw_cli_status_visible` (task-24453), so the attach "
+        "reconcile's re-arming timer writes nothing while raw-CLI mode is "
+        "unchanged; a CHANGED label also flips the row's display, width "
+        "(w-auto / w-0) and height (h-1 / h-0) on the same path, so it "
+        "NEEDS-LAYOUT (TASK-39129)."
     ),
     (
         "tldw_chatbook/Widgets/Console/console_composer_bar.py",
@@ -658,6 +661,61 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "unchanged-selection guard, and a no-op while an inline editor is "
         "open (the method's own documented contract)."
     ),
+    # -- UI/Screens/plugins_screen.py (TASK-39129)
+    (
+        "tldw_chatbook/UI/Screens/plugins_screen.py",
+        "PluginsScreen._load",
+        "self.query_one('#plugins-scope', Static)",
+    ): (
+        "NOT-PER-TICK: the 0.5 s `_check_scope_generation` poll reaches "
+        "this only past `if generation != self._scope_generation`, i.e. "
+        "when the workspace registry's mutation_generation moved, and then "
+        "through the plugins-load worker; an unchanged scope repaints "
+        "nothing; the scope line wraps, so it keeps layout."
+    ),
+    (
+        "tldw_chatbook/UI/Screens/plugins_screen.py",
+        "PluginsScreen._load",
+        "self.query_one('#plugins-detail', Static)",
+    ): (
+        "NOT-PER-TICK: behind the same scope-generation gate as _load's "
+        "#plugins-scope row; detail copy changes height, so it keeps "
+        "layout."
+    ),
+    (
+        "tldw_chatbook/UI/Screens/plugins_screen.py",
+        "PluginsScreen._publish",
+        "self.query_one('#plugins-page', Static)",
+    ): (
+        "NOT-PER-TICK: behind the same scope-generation gate as _load's "
+        "#plugins-scope row."
+    ),
+    (
+        "tldw_chatbook/UI/Screens/plugins_screen.py",
+        "PluginsScreen._status",
+        "self.query_one('#plugins-status', Static)",
+    ): (
+        "NOT-PER-TICK: behind the same scope-generation gate as _load's "
+        "#plugins-scope row; status copy changes length, so it keeps "
+        "layout."
+    ),
+    (
+        "tldw_chatbook/UI/Screens/plugins_screen.py",
+        "PluginsScreen._render_details",
+        "self.query_one('#plugins-detail', Static)",
+    ): (
+        "NOT-PER-TICK: behind the same scope-generation gate as _load's "
+        "#plugins-scope row; detail copy changes height, so it keeps "
+        "layout."
+    ),
+    (
+        "tldw_chatbook/UI/Screens/plugins_screen.py",
+        "PluginsScreen._render_details",
+        "self.query_one('#plugins-readme', Static)",
+    ): (
+        "NOT-PER-TICK: behind the same scope-generation gate as _load's "
+        "#plugins-scope row."
+    ),
     # -- UI/Screens/settings_screen.py
     (
         "tldw_chatbook/UI/Screens/settings_screen.py",
@@ -748,6 +806,18 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "`if status != self._subscription_readiness_status`, so an "
         "unchanged subscription state repaints nothing."
     ),
+    # -- UI/Wizards/first_run_provider_detection.py (TASK-39129)
+    (
+        "tldw_chatbook/UI/Wizards/first_run_provider_detection.py",
+        "ProviderDetectionStep._refresh_endpoint_status",
+        "status",
+    ): (
+        "NOT-PER-TICK: ProviderStep's 0.25 s readiness tick reaches it only "
+        "through _refresh_auth_readiness, past the same `status != "
+        "self._subscription_readiness_status` gate as the row above; a "
+        "changed line keeps the default layout pass because it wraps and "
+        "its display follows its text."
+    ),
     # -- Widgets/Chat_Widgets/chat_approval_card.py
     (
         "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py",
@@ -822,6 +892,49 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "NOT-PER-TICK: two fixed strings behind set_batch's own "
         "unchanged-round early return (round id + phase + calls equality); "
         "an unchanged poll tick returns before the write."
+    ),
+    # TASK-39129: four more buddy-poll sites, all behind the poll's
+    # gate_key equality gate and then set_batch's unchanged-round guard.
+    (
+        "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py",
+        "ChatApprovalCard._save_presentation",
+        "state",
+    ): (
+        "NOT-A-WIDGET: `state` is `self._presentation_state`, the "
+        "caller-owned presentation dict (`dict[str, Any] | None`); "
+        "`state.update(identity=...)` is dict.update."
+    ),
+    (
+        "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py",
+        "ChatApprovalCard._sync_batch_apply",
+        "self.query_one('#approval-choices-hint', Static)",
+    ): (
+        "NOT-PER-TICK: behind set_batch's unchanged-round guard, as header "
+        "above; the hint's copy changes length, so it keeps layout."
+    ),
+    (
+        "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py",
+        "ChatApprovalCard._sync_control_layout",
+        "count_summary",
+    ): (
+        "NOT-PER-TICK: behind set_batch's unchanged-round guard, as header "
+        "above; the summary's display follows its text, so it keeps layout."
+    ),
+    (
+        "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py",
+        "ChatApprovalCard._update_mounted_single_row",
+        "withheld_scope",
+    ): (
+        "NOT-PER-TICK: behind set_batch's unchanged-round guard, as header "
+        "above."
+    ),
+    (
+        "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py",
+        "ChatApprovalCard.set_batch",
+        "self.query_one('#approval-request-summary', Static)",
+    ): (
+        "NOT-PER-TICK: after set_batch's own unchanged-round early return, "
+        "as title above."
     ),
     # -- Widgets/Chat_Widgets/chat_question_card.py
     (
@@ -1543,6 +1656,23 @@ EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
             "tldw_chatbook/UI/Wizards/first_run_provider_step.py",
             "ProviderStep",
             "_refresh_subscription_readiness",
+        ),
+        # TASK-39129: the provider step's slow loopback re-check only starts
+        # a quiet discovery worker; nothing it reaches repaints per tick.
+        (
+            "set_interval",
+            "tldw_chatbook/UI/Wizards/first_run_provider_detection.py",
+            "ProviderDetectionStep",
+            "_quiet_recheck",
+        ),
+        # TASK-39129: Plugins' 0.5 s workspace-scope poll reloads only when
+        # the registry's mutation_generation moved; its rows are below the
+        # PluginsScreen comment in CLASSIFIED_SITES.
+        (
+            "set_interval",
+            "tldw_chatbook/UI/Screens/plugins_screen.py",
+            "PluginsScreen",
+            "_check_scope_generation",
         ),
         # The deferral shim itself (lambda: app.call_later(update_db_sizes)):
         # the census records BOTH the shim spelling and the real callback's

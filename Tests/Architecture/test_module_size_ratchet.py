@@ -258,7 +258,13 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-08, TASK-39119 review (owner size waiver): +3, an anchorless wake or goal iteration saves its reply row first.
     # 2026-11-09, round-12 restack onto dev 3a6498ae14 (owner size waiver):
     # dev's 29,167 plus TASK-39138's +4 and TASK-39119's +5.
-    "tldw_chatbook/Chat/console_chat_controller.py": 28734,
+    # 2026-11-10, TASK-39159 (owner size waiver): 29176 -> 29183 (+7, exact),
+    # a wake or goal iteration whose chat moved during its reply save is refused.
+    # 2026-11-12, restack onto dev e0186fa10a (owner size waiver): dev's
+    # 28,734 plus TASK-39159's +8, measured.
+    # 2026-11-10, TASK-39155 (owner size waiver): 29183 -> 29184 (+1, exact),
+    # a session close in progress counts as an explicit cancellation.
+    "tldw_chatbook/Chat/console_chat_controller.py": 28743,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
@@ -590,7 +596,7 @@ _BUDGETS: dict[str, int] = {
     # checked after the rebuild, and moves into the rebuilt panes do not count.
     # 2026-11-07, review r12s-rev3 (owner waiver): +38, a focus that was in
     # the old panes keeps the landing; new detail-pane focus counts as a move.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35852,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver)
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35910,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver); 2026-11-10: +36 (exact measurement), a focus the user moves during a same-category pane rebuild or before a landing's deferred focus is kept (TASK-39169) (owner waiver); 2026-11-10: +17 (exact measurement), review r13p-rev1: Textual's focus reset is told from a user's move, and a removed control lands on its rail row (TASK-39169) (owner waiver); 2026-11-10: +5 (exact measurement), review r13p-rev2: a region removes inside its batch and a pane-opener origin counts (TASK-39169) (owner waiver)
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -964,7 +970,10 @@ _BUDGETS: dict[str, int] = {
     # watcher restyles the bar and its draft text, not its subtree: +9 lines.
     # TASK-36511.2 Qodo fold, 2026-11-05 (same waiver): 7198 -> 7202 (+4).
     # The focus watcher's docstring gains its Args section.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7202,
+    # TASK-39156, 2026-11-10 (same waiver): 7202 -> 7213 (+11), exact
+    # measurement. The focus watcher drops the other descendants' cached
+    # visual style when the bar's background moves.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7213,
     # TASK-33628.1 moves tab-close loss projection/copy into shared loss_inventory.
     # PR3303, 2026-10-31: explicit user size waiver; exact integrated measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.

@@ -3,6 +3,7 @@ id: TASK-35059
 title: 'Timer census rot: 13 unclassified repeating-clock .update() sites on dev'
 status: To Do
 created_date: 2026-10-14 20:03
+updated_date: 2026-11-10 18:16
 labels:
 - bug
 priority: medium
@@ -22,7 +23,7 @@ Tests/Architecture/test_timer_path_static_update_inventory.py is deterministical
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Reconciled by TASK-39129 (2026-11-10, base ae9f9e8d21): none of the 13 sites this task lists is reported by `Tests/Architecture/test_timer_path_static_update_inventory.py` any more; later tasks classified or rewrote them. The file's reds on that base were TASK-39129's (Plugins, provider detection, composer raw-CLI status, the stale voice-chip row, five buddy-poll approval-card sites; classified on TASK-39129's branch) and TASK-36191's (`ProjectIndexBindingCard._poll`). With TASK-39129's rows and a temporary stand-in for TASK-36191's, the file passes 17/17. Status left To Do (corrected 2026-11-10): its criterion still applies and is not met. Its 13 sites are no longer reported, but "test_timer_path_static_update_inventory.py green on dev" holds only once TASK-39129's rows reach dev and TASK-36191 handles `ProjectIndexBindingCard`; until then the file stays red on dev. Close it when that file passes on dev.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
