@@ -2113,6 +2113,10 @@ App.-wide-viewport #console-edit-thinking-modal {
   width: $ds-percent-85;
   max-width: $ds-size-170;
 }
+App.-wide-viewport #bug-report-dialog {
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
+}
 App.-wide-viewport #console-prompts-modal {
   width: $ds-percent-85;
   max-width: $ds-size-170;

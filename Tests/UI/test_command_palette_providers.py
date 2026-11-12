@@ -8,13 +8,15 @@
 # - All command palette provider classes must be defined in app.py
 #
 # Imports
+import asyncio
 import time
+import warnings
 from types import SimpleNamespace
 
 from Tests.private_profile import private_profile_test
 
 import pytest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 from typing import List
 
 # 3rd-party Libraries
@@ -435,8 +437,10 @@ class TestTabNavigationProvider:
         assert any("Switch to Tools & MCP" in text for text in tab_texts)
 
     @pytest.mark.asyncio
+    @private_profile_test
     async def test_palette_library_skills_command_opens_hidden_starter_route(
         self,
+        request,
     ):
         """The mounted Skills palette command bypasses Starter rail filtering."""
         from Tests.UI.app_factory import _build_test_app
@@ -454,6 +458,13 @@ class TestTabNavigationProvider:
         app = _build_test_app(
             config_overrides={"splash_screen": {"enabled": False}},
         )
+        # This checks mounted navigation, not the nonessential boot fleet.
+        # Deferred backfills/reconciliation can outlive a short route test
+        # and must not start native storage work this factory does not own.
+        app._schedule_deferred_startup_work = lambda: None
+        # The scheduler starts outside deferred startup and can still be
+        # acquiring Windows storage admission after the route workers finish.
+        app.scheduler_loop.run = AsyncMock()
         app.app_config["_first_run"] = False
         app.app_config.setdefault("splash_screen", {})["enabled"] = False
         app.app_config.setdefault("library", {}).setdefault("rail_state", {})[
@@ -496,6 +507,22 @@ class TestTabNavigationProvider:
             assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
             assert screen.query_one("#library-skills-canvas")
             assert not screen.query(f"#library-row-{LIBRARY_ROW_BROWSE_SKILLS}")
+            # The canvas mounts before its finite local-Skills reads finish.
+            # Await those owners before run_test cancels their waiters; a cold
+            # native storage admission can still be initializing in the thread.
+            unfinished = [
+                worker
+                for worker in app.workers
+                if screen in worker.node.ancestors_with_self and not worker.is_finished
+            ]
+            if unfinished:
+                await app.workers.wait_for_complete(unfinished)
+
+        # Cancellation stops Textual waiters before their native callbacks
+        # finish. Join this cold-start app's callbacks before profile teardown.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            await asyncio.get_running_loop().shutdown_default_executor(timeout=30)
 
     @pytest.mark.asyncio
     @private_profile_test
@@ -713,7 +740,7 @@ class TestQuickActionsProvider:
         async for hit in quick_actions_provider.discover():
             hits.append(hit)
 
-        assert len(hits) == 5  # Popular actions defined in discover method
+        assert len(hits) == 6  # Includes Report a bug.
         action_names = [hit.text for hit in hits]
         assert any("New Chat" in name for name in action_names)
         assert any("New Note" in name for name in action_names)
@@ -727,7 +754,7 @@ class TestQuickActionsProvider:
         async for hit in quick_actions_provider.search("quick"):
             hits.append(hit)
 
-        assert len(hits) == 6  # All actions defined in search method
+        assert len(hits) == 7  # Includes Report a bug.
         action_texts = [hit.text for hit in hits]
         assert any("New Chat Conversation" in text for text in action_texts)
         assert any("Import Media" in text for text in action_texts)
@@ -830,10 +857,12 @@ class TestSettingsProvider:
         async for hit in settings_provider.discover():
             hits.append(hit)
 
-        assert len(hits) == 3  # Popular settings defined in discover method
-        setting_names = [hit.text for hit in hits]
-        assert any("Open Settings Tab" in name for name in setting_names)
-        assert any("Open Config File" in name for name in setting_names)
+        assert {hit.text for hit in hits} == {
+            "Settings & Preferences: Backup & Restore",
+            "Settings & Preferences: Open Settings Tab",
+            "Settings & Preferences: Open Config File",
+            "Settings & Preferences: Show Database Stats",
+        }
 
     def test_open_settings_tab(self, settings_provider):
         """Test opening settings tab."""
@@ -955,15 +984,21 @@ class TestLibraryIngestProvider:
         return provider
 
     @pytest.mark.asyncio
-    async def test_search_ingest_returns_exactly_one_hit(self, library_ingest_provider):
-        """Searching for 'ingest' returns exactly one Library ingest hit."""
+    async def test_search_yields_each_matching_library_command(
+        self, library_ingest_provider
+    ):
+        """The all-matching test matcher exposes Import and Chunking Lab once."""
         hits = []
         async for hit in library_ingest_provider.search("ingest"):
             hits.append(hit)
 
-        assert len(hits) == 1
-        assert hits[0].text == "Library: Import…"
-        assert "Open Library" in hits[0].help
+        assert [hit.text for hit in hits] == [
+            "Library: Chunking Lab",
+            "Library: Import…",
+        ]
+        assert "Open Library" in hits[1].help
+        assert hits[0].command.args == ("open_chunking_lab",)
+        assert hits[1].command.args == ("open_library_ingest",)
 
     @pytest.mark.asyncio
     async def test_discover_includes_library_ingest(self, library_ingest_provider):
@@ -972,8 +1007,10 @@ class TestLibraryIngestProvider:
         async for hit in library_ingest_provider.discover():
             hits.append(hit)
 
-        assert len(hits) == 1
-        assert hits[0].text == "Library: Import…"
+        assert [hit.text for hit in hits] == [
+            "Library: Chunking Lab",
+            "Library: Import…",
+        ]
 
     @pytest.mark.asyncio
     async def test_search_unmatched_query_returns_no_hits(
@@ -1134,12 +1171,12 @@ class TestCommandPaletteIntegration:
 
             # Check methods are callable
             # Check if the provider has the correct methods
-            assert callable(provider.search), (
-                f"{provider_class.__name__}.search is not callable"
-            )
-            assert callable(provider.discover), (
-                f"{provider_class.__name__}.discover is not callable"
-            )
+            assert callable(
+                provider.search
+            ), f"{provider_class.__name__}.search is not callable"
+            assert callable(
+                provider.discover
+            ), f"{provider_class.__name__}.discover is not callable"
 
     @pytest.mark.asyncio
     async def test_provider_discovery_matches_textual_contract(self, mock_app):
@@ -1168,9 +1205,9 @@ class TestCommandPaletteIntegration:
                 assert hits == [NotImplemented]
                 continue
 
-            assert len(hits) > 0, (
-                f"{provider.__class__.__name__} should return at least one hit"
-            )
+            assert (
+                len(hits) > 0
+            ), f"{provider.__class__.__name__} should return at least one hit"
 
             for hit in hits:
                 assert isinstance(hit, Hit), "All items should be Hit objects"
@@ -1227,9 +1264,9 @@ class TestCommandPaletteIntegration:
 
                 # Each provider should handle search gracefully
                 # (may return 0 or more hits, but shouldn't error)
-                assert isinstance(hits, list), (
-                    f"{provider.__class__.__name__} search should return list-like results"
-                )
+                assert isinstance(
+                    hits, list
+                ), f"{provider.__class__.__name__} search should return list-like results"
 
     def test_provider_error_handling(self, mock_app):
         """Test that providers handle errors gracefully."""
@@ -1281,9 +1318,9 @@ class TestCommandPaletteIntegration:
             # Should call notify with error
             provider.app.notify.assert_called()
             call_args = provider.app.notify.call_args
-            assert call_args[1].get("severity") == "error", (
-                f"Expected error severity for {provider.__class__.__name__}.{method_name}"
-            )
+            assert (
+                call_args[1].get("severity") == "error"
+            ), f"Expected error severity for {provider.__class__.__name__}.{method_name}"
             assert "Failed" in call_args[0][0] or "error" in call_args[0][0].lower()
 
 
@@ -1324,9 +1361,9 @@ class TestCommandPalettePerformance:
             end_time = time.time()
 
             # Discover should complete in under 100ms
-            assert (end_time - start_time) < 0.1, (
-                f"{provider.__class__.__name__}.discover() took too long"
-            )
+            assert (
+                end_time - start_time
+            ) < 0.1, f"{provider.__class__.__name__}.discover() took too long"
 
     @pytest.mark.asyncio
     async def test_search_performance(self, mock_app):
@@ -1356,9 +1393,9 @@ class TestCommandPalettePerformance:
             end_time = time.time()
 
             # Search should complete in under 100ms
-            assert (end_time - start_time) < 0.1, (
-                f"{provider.__class__.__name__}.search() took too long"
-            )
+            assert (
+                end_time - start_time
+            ) < 0.1, f"{provider.__class__.__name__}.search() took too long"
 
 
 #######################################################################################################################
@@ -1374,9 +1411,9 @@ def extract_hit_texts(hits: List[Hit]) -> List[str]:
 def assert_hit_contains_text(hits: List[Hit], expected_text: str):
     """Helper function to assert that hits contain expected text."""
     hit_texts = extract_hit_texts(hits)
-    assert any(expected_text in text for text in hit_texts), (
-        f"Expected '{expected_text}' in hits: {hit_texts}"
-    )
+    assert any(
+        expected_text in text for text in hit_texts
+    ), f"Expected '{expected_text}' in hits: {hit_texts}"
 
 
 # End of test_command_palette_providers.py

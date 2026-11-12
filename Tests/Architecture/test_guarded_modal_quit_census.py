@@ -61,6 +61,8 @@ _SAFE_REQUESTS = frozenset({"request_safe_cancel", "action_request_safe_cancel"}
 #: written, with its Ctrl+Q decision. Add a row for a new guard: prefer
 #: ``CONFIRM_QUIT``; an exemption must say why quitting loses nothing.
 GUARDED_CLOSE_DECISIONS: dict[str, str] = {
+    "tldw_chatbook/Widgets/bug_report_dialog.py:"
+    "BugReportDialog._perform_safe_cancel": CONFIRM_QUIT,
     # --- Refuse to close while an operation runs: Ctrl+Q says "still
     # working" and stays (refuse_quit_while_working, TASK-33622.15).
     "tldw_chatbook/Widgets/Console/console_fork_chat_modal.py:"
@@ -488,7 +490,7 @@ def find_guards(classes: dict[str, _Class]) -> dict[str, Guard]:
 
 def _package_sources() -> dict[str, str]:
     return {
-        str(path.relative_to(REPO_ROOT)): path.read_text(encoding="utf-8")
+        path.relative_to(REPO_ROOT).as_posix(): path.read_text(encoding="utf-8")
         for path in sorted(PACKAGE.rglob("*.py"))
     }
 
@@ -753,3 +755,10 @@ def test_negative_control_the_live_census_reaches_known_guards() -> None:
         "tldw_chatbook/Widgets/Console/console_settings_modal.py:ConsoleSettingsModal"
         in settings.modals
     )
+
+
+def test_bug_report_close_has_a_ctrl_q_decision() -> None:
+    key = "tldw_chatbook/Widgets/bug_report_dialog.py:BugReportDialog._perform_safe_cancel"
+    assert GUARDED_CLOSE_DECISIONS[key] == CONFIRM_QUIT
+    guard = _package_guards()[key]
+    assert not guard.modals_without_confirm_quit

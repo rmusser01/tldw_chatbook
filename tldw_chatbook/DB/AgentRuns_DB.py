@@ -2873,6 +2873,64 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             ).fetchone()
         return self._metadata_row_to_dict(row) if row else None
 
+    def get_report_event_tail(self, conversation_id: str, *, limit: int = 500) -> tuple[dict, ...]:
+        """Read bounded step facts without hydrating task, result, or step bodies."""
+        import time
+
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("report agent event limit")
+        with self.connection() as conn:
+            previous_busy = int(conn.execute("PRAGMA busy_timeout").fetchone()[0])
+            deadline = time.monotonic() + 5.0
+            work = 0
+
+            def stop_read():
+                nonlocal work
+                work += 1000
+                return int(work >= 1_000_000 or time.monotonic() >= deadline)
+
+            try:
+                conn.set_progress_handler(stop_read, 1000)
+                conn.execute("PRAGMA busy_timeout = 200")
+                rows = conn.execute(
+                    """WITH scoped_steps AS (
+                         SELECT runs.rowid AS run_order, runs.id AS run_id,
+                                runs.parent_run_id, runs.status AS run_status,
+                                runs.agent_kind, runs.resolved_provider AS provider,
+                                runs.resolved_model AS model, steps.seq AS step_index,
+                                steps.created_at AS stored_at,
+                                CASE WHEN length(CAST(steps.payload AS BLOB)) <= 65536
+                                          AND json_valid(steps.payload)
+                                     THEN steps.payload END AS bounded
+                           FROM agent_run_steps AS steps
+                           JOIN agent_runs AS runs ON runs.id = steps.run_id
+                          WHERE runs.conversation_id = ?
+                     )
+                     SELECT run_id, parent_run_id, run_status, agent_kind, provider, model,
+                            step_index,
+                            CASE WHEN json_type(bounded, '$.owner_seq') = 'integer'
+                                      AND json_extract(bounded, '$.owner_seq') >= 0
+                                 THEN json_extract(bounded, '$.owner_seq')
+                                 ELSE step_index END AS seq,
+                            NULLIF(substr(json_extract(bounded, '$.created_at'), 1, 64), '') AS created_at,
+                            stored_at,
+                            COALESCE(substr(json_extract(bounded, '$.kind'), 1, 128), 'unavailable') AS event_kind,
+                            substr(json_extract(bounded, '$.tool_name'), 1, 128) AS tool_name,
+                            COALESCE(substr(json_extract(bounded, '$.status'), 1, 128), 'unavailable') AS status,
+                            COALESCE(substr(json_extract(bounded, '$.tool_outcome'), 1, 128), 'unavailable') AS tool_outcome,
+                            CASE WHEN json_extract(bounded, '$.kind') = 'model_error'
+                                      AND json_extract(bounded, '$.sensitivity') = 'diagnostic'
+                                 THEN NULLIF(substr(json_extract(bounded, '$.summary'), 1, 200), '')
+                                 END AS diagnostic_error
+                       FROM scoped_steps
+                      ORDER BY run_order DESC, seq DESC, step_index DESC LIMIT ?""",
+                    (conversation_id, limit),
+                ).fetchall()
+            finally:
+                conn.set_progress_handler(None, 0)
+                conn.execute(f"PRAGMA busy_timeout = {previous_busy}")
+        return tuple(dict(row) for row in reversed(rows))
+
     def list_runs(
         self,
         conversation_id: str,

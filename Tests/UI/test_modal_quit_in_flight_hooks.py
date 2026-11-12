@@ -69,6 +69,7 @@ from tldw_chatbook.Widgets.Settings_Widgets.personal_context_review_modal import
 
 def _stand_in(**state: object) -> tuple[SimpleNamespace, list[tuple[str, dict]]]:
     notices: list[tuple[str, dict]] = []
+    state.setdefault("_has_unsaved", lambda: False)
     screen = SimpleNamespace(
         notify=lambda message, **kwargs: notices.append((str(message), kwargs)),
         **state,

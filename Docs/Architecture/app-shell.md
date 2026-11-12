@@ -23,7 +23,7 @@ This document describes the `TldwCli` Textual application: startup phases, the s
 
 `TldwCli` composes `TextualAppGuards` before `App`. The aggregate in `Utils/text_selection_crash_guard.py` includes the Textual 8.x text-selection crash guard, detached-focus recovery, input activity tracking, and thread-worker context isolation.
 
-On native Windows, its `get_driver_class()` adapts Textual's default `WindowsDriver` to enable `ENABLE_WINDOW_INPUT` after every application-mode start, including resume (TASK-37173). Textual 8.2.8 enables VT input but omits this resize-reporting flag, leaving screens at their old dimensions after a terminal resize. The adapter preserves the remaining input flags and upstream console restoration; constructor-supplied and environment-selected drivers, including served transports, are unchanged. Unix does not import the Windows adapter path. Native before/after evidence and a reproducible Logs probe live in `qa/windows-terminal-resize-2026-10-28/`.
+On native Windows, its `get_driver_class()` adapts Textual's default `WindowsDriver` to enable `ENABLE_WINDOW_INPUT` after every application-mode start, including resume (TASK-40260). Textual 8.2.8 enables VT input but omits this resize-reporting flag, leaving screens at their old dimensions after a terminal resize. The adapter preserves the remaining input flags and upstream console restoration; constructor-supplied and environment-selected drivers, including served transports, are unchanged. Unix does not import the Windows adapter path. Native before/after evidence and a reproducible Logs probe live in `qa/windows-terminal-resize-2026-10-28/`.
 
 Construction is phased and timed (`self._startup_phases`, histogram `app_startup_phase_duration_seconds`):
 
@@ -38,6 +38,22 @@ App-level state includes the DB handles (`media_db`, `prompts_db`, `subscription
 `action_quit` runs as `run_worker(group="application-quit", exclusive=True, exit_on_error=False)`, consults the current screen's `confirm_quit`/`prepare_for_quit` and the console-runtime quit confirmation; any pre-quit failure keeps the app alive with a notify.
 
 ## Navigation system
+
+### Bug report action
+
+`TldwCli.action_report_bug()` defers opening until palette dismissal and owns one
+`Widgets/bug_report_dialog.py::BugReportDialog`. Quick Actions search/discovery,
+`UI/Logs_Window.py`, and canonical Settings About call the same action without
+navigation. Duplicate requests focus the current report. The modal uses shared
+safe-dismiss/focus and quit-discard contracts; no draft is persisted.
+
+`Utils/bug_report_capture.py` freezes existing runtime/workspace/session owners,
+then collects bounded evidence off the loop without Console initialization.
+Timed-out thread tasks remain app-owned until retirement, including across
+close/reopen. `Utils/bug_report.py` renders and validates the exact edited
+clipboard candidate. Changed sanitization requires another review; client
+clipboard requests have no delivery acknowledgement. See
+[ADR-358](../../backlog/decisions/358-bug-report-evidence-and-sharing.md).
 
 Three layers resolve a route string to a screen:
 

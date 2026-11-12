@@ -49,6 +49,7 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
         self._binding_version = 0
         self._catalog_binding_id = request.binding.binding_id
         self._refreshing_tools = False
+        self._launch_result: GoalSnapshot | None = None
 
     def compose(self) -> ComposeResult:
         p = self.request.policy
@@ -298,6 +299,23 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
             or (self.discover_tools is not None and self._catalog_binding_id is None)
         )
 
+    def _finish_launch(self) -> None:
+        """Deliver a completed launch only when this exact modal is on top."""
+        if (
+            self._launch_result is None
+            or not self.is_mounted
+            or self.app.screen is not self
+        ):
+            return
+        result, self._launch_result = self._launch_result, None
+        self.dismiss(result)
+
+    def on_screen_resume(self) -> None:
+        self.call_after_refresh(self._finish_launch)
+
+    def on_unmount(self) -> None:
+        self._launch_result = None
+
     @work(exclusive=True, group="goal-launch")
     async def launch(self) -> None:
         try:
@@ -353,7 +371,7 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
                         tuple(arguments),
                         tuple(inputs),
                     )
-                    if not self.is_current or not all(
+                    if not self.is_mounted or not all(
                         self.query(f"#goal-{name}")
                         for name in (
                             "selected-tools",
@@ -400,10 +418,11 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
                     self.query("#goal-selected-checks").first().scroll_visible()
                     return
             result = await self._start(self._submitted, self.launch_id)
-            if self.is_current:
-                self.dismiss(result)
+            if self.is_mounted:
+                self._launch_result = result
+                self._finish_launch()
         except Exception as exc:  # noqa: BLE001 - preserve a recoverable saved launch
-            if not self.is_current or not self.query("#goal-setup-error"):
+            if not self.is_mounted or not self.query("#goal-setup-error"):
                 return
             self.query("#goal-setup-error").first(Static).update(
                 str(exc)
@@ -415,5 +434,5 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
             from tldw_chatbook.Widgets.quit_while_working import forget_quit_refusal
 
             forget_quit_refusal(self)
-            if self.is_mounted and self.is_current:
+            if self.is_mounted:
                 self._update_controls()

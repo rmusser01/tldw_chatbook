@@ -172,6 +172,7 @@ WIDE_TIER_WIDTH_PERCENT = 85
 #: from biggest cap to smallest.
 MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
     # cap 170 -- base width >= 100
+    ("#bug-report-dialog", 170, "Widgets/bug_report_dialog.py"),
     ("#console-hooks-review", 170, "Widgets/Console/console_hooks_review_modal.py"),
     (
         "#console-inspector-modal",

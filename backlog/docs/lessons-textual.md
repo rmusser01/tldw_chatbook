@@ -405,6 +405,16 @@ visible map, each such read arranges the whole screen on every scroll frame
 round 2 measured 5 full arranges in 5 scroll frames at the base, for a cost chip past the
 strip's edge and for a collapsed strip.
 
+**Recurred during TASK-37173 shared-check repairs, 2026-10-28.** Adding the
+missing goal-setup quit hook exposed the same visibility/ownership distinction:
+launch completion saw `is_current` True under the quit prompt, and plain
+`dismiss()` popped that prompt instead of its own modal. The mounted regression
+`test_goal_completion_under_quit_prompt_survives_wait[launch]` failed at the
+prompt-preservation assertion. Completion now requires `app.screen is self`,
+retains its result while covered and retries after `ScreenResume`; configure and
+error updates remain owned by the mounted modal. All three covered-completion
+cases pass. Use exact top-screen identity for dismissal, never `is_current`.
+
 ## A pane whose content just fits flips its scrollbar on focus — reserve the gutter
 
 **TASK-33007.6, 2026-10-04.** Folding the rarely used Providers & Models controls

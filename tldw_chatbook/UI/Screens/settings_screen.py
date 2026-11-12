@@ -23570,6 +23570,7 @@ class SettingsScreen(BaseAppScreen):
             with Vertical(id="settings-about-card", classes="settings-focus-card"):
                 yield self._detail_row("Version", get_app_version())
                 yield self._detail_row("License", "AGPLv3+")
+                yield Button("Report a bug…", id="settings-about-report-bug", action="app.report_bug")
                 # open_links=False: clicks go through _handle_about_link so
                 # the policy (browser + notify) is explicit and testable.
                 yield Markdown(

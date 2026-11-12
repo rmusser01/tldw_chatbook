@@ -15,7 +15,12 @@ import re
 import sys
 from pathlib import Path
 
-from python_style_inventory import inventory_styles
+# Bind both imports to this script's checkout, including isolated probes and
+# Python safe-path execution, which omits the script directory from sys.path.
+ROOT = Path(__file__).resolve().parents[2]
+sys.path[:0] = [str(Path(__file__).resolve().parent), str(ROOT)]
+
+from python_style_inventory import inventory_styles  # noqa: E402 - script-owned path above
 
 # This script has NO argument parser ON PURPOSE: any invocation re-pins the
 # baseline (an accidental `--help` run executed the pin during ADR-161 task 11
@@ -25,11 +30,8 @@ if len(sys.argv) != 1:
         "refusing: this script takes no arguments (it re-pins the ratchet baseline); pass none to pin"
     )
 
-ROOT = Path(__file__).resolve().parents[2]
 CSS = ROOT / "tldw_chatbook/css"
 PKG = ROOT / "tldw_chatbook"
-# Bind the manifest to this checkout, including isolated pin-command tests.
-sys.path.insert(0, str(ROOT))
 
 _COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _DIM = re.compile(

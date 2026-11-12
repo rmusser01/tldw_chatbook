@@ -16,6 +16,46 @@ Logs shows application logs and diagnostics (on-screen subtitle:
 
 ## Sharing logs safely
 
+### Report a bug
+
+Choose **Report a bug…** in **Ctrl+P**, the Logs action bar, or **Settings →
+About**. Describe the problem, optionally add reproduction steps and expected/
+actual behavior, then **Generate** an editable Markdown report. Review and remove
+anything private before **Copy report**. Share the text manually in a GitHub
+issue, message, or paste site; the app does not upload it.
+
+Application-wide session logs and Console events, timing, and errors are included
+by default when retained. The dialog names the selected local Console
+conversation; open another conversation in Console before starting reporting to
+change it. Its title is shown locally and omitted from automatic report output.
+Logs include background activity across the application, including other
+workspaces; they are not proof of a connection to that conversation. Either
+evidence source can be unchecked. Reporting also works without Console history.
+
+**Include redacted tool inputs/results** starts off. These fields use the stored
+source privacy decisions, followed by diagnostic redaction. Tool results may
+themselves contain file, document, or other-conversation excerpts. Message bodies,
+reasoning, and provider exchanges are excluded from this trace projection;
+ordinary retained logs can contain diagnostic prose. Redaction can miss private
+details, so review the entire report before sharing.
+
+Evidence is frozen when collected: at most 500 retained log entries and 500
+Console facts, with explicit missing/truncated-source notices. Tool opt-in uses
+that same excerpt. A source's five-second presentation deadline leaves available
+evidence usable. Only current-session logs are available; previous-session crash
+recovery is not included. Existing 2,000-character log-entry limits cannot be
+undone. Exception traces appear only when present in retained logs. Source clocks
+and unknown timing stay labelled as such.
+
+The complete report, including edits, must fit **60,000 UTF-8 bytes**. Oversized
+edits stay visible and block copying. If final redaction changes edited text,
+review it and press Copy again. **Copy requested** means the app asked your client
+clipboard to copy; paste into your destination to verify delivery. If clipboard
+delivery is unavailable, the review text remains selectable. Closing asks before
+discarding your memory-only description or review edits.
+
+### Existing log copy actions
+
 Both copy actions preserve diagnostic text, with credentials and recognizable
 personally identifiable information (PII) masked:
 

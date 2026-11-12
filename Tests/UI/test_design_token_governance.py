@@ -113,7 +113,7 @@ def test_all_referenced_ds_tokens_are_defined(request) -> None:
         text = _strip_comments(module.read_text(encoding="utf-8"))
         referenced = set(_TOKEN_RE.findall(text)) - defined
         if referenced:
-            offenders[str(module.relative_to(CSS_ROOT))] = sorted(referenced)
+            offenders[module.relative_to(CSS_ROOT).as_posix()] = sorted(referenced)
 
     assert not offenders, (
         "Undefined $ds-* tokens referenced (define them in "
@@ -175,7 +175,7 @@ def test_hex_literals_are_ratcheted_outside_token_definitions(request) -> None:
     CI nor free up allowance for a real hardcoded color.
     """
     for module in _source_modules():
-        relative = str(module.relative_to(CSS_ROOT))
+        relative = module.relative_to(CSS_ROOT).as_posix()
         if module == TOKENS_FILE:
             continue
         text = _strip_comments(module.read_text(encoding="utf-8"))
@@ -199,7 +199,7 @@ def test_hex_ratchet_ignores_comments(request) -> None:
 def test_new_sheets_must_use_spacing_tokens(request) -> None:
     """Modules added after ADR-150 may not hardcode numeric padding/margin."""
     for module in _source_modules():
-        relative = str(module.relative_to(CSS_ROOT))
+        relative = module.relative_to(CSS_ROOT).as_posix()
         if relative in _LEGACY_SHEETS:
             continue
         matches = _RAW_SPACING_RE.findall(
@@ -223,7 +223,7 @@ def test_active_css_extension_is_in_hex_floor(request, tmp_path, monkeypatch):
     assert sheet in _source_modules()
     assert unused not in _source_modules()
     with pytest.raises(
-        AssertionError, match=re.escape(str(sheet.relative_to(tmp_path)))
+        AssertionError, match=re.escape(sheet.relative_to(tmp_path).as_posix())
     ):
         test_hex_literals_are_ratcheted_outside_token_definitions.__wrapped__(request)
 
@@ -236,7 +236,9 @@ async def test_section_header_preserves_global_and_stats_computed_geometry(reque
     from textual.containers import Vertical
     from textual.widgets import Label
 
-    source = "\n".join((CSS_ROOT / name).read_text() for name in CSS_MODULES)
+    source = "\n".join(
+        (CSS_ROOT / name).read_text(encoding="utf-8") for name in CSS_MODULES
+    )
 
     class HeaderProbe(App):
         CSS = source

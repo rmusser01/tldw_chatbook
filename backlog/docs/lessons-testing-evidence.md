@@ -24943,3 +24943,11 @@ During the PR3036 audio-meter repair, Path.read_text() used the Windows locale r
 ### A tool session ID is not an operating-system PID
 
 PR3036 native validation17 (2026-11-07) returned exec session 82824. The initial postflight audit incorrectly passed that number to OpenProcess and counted its absence as authenticated process closure. The actual guarded observer receipt identified PID 37684; the captured product, worker and launcher identified 43112, 41036 and 26956. Preserve the erroneous seal and bind an explicit correction. Obtain process identities from authenticated run/guard receipts and retain their lineage/creation evidence; a tool session identifier is only a handle for polling tool output and its absence as a PID proves nothing.
+
+## A mounted canvas can precede the native reads its screen still owns (TASK-37173, 2026-10-28)
+
+**Incident.** The palette-to-Library Skills test passed every route assertion but failed profile retirement: cancellation of its Textual workers left native callbacks in cold storage admission. A thread snapshot found Skills list/context and trust-posture calls waiting on the same native authority initialization. Skipping unrelated deferred boot jobs did not settle those screen-owned calls; a diagnostic stack-print probe even passed by changing the timing.
+
+**What to do.** Before closing a short mounted destination test, await its finite workers using the current screen's membership in `worker.node.ancestors_with_self` and `app.workers.wait_for_complete(unfinished)`. Keep app-wide long-running workers outside that set. A canvas mount proves navigation, not completion of background reads; a logging probe that happens to pass is not a cleanup condition. The final test passes with the native retirement checks unchanged.
+
+**PR #3494 follow-up.** The same route assertions passed on Windows while the shared teardown still refused to reset the profile. An executor stack after the Skills workers finished showed the scheduler acquiring Windows storage admission. The scheduler starts independently of deferred startup, so this navigation test stubs it explicitly. The test also joins native callbacks with its own deadline after the app closes, before the shared profile fixture runs. The isolated Windows case passed through teardown with the shared fixture's deadline intact.

@@ -386,6 +386,7 @@ from tldw_chatbook.app_service_wiring import (
 
 # TASK-33011: TldwCli's lifecycle, shutdown and quit flow lives in
 # ``app_lifecycle.py`` (``LifecycleMixin``), a base class of ``TldwCli``.
+from tldw_chatbook.app_bug_report import BugReportActions
 from tldw_chatbook.app_lifecycle import LifecycleMixin, _DIAGNOSTICS_COMPONENT_APP
 from tldw_chatbook.app_navigation import NavigationMixin
 
@@ -818,6 +819,7 @@ class TldwCli(
     LifecycleMixin,
     NavigationMixin,
     FeatureGlueMixin,
+    BugReportActions,
     ThemeVariableDefaultsMixin,  # TASK-33003.6 ruling 15: guard-name fallback
     App[None],
 ):  # Specify return type for run() if needed, None is common
@@ -2260,9 +2262,8 @@ class TldwCli(
         if not hasattr(self, "_log_records"):
             self._log_records = deque(maxlen=MAX_LOG_RECORDS)
 
-        # Add the persistent handler to the root logger. It shares the private
-        # file's single redaction pass (PERF-03; see LogsBufferHandler).
-        if not hasattr(self, "_persistent_log_handler"):
+        # Share the private file's redaction pass (PERF-03; see LogsBufferHandler).
+        if getattr(self, "_persistent_log_handler", None) is None:
             self._persistent_log_handler = LogsBufferHandler(self)
             logging.getLogger().addHandler(self._persistent_log_handler)
             logger.info("Persistent logging handler set up for screen navigation")
@@ -5252,9 +5253,8 @@ class TldwCli(
                 route.load_screen_class()
             except Exception as exc:
                 self.loguru_logger.debug(
-                    "Screen pre-import failed (route={}, error_type={})",
-                    route.screen_name,
-                    type(exc).__name__,
+                    f"Screen pre-import failed (route={route.screen_name}, "
+                    f"error_type={type(exc).__name__})"
                 )
             previous_cost = time.monotonic() - started
         freeze_long_lived_heap("screen_preimport")  # ADR-198: imported screens are long-lived
@@ -5369,8 +5369,8 @@ class TldwCli(
             return resolve_screen_route(self._resolve_initial_shell_route())
         except Exception as exc:
             self.loguru_logger.debug(
-                "Initial-screen pre-import route resolution failed (error_type={})",
-                type(exc).__name__,
+                "Initial-screen pre-import route resolution failed "
+                f"(error_type={type(exc).__name__})"
             )
             return None
 

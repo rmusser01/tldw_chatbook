@@ -238,6 +238,8 @@ Do not reuse numbers.
 | [ADR-282: Opt-in Console OS notification dispatch](282-console-os-notification-dispatch.md) | Accepted | Separate default-off desktop channel with fixed argv, bounded literal identity, content-free diagnostics, and timeout ownership through orderly process exit. |
 | [ADR-286](286-console-prompt-mix-ins.md) | Accepted | Add literal Before/After Mix-in library artifacts through the existing composer Prompts button, with chat-owned selections, exact retry snapshots and current-send-only caching semantics. |
 
+| [ADR-358: Bug report evidence and sharing](358-bug-report-evidence-and-sharing.md) | Accepted for implementation planning | Copy one bounded, user-reviewed Markdown report from retained logs and governed Console evidence, with diagnostic facts by default and redacted tool content only by opt-in. |
+
 ### Console approval resync references
 
 | Decision | Status | Scope |

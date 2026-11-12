@@ -486,13 +486,29 @@ class TabNavigationProvider(Provider):
             self.app.notify(f"Failed to switch tab: {e}", severity="error")
 
 
-#: task-18812 / ADR-071: the command-palette entry for the Console focus
-#: toggle -- one tuple reused by both QuickActionsProvider lists so the
-#: command text, action id, and help string cannot drift apart.
 FOCUS_TOGGLE_PALETTE_ENTRY = (
     "Quick Actions: Toggle Focus Mode",
     "toggle_focus_mode",
     "Hide or restore the Console's nav bar and header (Ctrl+Shift+F)",
+)
+
+_QUICK_ACTIONS = {
+    "new_chat": ("Quick Actions: New Chat Conversation", "Start a new chat conversation"),
+    "new_character": (
+        "Quick Actions: New Character Chat",
+        "Start a new character-based conversation",
+    ),
+    "new_note": ("Quick Actions: New Note", "Create a new note"),
+    "import_media": ("Quick Actions: Import Media File", "Import a new media file for processing"),
+    "search_all": ("Quick Actions: Search All Content", "Search across all content"),
+    FOCUS_TOGGLE_PALETTE_ENTRY[1]: (FOCUS_TOGGLE_PALETTE_ENTRY[0], FOCUS_TOGGLE_PALETTE_ENTRY[2]),
+    "report_bug": (
+        "Quick Actions: Report a bug…",
+        "Describe an issue, review retained diagnostics and copy a report",
+    ),
+}
+_POPULAR_QUICK_ACTIONS = (
+    "new_chat", "new_note", "search_all", "import_media", "toggle_focus_mode", "report_bug"
 )
 
 
@@ -506,32 +522,7 @@ class QuickActionsProvider(Provider):
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
 
-        quick_actions = [
-            (
-                "Quick Actions: New Chat Conversation",
-                "new_chat",
-                "Start a new chat conversation",
-            ),
-            (
-                "Quick Actions: New Character Chat",
-                "new_character",
-                "Start a new character-based conversation",
-            ),
-            ("Quick Actions: New Note", "new_note", "Create a new note"),
-            (
-                "Quick Actions: Import Media File",
-                "import_media",
-                "Import a new media file for processing",
-            ),
-            (
-                "Quick Actions: Search All Content",
-                "search_all",
-                "Search across all content",
-            ),
-            FOCUS_TOGGLE_PALETTE_ENTRY,
-        ]
-
-        for command_text, action_id, help_text in quick_actions:
+        for action_id, (command_text, help_text) in _QUICK_ACTIONS.items():
             score = matcher.match(command_text)
             if score > 0:
                 yield Hit(
@@ -542,27 +533,8 @@ class QuickActionsProvider(Provider):
                 )
 
     async def discover(self) -> Hits:
-        popular_actions = [
-            (
-                "Quick Actions: New Chat Conversation",
-                "new_chat",
-                "Start a new chat conversation",
-            ),
-            ("Quick Actions: New Note", "new_note", "Create a new note"),
-            (
-                "Quick Actions: Search All Content",
-                "search_all",
-                "Search across all content",
-            ),
-            (
-                "Quick Actions: Import Media File",
-                "import_media",
-                "Import a new media file for processing",
-            ),
-            FOCUS_TOGGLE_PALETTE_ENTRY,
-        ]
-
-        for command_text, action_id, help_text in popular_actions:
+        for action_id in _POPULAR_QUICK_ACTIONS:
+            command_text, help_text = _QUICK_ACTIONS[action_id]
             yield Hit(
                 1.0,
                 command_text,
@@ -598,6 +570,8 @@ class QuickActionsProvider(Provider):
                 )
             elif action_id == FOCUS_TOGGLE_PALETTE_ENTRY[1]:
                 self.app.action_toggle_focus_mode()
+            elif action_id == "report_bug":
+                self.app.action_report_bug()
         except Exception as e:
             self.app.notify(f"Failed to execute quick action: {e}", severity="error")
 
