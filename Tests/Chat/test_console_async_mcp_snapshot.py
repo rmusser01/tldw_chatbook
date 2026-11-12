@@ -738,16 +738,15 @@ async def test_actual_screen_wiring_prepares_native_mcp_sources_off_ui_loop(
     ],
 )
 async def test_actual_wired_preparation_refuses_drift_without_turn_or_draft_loss(
-    wired_case, change
+    wired_composer_case, change
 ):
-    from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleDraftStash
-
-    case = wired_case
+    case = wired_composer_case
     _loop_projection(case)
     runtime = case.screen._console_runtime()
+    case.composer.load_draft("owning draft")
     case.store.set_session_draft(case.session.id, "owning draft")
     case.store.set_session_one_shot_prefill(case.session.id, "prefill")
-    stash = ConsoleDraftStash(segments=[], text="owning draft", has_paste=False)
+    stash = None if change == "draft" else case.composer.capture_draft_for_send()
     queue = case.screen._prompt_queue
     if change == "attachment":
         from tldw_chatbook.Chat.attachment_core import PendingAttachment
@@ -760,7 +759,7 @@ async def test_actual_wired_preparation_refuses_drift_without_turn_or_draft_loss
             text_content="captured text",
         )
         assert case.store.add_pending_attachment(case.session.id, attachment)
-    probe = _MaximumProbe(case.source, case.permissions, hold=True)
+    probe = _PermissionProbe(case.source, case.permissions)
     with probe.installed():
         task = asyncio.create_task(
             queue._launch_chain_async(
@@ -771,14 +770,20 @@ async def test_actual_wired_preparation_refuses_drift_without_turn_or_draft_loss
             await catalog_controls._worker_entered(probe, task)
             assert not runtime.has_custodied_turns()
             if change == "cancel":
-                case.service._maintenance_close_admission()
+                from tldw_chatbook.Chat.console_preparation_reads import (
+                    preparation_reads_for,
+                )
+
+                (read,) = preparation_reads_for(
+                    runtime._preparation_reads, case.session.id
+                )
                 task.cancel()
                 await asyncio.sleep(0)
                 task.cancel()
                 await asyncio.sleep(0)
-                assert not task.done()
-                assert not await case.service._maintenance_drain(
-                    time.monotonic() + 0.03
+                assert not task.done() and not read.retired.done()
+                assert probe.leases and all(
+                    lease in storage_admission._live_leases for lease in probe.leases
                 )
             elif change == "draft":
                 case.store.set_session_draft(case.session.id, "newer draft")
@@ -813,6 +818,7 @@ async def test_actual_wired_preparation_refuses_drift_without_turn_or_draft_loss
                     EqualBuilder()
                 )
             else:
+                assert stash is not None
                 stash.edit_serial += 1
             probe.release.set()
             expected = (
@@ -822,6 +828,11 @@ async def test_actual_wired_preparation_refuses_drift_without_turn_or_draft_loss
             )
             with pytest.raises(expected):
                 await task
+            if change == "cancel":
+                assert read.retired.done() and not read.retired.cancelled()
+                assert not preparation_reads_for(
+                    runtime._preparation_reads, case.session.id
+                )
             assert not runtime.has_custodied_turns()
             assert case.store.session_draft(case.session.id) == (
                 "newer draft" if change == "draft" else "owning draft"
@@ -831,8 +842,6 @@ async def test_actual_wired_preparation_refuses_drift_without_turn_or_draft_loss
             )
         finally:
             await catalog_controls._settle(task, probe)
-            if case.service._producer_lifetime.closed:
-                case.service._maintenance_resume()
             runtime.stage_console_staged_evidence(None)
             await runtime.dispose(timeout_seconds=3)
 
