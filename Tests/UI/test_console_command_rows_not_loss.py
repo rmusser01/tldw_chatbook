@@ -144,10 +144,14 @@ async def _run_row_kind(pilot, console, store, session_id, kind: str) -> None:
     )
     if len(_system_rows(store, session_id)) == before:
         await pilot.press("enter")
+    # /doctor runs real health checks: 10-25 s in the test app, longer under
+    # load (a 20 s wait timed out once on a loaded machine, 2026-11-12).
+    row_wait = {"timeout": 90.0} if kind == "doctor" else {}
     await _until(
         pilot,
         lambda: len(_system_rows(store, session_id)) == before + 1,
         f"the {kind} row",
+        **row_wait,
     )
     row = _system_rows(store, session_id)[-1]
     assert row.content.startswith(starts), row.content[:80]
