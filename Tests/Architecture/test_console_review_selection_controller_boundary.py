@@ -28,7 +28,11 @@ _, LIVE_SCREEN_LINE_CEILING, LIVE_SCREEN_METHOD_CEILING = _SCREEN_SIZE_BUDGETS[
 #: The screen-size ratchet row this file holds unraised, re-pinned the same day.
 #: Re-pinned 2026-11-07 by TASK-36948.3 with the row's dated waiver raise.
 #: Re-pinned 2026-11-12 with the row (measured on dev 4b90eb860b).
-LIVE_RATCHET_ROW = ("ChatScreen", 24_568, 742)
+#: 2026-11-12, TASK-36571.1 (owner size waiver, exact measurement): re-pinned
+#: with the row after rebasing onto dev 26b2e677dd -- dev's 24,568 / 742 plus
+#: the branch's own +19 lines and +2 methods (the Agent open-flag and
+#: stored-preference reads).
+LIVE_RATCHET_ROW = ("ChatScreen", 24_587, 744)
 MAX_DELEGATE_LINES = 5
 
 MOVE_METHODS = frozenset(
