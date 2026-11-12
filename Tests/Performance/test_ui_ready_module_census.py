@@ -185,7 +185,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: writes and Console preparation reads) is imported on first use, and a read
 #: or write runs before ready. It is kept off the app-import path (687/688).
 #: Limit = the 1038 measured + the documented +/-1 wobble, as above.
-MAX_TLDW_MODULES_AT_UI_READY = 1039
+#: 1039 -> 1040 (2026-11-12, round-13 restack onto dev e0186fa10a (owner size
+#: waiver): dev's own merges added `Agents.execution_capacity`,
+#: `Agents.ordinary_tree`, `Agents.workflow_task_scope`,
+#: `Chat.console_ordinary_tree` and `Workspaces.worktree_activity` (dev is at
+#: 1040); measured.
+MAX_TLDW_MODULES_AT_UI_READY = 1040
 
 #: Families that must not be resident anywhere in the first-paint window.
 #: The two package prefixes are TASK-21731's; the exact module names are the
