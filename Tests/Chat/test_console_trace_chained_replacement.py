@@ -15,6 +15,7 @@ native reader that the Inspector and trace export use.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import replace
 from uuid import uuid4
 
@@ -47,8 +48,12 @@ _COUNTS = (
 )
 
 
-def _send(chat, rows, current, *, service):
-    """Reserve, plan, verify and bind one captured send, as the runtime does."""
+def _prepare_send(chat, rows, current, *, service):
+    """Reserve, plan and verify one captured send, as the runtime does.
+
+    Returns the admission, a callable that binds and dispatches the call, the
+    reserved call and the messages the provider receives.
+    """
 
     reserved = service.reserve_call(
         chat.db,
@@ -93,16 +98,29 @@ def _send(chat, rows, current, *, service):
     delta = build_verified_surface_delta(
         boundary.provenance, bundle, admission=admission
     )
-    call = service.bind_and_mark_dispatch(
-        chat.db,
-        call_id=reserved.call_id,
-        owner_id=chat.owner_id,
-        segment_id=chat.segment_id,
-        provenance=boundary.provenance,
-        bundle=bundle,
-        surface_delta=delta,
-        occurred_at="2026-11-12T00:00:00Z",
+
+    def bind():
+        return service.bind_and_mark_dispatch(
+            chat.db,
+            call_id=reserved.call_id,
+            owner_id=chat.owner_id,
+            segment_id=chat.segment_id,
+            provenance=boundary.provenance,
+            bundle=bundle,
+            surface_delta=delta,
+            occurred_at="2026-11-12T00:00:00Z",
+        )
+
+    return admission, bind, reserved, list(sent["messages_payload"])
+
+
+def _send(chat, rows, current, *, service):
+    """Reserve, plan, bind and settle one captured send."""
+
+    admission, bind, _reserved, sent = _prepare_send(
+        chat, rows, current, service=service
     )
+    call = bind()
     with chat.db.transaction() as cursor:
         for state in (TraceCallState.RESPONSE_STARTED, TraceCallState.COMPLETE):
             chat.repository.advance_call_state(
@@ -120,7 +138,7 @@ def _send(chat, rows, current, *, service):
             call_id=call.call_id,
         )
     chat.head = call.surface_node_id
-    return admission, call, list(sent["messages_payload"])
+    return admission, call, sent
 
 
 def _keys(chat, head_id):
@@ -404,3 +422,117 @@ def test_dispatch_binding_revalidates_every_link(chat_factory):
         "gap": "replacement_chain_gap",
         "wrong end node": "replacement_range_mismatch",
     }
+
+
+def test_a_committed_chain_reconciles_to_the_dispatched_call(
+    chat_factory, monkeypatch
+):
+    """A failure after the binding commit still returns the dispatched call.
+
+    Reconciliation reads back every link. Only the first link follows the
+    head the send planned on; later links follow the chain's placeholders.
+    """
+
+    real_policy = trace_service_module.trace_critical_write_checkpoint_policy
+
+    @contextmanager
+    def failing_after_commit(database):
+        with real_policy(database):
+            yield
+        raise RuntimeError("post-commit failure")
+
+    chat = chat_factory()
+    _recorded, _first, incoming, current = _long_chat(chat, "compact")
+    admission, bind, reserved, _sent = _prepare_send(
+        chat, incoming, current, service=chat.recorder
+    )
+    assert _ranges(admission) == [(0, 255), (256, 258)]
+    monkeypatch.setattr(
+        trace_service_module,
+        "trace_critical_write_checkpoint_policy",
+        failing_after_commit,
+    )
+
+    call = bind()
+
+    assert call.call_id == reserved.call_id
+    assert call.state is TraceCallState.DISPATCH_STARTED
+    assert _keys(chat, call.surface_node_id) == _revisions(incoming)
+
+
+@pytest.mark.parametrize("restart", [False, True], ids=["warm", "restarted"])
+def test_a_later_chain_skips_the_dead_run_between_its_links(chat_factory, restart):
+    """A second chain leaves the dead run between its links alone.
+
+    An edit replaces sequence 0, so the retained prefix of the first chain
+    holds a high-sequence row. The second chain then starts from the root:
+    its links are (1..1) and (300..305), and the dead run 2..299 between
+    them is not replaced again. The second link spans the first chain's
+    placeholders. Every head before and after still reads back, and trace
+    GC keeps everything.
+    """
+
+    from Tests.Chat.test_console_trace_service import SurfaceReplacementPlan
+
+    chat = chat_factory()
+    rows = chat.chain(300)
+    first = chat.record(rows)
+    edit = chat.add(None, "edited m0")
+    surface = [edit, *rows[1:]]
+    second = chat.record(
+        surface,
+        replacement=SurfaceReplacementPlan(
+            predecessor_head_id=first.surface_head_id,
+            start_node_id=first.appended_nodes[0].node_id,
+            end_node_id=first.appended_nodes[0].node_id,
+            start_sequence=0,
+            end_sequence=0,
+            replacement_index=0,
+        ),
+    )
+    assert _keys(chat, second.surface_head_id) == _revisions(surface)
+    service = ConsoleTraceService(chat.repository) if restart else chat.recorder
+    # The first chain keeps the high-sequence edit in its retained prefix.
+    edited = chat.add(rows[1], "edited q2")
+    answer = chat.add(edited, "answer", "assistant")
+    current = chat.add(answer, "after")
+    incoming = [edit, rows[1], edited, answer, current]
+    admission, call1, sent = _send(chat, incoming, current, service=service)
+    assert _ranges(admission) == [(2, 257), (258, 299)]
+    assert _exported(chat, current) == sent
+    _assert_warm_matches_cold(chat, service, call1.surface_node_id)
+    # The second chain starts from the root.
+    root = chat.add(None, "fresh root")
+    answer2 = chat.add(root, "answer2", "assistant")
+    current2 = chat.add(answer2, "again")
+    incoming2 = [root, answer2, current2]
+    service2 = ConsoleTraceService(chat.repository) if restart else service
+    admission2, call2, sent2 = _send(chat, incoming2, current2, service=service2)
+    assert _ranges(admission2) == [(1, 1), (300, 305)]
+    assert _exported(chat, current2) == sent2 == [row.value for row in incoming2]
+    assert _keys(chat, call2.surface_node_id) == _revisions(incoming2)
+    _assert_warm_matches_cold(chat, service2, call2.surface_node_id)
+    assert _keys(chat, call1.surface_node_id) == _revisions(incoming)
+    assert _keys(chat, second.surface_head_id) == _revisions(surface)
+    assert _keys(chat, first.surface_head_id) == _revisions(rows)
+    # Then a plain append over the second chain.
+    following = chat.add(current2, "and again")
+    later, call3, sent3 = _send(
+        chat, [*incoming2, following], following, service=service2
+    )
+    assert later.replacement_range is None
+    _assert_warm_matches_cold(chat, service2, call3.surface_node_id)
+    before = _counts(chat)
+
+    result = TraceGarbageCollector(chat.db).collect(request_id=new_opaque_id())
+
+    assert result.status == "completed"
+    assert _counts(chat) == before
+    for head, expected in (
+        (call3.surface_node_id, [*incoming2, following]),
+        (call2.surface_node_id, incoming2),
+        (call1.surface_node_id, incoming),
+        (first.surface_head_id, rows),
+    ):
+        assert _keys(chat, head) == _revisions(expected)
+    assert _exported(chat, following) == sent3
