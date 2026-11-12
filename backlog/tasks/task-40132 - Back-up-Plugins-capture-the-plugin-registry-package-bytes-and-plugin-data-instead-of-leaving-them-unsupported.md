@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-10 16:15
-updated_date: 2026-11-12 17:14
+updated_date: 2026-11-12 17:27
 labels:
 - follow-up
 - backup
@@ -220,6 +220,8 @@ Implemented on dev ae9f9e8d21 plus the filing commit, 2026-11-10. Owner decision
 - `Tests/Backup_Recovery/test_detached_layout.py::test_detached_import_refuses_a_plugin_root_by_name`.
 - `Tests/Backup_Recovery/test_restore_plan_excluded_directories.py::test_replace_keeps_an_excluded_directory_whole_without_listing_it[archived|added]`, a new Hypothesis-free module (`test_restore_plan.py` imports Hypothesis, which the PR lanes do not install), run by `derived-artifacts.yml`'s Architecture guard job and pinned in `ARCHITECTURE_GUARD_TARGETS` (I-2).
 - UI: `test_backup_data_groups.py::test_backup_review_explains_refused_live_plugins`, `test_plugins_browse.py::test_authority_recovery_copy_is_truthful_without_a_reset_step` and `test_plugin_review.py::test_unlock_mismatch_shows_restore_copy_not_passphrase_advice`, all on the UI census (the last appended at the tail in this round). The shard replay was not run, so the coordinator rebalances if needed.
+
+**Review r13g-rev4 (2026-11-12).** The refusal copy and both user docs named the wrong cause ("installed or updated"). Every repository download leaves a fetch folder: a source refresh, an update check, an install, an update, or a cancelled install review. The reviewer's refusing folders came from a refresh and an update check. The copy now says "downloaded from a repository since this backup was made (a source refresh, an update check, an install or an update)" and "installed plugins keep working"; the docs say "each such download". The two pinning tests were red on the old text before the change and are green after.
 
 **Covering runs (review r13g-rev3, at 4715929df1, load 15–35).**
 - The rev2 selection below plus the new planner module and all of `Tests/CI`, at `-n 4`, e2e deselected: 3343 passed, 29 failed, 8 skipped. The 29 are the same as rev2's: 28 also fail at base, and the 29th is again `test_fresh_app_complete_public_capture_preserves_real_bytes_and_resumes` on its 20 s capture watchdog (`cancelled`); it passes alone at HEAD (22 s).

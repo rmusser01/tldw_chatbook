@@ -543,5 +543,8 @@ async def test_restore_review_explains_refused_newer_plugin_fetches(tmp_path):
         await pilot.pause()
         review = str(screen.query_one("#backup-restore-preview", Static).render())
         assert "Restore review refused" in review
-        assert "installed or updated from a repository since this backup" in review
+        # r13g-rev4: every repository download leaves such a folder, not only
+        # installs and updates.
+        assert "downloaded from a repository since this backup" in review
+        assert "a source refresh, an update check, an install or an update" in review
         assert "without the Tools and skills group" in review

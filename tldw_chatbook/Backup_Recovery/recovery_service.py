@@ -164,13 +164,14 @@ _ISSUE_MESSAGES = {
         "plugins. Either way, a partial backup without plugins is available now."
     ),
     "plugin_fetch_added_since_backup": (
-        "Plugins were installed or updated from a repository since this backup "
-        "was made, and restoring Tools and skills over them is not supported yet: "
-        "their download folders hold files a backup never includes. Restore "
-        "without the Tools and skills group, or first open the plugins folder's "
-        "staging folder and, inside each folder created after the backup, delete "
-        "everything except the snapshot folder (those plugins keep working), then "
-        "review the restore again."
+        "Plugins were downloaded from a repository since this backup was made (a "
+        "source refresh, an update check, an install or an update), and restoring "
+        "Tools and skills over those downloads is not supported yet: their "
+        "download folders hold files a backup never includes. Restore without the "
+        "Tools and skills group, or first open the plugins folder's staging folder "
+        "and, inside each folder created after the backup, delete everything "
+        "except the snapshot folder (installed plugins keep working), then review "
+        "the restore again."
     ),
 }
 

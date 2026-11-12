@@ -125,15 +125,16 @@ What does not work yet, and what Plugins says:
 Resetting plugin authority does not help in either case: setting it up again
 refuses while the restored registry still lists installed plugins.
 
-A restore over a plugin installed or updated from a repository since the backup
-is refused when you review it (`plugin_fetch_added_since_backup`). Each such
-install leaves a download folder, `staging/<name>/` in the plugin folder, that
-the backup lacks, holding files a backup never includes (the fetch's git copy and
-your git/SSH configuration copies). Uninstalling the plugin does not remove that
-folder. Restore without **Tools and skills**, or delete everything except
-`snapshot/` inside each such folder (the plugin keeps working from `snapshot/`
-and its fetch record), then review the restore again; the restore then removes
-the folder with the rest of the plugin state newer than the backup.
+A restore after plugins were downloaded from a repository since the backup (a
+source refresh, an update check, an install or an update) is refused when you
+review it (`plugin_fetch_added_since_backup`). Each such download leaves a
+download folder, `staging/<name>/` in the plugin folder, that the backup lacks,
+holding files a backup never includes (the fetch's git copy and your git/SSH
+configuration copies). Uninstalling a plugin does not remove these folders.
+Restore without **Tools and skills**, or delete everything except `snapshot/`
+inside each such folder (an installed plugin keeps working from `snapshot/` and
+its fetch record), then review the restore again; the restore then removes the
+folder with the rest of the plugin state newer than the backup.
 
 File identity matters too. A restore over the existing plugin folders keeps
 their identities. If the plugin folder, `staging/` or a saved-data folder was

@@ -1210,7 +1210,9 @@ def test_replace_restore_refuses_a_fetch_folder_added_since_the_backup(tmp_path,
     code = issue_code(refused.value)
     assert code == "plugin_fetch_added_since_backup"
     message = issue_message(code)
-    assert "since this backup" in message and "without the Tools and skills group" in message
+    assert "downloaded from a repository since this backup" in message
+    assert "a source refresh, an update check, an install or an update" in message
+    assert "without the Tools and skills group" in message
     assert "except the snapshot folder" in message and "Uninstall" not in message
 
 
