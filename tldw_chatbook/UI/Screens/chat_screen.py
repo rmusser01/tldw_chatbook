@@ -178,6 +178,7 @@ from ..Console_Modules.retrieval import (
 from ..Console_Modules.transcript import (
     _ConsoleTranscriptReadingState,
     note_console_conversation_painted,
+    prepare_change_review_projection,
     request_console_heap_refreeze,
     request_transcript_sync as _request_transcript_sync,
 )
@@ -16909,7 +16910,9 @@ class ChatScreen(BaseAppScreen):
             rendered.append((conversation_id, receipt_id))
         return tuple(rendered)
 
-    async def _sync_native_console_transcript(self, *, force: bool = False) -> None:
+    async def _sync_native_console_transcript(
+        self, *, force: bool = False
+    ) -> bool | None:
         """Render native Console messages in the native transcript.
 
         Args:
@@ -16918,16 +16921,12 @@ class ChatScreen(BaseAppScreen):
                 (no run active, so no 0.2s tick is running) must pass
                 ``True`` -- the review-notes edit/delete reload otherwise
                 skips as a no-op until the user's next send.
-        """
-        from ..Console_Modules.transcript import ConsoleChangeReviewProjection
 
-        if type(self._change_review_projection) is ConsoleChangeReviewProjection:
-            if _console_screen_is_torn_down(self):
-                return
-            if not await self._change_review_projection.prepare():
-                return
-            if _console_screen_is_torn_down(self):
-                return
+        Returns:
+            False if the transcript read was deferred or the screen closed.
+        """
+        if not await prepare_change_review_projection(self, _console_screen_is_torn_down):
+            return False
         try:
             transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
         except QueryError:
@@ -17724,9 +17723,11 @@ class ChatScreen(BaseAppScreen):
                     delay = config_sync.full_sync_replay_delay(self)  # TASK-38696
                     self._request_console_control_bar_sync(delayed=delay)
                     return False
+            terminal_owner = config_sync.terminal_projection_owner(self)
             with self._workspace.tick_workspace_build_scope():
-                if config_sync.project_console_tick(self) is False:  # Replay owns it.
-                    return False
+                if terminal_owner is None:
+                    if config_sync.project_console_tick(self) is False:
+                        return False  # Replay owns it.
                 # Settings failures may arrive after Apply has returned:
                 # ordinary first persistence and temporary-chat promotion
                 # both update the session ledger on their own later path.
@@ -17744,9 +17745,17 @@ class ChatScreen(BaseAppScreen):
                 await asyncio.sleep(0)  # TASK-33628.5.1: rails, transcript: 2 turns
                 if not poll_is_current():
                     return False
-                await self._sync_native_console_transcript()
+                transcript_synced = await self._sync_native_console_transcript()
                 if not poll_is_current():
                     return False
+                if terminal_owner is not None:
+                    if config_sync.settle_terminal_projection(
+                        self,
+                        terminal_owner,
+                        transcript_synced,
+                        _console_screen_is_torn_down,
+                    ) is False:
+                        return False
                 app = self.app_instance
                 try:
                     ui_ready = app._ui_ready

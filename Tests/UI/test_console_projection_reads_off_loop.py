@@ -518,6 +518,87 @@ async def test_run_poll_repaints_send_when_a_completed_turn_releases_its_queue(
             assert button.disabled
 
 
+@pytest.mark.asyncio
+async def test_run_poll_settles_streaming_header_before_ready_composer(monkeypatch):
+    """The composer and the final assistant row settle in the same order."""
+    from textual.widgets import Static
+
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleMessageRole,
+        ConsoleRunState,
+        ConsoleRunStatus,
+    )
+    from tldw_chatbook.UI.Console_Modules import composer_run_controls
+    from tldw_chatbook.UI.Console_Modules.transcript import ConsoleChangeReviewProjection
+
+    _install_clock(monkeypatch)
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            await _fresh_display(console)
+            console._stop_console_transcript_sync_timer()
+            controller = console._ensure_console_chat_controller()
+            store = controller.store
+            session_id = store.active_session_id
+            assistant = store.append_message(
+                session_id, role=ConsoleMessageRole.ASSISTANT, content=""
+            )
+            controller._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.STREAMING), session_id=session_id
+            )
+            store.append_stream_chunk(assistant.id, "Scripted planning complete.")
+            await config_sync.run_periodic_console_sync(
+                composer_run_controls.sync_poll_display_ui, console
+            )
+            selector = (
+                f"#console-message-header-{assistant.id} "
+                ".console-transcript-speaker-label"
+            )
+
+            def speaker_text():
+                speaker = console.query_one_optional(selector, Static)
+                return "" if speaker is None else speaker.render().plain
+
+            await until(lambda: composer.run_active and "Streaming…" in speaker_text())
+
+            ready_headers = []
+            sync_action_state = composer.sync_action_state
+
+            def observe_action_state(**kwargs):
+                sync_action_state(**kwargs)
+                if not kwargs["stop_available"] and kwargs["send_label"] == "Send":
+                    ready_headers.append(speaker_text())
+
+            monkeypatch.setattr(composer, "sync_action_state", observe_action_state)
+            store.mark_message_complete(assistant.id)
+            controller._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.COMPLETED), session_id=session_id
+            )
+            prepare = ConsoleChangeReviewProjection.prepare
+            obsolete = asyncio.Event()
+
+            async def defer_once(projection):
+                if not obsolete.is_set():
+                    obsolete.set()
+                    return False
+                return await prepare(projection)
+
+            with monkeypatch.context() as deferred:
+                deferred.setattr(ConsoleChangeReviewProjection, "prepare", defer_once)
+                await config_sync.run_periodic_console_sync(
+                    composer_run_controls.sync_poll_display_ui, console
+                )
+                await asyncio.wait_for(obsolete.wait(), timeout=15)
+                assert not ready_headers
+                assert composer.run_active
+                assert "Streaming…" in speaker_text()
+
+            # The coalesced replay reads the now-current projection.
+            await until(lambda: bool(ready_headers))
+            assert ready_headers[0] == "Assistant"
+
+
 def test_a_stopping_poll_hands_a_request_it_was_left_to_the_running_sync():
     """AC#5: a request coalesced into a poll that then stops is still rendered.
 

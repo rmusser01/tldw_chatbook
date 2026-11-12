@@ -183,11 +183,47 @@ ADR required: no new decision. ADR path: backlog/decisions/235-console-approval-
 
 ADR required: no new ADR. ADR paths are backlog/decisions/235-console-approval-interaction-and-feedback.md, backlog/decisions/098-visible-bounded-console-prompt-queue.md and backlog/decisions/231-console-polling-and-full-state-reconciliation.md. The repair preserves the established permission, queue and timing boundaries.
 
+### Reconcile the final transcript badge and qualify matched presentation
+
+- Reproduce the stale Streaming badge at composer settlement with a mounted transcript and an unchanged final assistant body.
+- Preserve live streaming and bring the terminal transcript into the composer settlement before its Ready presentation.
+- Freeze the same harmless fixture for the reviewed pre-feature baseline and integrated dev. Preserve a distinct presented assistant text delta before the actionable card.
+- Validate both presentation chains in closed single runs, then collect the cold and separate warm series on native and Edge. Report failed slots, clock bounds, and the existing performance budgets and functional matrix.
+
+ADR required: no. ADR path: backlog/decisions/235-console-approval-interaction-and-feedback.md. This work uses the existing presentation and approval boundaries.
+
+### Keep terminal settlement within the Console projection ceiling
+
+Reproduce the two Architecture guard failures from PR #3482. Put the terminal projection owner and replay checks in the existing configuration sync module. Keep transcript and composer ordering, ownership, and the reviewed line and method ceilings. Re-run both guards and the mounted terminal settlement checks.
+
+ADR required: no. ADR path: backlog/decisions/231-console-polling-and-full-state-reconciliation.md. Reason: the extraction follows the existing sync ownership and preserves the timing and permission contracts.
+
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
+
+### Architecture guard repair for PR #3482
+
+Hosted Architecture guard contracts reproduced the same line-budget failure in two tests. The badge patch raised `ChatScreen` from 24,592 to 24,617 lines against the 24,608 ceiling. The existing configuration sync module now captures the terminal projection owner and decides whether to replay or publish the controls after transcript reconciliation. Both guards and six targeted Console tests passed locally. Independent review verified 24,607 lines and the same 741 direct methods. The physical timing criteria still need live evidence. [Hosted guard job](https://github.com/rmusser01/tldw_chatbook/actions/runs/42733632354/job/129586578318)
+
+The hosted Architecture guard passed on the subsequent PR head. Rebase onto dev `7775edb567` added seven upstream screen lines. The transcript module now owns the stock change-review preparation and the teardown checks around its await. Both architecture guards and the mounted badge regression passed on the rebased source. `ChatScreen` has 24,608 lines and 741 direct methods. [Hosted guard job](https://github.com/rmusser01/tldw_chatbook/actions/runs/42756307296/job/129675066630)
+
+### FULL configuration fixtures on rebased dev
+
+The rebase onto dev `e10ce63fe8` preserved the three badge-fix patches. The mounted badge regression and both architecture checks passed with 24,523 `ChatScreen` lines and 741 direct methods. The hosted FULL configuration tests exposed two fixtures missing the production run-status method and one inherited fixture that passed an async worker function directly to `create_task`. The exact dev base passed the first two cases and reproduced the worker failure.
+
+The FULL fixture now binds the existing run-status method to its real controller. The shared test scheduler accepts async functions and coroutine objects. All original assertions remain in place. The FULL file and both hosted tokenizer cases passed locally (9 cases), and independent review cleared the fixture changes. Two other failures in a broader local run reproduced at the same assertions on unmodified dev and are outside the affected hosted census. ADR-231 still applies. [Hosted UI shard](https://github.com/rmusser01/tldw_chatbook/actions/runs/43160188546/job/131064795228)
+
+### Terminal transcript and composer settlement
+
+The Windows Edge validation on dev 3a6498ae14 captured two ordered frames with a Ready composer and the final assistant body under a Streaming badge. The saved message was already complete. A mounted regression reproduced the mismatch when the composer restored Send. A second reproduction forced an obsolete change-review marker read, which could leave the transcript stale while controls advanced.
+
+The terminal full sync now reconciles the mounted transcript before it settles the controls. An obsolete read or changed store or session returns to the existing coalesced whole-sync replay. The test observes the still-mounted assistant label at composer settlement after an actual active Streaming presentation. The queue-release and poll-stop controls pass. A separate transcript cache case hit the same Windows raw-source bootstrap refusal on both the candidate and exact dev.
+
+The earlier cold evidence has no prior presented assistant output or qualified timing sample. The matched capture still needs the same pre-request text fixture in both revisions, independent native and Edge frame evidence, and the complete warm series and functional matrix.
+
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Required CI follow-up (AC12/AC13, 2026-11-07): retained all original ordered fast/admission targets and appended only five remembering nodes, the entire pure Canvas policy-test file, and three guarded policy-worker nodes in the proper isolated lanes (169 to 175 / 42 to 45). Actual missing-membership and comment-only REDs precede the final 125 passing metadata contracts; independent CI source review is clear. No flags, limits, job topology, dependencies or aggregation changed. Public evidence/source bindings: Docs/superpowers/qa/2026-11-06-console-approval-resync/staged-handoff-ci-followup.md. Functional/original idle and physical qualification gates remain open; status stays In Progress. Existing ADR121/235 apply.
 

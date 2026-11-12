@@ -255,6 +255,18 @@ class ConsoleChangeReviewProjection:
         return inject_resume_agent_markers(messages, self._marker_blocks)
 
 
+async def prepare_change_review_projection(
+    screen: Any, torn_down: Callable[[Any], bool]
+) -> bool:
+    """Prepare the stock transcript markers for a still-mounted screen."""
+    projection = screen._change_review_projection
+    if type(projection) is not ConsoleChangeReviewProjection:
+        return True
+    if torn_down(screen) or not await projection.prepare():
+        return False
+    return not torn_down(screen)
+
+
 @dataclass(frozen=True)
 class _ConsoleTranscriptReadingState:
     """The transcript's semantic reading position across a layout change.
