@@ -351,6 +351,9 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # TASK-36571.1 review fix, 2026-11-06: same waiver. The open-flag read
     # asks for the re-reads the rail-state build it replaced asked for: +2
     # lines, no methods: 24621/743 -> 24623/743.
+    # TASK-36571.1, 2026-11-12: re-measured after rebasing onto dev
+    # 4b90eb860b (owner rule: exact; dev measures 24524/741, so the branch
+    # adds 19 lines and two methods): 24608/741 -> 24543/743.
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24568, 742),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
