@@ -25,8 +25,9 @@ def _screen(tmp_path):
     )
     tasks = []
 
-    def schedule(operation, **_kwargs):
-        task = asyncio.create_task(operation() if callable(operation) else operation)
+    def schedule(work, **_kwargs):
+        # Textual accepts async callables as well as coroutine objects.
+        task = asyncio.create_task(work() if callable(work) else work)
         tasks.append(task)
         return task
 
@@ -38,6 +39,7 @@ def _screen(tmp_path):
             app_config=config.load_settings(), chachanotes_db=database
         ),
         _console_chat_store=store,
+        _console_sync_in_progress=False,
         _console_config_snapshot_is_disk_loaded=lambda _: True,
         _console_derivation_memo=None,
         _console_derivation_scope=lambda: _empty_scope(),
@@ -93,9 +95,9 @@ async def test_real_context_display_reuses_actual_checked_config_operation(tmp_p
             await asyncio.gather(*tasks)
             assert await snapshot.warm(controller, "session-1")
             displayed = snapshot.inputs(controller, "session-1")
-            assert (
-                calls["live_policy"] == 0
-            ), "display opened a second live policy scope"
+            assert calls["live_policy"] == 0, (
+                "display opened a second live policy scope"
+            )
             assert calls["config"] == 1, "display repeated the checked config lifetime"
             from tldw_chatbook.Chat import console_context_policy
 
@@ -106,9 +108,9 @@ async def test_real_context_display_reuses_actual_checked_config_operation(tmp_p
                 previous is None or previous[0] is not config._CONFIG_CACHE
             )
             live = controller.context_control_inputs("session-1")
-            assert (
-                calls["live_policy"] == 1
-            ), "live action reused disposable display data"
+            assert calls["live_policy"] == 1, (
+                "live action reused disposable display data"
+            )
             assert displayed[1] == live[1]
             assert calls["config"] == 1 + expected_live_scopes
     finally:
@@ -131,9 +133,9 @@ async def test_expired_checked_read_failure_cannot_satisfy_modal_warm(tmp_path):
             raise OSError("checked reader unavailable")
 
         projection.read_current = failed_read
-        assert not await snapshot.warm(
-            controller, "session-1"
-        ), "expired display data satisfied a modal requiring a checked refresh"
+        assert not await snapshot.warm(controller, "session-1"), (
+            "expired display data satisfied a modal requiring a checked refresh"
+        )
         projection.read_current = original
         assert await snapshot.warm(controller, "session-1")
     finally:
@@ -517,9 +519,9 @@ async def test_actual_same_id_session_replacement_refuses_pending_checked_policy
         assert replacement == prior and replacement is not prior
         store._sessions["session-1"] = replacement
         release.set()
-        assert (
-            not await warmer
-        ), "field-equal replacement inherited old session's checked display owner"
+        assert not await warmer, (
+            "field-equal replacement inherited old session's checked display owner"
+        )
         assert projection.value is None and snapshot.value is None
     finally:
         release.set()
@@ -540,9 +542,9 @@ async def test_context_memo_rejects_field_equal_same_id_owner_replacement(tmp_pa
         replacement = replace(owner)
         assert replacement == owner and replacement is not owner
         store._sessions["session-1"] = replacement
-        assert (
-            snapshot._key(controller, "session-1") != prior
-        ), "context memo omitted exact actual session owner"
+        assert snapshot._key(controller, "session-1") != prior, (
+            "context memo omitted exact actual session owner"
+        )
     finally:
         await asyncio.gather(*tasks, return_exceptions=True)
         database.close()
@@ -588,9 +590,9 @@ async def test_repeated_readiness_cancellation_waits_for_actual_raw_native_retir
         await asyncio.sleep(0)
         task.cancel()
         await asyncio.sleep(0)
-        assert (
-            not task.done()
-        ), "second cancellation ended readiness before native retirement"
+        assert not task.done(), (
+            "second cancellation ended readiness before native retirement"
+        )
         assert projection.pending and not projection._settled.is_set()
         assert state.active
         release.set()
