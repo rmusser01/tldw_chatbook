@@ -1,0 +1,17 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+.                                                                        [100%]
+============================== warnings summary ===============================
+Tests/Chat/test_console_workspace_folder_note_contract.py::test_enabled_index_preserves_saved_library_policy_and_scope[allowed-never]
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+- generated xml file: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-20-workspace-project-semantic-index\native-temp\task4-console-policy-semantic-03\pytest-of-GDesktop-1\pytest-0\test_enabled_index_preserves_s1\private-profile-process\pytest.xml -
+============================ slowest 25 durations =============================
+64.71s call     Tests/Chat/test_console_workspace_folder_note_contract.py::test_enabled_index_preserves_saved_library_policy_and_scope[allowed-never]
+
+(2 durations < 1s hidden.  Use -vv to show these durations.)
+1 passed, 1 warning in 65.69s (0:01:05)

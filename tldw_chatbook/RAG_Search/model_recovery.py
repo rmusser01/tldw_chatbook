@@ -7,7 +7,6 @@ never provision weights or authorize configuration, providers, or RAG indexing.
 import asyncio
 import hashlib
 import json
-import os
 import stat
 import threading
 import time
@@ -33,6 +32,7 @@ from tldw_chatbook.Backup_Recovery.native_files import pinned_directory
 from tldw_chatbook.Backup_Recovery.profile_paths import lexical_path
 from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
 from tldw_chatbook.Backup_Recovery.admission_runtime import execution_identity
+from tldw_chatbook.Utils.platform_files import os
 from .activation import RAGActivationRequired
 
 def _digest(value):

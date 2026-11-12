@@ -152,10 +152,10 @@ cron entry on `dev`.
   Fast Lane's admission-sensitive half (two jobs since TASK-35575, three since Roleplay frame B2b), the Dreams
   tracking tests, the Dreams and Guardian boundary contracts, the
   Architecture guard contracts, the architecture-review tests and the
-  recovered suites are jobs of their own (TASK-34916, TASK-34929,
+  recovered suites and project index contracts are jobs of their own (TASK-34916, TASK-34929,
   TASK-34986, TASK-38989, PR #3399, owner decision 2026-11-06), so an
   ordinary unlabeled,
-  non-GGUF PR now requests 28 test runners in parallel, 29 with perf-guard
+  non-GGUF PR now requests 29 test runners in parallel, 30 with perf-guard
   (see the dated notes below).
 - That figure is not a global maximum. The two path-scoped GGUF
   evidence matrices can add six jobs, and a synchronize event on a PR carrying
@@ -403,7 +403,7 @@ Even ideal balance at 27 shards has a lower-bound forecast of 1027.70 seconds un
 
 ## Amendment (2026-10-28, TASK-37266..37268): enroll native publication and export controls
 
-Current UI lane: 36 shards. The current total is 46 eligible test jobs per PR
+Current UI lane: 36 shards. The current total is 47 eligible test jobs per PR
 (2026-11-02: includes the third admission-sensitive lane; 2026-11-06: and the
 Architecture guard contracts job, TASK-38989, and the architecture-review
 tests' own job, `pr-fast-lane-arch`, split out of the PR Fast Lane at its
@@ -485,3 +485,23 @@ entries, on dev 3a6498ae14, 2026-11-09), with weights from the 22 latest PR
 runs whose UI shards all finished and 92 untimed entries at their local serial
 seconds: 430 worst-case pytest min, and `--rebalance 12.7` projects 13.1-14.4
 min a job across the 36 shards.
+
+## Consent/release required PR runtime coverage (2026-10-23, TASK-36423)
+
+The source-qualified project allocation positives need real SQLite3.49.1 with the recorded source/options/VFS envelope. Add one bounded project-index contract job to the existing derived-artifacts required aggregation, using Windows with exact Python3.12.10 and core/test dependencies only. Record actual runtime identity and run positive contracts; unsupported source must fail, never spoof or skip all positives. This candidate pin follows CPythonv3.12.10 PCbuild/get_externals.bat selecting sqlite-3.49.1.0; actual hosted execution remains required before claiming CI qualification. Keep the existing required context name/install-free artifact job, fail-closed needs/verdicts, current lane caps and13UIshards. The new job has a20-minute ceiling; measure selectors/setup plus one test-timeout headroom and runner variance before final membership. Nineteen current test runners become twenty, twenty-one including perf-guard; no general matrix or optionalML addition. Critical schema/settings/native/project-admission and missing-embedding keyword controls are explicit nonoverlapping targets. New mounted consent tests are deliberately classified by the governed UI census; measure placement rather than blindly appending costly work. Update exact Tests/CI/test_ci_queue_pressure_contract.py expectations only for this intentional boundary. Real cached-model/app/20k qualification is retained separately, not inferred from deterministic PR controls.
+
+References: https://raw.githubusercontent.com/python/cpython/v3.12.10/PCbuild/get_externals.bat ; https://github.com/actions/setup-python/blob/main/docs/advanced-usage.md . These are source/pin references, not a hosted runtime certificate.
+
+Task4 placement refinement: the mounted stage/cancel consent node uses the real project SQLite store and allocation gate, so it must execute in that same positive Windows/Python3.12.10 project-index job, not in the Ubuntu UI shards whose native SQLite source is unqualified. The one uncommitted local census addition is withdrawn; its original floor and all thirteen shards remain, with the node's Windows inclusion and Ubuntu absence pinned by the exact CI contract. This adds one bounded target to the existing job, not another lane, dependency set or required context. Local cost is only a candidate; the hosted PR job must still qualify runtime and budget.
+
+
+### Final semantic review regression coverage (Task36423)
+The existing approved Project index contracts job adds exactly four selectors: held public Disable, held public reconfiguration, the two peer-carrier slow/failed-close parameters, and the four real 307/308 project/Library transport parameters. Existing selected local128normal now also proves retained Partial forbidden text never reaches the provider; the settings file includes portable lease refusal and actual unsupported-runtime refusal controls. The target count changes12 to16 and measured case projection33 to44, with about91.3 seconds measured additional critical-node calls and a conservative284-second total including the extra portable lease case. Preserve the1200-second job cap, Python3.12.10 actual source/options assertions, dependencies, test timeout180,13 UI shards, required context and aggregation. Root recorded explicit GO before workflow edits. Native-positive tests alone may skip unsupported comprehensive runtimes; the required Windows preflight still fails closed and its selected positives must execute with zero skips. No new lane or optional ML dependency.
+
+
+### Hosted contract accounting and shared-parent retirement control
+
+On the October branch base this meant twenty concurrent test runners per PR, twenty-one
+with perf-guard, after the already-approved project-index job. Current exact workflow/job/verdict and runner statements now include that job; historical dated counts remain unchanged in meaning. The count assertion accepts only the actual numeric count or its known exact word and safely handles counts beyond its word list; hyphenated twenty-one is recognized. No lane, dependency, cap, shard or aggregation behavior changes.
+
+Add the critical real-issued nested-parent pending-close regression to the SAME Windows project-index job:17 selectors/45 cases instead of16/44. The new one-case control covers same-binding and different-binding nested carriers plus keyword evidence, actual factory retry and positive owner retirement. Its RED outer call cost64.27 seconds (57.81 child) plus the previous314.19-second exact lane projects about379 seconds; retain the1200-second job and180-second per-test cap unchanged. Root plan18 authorizes this critical addition; local qualification targets this ownership delta and existing independent-peer/own-close/native-child controls plus directly related CI contracts, without replaying the44-case lane or real models merely for hashes.

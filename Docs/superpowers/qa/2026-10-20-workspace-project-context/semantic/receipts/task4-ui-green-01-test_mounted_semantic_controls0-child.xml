@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="63.859" timestamp="2026-10-23T13:47:54.592130-07:00" hostname="DESKTOP-BISU2HE"><testcase classname="Tests.UI.test_project_semantic_consent" name="test_mounted_semantic_controls_and_status_do_not_load_model" time="62.728"><failure message="TypeError: DOMNode.query() takes from 1 to 2 positional arguments but 3 were given">tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_mounted_semantic_controls0/private-profile-process/pytest/test_mounted_semantic_controls0')
+request = &lt;FixtureRequest for &lt;Coroutine test_mounted_semantic_controls_and_status_do_not_load_model&gt;&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000002218A5D07A0&gt;
+
+    @private_profile_test
+    async def test_mounted_semantic_controls_and_status_do_not_load_model(tmp_path, request, monkeypatch):
+        mod = card_module()
+        rig = Rig(tmp_path)
+        monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+        monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+        before = {name for name in sys.modules if name.startswith("sentence_transformers")}
+        card = mod.ProjectIndexBindingCard(
+            rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+        )
+        try:
+            async with CardApp(card).run_test(size=(80, 24)) as pilot:
+&gt;               await wait_for_card(card, pilot)
+
+Tests\UI\test_project_semantic_consent.py:26: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+card = ProjectIndexBindingCard(classes='h-auto')
+pilot = &lt;Pilot app=CardApp(title='CardApp', classes={'-dark-mode'}, pseudo_classes={'focus', 'nocolor', 'dark'})&gt;
+
+    async def wait_for_card(card, pilot):
+        import time
+    
+        deadline = time.monotonic() + 60
+        while card.status is None or card._pending:
+&gt;           assert time.monotonic() &lt; deadline, (
+                card.is_mounted,
+                card._request,
+                card._pending,
+            )
+E           AssertionError: (True, 0, 0)
+E           assert 171979.953 &lt; 171979.953
+E            +  where 171979.953 = &lt;built-in function monotonic&gt;()
+E            +    where &lt;built-in function monotonic&gt; = &lt;module 'time' (built-in)&gt;.monotonic
+
+Tests\UI\test_workspace_project_index_settings.py:28: AssertionError
+
+During handling of the above exception, another exception occurred:
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-20-work...of-GDesktop-1/pytest-0/test_mounted_semantic_controls0/private-profile-process/pytest/test_mounted_semantic_controls0')
+request = &lt;FixtureRequest for &lt;Coroutine test_mounted_semantic_controls_and_status_do_not_load_model&gt;&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000002218A5D07A0&gt;
+
+    @private_profile_test
+    async def test_mounted_semantic_controls_and_status_do_not_load_model(tmp_path, request, monkeypatch):
+        mod = card_module()
+        rig = Rig(tmp_path)
+        monkeypatch.setattr(mod, "get_project_index_service", lambda app: rig.service)
+        monkeypatch.setattr(mod, "project_index_key", lambda *args: rig.key)
+        before = {name for name in sys.modules if name.startswith("sentence_transformers")}
+        card = mod.ProjectIndexBindingCard(
+            rig.key.binding_id, workspace_id=rig.key.workspace_id, root=str(rig.root)
+        )
+        try:
+&gt;           async with CardApp(card).run_test(size=(80, 24)) as pilot:
+
+Tests\UI\test_project_semantic_consent.py:25: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Python312\Lib\contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\app.py:2218: in run_test
+    raise self._exception
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:604: in _pre_process
+    await self._dispatch_message(events.Mount())
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:727: in _dispatch_message
+    await self.on_event(message)
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:808: in on_event
+    await self._on_message(event)
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\message_pump.py:829: in _on_message
+    await invoke(method, message)
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+tldw_chatbook\Widgets\Settings_Widgets\project_index_binding_card.py:209: in on_mount
+    self._paint()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = ProjectIndexBindingCard(classes='h-auto')
+
+    def _paint(self) -&gt; None:
+        status = self.status
+        if not self.supported:
+            text = "Keyword index unavailable: SSH folders are not supported."
+        elif not self.available:
+            text = "Keyword index unavailable. Restore folder access in Settings."
+        else:
+            text = (
+                index_status_copy(status, self.requires_upgrade)
+                if status
+                else "Keyword index: checking…"
+            )
+        self.query_one(".project-index-status", Static).update(text)
+        state = status.state if status else None
+        actions = {"reload"} if self.available and self.supported else set()
+        if status and self.available and self.supported:
+            actions |= {"clear"}
+            if self.requires_upgrade:
+                actions.add("enable" if state == "Off" else "refresh")
+            elif state == "Off":
+                actions.add("enable")
+            else:
+                actions.add("disable")
+                if state == "Building":
+                    actions.add("pause")
+                else:
+                    actions |= {"refresh", "apply"}
+                    if state in {"Paused", "Interrupted"} and status.job_id:
+                        actions.add("resume")
+&gt;       for button in self.query(".project-index-action", Button):
+E       TypeError: DOMNode.query() takes from 1 to 2 positional arguments but 3 were given
+
+tldw_chatbook\Widgets\Settings_Widgets\project_index_binding_card.py:257: TypeError</failure></testcase></testsuite></testsuites>

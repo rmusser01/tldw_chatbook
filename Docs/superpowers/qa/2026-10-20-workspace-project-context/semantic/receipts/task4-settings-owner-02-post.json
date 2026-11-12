@@ -1,0 +1,45 @@
+{
+  "pid": 80708,
+  "exit_code": 0,
+  "stack_log": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index\\task4-settings-owner-02-stacks.jsonl",
+  "timed_out": false,
+  "source_hashes": [
+    {
+      "sha256": "6FBB7AFF3CA9C0F89E44C1EF85DFF392965351684650844C316453D7D4D5CA27",
+      "path": ".superpowers/sdd/2026-10-20-workspace-project-semantic-index/task4_settings_owner_probe.py"
+    },
+    {
+      "sha256": "5593248753FC404A12ADE2542CFB2064A07137E388093A83BE77B21655934151",
+      "path": ".superpowers/sdd/2026-10-20-workspace-project-semantic-index/task4-settings-owner-site/sitecustomize.py"
+    },
+    {
+      "sha256": "B89B591BEBC2D08BDEDB881125AC99DF124AB6793318C26E2D88438953677715",
+      "path": ".superpowers/sdd/2026-10-20-workspace-project-semantic-index/run-task4-settings-owner-diagnostic-02.ps1"
+    },
+    {
+      "sha256": "437B149C15CCB9C90289F4999C392314307CBE8269BE9D97CE814F0DC86358F6",
+      "path": "Tests/UI/test_project_semantic_consent.py"
+    },
+    {
+      "sha256": "3ABB85EA0D40754E1AAAA75F06E73DFC83ED55A1FA0B7D843A28993B67A1FCB8",
+      "path": "Tests/conftest.py"
+    },
+    {
+      "sha256": "32153EB1D71FDF430FF22DCB17FF23FF3F52ED0DC4C30FB8E2177DD94DDBD3E0",
+      "path": "Tests/UI/app_factory.py"
+    },
+    {
+      "sha256": "E17E257507DE30B2F1DDBA6A8FBC2B706F02CC2951C355451B788F7FA06E3CDD",
+      "path": "tldw_chatbook/app_lifecycle.py"
+    },
+    {
+      "sha256": "18C7A1706063B1B90290DF331F337F2B72961AC0D0072BA551AC00AA3DC1E538",
+      "path": "tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py"
+    },
+    {
+      "sha256": "5333B8EE4EA78E9FBD0648B14713B1EFBE39A315AB058694575B8C0E3030220C",
+      "path": "tldw_chatbook/Workspaces/project_index/service.py"
+    }
+  ],
+  "source_unchanged": true
+}

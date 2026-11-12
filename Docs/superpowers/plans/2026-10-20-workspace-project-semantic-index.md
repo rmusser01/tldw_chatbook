@@ -1,22 +1,20 @@
 # Optional Workspace Semantic Index Implementation Plan
 
-Current governance: [ADR-241](../../../backlog/decisions/241-workspace-project-context-and-folder-bound-index.md). Renumbered from project ADR-240 during 2026-10-22 dev integration; historical rulings and delivery notes below retain their original source-era labels.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Steps use checkbox (`- [ ]`) syntax. The user already approved the feature and subagent execution; proceed without another preference/approval round.
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+**Goal:** Add explicitly enabled, folder-bound semantic discovery while preserving saved Library choices and keyword operation without embeddings.
 
-**Goal:** Add explicitly enabled semantic project discovery while retaining keyword search and the folder binding's live authority.
+**Architecture:** Add immutable semantic membership/vector generations to the existing project SQLite cache, with bounded streaming exact cosine. Reuse the real embedding wrapper under code-issued project admission and offline/destination consent; keep default Library admission unchanged. Merge eligible candidates through the existing live validation and output boundary.
 
-**Architecture:** Build a separately owned vector generation from the keyword index's committed chunks, then atomically publish a compatible ready pointer. Reuse embedding/vector primitives with an explicit code-issued project execution scope; their existing Library activation/readiness defaults cannot stand in for project authority. Merge eligible candidates before the keyword delivery's unchanged live-validation/output boundary.
+**Tech Stack:** Python>=3.12, existing SQLiteStoreKernel/BindingLifetime and optional embedding dependencies; float32 BLOBs and bounded numerical cosine, no new persistent backend or dependency.
 
-**Tech Stack:** Python >=3.12, existing ChunkingService/EmbeddingsServiceWrapper/VectorStore and optional Chroma backend, existing model/egress/recovery controls, SQLiteStoreKernel, pytest/Ruff. Imports remain lazy behind `Utils/optional_deps.py`.
+**Spec:** [Approved design](../specs/2026-10-20-workspace-aware-project-context-design.md), Index modes, refresh publication, acceptance2-3/5/8-12. [Pinned actual Codex CLI source reference](../specs/2026-10-20-codex-cli-project-context-reference.md).
 
-**Spec:** [Approved design](../specs/2026-10-20-workspace-aware-project-context-design.md), Index modes, Refresh publication, and acceptance items 2-3, 5 and 8-12. Prerequisite: the shipped [keyword-index delivery](2026-10-20-workspace-project-keyword-index.md), including its permission/revocation/Settings contracts.
-
-**Reference:** [Pinned Codex CLI source inspection](../specs/2026-10-20-codex-cli-project-context-reference.md). Codex's inspected path-search session is not a semantic content index; this feature is an optional Chatbook extension.
-
-**ADR required:** yes, existing accepted decision.
+**ADR required:** yes, amend existing accepted decision before code.
 **ADR path:** `backlog/decisions/241-workspace-project-context-and-folder-bound-index.md`.
-**Reason:** Implements its isolated semantic projection, destination consent, and atomic-generation contract. The shared-adapter scope extension below is necessary to preserve those existing boundaries rather than impersonating the Library service.
+**Reason:** Implements the accepted isolated projection/consent/generation contract with current schema and bounded SQLite storage. This amendment replaces the stale v1->v2 and Chroma allocation assumptions; feature intent remains approved.
+
+**Merged baseline:** PR3204 merged as6ac357de; branch starts from dev2070d9453bcf4f2cacb0b007cff5a41861aee188. Ten relevant store/kernel/lifetime/embedding source files match preflight. Cache is v3, so add004 and fresh v4; preserve prior migrations.
 
 ## Global Constraints
 
@@ -31,155 +29,207 @@ Current governance: [ADR-241](../../../backlog/decisions/241-workspace-project-c
 - Only compatible ready generations are queried. Revocation precedes cleanup, and old workers cannot publish after Clear/detach or an epoch change.
 - No embeddings/vector import or model construction on widget compose, ordinary keyword search, or index status projection.
 - Targeted test selections only; real-provider qualification is distinct from deterministic test embeddings.
-- Before execution, allocate/read atomic Backlog tasks and add their plans only after In Progress. S1-S3 here are local plan labels.
+- Sequential implementation ownership: S1a, S1b, S2, S3. No shared-file parallel writers, installer/model download, source-text egress, or automatic semantic PR merge.
+
+## Current-source decisions and interfaces
+
+The original plan is retained in merged Git history. Its Chroma adapter/strict-VectorStore changes are superseded: vectors stay in project SQLite, so unused Chroma/genericVectorStore/generation.query_scope paths remain unchanged. Strict project query outcomes distinguish unavailable from ready-zero. The embedding wrapper's actual constructor, activation, direct/native/model entrances still require exact issued project scope before effects.
+
+`ProjectSemanticSettings` keeps provider_id, model_id, destination_fingerprint, config_fingerprint and approved_destination_fingerprint, adding restart-safe secret-free provider/config references. No raw credentials or credential-bearing endpoints are persisted. `ProjectSemanticState` holds independent semantic_revision, enabled/settings, safe state/reason and optional generation/coverage. Existing keyword state keeps its meaning; semantic changes do not call keyword configure/revoke or advance its epoch. Full Clear/revoke affects both.
+
+`ProjectSemanticGeneration` records generation_id, complete scope, semantic_revision, settings/model/artifact/format/dimension identity, captured manifest_revision, durable claim/checkpoint, state and chunk_count. Immutable members own relative path, filesystem identity, content hash and line map plus float32 vector; no foreign key to mutable keyword chunk IDs. `page_chunks(scope, *, expected_manifest_revision, after_chunk_id: int|None, limit, max_utf8_bytes)` returns a checked immutable page; integer IDs are stable only within that checked manifest.
+
+A native append transaction or query vector page is <=32 records and <=1MiB of its encoded payload; check SQLite byte lengths before materializing a BLOB/text. Oversized records refuse explicitly. The existing paged query rank retains one outer `store.sql_unit()`/registry fence across those pages; the page bound does not imply a per-page query transaction. Task4's prospective local Hugging Face source/provider page is <=128 contiguous records and <=1MiB encoded source text, while hosted and other providers retain <=32. Validate the complete provider result before any native append; split local output into contiguous <=32-row/<=1MiB admitted commits and advance the checkpoint only after each commit. Source retained/queued across work remains <=4MiB. No cursor/transaction spans embedding await, no fetch-all/full matrix/OFFSET pagination. Query scores use a heap of at most100, exact policy/run/current exclusions before rank, deterministic ties, RRF k=60 and path/hash/line deduplication before the existing live choke point.
+
+## Allocation and settlement contract
+
+Use a project-only `allocation.py`, the existing native BindingLifetime primitive and one fixed binding-group `allocation-v1.lock` (zero-payload control file, known/counted cleanup inventory). This avoids repurposing the cleanup receipt and its existing lock order. All cooperating current-version SQLite units use a nonblocking allocation gate outside registry fences. A retained job authority lifetime may precede that try-only gate. Every gate holder uses try-only receipt/lifetime acquisition, unwinds on busy, and never waits/joins while holding it; cleanup returns Pending for a live job. Keyword and semantic writers remain sequential. Read/status/search paths may not silently allocate/reconcile durable control; create/reconcile it inside an admitted mutation.
+
+A finite cleanup/receipt control unit may own the group gate while sequential namespace SQL units borrow that exact live lease. Borrowing is limited to the same group and process/thread/execution; stale or copied contexts and other groups refuse. The control owner holds no SQLite handle. At most one native SQL store/unit is active in the group at a time (same-store nested methods may reuse it); each namespace closes and inventories before the next opens. Overlapping independent reservations could budget against stale other-file lengths and are forbidden. Admit and count bounded receipt growth under the gate, then inventory again. Any child store, receipt, capability or gate settlement uncertainty retains/quarantines the exact outer gate and operation owner. No borrow extends over joins, retries, scanner/provider waits or file Capture; cleanup capability acquisition remains try-only and a live owner yields Pending.
+
+Public read admission uses the unchanged 3s outside-unit retry bound. Measured consecutive finite writer units can starve status at its first constructor admission, so ProjectIndexService may record an ephemeral pending-read count per exact binding group only after status/management/policy receives transient LifetimeBusy. Registration always clears on success, timeout, close or any other exit. After a successful background SQL operation has completely released its fence, native store and allocation gate and finished inventory, a same-service writer with a pending reader yields once for at most25ms using a stop-aware wait, unless stopped or closing. No unconditional per-unit delay, gate-held wait, cached authority/status or new persistent owner is introduced. At most one bounded yield follows a successful unit, so a stream of readers cannot indefinitely suspend the writer. This is a cooperative acquisition window for the existing5ms read retry, not a cross-process fairness or hard scheduling guarantee; foreign contention still reports Busy at3s. Native synchronized contention and physical stop/close tests must verify the chosen policy.
+
+Review clarification for binding-wide admission: before a write-capable outer SQL unit enters its target allocation_store or opens its native handle, the existing group gate owns a bounded, serial, existing-only/read-only peer preflight through the established project SQLite owner. Positively close and inventory each peer before another peer or target opens. Cache only a boolean for this exact finite gate-held unit and discard it on release. Qualify the group when any validated namespace has semantic consent enabled, a non-null ready-generation reference, or generation/member rows. Disabled settings alone, schema-v4 tables alone, and an Off row without generation data do not force semantic runtime qualification; their bytes/freelist still count under the keyword allowance. Unknown/corrupt/aliased/recovery-sidecar peers or uncertain close refuse. There is no permanent semantic marker or new persistence owner. Preflight write-capable constructor/management units, including regular constructors that may migrate; keep cleanup-only/read units read-only, and refuse unexpected read-to-write nesting rather than opening a peer beside a live target. Pure keyword groups retain keyword admission without semantic source qualification. No gate waits, registry-fence reversal or overlapping native SQL store is permitted.
+
+Persisted semantic settings v1 use configuration catalog keys, not raw model paths or connection settings: provider_id matches [a-z][a-z0-9_-]{0,63}; model_id matches [A-Za-z0-9][A-Za-z0-9_.-]{0,127}; provider_ref is exactly provider:v1:<provider_id>; config_ref is exactly model:v1:<model_id>. The model key selects the existing EmbeddingConfigSchema.models entry (which already contains its provider and configuration); no separate configuration-profile system is introduced. Project semantic configuration must refuse unsupported key syntax without rewriting saved Library configuration. destination_fingerprint, config_fingerprint and a non-null approved_destination_fingerprint are exactly sha256:v1:<64 lowercase hexadecimal characters>. Different well-formed approval/destination digests still project Paused. Syntax validation does not prove a caller's arbitrary ID is not a secret; Task2 must resolve code-issued actual provider/model catalog membership and construct fingerprints from non-secret canonical fields before effects or persistence. Task1 rejects endpoint/userinfo/query/assignment/freeform reference material before persistence and exposes no raw invalid values in errors. These metadata formats do not change schema-v4 ownership or create a catalog/runtime in Task1.
+
+For semantic-enabled projection allocations and their competing writes, require verified single-main DELETE journal, NORMAL locking, FULL/EXTRA synchronous, incremental auto-vacuum, secure_delete, foreign_keys, memory temp and cache_spill=OFF on the actual held connection. Forbid ATTACH, WAL transition, savepoints, disk temp, VACUUM and unbounded pruning. Before SQLite open, refuse nonempty journal/WAL/SHM/unknown sidecars rather than trigger unbudgeted recovery or delete evidence. Stop issuing SQL after any SQLite error.
+
+With budgetB=1073741824, old page countN, page sizeP, sector upper boundS=65536, other owned regular-file lengthsO, separately reserved control growthE and observed journalJ0:
+
+`J = 2*S + N*(P+8)`; choose integerC>=N with `O + E + C*P + max(J0,J) <= B`.
+
+Verify actual file length=N*P and actual returned/read-back max_page_count<=C and>=N; never clamp a negative allowance to one page. Recompute each transaction; freelist/deleted rows still count. Preserve old Ready while staging. This reserves every old page, not an estimated touched set. The initial source proof is pinned to probed SQLite3.49.1/source873d4e... plus actual connection/compile/VFS conditions; qualify another build before using the certificate. Unsupported semantic allocation reports setup/unavailable, while pure keyword-only operation retains its established behavior and limits without embedding imports. Do not turn a semantic-only runtime requirement into a keyword dependency.
+
+The envelope covers cooperating current-version processes after old native owners retire. It does not certify concurrent older binaries ignoring the new gate, filesystem cluster/directory allocation overhead, arbitrary extensions or external file writers. Refuse observed mixed/unretired writers; do not claim an OS quota. Existing keyword reserve was unproven for arbitrary new vector transactions, not a demonstrated keyword overrun.
+
+The project transaction owner retains native connection/gate through body, COMMIT, rollback, native close and post-settlement inventory. Each finite SQL unit (including reads that could trigger recovery) closes positively before releasing the gate. No gate, SQLite handle/transaction or cursor spans scanner IPC, embedding/provider await, file Capture, native joins or retry sleeps; only existing job/data/native lifetime owners may span those waits. Acquire the gate before entering a registry fence. Use timeout=0/busy_timeout=0 on the actual project opener/connection; retry SQLITE_BUSY only after the unit has closed/unwound. Refactor constructor pre-open, scanner frontier/admit/emit callbacks, search capture boundaries, revoke joins and supervisor final status into these finite units. This preserves keyword search during real scanner/provider waits. Generic kernel commit failure is outside its body rollback arm; do not change the generic kernel or assume it settled. Uncertain rollback/close/inventory retains ownership/quarantine. If commit logically ambiguous but physical settlement proved, reread CAS in a new admitted operation before reporting/retrying. Failure-status/control writes need admission too; no allocation after full quota merely to record an error. Cleanup v2/v3/v4 stays nonmigrating; v1 quarantine remains.
+
+Primary proof references: [SQLite3.49.1 release](https://www.sqlite.org/releaselog/3_49_1.html), [pinned pager](https://raw.githubusercontent.com/sqlite/sqlite/version-3.49.1/src/pager.c), [temp files](https://www.sqlite.org/tempfiles.html), [PRAGMAs](https://www.sqlite.org/pragma.html). Retain exact source proof and actual native peak evidence separately.
 
 ## Review Focus
 
-- Existing vector/embedding decorators can accidentally resolve Library owners: S1 instruments actual source admission and forbids that crossover.
-- Direct activation calls, lazy native collection creation, and native-worker transfers must select the same issued project scope as decorated calls.
-- Native query failure currently becomes an empty list: S1/S2 distinguish failure from successful zero hits without changing Library defaults.
-- A same-dimension model change can incorrectly look compatible: S1/S2 fingerprint model, destination, chunker, configuration, authority, and epoch.
-- A failed native query/build may continue after coroutine cancellation: S2 observes the physical borrower and retirement before publication/cleanup.
-- Keyword and semantic candidates may refer to different file revisions: S2 validates revision before merge and uses the shared live-result choke point.
-- The user can change embedding destination while an old build waits to commit: S3 holds that boundary and proves pause/revocation without changing Library or keyword availability.
+- Hidden status/control writes, native open hot-journal recovery or commit error can bypass quota; S1a tests actual entrances and retains uncertain ownership.
+- Embedding construction can resolve Library sources before activation; S1b instruments actual wrapper/factory/native guards and default compatibility.
+- A destination/model change or same-dimension model can reuse stale Ready; S1b/S2/S3 compare full compatibility and consent before effects/publication.
+- Current exclusions alone omit a requesting run floor; S2 tests dominant forbidden matches and old-run exclusion removal before semantic top-k.
+- Cancellation may finish a coroutine before native work retires, and stale mounted actions can affect a new binding; S2/S3 hold actual workers/owners and captured revision fences.
 
-## File structure
+## File map
 
-| Files | Responsibility |
+| Area | Files |
 | --- | --- |
-| New `tldw_chatbook/RAG_Search/projection_scope.py` | Narrow code-issued execution/query-scope carrier for a second projection owner. |
-| Existing `RAG_Search/activation.py`, `generation.py`, `simplified/embeddings_wrapper.py`, `simplified/vector_store.py` | Accept the explicit scope at every installed entrance; explicit strict query/offline options preserve current Library defaults. |
-| Existing `Embeddings/Embeddings_Lib.py` and the wrapper's factory setup | Credential-free destination/error reporting and project-only offline loading. |
-| New `tldw_chatbook/Workspaces/project_index/semantic.py` | Project embedding configuration, generation builder, candidate query and readiness. |
-| Existing project-index models/store/service/recovery/runtime | Versioned semantic settings, generation pointers, job ownership and revocation. |
-| Existing ProjectIndexBindingCard | Per-binding semantic choice/consent and separate keyword/semantic status. |
-| New semantic/adapter/generation tests | Source admission, real SQLite generations, deterministic embeddings and dependency-failure controls. |
+| Allocation/settings foundation | New `Workspaces/project_index/allocation.py`, `DB/migrations/workspace_project_index_004.sql`; existing project models, DB, lifetime, recovery, runtime and service; small `tldw_chatbook/DB/project_semantic_store.py` companion if cohesive SQL needs separation, same owner/kernel |
+| Explicit embedding scope | New `RAG_Search/projection_scope.py`, `Workspaces/project_index/semantic.py`; existing activation/native guard plumbing, embeddings_wrapper and Embeddings_Lib; no unused vector adapter changes |
+| Generations/search | `semantic.py`, new `semantic_vectors.py` for codec/bounded ranking, same project store/service/runtime/recovery; no second scanner |
+| Consent/qualification | Existing ProjectIndexBindingCard, model-free file-root wording, architecture/user docs and retained semantic QA |
 
-## S1 Explicit projection ownership and versioned semantic settings
+## Task 1: S1a cache state and allocation — TASK36420
 
-**Files:** Create `RAG_Search/projection_scope.py` and `Workspaces/project_index/semantic.py`; extend the four RAG adapter/guard files in the table, `Embeddings/Embeddings_Lib.py`, `project_index/models.py`, `DB/Workspace_Project_Index_DB.py`, and project-index `recovery.py`. Create `Tests/RAG/test_project_projection_scope.py` and `Tests/Workspaces/test_project_semantic_settings.py`; extend focused wrapper/vector/factory tests.
+**Files:** Allocation/settings foundation row above; new `Tests/Workspaces/test_project_semantic_settings.py`, `Tests/DB/test_project_semantic_schema.py`, `Tests/Workspaces/test_project_index_allocation.py`; relevant existing DB/migration/owner/cleanup/native retirement nodes.
 
-**Interfaces:** Add keyword-only `execution_scope: ProjectionExecutionScope | None = None`
-to `EmbeddingsServiceWrapper.__init__` and `ChromaVectorStore.__init__`; forward
-it through `create_vector_store`. `ProjectionExecutionScope` is an immutable,
-code-issued carrier with `operation() -> ContextManager[None]` and
-`query(target: object) -> ContextManager[None]`. Only internal composition issues
-one; no config/tool/archived payload supplies callbacks, owner names or grants.
-The project's issuer lives in `semantic.py`, under the existing recovery admission
-guard and K3's current key/epoch checks. Scope transfer to awaited native work
-retains accepted lifetimes. Default None preserves current Library behavior.
-Bind the carrier to its exact cache/generation/model targets, not only an owner
-label. `activation.execution`, `_call_scope`, `native_worker`, nested lazy
-client/collection creation, and `generation.query_scope` all select that same
-carrier before effects. The scope owns context-checked transfer of an accepted
-live parent into retained native work; copied/dead context or the wrong target
-cannot fall back to Library source inference. Keep ancestor-liveness, task/thread
-identity and native borrower checks; no parallel untracked worker path.
-Its exact issuer is `_issue_project_projection_scope(service: ProjectIndexService,
-scope: ProjectIndexScope, settings: ProjectSemanticSettings,
-semantic_revision: int) -> ProjectionExecutionScope`.
+**Produces:** v4 exact catalog and immutable semantic records; `load_semantic_state(scope) -> ProjectSemanticState` (read-only); `configure_semantic(scope, settings, *, enabled, expected_semantic_revision) -> ProjectSemanticState`; project allocation/native settlement helper consumed by all new projection mutations, with stable gate and legacy keyword-only availability.
 
-Add `ProjectSemanticSettings(provider_id: str, model_id: str,
-destination_fingerprint: str, config_fingerprint: str,
-approved_destination_fingerprint: str | None)` and
-`ProjectSemanticGeneration(generation_id: str, scope: ProjectIndexScope,
-settings_fingerprint: str, manifest_revision: int, state: str, chunk_count: int)`.
-Generation state accepts building/ready/failed/cancelled/incompatible. Add store
-schema v2 transactionally: device-local semantic settings, a semantic revision, generation
-metadata, durable build checkpoints, and a ready pointer. Existing v1 keyword
-rows and enablement remain intact; no semantic objects are constructed on upgrade.
-Semantic settings/consent changes advance that separate revision; they do not
-advance the binding epoch or invalidate the keyword generation. A full Clear or
-binding revocation still advances the shared binding epoch and revokes both.
+- [x] Write meaningful RED tests for fresh/1->2->3->4 preservation, DDL rollback, independent semantic revision and no eager dependencies.
+- [x] Write actual held-SQLite/native RED cases: two namespaces competing for one binding allowance, keyword lookup while a real scanner waits outside a SQL unit, negative cap/no clamping, all control/migration/status entrances, unknown sidecars before open, commit/body/rollback/close uncertainty, old Ready retained and v2/v3/v4 cleanup with v1 refusal. Use scaled budgets for exhaustion plus the analytical formula; sampled peaks alone are insufficient.
+- [x] Run only these new nodes first; confirm failures identify absent behavior rather than bootstrap/typo.
+- [x] Implement the narrow allocation owner and v4/settings interfaces; preserve keyword rows/policy/epoch/frontier/claims and native ownership. No generic kernel change, semantic job, embedding construction or UI.
+- [x] Verify new files and directly affected keyword DB/service/recovery/cleanup controls, scoped Ruff/format/source guards and diff. Preserve child receipts outside numbered pytest temp immediately. Record actual SQLite/VFS proof limits.
+- [x] Commit exact task paths and report to parent; independent task review before S1b. ADR241 is amended before code.
 
-Add explicit `local_files_only: bool | None = None` to the embedding wrapper's
-factory configuration: None keeps existing callers' behavior; project local
-models set True, disallow dynamic remote model acquisition, and resolve only an
-already complete local snapshot. This applies on ordinary and restored profiles.
-A missing snapshot returns a setup-required state before loader/network effects.
-Add `raise_on_error: bool = False` to the vector `search` protocol and its actual
-implementations. Project semantic queries set True and propagate a classified
-failure; default False preserves existing callers. Do not infer success from
-`[]` after an adapter has swallowed an exception.
-Production project composition selects the persistent backend explicitly; an
-unknown/unavailable backend must not silently become an in-memory Ready index.
+## Task 2: S1b issued embedding scope — TASK36421
 
-- [ ] **Write adapter/upgrade tests.** `test_project_scope_never_admits_library_sources` instruments the actual EmbeddingsServiceWrapper and ChromaVectorStore through constructor, first lazy client/collection creation, async embedding native worker, nested query and retirement. Assert the project declaration/key and model-artifact owner are used and no Media/Notes/Prompts or `db.rag_indexing` source is inferred. `test_default_scope_keeps_library_admission` pins current behavior. Reject a serialized/fake scope, wrong target, copied/dead transfer context and untrusted owner name before any effect. Test repeated cancellation with accepted parent retirement. On an ordinary isolated profile with network blocked, a missing local model cannot download and the real loader receives offline-only settings. A native collection query exception raises in strict mode; a successful zero-hit query remains empty and default behavior stays compatible. Assert `old_model_fingerprint != new_model_fingerprint` even when dimensions match. Upgrade tests compare keyword rows and policy values before/after v1->v2, prove a semantic-revision change preserves keyword readiness, and roll back an injected DDL failure.
-- [ ] **Run:** `python -m pytest Tests/RAG/test_project_projection_scope.py Tests/Workspaces/test_project_semantic_settings.py -q`. Expect the missing execution-scope/semantic contracts to fail.
-- [ ] **Implement the explicit scope and opt-in adapter contracts.** Constructor decorators must see the supplied scope before first filesystem/model effects. Route every listed decorated/direct/native entrance to that exact typed carrier without falling through to Library default source discovery/reconciliation. Retain native borrower tracking and storage admission. Do not unwrap decorators, monkeypatch global guards, forge `_projection_service`, duplicate the vector adapter, or broaden default guards for all callers. The project scope checks its own storage generation, current authority and exact target; local models retain readiness checks plus the explicit offline-only loader contract. Add the strict search option at the actual exception handler, preserving its default.
-- [ ] **Verify:** `python -m pytest Tests/RAG/test_project_projection_scope.py Tests/Workspaces/test_project_semantic_settings.py Tests/RAG/test_local_citation_capture.py Tests/RAG/simplified/test_vector_store.py Tests/RAG/simplified/test_embeddings_wrapper.py Tests/Backup_Recovery/test_projection_generation.py Tests/Backup_Recovery/test_rag_projection_lifetimes.py Tests/Backup_Recovery/test_activation_local_embedding.py -q`. These are focused existing regressions for the shared guards being changed. Include a real private store and an installed optional vector backend; deterministic/memory tests alone do not establish Chroma lifetime behavior. Run scoped Ruff and `git diff --check`.
-- [ ] **Commit:** `git commit -m "feat(rag): support explicit project projection ownership"`; document exact default-Library compatibility and the new owner boundary in Backlog notes.
+**Consumes:** S1a state/revision, scope and allocation contracts. **Produces:** `ProjectionExecutionScope`; keyword-only `execution_scope: ProjectionExecutionScope|None=None` and `local_files_only: bool|None=None` in actual wrapper/factory; `_issue_project_projection_scope(service, scope, settings, semantic_revision)` in semantic.py. Binding to exact target/model occurs before constructor effects. None keeps Library behavior.
 
-## S2 Bounded semantic generations and live validated search
+**Files:** Explicit embedding scope row; `Tests/RAG/test_project_projection_scope.py`, focused factory/offline/logging tests, actual existing activation/native lifetime regressions.
 
-**Files:** Extend `semantic.py`, project models/store/service/scanner accounting, and project recovery/runtime. Create `Tests/Workspaces/test_project_semantic_generations.py`, `Tests/Workspaces/test_project_semantic_search.py`, and `Tests/Backup_Recovery/test_project_semantic_lifetime.py`.
+- [x] Write REDs through actual constructor, source admission, synchronous/async/native entrances, wrong target/forged scope/stale revision/copied or dead parent, repeated cancellation and default Library behavior.
+- [x] Write actual factory offline missing-snapshot/blocked-network and controlled-HTTP credential-bearing success/retry/failure tests. Replace old raw-endpoint logging expectations with safe behavior assertions.
+- [x] Implement exact issued routing before Library inference, retained accepted-parent transfer and actual native/model retirement, offline-only complete-snapshot loading, secret-free config/destination resolution and safe error classification. Do not unwrap decorators, impersonate Library service, weaken broad optional-dependency guards or construct unused Chroma.
+- [x] Verify new scope/offline/privacy tests plus affected existing wrapper/factory/activation defaults. Record true setup-required conditions; deterministic embeddings are not quality evidence. Commit/report/review.
 
-**Interfaces:** `ProjectSemanticIndex(scope, settings, store, embeddings, vector_store)`
-consumes the exact S1 scope and the existing `VectorStore` protocol.
-`async build(job_id: str, stop: threading.Event) -> ProjectSemanticGeneration`
-reads committed keyword chunks in pages of <=32 chunks and <=1 MiB source text.
-K1's store adds `page_chunks(scope, *, expected_manifest_revision: int,
-after_chunk_key: str | None, limit: int, max_utf8_bytes: int) -> ChunkPage`;
-each page checks the revision transactionally and uses stable unique keyset
-ordering. A changed revision stops/discards staging or starts an explicit new
-build; never keep an SQLite read snapshot open across embedding/network work.
-The captured manifest revision belongs to generation metadata/checkpoints and
-the final ready-pointer CAS, alongside scope, authority and semantic settings.
-`candidates(authority: ProjectIndexSearchAuthority, query: str, *, limit: int) -> ProjectSemanticCandidates` returns
-only revision-bearing candidate records, never cache excerpts. This frozen
-result distinguishes ready (including zero hits) from unavailable with a safe
-reason code. It consumes S1's strict vector query mode.
-Apply K4's run-specific exclusion floor before semantic ranking too. A generation
-is queryable only when its recorded eligible path set is no broader than that
-call's authority, or a bounded exact backend filter can narrow it before top-k.
-The existing metadata allowlist cannot be replaced by an unbounded list of every
-authorized file. If exact bounded pushdown is unavailable, report semantic
-unavailable and use keyword search; do not post-filter a global semantic top-k.
-Test exclusion removal plus refresh from an old run, and an added exclusion
-whose matches otherwise dominate top-k. This is the same K4 authority contract,
-not a separate semantic permission model.
-`async aclose() -> None` drains issued work and retires native borrowers.
-Extend `ProjectIndexService.search` internally to merge keyword and semantic
-candidates by reciprocal rank with fixed k=60, deduplicate by path/hash/line,
-and then use K4's unchanged 100-candidate/live-validation/output boundary.
-Keyword search proceeds when the semantic result is unavailable.
-`candidates` uses `EmbeddingsServiceWrapper.create_embedding` on the existing
-finite tool worker; `build` uses `create_embeddings_async` for its bounded pages.
-Do not introduce a new event loop with `asyncio.run` for each tool call.
+## Task 3: S2 generations and search — TASK36422
 
-- [ ] **Write generation/race tests first.** With real temporary SQLite and deterministic test embeddings, build a known synonym corpus, stage a changed generation, fail before ready-pointer publication, and assert the prior compatible pointer remains. Mutate keyword rows between semantic pages and immediately before final CAS: no mixed membership may become Ready. Assert incompatible model/config/epoch generations are not queried, no content crosses two bindings with identical text, updated hashes are not merged as the same revision, and the serialized result still fits 16384 bytes/ten hits. Inject an exception into the actual vector collection query, assert semantic unavailable with keyword fallback, then recover the query and distinguish a real zero-hit result. Hold native work across cancellation, exclusion/detach/Clear, then release: publication must fail and actual borrowers must retire. Force storage budget exhaustion including staging vectors and assert Partial plus keyword usability.
-- [ ] **Run:** `python -m pytest Tests/Workspaces/test_project_semantic_generations.py Tests/Workspaces/test_project_semantic_search.py Tests/Backup_Recovery/test_project_semantic_lifetime.py -q`. Expect the new semantic build/query assertions to fail.
-- [ ] **Implement batching and atomic readiness.** Reuse keyword chunks and their content hash/line mappings, not a second scanner or an independent re-chunking policy. Collections are opaque per binding/epoch/config/generation under that binding's cache namespace. Build in staging from one checked manifest revision, persist revision-bearing checkpoints, then under K1's registry-then-store fence validate scope/config/authority/exclusions/manifest revision and atomically swap the ready pointer. Keep old compatible ready generations during rebuild, reporting their coverage revision; changed/deleted files are still rejected by live candidate validation. Source membership changes invalidate a new build's publication but do not falsely rewrite an already published generation's snapshot. Run query embeddings under the same destination consent and source admission as build embeddings. Degrade to keyword on semantic failure with a truthful status rather than an empty-success semantic claim.
-- [ ] **Verify:** Run the three new files, K4's `Tests/Agents/test_project_index_tool.py`, K3's recovery tests, and affected node IDs from `Tests/Backup_Recovery/test_projection_generation.py`, `test_rag_projection_lifetimes.py`, and `test_activation_local_embedding.py`. With optional dependencies installed, exercise the real vector store's close/maintenance path using the shared lifetime observer. Repeat the scale harness in semantic mode, recording model/config, corpus bytes, cache+staging peak, indexing rate, query latency and cancellation. Deterministic vectors test lifecycle, not semantic quality; retain a separate real embedding-quality receipt.
-- [ ] **Commit:** `git commit -m "feat(workspaces): build optional semantic project generations"` after exact-path staging, scoped lint, and `git diff --check`; update Backlog coverage and measured limits.
+**Consumes:** S1a records/allocation and S1b wrapper/issuer. **Produces:** bounded builder/candidate outcome on existing `ProjectIndexService`, with codec/ranking helpers, service owned semantic jobs and `enable_semantic(key, settings, *, expected_epoch, expected_semantic_revision)` / `disable_semantic(key, *, expected_epoch, expected_semantic_revision)`; model-free separate state.
 
-## S3 Semantic choice destination consent and release qualification
+**Files:** Generations/search row; new `Tests/Workspaces/test_project_semantic_generations.py`, `test_project_semantic_search.py`, `Tests/Backup_Recovery/test_project_semantic_lifetime.py`; affected actual project tool/recovery controls.
 
-**Files:** Extend `ProjectIndexBindingCard`, project service/runtime, `Tools/workspace_file_roots.py` status wording, `RAG_Search/simplified/embeddings_wrapper.py`, `Embeddings/Embeddings_Lib.py` endpoint/error reporting, and `Tests/UI/test_workspace_project_index_settings.py`. Create `Tests/UI/test_project_semantic_consent.py`; extend the actual embedding factory's controlled-HTTP tests. Update `Docs/Architecture/project-indexing.md`, `rag.md`, and the Console/Settings user guides. Retain receipts under `Docs/superpowers/qa/2026-10-20-workspace-project-context/semantic/`.
+- [x] Write real-SQLite deterministic-vector REDs for synonym corpus, failed rebuild/old Ready, mutation between pages/final CAS, same-dimension model changes, identical-text binding separation, ready-zero versus unavailable, corrupt/oversized/nonfinite vectors and quota refusal.
+- [x] Hold actual work across repeated cancellation, Clear/detach/exclusion/settings changes, competing keyword build and app close; publication must fail and physical borrowers retire.
+- [x] Implement immutable bounded keyset pages, <=4MiB total source ownership, finite float32 codec and heap100 exact cosine. Apply shared exact eligibility predicate before ranking, RRF60/dedup before unchanged live validation, 10hit/16384byte output. No full matrix, source replay scanner or per-tool asyncio.run.
+- [x] Build uses actual async embedding pages on one owned job lifecycle with durable claim/checkpoint; synchronous query embeddings use the existing finite tool worker. Consent/config checks apply at service boundaries before UI exists. Register semantic jobs in the same close/revoke snapshots; sequential keyword/semantic writes.
+- [x] Verify new files and directly affected tool/keyword/native controls, codec/rank/filter behavior, source guards/lint/diff; commit/report/review. Scale/real quality follows in S3 after source settles.
 
-**Interfaces:** `ProjectIndexService.enable_semantic(key: ProjectIndexKey,
-settings: ProjectSemanticSettings, *, expected_epoch: int,
-expected_semantic_revision: int) -> ProjectIndexStatus`
-accepts only a current explicit Settings action and valid destination approval.
-`disable_semantic(key, *, expected_epoch: int, expected_semantic_revision: int) -> ProjectIndexStatus` revokes semantic query/build
-eligibility while leaving keyword mode enabled. Expose separate `keyword_state`,
-`semantic_state` and coverage in status, together with `semantic_revision: int`;
-no worker or model construction occurs
-when projecting them. Resolve secrets through the existing embedding factory;
-persist only nonsecret references/fingerprints.
+## Task 4: S3 consent and release — TASK36423
 
-- [ ] **Write mounted consent/availability tests.** Assert missing embeddings offers keyword operation and an actionable optional-feature state; switching chat providers changes no index setting. Select an external embedding destination, cancel its disclosure, and assert zero provider calls. Approve, hold the build before publication, change destination, then assert paused semantic work, unchanged keyword state and byte-identical Library policies. Send credential-bearing custom endpoints through actual wrapper/factory construction and controlled HTTP success/retry/failure responses; inspect captured logs and propagated status/error strings, not only UI labels. Prove no raw credentials/query secrets escape. Test stale semantic Disable after Clear/re-enable and ordinary-profile missing local models with network blocked.
-- [ ] **Run:** `python -m pytest Tests/UI/test_project_semantic_consent.py Tests/UI/test_workspace_project_index_settings.py -q`. Expect absent semantic controls/guards to fail.
-- [ ] **Implement existing-pattern Settings controls and safe factory reporting.** Show provider/model, local/external destination, separate semantic readiness/coverage, and its storage share. Reuse existing optional-dependency and provider selection seams; do not mutate the global Library RAG profile or capture a Library Allowed setting as consent. Replace raw endpoint logging in both the wrapper and `_openai_embedder` success/retry/failure sites with a credential-free destination label and safe error classification; propagated request exceptions must not re-expose the URL. Changing provider destination invalidates semantic consent/build publication before requesting new approval. Keep keyword results and the file tools available through failure, disabling and cancellation.
-- [ ] **Qualify with the real app and selected real embedding backend.** Exercise local semantic discovery for a paraphrased query, refresh, failed rebuild, restart, destination change, semantic disable, and full Clear/detach. Verify returned project facts through live file reads. For external embeddings, capture only credential-free destination/call receipts under explicitly selected consent. Run the S1/S2/S3 targeted tests plus the G3 policy-preservation test. Scope Ruff and token/CSS checks if relevant UI sources changed; require `git diff --check`.
-- [ ] **Commit:** `git commit -m "feat(settings): opt into semantic project indexing by destination"`. Close the Backlog task only after actual provider, lifecycle, documentation, self-review and ADR evidence is recorded.
+**Consumes:** Stable service actions/state/resolver/jobs. **Files:** Consent/qualification row; new `Tests/UI/test_project_semantic_consent.py`, existing mounted project card tests; `Docs/Architecture/project-indexing.md`, `rag.md`, user guides, semantic QA.
+
+- [ ] Read design-language/component patterns before UI. Write mounted REDs for independent controls/selectors, separate readiness, dirty drafts, stale semantic Disable after Clear/re-enable, no model work on compose/status, missing dependency and all saved Library combinations.
+- [ ] Exercise cancellation of external disclosure (zero calls), approved destination hold/change/publication refusal and unchanged keyword/Library state. Implement existing-token controls with explicit provider/config refs and captured semantic revision; no generic query(Input) assumption about two processing fields.
+- [ ] Qualify actual cached local model through real production factory/issued scope and app: paraphrase discovery, refresh, failed rebuild, restart, semantic disable and full Clear/detach. Candidate snapshot: already cached MiniLM c9745ed...; artifact presence is not loader/quality proof. Missing sentence-transformers requires an isolated dependency setup, never modifying the shared environment or silently downloading model files.
+- [ ] Run one source-frozen semantic scale qualification on retained20k shapes, preserving corpora and analytical/native storage envelope; record model/config/dimension, bytes, throughput, memory, query latency and physical cancellation. Test keyword with missing embeddings independently. No favorable timing reruns or universal latency claim.
+- [ ] Retain raw RED/GREEN/native/provider/visual receipts as they retire, exact hashes/limitations/rulings and documentation; self review, independent task review, then one whole-branch review/fix wave. Close tasks only on actual evidence. User has not authorized auto-merging a future semantic PR and PR3204 Qodo waiver does not carry.
+
+- [ ] Gate critical semantic schema/settings/native/project-admission and current embeddings-free keyword regressions in a bounded required PR lane on an actually qualified SQLite runtime, with explicit UI census classification. Keep optional ML/20k work separate and existing lane caps/shards unchanged; update exact CI contracts and ADR103 before workflow changes. Parent owns external hosted qualification/PR actions.
+- [ ] Bind disclosure text and approval to one inspected current catalog snapshot; refuse a changed destination before opening the dialog. Retain staged revision and service CAS checks. Qualify the mounted catalog-change RED/GREEN.
+- [ ] Correct the existing Hugging Face producer's explicit CPU precision on CUDA-capable hosts by resolving actual device before load/dtype (CPU float32, actual CUDA float16). Focused device-contract RED/GREEN and one owned offline synthetic probe qualify numerical correctness; keep it separate from the operator-stopped 20k throughput diagnosis.
+- [ ] Place the native-positive mounted stage/cancel node in the existing bounded qualified Windows job, not the unqualified Ubuntu UI shard; restore the uncommitted local census entry/floor and pin exact inclusion/absence. Keep 13 shards, the 20-minute cap and core dependencies. Diagnose the measured inter-batch gap with a small model-free per-stage control before proposing service performance changes or another retained scale attempt.
+- [ ] Apply the measured Task4 local Hugging Face source/provider page amendment from ADR241: <=128 contiguous chunks/<=1MiB source text only for local HF, <=32 for other providers, each native append transaction and each query vector page. The existing query rank keeps its outer paged-rank SQL/registry unit. Validate provider count and dimensions before append, split contiguous native commits by rows and bytes with fresh admission/live/CAS checks, and prove tail/checkpoint/cancel/source-change/native retirement and memory in focused tests. This source change alone does not satisfy the retained 20k scale gate; preserve its original 3,600-second bound.
 
 ## Delivery gate
 
-Ship when semantic opt-in has a recorded real-backend qualification, project-only
-source admission, compatible-generation publication, and cancellation/revocation
-evidence, while missing/degraded semantic capability leaves keyword search and
-saved Library choices intact. The user selected Subagent-driven execution.
-The [pre-implementation review](../qa/2026-10-20-workspace-project-context/plan-review.md)
-records the source-snapshot, adapter-failure, direct/native-scope, offline-model,
-factory-reporting and recovery-regression corrections included here.
+Real-backend quality, supported storage/runtime envelope, exact project admission, compatible atomic generations and physical revoke/cancellation must be qualified. Keyword and saved Library behavior stay intact when semantics is Off/missing/degraded. Deterministic vectors, presence-only model inventory or observed disk peak alone cannot satisfy those gates.
+
+
+R1 implementation refinement (recorded before owner-policy edit): the actual first GREEN failed because db.workspace_project_index permits only PRIVATE_FILE and refuses READ_ONLY_URI. Authorize only this existing owner's allowed kinds to become _PRIVATE_AND_READ_ONLY, using the existing checked mode=ro, must_exist=True path for serial peer inspection. Keep its production_module, private-path validation, backup/sync exclusion, foreign-source flag, recovery flags, memory exclusion and every other owner unchanged. This introduces no source grant or generic-kernel behavior. Record the new WorkspaceProjectIndexDB._probe_peer call as a separate read_only_uri C99 row in backlog/docs/sqlite-private-owner-inventory.md and deliberately extend only the exact connection census range to include C99 in Tests/DB/test_private_sqlite_inventory.py, retaining its guards. Add actual project-owner read-only/missing-target/write-refusal controls and run matching inventory/registry nodes; no inventory regeneration or unrelated baseline absorption.
+
+Missing allocation gate bootstrap: before first gate creation, a regular write-capable constructor must inspect every existing namespace serially through existing-only read-only handles, with validated inventory and positive native close. An existing v4 target OR peer refuses without creating the missing gate, including repeated/restarted attempts. Only an empty or fully validated legacy v2/v3 group may proceed to a separate gate-held write-capable unit, which rechecks current peers before opening the target. Read/status never creates a gate. Ambiguous aliases, unknown catalogs, recovery sidecars or close uncertainty refuse; uncertain ownership is retained. The preliminary scan grants no write authority and cannot substitute for the gate-held recheck. Costs if wrong: safe refusal or additional finite peer-open work; no repair-by-retry of missing v4 control.
+
+
+Demonstrated Windows offline-loader correction: actual qualified factory reached model_recovery._closure and failed because that owner imports stdlib os while pinned_directory returns the existing platform filesystem descriptor. Python Windows stdlib os.listdir(fd) is unsupported. Reuse tldw_chatbook.Utils.platform_files.os in model_recovery.py, as native_files already does, so listdir/open/fstat use the existing handle-relative no-follow Windows implementation and unchanged stdlib POSIX behavior. This is a narrow import/adapter correction under existing ADR126 and ADR241, not a new storage/source permission or Windows backend. Do not add path-based enumeration fallback, weaken alias/single-link/identity/manifest/closure limits, change the generic platform shim or bypass model/recovery gates. Retain the actual offline13/16/17 failures and run native closure success/refusal tests plus directly affected model-reference/recovery controls and actual blocked-network offline factory. Report any additional owner need before edits.
+
+### Task2 review correction: retained project model close failure
+
+Ruling: Use only the existing ProjectIndexService operation owner to strongly retain failed project model retirement. Add a private projection_close_pending token-to-actual-wrapper map to _Operation and narrow private mark/settle/check helpers under the service lock. Register the actual project wrapper before factory/model close; keep its actual factory/cache record and carrier/retained parent on any failure, raise/log only classified project_embedding_close_failed without raw cause, and remove only its token after positively successful retry. Carrier close and wrapper use/rebind refuse while its retirement is pending; the service-rooted operation -> wrapper -> carrier -> actual parent chain must survive caller reference loss and GC. A self-contained wrapper/carrier cycle alone is insufficient. Default Library close behavior is unchanged.
+
+Keep projection-close pending separate from generic retirement_unproven. It must not blanket-deny registry_connection_scope or keyword reads merely because a model close failed; new semantic use on the affected binding refuses, while actual keyword lookup remains usable. During explicit service shutdown, detect/report a known unresolved projection close before waiting forever on its not-done operation; retain its real owner and permit positive same-wrapper cleanup retry. Never clear an unrelated native/store/capability uncertainty, claim cleanup success, or release the parent because an exception was swallowed. Serialize close/rebind and prevent embed reuse after partial closure. No SQLite handle/gate/fence spans model close, joins or waits.
+
+Authorized additional exact product path is tldw_chatbook/Workspaces/project_index/service.py, limited to this existing operation-owner retention/reporting seam. Existing Task2 projection_scope.py, embeddings_wrapper.py and actual factory paths may consume it; no generic recovery framework, new persistence owner, source grant or Library behavior change. Test actual factory record retention after injected close failure, sanitized logs/errors, caller-reference loss/GC, carrier and affected-semantic admission refusal, actual keyword lookup availability, explicit shutdown unresolved result, and successful physical retry followed by parent retirement. Root inspected actual factory close (cache.clear only after all record closes), service operation roots/admission and shutdown waits before this amendment.
+
+ADR required: yes, amend existing ADR241 before the cross-module owner change. ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md. Reason: narrow completion of accepted physical retirement and keyword independence, reusing existing project operation owner; no duplicate ADR.
+
+### Task3 background build model retirement retry
+
+Ruling: A service-owned semantic build whose actual wrapper close fails must keep its original owning worker execution alive, retaining the same wrapper/factory/carrier, operation, binding lease and pin. Add only `ProjectIndexService.retry_semantic_close(job_id)` as a nonblocking signal to that retained semantic run; one signal retries the same wrapper close on its original owner execution. This signal grants no source, model, query or publication authority and permits no further embedding. It remains usable after `aclose()` reports unresolved retirement. Wrong, completed or unrelated job identifiers cannot retire another run. Failed retry retains the actual owners; positive close, carrier/native/registry retirement and operation completion precede release. No SQLite connection, allocation gate or registry fence spans retry waits or native close.
+
+The run waits for an explicit signal without busy spinning; repeated cancellation/Stop/Clear/detach/shutdown cannot unwind its retained ownership merely to finish a coroutine. Service shutdown promptly reports known pending retirement rather than joining that worker indefinitely, and may complete after a positive retry. Keyword reads remain available while affected semantic admission refuses. Cover actual close failure, reference loss, repeated cancellation, shutdown reporting, failed and successful same-owner retry, wrong-job refusal and physical retirement.
+
+This is a narrow completion of existing ADR241 model-retirement ownership in the existing service and Task3 path map, not a new persistence owner, durable control, foreign-thread close or general retry broker. The earlier no-retry-broker statement concerns failed SQLite constructor retirement and remains unchanged. Synchronous query close-failure behavior must be explicitly reviewed and reported before inventing an additional executor. Cost if wrong: a retained background owner may require process exit; do not hide that limitation or report cleanup success.
+
+ADR required: yes, amend existing ADR241. ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md. Reason: make the accepted failed-model-close retry usable under the service-owned async build execution without changing authority or storage.
+
+### Task3 synchronous query close failure and bounded retry signal
+
+Ruling: Keep query embeddings on the existing synchronous tool worker. Do not add a query thread pool, per-tool event loop, transferable source carrier or foreign-thread model close. If close fails, perform at most one immediate same-wrapper retry. Persistent failure keeps that same owner execution and its actual wrapper/factory/carrier/operation/pin alive in a non-spinning signal wait until positive same-wrapper close. No further embedding, query disclosure or publication occurs from that pending owner. Capture any query result only after positive cleanup. Cancellation or outer tool timeout cannot release those physical owners.
+
+Superseding the earlier job-id-only signature before implementation: use `ProjectIndexService.retry_semantic_close(key)` to nonblockingly signal only already-retained pending close owners for that exact binding key, including background builds and the existing synchronous query worker. Cleanup signaling does not grant source authority, alter consent/revisions, query data or start embeddings; it remains available after service close reports pending. Wrong/retired/unrelated keys do not release any owner. One attempt per signal, with failed retry retaining the actual owner. Existing run/operation records own the event and safe pending state; no new persistence or general executor.
+
+Bound semantic query admission to one active query projection per service, nonblocking with no queued query text: contention degrades that invocation to keyword-only candidates. This accepted throughput ceiling bounds the exceptional retained query worker count to one and avoids a pool of waiting semantic queries. Keyword reads must have an available independent read slot while this query waits; retire any cache SQL handle/gate/fence/read slot before the close-retry wait, retaining only actual model/carrier/operation/data capabilities needed for retirement. If the current search structure cannot safely release the slot, move query projection and its close before entering `_search_store`; do not release native owners on an assumption.
+
+The remaining exceptional user cost is one tool worker waiting until explicit cleanup retry succeeds; the UI and keyword search must remain responsive. Task4 must expose the safe pending-close reason and a per-binding Retry cleanup action through the existing card, including after a failed shutdown. Test actual pending query close on its original worker, repeated tool cancellation, bounded additional semantic admission/keyword fallback, live keyword hit, wrong-key signal, repeated failed retry, successful same-owner retry and physical carrier/operation retirement. No synthetic carrier or global permission relaxation substitutes for this proof.
+
+ADR required: yes, amend existing ADR241. ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md. Reason: bounded same-owner cleanup for the accepted finite sync-query integration. Cost if wrong: a held tool worker remains unresolved, reported rather than silently retired; independent review must check both ordinary and failed close paths and keyword independence.
+
+### Task3 finite registry units before model work
+
+Ruling: Reuse `project_index_registry_connections(database)` and service `registry_connection_scope()` to retire admission-created WorkspaceDB handles before actual semantic model/provider work, physical model close or close-retry waits. The actual outer runtime context records its pre-existing native/core handle and yields a same-thread callback for finite retirement; nested service/project scopes consume that same outer owner. Prefer the existing yielded context seam over another service constructor callback. The callback may close only a newly owned or replacement connection, verifies that exact native handle is closed and absent from the core registry, and retains final proof for every such handle. A still-live borrowed caller handle is never closed: refuse semantic model admission before effects and allow ordinary keyword fallback. An absent handle needs no new open. Do not change generic DB close/ownership behavior.
+
+Invoke that narrow finite-retirement seam after issuer/current-state admission and before actual model construction/encode/close or retry waits. Authorize the exact additional Task3 path `RAG_Search/projection_scope.py` for `_current_state` and associated project admission integration only. Existing service/runtime/semantic paths are already in the task map. Preserve complete operation/native lifetime accounting through final scope exit, repeated cancellation and replacement handles; a bare `database.close()` callback without entry ownership and positive native/core proof is insufficient. Any uncertain retirement propagates and remains owned rather than permitting model effects. No registry transaction/fence or allocation gate spans the close.
+
+This is a semantic boundary correction under existing ADR241, not a new registry, persistence owner, generic connection framework or source grant. Library default calls and ordinary keyword query semantics remain unchanged. Verify actual production file-backed WorkspaceDB connections are physically retired at model entry/held wait, replacement handles are also retired, a borrowed live caller handle is preserved/refuses before model work, failed native retirement stays represented, and default keyword/model-free controls still work.
+
+ADR required: yes, amend existing ADR241. ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md. Reason: complete finite SQL ownership at the accepted project-model boundary. Cost if wrong: unavailable semantics under a borrowed handle, or retained unknown native ownership; neither may be hidden as successful zero results or repaired by closing caller state.
+
+
+### Task3 explicit OpenAI transport retirement
+
+Ruling: The held-provider lifecycle test exposed that the OpenAI factory record has close=None while its embedding closure owns a requests.Session. Reference loss or factory-cache clearing is not deterministic transport retirement. Extend only the private _openai_embedder seam in tldw_chatbook/Embeddings/Embeddings_Lib.py to return the embedding callable and the existing session.close callback; the single production _build caller stores that callback in its existing CacheRecord. Adapt the direct consumer in Tests/RAG/test_embeddings_lib_logging.py and focused factory/held-provider controls. The existing factory refcount/condition, cache record, same-owner wrapper close and pending-retirement path remain the owners; do not introduce a transport manager, executor, new persistence or permission boundary. Requests/response behavior, destination approval, credentials, saved Library policy/item scopes, and keyword operation remain unchanged. Shared factory retirement now explicitly closes its already-owned OpenAI session for both project and default callers; do not silently substitute project-only no-op closure.
+
+Before source changes, retain the actual None-callback diagnosis and the aborted test as adverse evidence, not proof that the original callback failed. Test explicit real Session close on the original worker after in-flight embed completion, injected failure retention and successful retry, exact cache/wrapper/carrier retirement, and default-factory closure plus sanitized provider logs. No SQL handle/gate/fence spans close. No new model quality run is required for this HTTP-only seam. Cost if wrong: close failure remains truthfully pending under the existing owner; independent Task3 review includes this producer delta.
+
+ADR required: yes, amend existing ADR241. ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md. Reason: complete deterministic transport retirement at the existing embedding factory boundary without a new owner or storage contract.
+
+
+### Task3 eviction retains failed transport retirement
+
+Ruling: The new explicit OpenAI session callback makes both existing idle and LRU eviction paths part of deterministic project transport retirement. They currently pop a zero-refcount CacheRecord before close, losing the owned callback if close raises. Correct only those branches in Embeddings_Lib.py to invoke the existing callback before removing the exact record under the existing factory condition. A failed close propagates while the actual record/callback remains retained for the existing wrapper/factory close path; no replacement model is built and no new ownership framework is introduced. Successful eviction retains existing capacity, refcount and concurrency behavior. Project wrappers already prevent embedding reuse after close starts. Preserve failure evidence, test both idle and LRU actual callback failure/retention and successful physical close retry, and cover the directly affected factory concurrency contract. Do not repeat cached-model quality or held HTTP qualification when this isolated ordering delta does not reach those previously exercised paths.
+
+ADR required: yes, amend existing ADR241. ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md. Reason: retain the already-owned session across failure at both existing cache retirement entrances. Cost if wrong: safe failed embedding and retained resources until explicit existing close succeeds; never a lost native owner or false retirement.
+
+
+## Final semantic review correction contract
+
+ADR required: yes, amend existing ADR241.
+ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md.
+Reason: clarify existing eligible-source, exact provider destination, independent consent and physical-owner contracts; no schema, backend or dependency change.
+
+A Partial keyword cache may retain rows outside its current processing policy. Semantic source paging must apply the existing current policy and authoritative binding exclusions before reading text, using bounded keyset SQL. Append validation and final completeness count the same eligible set, with fresh service authority at each unit. Retained forbidden rows cannot reach a provider or prevent an otherwise complete eligible generation from becoming Ready.
+
+Project OpenAI-compatible transport refuses HTTP redirects, including 307/308, before any resend; the explicit project factory option is set only by the issued project wrapper. Default Library transport retains its existing behavior. A redirect refusal is an unavailable provider outcome, never new destination consent.
+
+New semantic work remains denied while any same-binding model close is pending. Already-admitted carriers retire independently: close verifies issued identity, live parent, original execution/thread, zero live children and only its own operation's pending model-close tokens. A peer's ordinary or failed close cannot poison physical retirement. Own failed close and unknown native closure remain retained.
+
+Semantic ranking captures its independently consented compatible Ready generation. Candidate and final disclosure fences revalidate the captured semantic revision/settings and that exact compatible generation. A mismatch returns unavailable without stale semantically selected hits. Keyword scope/manifest alone cannot attest semantic consent.
+
+Tests that perform native-positive semantic allocations explicitly require the production qualified SQLite source/version/options; unsupported runtimes skip only those positives with a precise reason. Portable keyword/refusal controls remain active. Required Windows preflight and positive assertions remain fail-closed.
+
+
+### Final semantic review regression coverage (Task36423)
+The existing approved Project index contracts job adds exactly four selectors: held public Disable, held public reconfiguration, the two peer-carrier slow/failed-close parameters, and the four real 307/308 project/Library transport parameters. Existing selected local128normal now also proves retained Partial forbidden text never reaches the provider; the settings file includes portable lease refusal and actual unsupported-runtime refusal controls. The target count changes12 to16 and measured case projection33 to44, with about91.3 seconds measured additional critical-node calls and a conservative284-second total including the extra portable lease case. Preserve the1200-second job cap, Python3.12.10 actual source/options assertions, dependencies, test timeout180,13 UI shards, required context and aggregation. Root recorded explicit GO before workflow edits. Native-positive tests alone may skip unsupported comprehensive runtimes; the required Windows preflight still fails closed and its selected positives must execute with zero skips. No new lane or optional ML dependency.
+
+
+### Pending nested-carrier operation ownership correction
+
+ADR required: yes, amend existing ADR241; ADR path: backlog/decisions/241-workspace-project-context-and-folder-bound-index.md. Reason: preserve the existing actual operation owner across nested issued carriers, without a new owner/schema/permission boundary.
+
+Nested registry scopes borrow the same physical operation. Carrier retirement therefore refuses while ANY actual wrapper token remains pending in that retiring parent operation, including a nested carrier for a different binding. A positive independent operation may still retire while another operation closes. New semantic admission retains its existing binding-key pending filter. Issued identity, original execution/thread, live parent and native-child checks remain mandatory; positive same-owner wrapper retry precedes both nested carrier and outer operation retirement. Add one real-issued/native/factory regression covering same-binding and different-binding nested owners, plus existing independent-peer/own-failure/native-child controls. The already-qualified441bb9 cached-model result remains historical for this guard delta; no model/20k replay is implied.

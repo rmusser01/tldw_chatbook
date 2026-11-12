@@ -1,0 +1,516 @@
+{
+  "model_source_head": "441bb9aa898e946d1d57d095ce2e64e3d95d53ab",
+  "historical_hosted_source": "d0124ba2d1630fa8b04eb3369b4abb7da8d9e9aa",
+  "originals": [
+    {
+      "member": "final-fix-app-quality-01-source-pre/.github/workflows/derived-artifacts.yml",
+      "original": "final-fix-app-quality-01-source-pre/.github/workflows/derived-artifacts.yml",
+      "bytes": 76172,
+      "sha256": "a67ad23e548414640e2a833293ccf630986db8d9ff1d51ef44be531d6e26479e"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/.superpowers/sdd/2026-10-20-workspace-project-semantic-index/run-qualified-targeted.ps1",
+      "original": "final-fix-app-quality-01-source-pre/.superpowers/sdd/2026-10-20-workspace-project-semantic-index/run-qualified-targeted.ps1",
+      "bytes": 3256,
+      "sha256": "0e41be43bc55eee244ba0e13d8290ddeeec57cdd4d9a5fb6d75dfe7de6041c36"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md",
+      "original": "final-fix-app-quality-01-source-pre/backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md",
+      "bytes": 23038,
+      "sha256": "c441c050c56c71aaefb2f50378fffbf402c7ad2b3f17ef62d84988ca2a5317c7"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/backlog/decisions/241-workspace-project-context-and-folder-bound-index.md",
+      "original": "final-fix-app-quality-01-source-pre/backlog/decisions/241-workspace-project-context-and-folder-bound-index.md",
+      "bytes": 73725,
+      "sha256": "deeac12c8188384cca836d903237ccc7ef671bf6c5d9dad5446bc31284e65800"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/Docs/Architecture/project-indexing.md",
+      "original": "final-fix-app-quality-01-source-pre/Docs/Architecture/project-indexing.md",
+      "bytes": 24297,
+      "sha256": "380526bd9c3b78b81b3b14221ef536718605e48db86593c6197df6e79e03aa8f"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/Docs/superpowers/plans/2026-10-20-workspace-project-semantic-index.md",
+      "original": "final-fix-app-quality-01-source-pre/Docs/superpowers/plans/2026-10-20-workspace-project-semantic-index.md",
+      "bytes": 48401,
+      "sha256": "d49e2da62c744cb4414d84cdb7f4c07f405fb70824a90bd3fa73fca8fffd20f7"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/manifest.json",
+      "original": "final-fix-app-quality-01-source-pre/manifest.json",
+      "bytes": 6078,
+      "sha256": "0d040fe33c063f54c76a2c610613bc61e0fccafba0535f40d8f1e8beb1adc70f"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/Tests/Agents/test_project_index_tool.py",
+      "original": "final-fix-app-quality-01-source-pre/Tests/Agents/test_project_index_tool.py",
+      "bytes": 47077,
+      "sha256": "1877d76c77d6e08a3f6ee8ed860a8ab6d72b602e1804802660cb15b1eea80206"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/Tests/CI/test_ci_queue_pressure_contract.py",
+      "original": "final-fix-app-quality-01-source-pre/Tests/CI/test_ci_queue_pressure_contract.py",
+      "bytes": 77595,
+      "sha256": "9b846d93893eb383a5e13ce674c9127c31b949e3ef92d3a8c77550da0dd9d0fe"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/Tests/conftest.py",
+      "original": "final-fix-app-quality-01-source-pre/Tests/conftest.py",
+      "bytes": 97070,
+      "sha256": "dd87044f09f31caa93a87696584321c4cda1da7db710a660c047910d0a3a3b77"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/Tests/private_profile.py",
+      "original": "final-fix-app-quality-01-source-pre/Tests/private_profile.py",
+      "bytes": 18828,
+      "sha256": "d96b69562e65becc18dd5c2ef76b521dcb624f151a870f3eaa12a240aeb96f44"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/Tests/RAG/test_embeddings_lib_logging.py",
+      "original": "final-fix-app-quality-01-source-pre/Tests/RAG/test_embeddings_lib_logging.py",
+      "bytes": 12957,
+      "sha256": "117f3477032fb424f56841dff837161ca30d3dbc4405e97cfea006c443d97d45"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/Tests/RAG/test_project_projection_scope.py",
+      "original": "final-fix-app-quality-01-source-pre/Tests/RAG/test_project_projection_scope.py",
+      "bytes": 35131,
+      "sha256": "d3ba32654ac6ebbfc3f6dbf248995dd75dec91949df0442be090d29a4261fca9"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/Tests/UI/app_factory.py",
+      "original": "final-fix-app-quality-01-source-pre/Tests/UI/app_factory.py",
+      "bytes": 26219,
+      "sha256": "32153eb1d71fdf430ff22dcb17ff23ff3f52ed0dc4c30fb8e2177dd94ddbd3e0"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/Tests/UI/test_project_semantic_consent.py",
+      "original": "final-fix-app-quality-01-source-pre/Tests/UI/test_project_semantic_consent.py",
+      "bytes": 25322,
+      "sha256": "f715f1d6f55d5360c6306eda0cc8d98765e25a9c1843cb6d5542bdd257c185df"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/Tests/Workspaces/project_index_support.py",
+      "original": "final-fix-app-quality-01-source-pre/Tests/Workspaces/project_index_support.py",
+      "bytes": 2212,
+      "sha256": "d1596900616a29a547f758ed8ee348525d59d44b2616edd86223ea38b626c17c"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/Tests/Workspaces/test_project_index_allocation.py",
+      "original": "final-fix-app-quality-01-source-pre/Tests/Workspaces/test_project_index_allocation.py",
+      "bytes": 34726,
+      "sha256": "dce7d2d867475cfe6a3a6490d1ff4c2d7bf5ce8cb12fdc8afcc911563e7b69d5"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/Tests/Workspaces/test_project_semantic_app_quality.py",
+      "original": "final-fix-app-quality-01-source-pre/Tests/Workspaces/test_project_semantic_app_quality.py",
+      "bytes": 36869,
+      "sha256": "399b18c635855abbacbe8145762a8ee3813f78e2bdfa7da8f3dd5e97f7986600"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/Tests/Workspaces/test_project_semantic_generations.py",
+      "original": "final-fix-app-quality-01-source-pre/Tests/Workspaces/test_project_semantic_generations.py",
+      "bytes": 76714,
+      "sha256": "6891c7c6d1694660b30e471295b65f5411f5cc49413209bbd612516c9f0b1030"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/Tests/Workspaces/test_project_semantic_search.py",
+      "original": "final-fix-app-quality-01-source-pre/Tests/Workspaces/test_project_semantic_search.py",
+      "bytes": 35488,
+      "sha256": "9eb103a8bcbe29d11fa197edbfc49ca3120b18bb4d5f62e12508911ba4d162e6"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/Tests/Workspaces/test_project_semantic_settings.py",
+      "original": "final-fix-app-quality-01-source-pre/Tests/Workspaces/test_project_semantic_settings.py",
+      "bytes": 11959,
+      "sha256": "6bd4062738a48eab44c02c56e8ac2fff6adc2576143d29183565608d46942ded"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/tldw_chatbook/DB/Workspace_Project_Index_DB.py",
+      "original": "final-fix-app-quality-01-source-pre/tldw_chatbook/DB/Workspace_Project_Index_DB.py",
+      "bytes": 93526,
+      "sha256": "2858160ee0e8b64b1b246b0829aa150a1dcc8a9269f1fb5da619849a03b223ae"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/tldw_chatbook/Embeddings/Embeddings_Lib.py",
+      "original": "final-fix-app-quality-01-source-pre/tldw_chatbook/Embeddings/Embeddings_Lib.py",
+      "bytes": 49193,
+      "sha256": "51e4b4ecffe9cf7cbe8985285ee56c084e99d0a0f108fdee807b37c2e6a4d86f"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/tldw_chatbook/RAG_Search/projection_scope.py",
+      "original": "final-fix-app-quality-01-source-pre/tldw_chatbook/RAG_Search/projection_scope.py",
+      "bytes": 9326,
+      "sha256": "07fdd471ffdef623624d5507132db23229b9e53aab4493748bcb1c1933f492cb"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py",
+      "original": "final-fix-app-quality-01-source-pre/tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py",
+      "bytes": 59127,
+      "sha256": "ce7c94a1a250d48760ff2aa8672da464f2264c100b04fbeb689c8cd96bfd2faf"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/tldw_chatbook/Workspaces/project_index/__init__.py",
+      "original": "final-fix-app-quality-01-source-pre/tldw_chatbook/Workspaces/project_index/__init__.py",
+      "bytes": 72,
+      "sha256": "e6292c8c8e9fee6da2ff9a54efe17396fa6927ccf294789d9dc89cd9dae9f26c"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/tldw_chatbook/Workspaces/project_index/allocation.py",
+      "original": "final-fix-app-quality-01-source-pre/tldw_chatbook/Workspaces/project_index/allocation.py",
+      "bytes": 14796,
+      "sha256": "b7e5382376a086f056ca85f5be36b11048a87ee647a3ac129067cc88c57af30a"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/tldw_chatbook/Workspaces/project_index/lifetime.py",
+      "original": "final-fix-app-quality-01-source-pre/tldw_chatbook/Workspaces/project_index/lifetime.py",
+      "bytes": 11341,
+      "sha256": "a1a86a8c91c7707cb906e9bf4337141198a0d3db0a56d49ea9d16394ad01e965"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/tldw_chatbook/Workspaces/project_index/models.py",
+      "original": "final-fix-app-quality-01-source-pre/tldw_chatbook/Workspaces/project_index/models.py",
+      "bytes": 16588,
+      "sha256": "191d6de9468ee7a0885b1403598b5602dbc0ee5b54349a36b443230f4d89f49f"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/tldw_chatbook/Workspaces/project_index/recovery.py",
+      "original": "final-fix-app-quality-01-source-pre/tldw_chatbook/Workspaces/project_index/recovery.py",
+      "bytes": 888,
+      "sha256": "2bfc64b6683d975c00e4f39598cc4a3f936078148683322b5574ed093ee9847f"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/tldw_chatbook/Workspaces/project_index/runtime.py",
+      "original": "final-fix-app-quality-01-source-pre/tldw_chatbook/Workspaces/project_index/runtime.py",
+      "bytes": 13352,
+      "sha256": "33778a422021ee70e8364f5b67718dcbe71fcaac6acda2d22ce2c522dfdedf3c"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/tldw_chatbook/Workspaces/project_index/scanner.py",
+      "original": "final-fix-app-quality-01-source-pre/tldw_chatbook/Workspaces/project_index/scanner.py",
+      "bytes": 22653,
+      "sha256": "5e34731b35153728779d59ad7c3566b61dfde8486055caa45e494b431ef5fd81"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/tldw_chatbook/Workspaces/project_index/semantic.py",
+      "original": "final-fix-app-quality-01-source-pre/tldw_chatbook/Workspaces/project_index/semantic.py",
+      "bytes": 12275,
+      "sha256": "d0351bb50d2753859330a871c058b4006c5944082f0388d197920a5912afb715"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/tldw_chatbook/Workspaces/project_index/semantic_vectors.py",
+      "original": "final-fix-app-quality-01-source-pre/tldw_chatbook/Workspaces/project_index/semantic_vectors.py",
+      "bytes": 1638,
+      "sha256": "a4cd45e0643db2e0e2ee8690b060dea8f6796b6caf99ce12108ba89616c1346f"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-pre/tldw_chatbook/Workspaces/project_index/service.py",
+      "original": "final-fix-app-quality-01-source-pre/tldw_chatbook/Workspaces/project_index/service.py",
+      "bytes": 101279,
+      "sha256": "bca40d4cd5f6e6e94d01529029b94790439ecedeea217c38c2e8c6e3e89ca8fc"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/.github/workflows/derived-artifacts.yml",
+      "original": "final-fix-app-quality-01-source-post/.github/workflows/derived-artifacts.yml",
+      "bytes": 76172,
+      "sha256": "a67ad23e548414640e2a833293ccf630986db8d9ff1d51ef44be531d6e26479e"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/.superpowers/sdd/2026-10-20-workspace-project-semantic-index/run-qualified-targeted.ps1",
+      "original": "final-fix-app-quality-01-source-post/.superpowers/sdd/2026-10-20-workspace-project-semantic-index/run-qualified-targeted.ps1",
+      "bytes": 3256,
+      "sha256": "0e41be43bc55eee244ba0e13d8290ddeeec57cdd4d9a5fb6d75dfe7de6041c36"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md",
+      "original": "final-fix-app-quality-01-source-post/backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md",
+      "bytes": 23038,
+      "sha256": "c441c050c56c71aaefb2f50378fffbf402c7ad2b3f17ef62d84988ca2a5317c7"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/backlog/decisions/241-workspace-project-context-and-folder-bound-index.md",
+      "original": "final-fix-app-quality-01-source-post/backlog/decisions/241-workspace-project-context-and-folder-bound-index.md",
+      "bytes": 73725,
+      "sha256": "deeac12c8188384cca836d903237ccc7ef671bf6c5d9dad5446bc31284e65800"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/Docs/Architecture/project-indexing.md",
+      "original": "final-fix-app-quality-01-source-post/Docs/Architecture/project-indexing.md",
+      "bytes": 24297,
+      "sha256": "380526bd9c3b78b81b3b14221ef536718605e48db86593c6197df6e79e03aa8f"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/Docs/superpowers/plans/2026-10-20-workspace-project-semantic-index.md",
+      "original": "final-fix-app-quality-01-source-post/Docs/superpowers/plans/2026-10-20-workspace-project-semantic-index.md",
+      "bytes": 48401,
+      "sha256": "d49e2da62c744cb4414d84cdb7f4c07f405fb70824a90bd3fa73fca8fffd20f7"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/manifest.json",
+      "original": "final-fix-app-quality-01-source-post/manifest.json",
+      "bytes": 6078,
+      "sha256": "0d040fe33c063f54c76a2c610613bc61e0fccafba0535f40d8f1e8beb1adc70f"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/Tests/Agents/test_project_index_tool.py",
+      "original": "final-fix-app-quality-01-source-post/Tests/Agents/test_project_index_tool.py",
+      "bytes": 47077,
+      "sha256": "1877d76c77d6e08a3f6ee8ed860a8ab6d72b602e1804802660cb15b1eea80206"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/Tests/CI/test_ci_queue_pressure_contract.py",
+      "original": "final-fix-app-quality-01-source-post/Tests/CI/test_ci_queue_pressure_contract.py",
+      "bytes": 77595,
+      "sha256": "9b846d93893eb383a5e13ce674c9127c31b949e3ef92d3a8c77550da0dd9d0fe"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/Tests/conftest.py",
+      "original": "final-fix-app-quality-01-source-post/Tests/conftest.py",
+      "bytes": 97070,
+      "sha256": "dd87044f09f31caa93a87696584321c4cda1da7db710a660c047910d0a3a3b77"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/Tests/private_profile.py",
+      "original": "final-fix-app-quality-01-source-post/Tests/private_profile.py",
+      "bytes": 18828,
+      "sha256": "d96b69562e65becc18dd5c2ef76b521dcb624f151a870f3eaa12a240aeb96f44"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/Tests/RAG/test_embeddings_lib_logging.py",
+      "original": "final-fix-app-quality-01-source-post/Tests/RAG/test_embeddings_lib_logging.py",
+      "bytes": 12957,
+      "sha256": "117f3477032fb424f56841dff837161ca30d3dbc4405e97cfea006c443d97d45"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/Tests/RAG/test_project_projection_scope.py",
+      "original": "final-fix-app-quality-01-source-post/Tests/RAG/test_project_projection_scope.py",
+      "bytes": 35131,
+      "sha256": "d3ba32654ac6ebbfc3f6dbf248995dd75dec91949df0442be090d29a4261fca9"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/Tests/UI/app_factory.py",
+      "original": "final-fix-app-quality-01-source-post/Tests/UI/app_factory.py",
+      "bytes": 26219,
+      "sha256": "32153eb1d71fdf430ff22dcb17ff23ff3f52ed0dc4c30fb8e2177dd94ddbd3e0"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/Tests/UI/test_project_semantic_consent.py",
+      "original": "final-fix-app-quality-01-source-post/Tests/UI/test_project_semantic_consent.py",
+      "bytes": 25322,
+      "sha256": "f715f1d6f55d5360c6306eda0cc8d98765e25a9c1843cb6d5542bdd257c185df"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/Tests/Workspaces/project_index_support.py",
+      "original": "final-fix-app-quality-01-source-post/Tests/Workspaces/project_index_support.py",
+      "bytes": 2212,
+      "sha256": "d1596900616a29a547f758ed8ee348525d59d44b2616edd86223ea38b626c17c"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/Tests/Workspaces/test_project_index_allocation.py",
+      "original": "final-fix-app-quality-01-source-post/Tests/Workspaces/test_project_index_allocation.py",
+      "bytes": 34726,
+      "sha256": "dce7d2d867475cfe6a3a6490d1ff4c2d7bf5ce8cb12fdc8afcc911563e7b69d5"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/Tests/Workspaces/test_project_semantic_app_quality.py",
+      "original": "final-fix-app-quality-01-source-post/Tests/Workspaces/test_project_semantic_app_quality.py",
+      "bytes": 36869,
+      "sha256": "399b18c635855abbacbe8145762a8ee3813f78e2bdfa7da8f3dd5e97f7986600"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/Tests/Workspaces/test_project_semantic_generations.py",
+      "original": "final-fix-app-quality-01-source-post/Tests/Workspaces/test_project_semantic_generations.py",
+      "bytes": 76714,
+      "sha256": "6891c7c6d1694660b30e471295b65f5411f5cc49413209bbd612516c9f0b1030"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/Tests/Workspaces/test_project_semantic_search.py",
+      "original": "final-fix-app-quality-01-source-post/Tests/Workspaces/test_project_semantic_search.py",
+      "bytes": 35488,
+      "sha256": "9eb103a8bcbe29d11fa197edbfc49ca3120b18bb4d5f62e12508911ba4d162e6"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/Tests/Workspaces/test_project_semantic_settings.py",
+      "original": "final-fix-app-quality-01-source-post/Tests/Workspaces/test_project_semantic_settings.py",
+      "bytes": 11959,
+      "sha256": "6bd4062738a48eab44c02c56e8ac2fff6adc2576143d29183565608d46942ded"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/tldw_chatbook/DB/Workspace_Project_Index_DB.py",
+      "original": "final-fix-app-quality-01-source-post/tldw_chatbook/DB/Workspace_Project_Index_DB.py",
+      "bytes": 93526,
+      "sha256": "2858160ee0e8b64b1b246b0829aa150a1dcc8a9269f1fb5da619849a03b223ae"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/tldw_chatbook/Embeddings/Embeddings_Lib.py",
+      "original": "final-fix-app-quality-01-source-post/tldw_chatbook/Embeddings/Embeddings_Lib.py",
+      "bytes": 49193,
+      "sha256": "51e4b4ecffe9cf7cbe8985285ee56c084e99d0a0f108fdee807b37c2e6a4d86f"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/tldw_chatbook/RAG_Search/projection_scope.py",
+      "original": "final-fix-app-quality-01-source-post/tldw_chatbook/RAG_Search/projection_scope.py",
+      "bytes": 9326,
+      "sha256": "07fdd471ffdef623624d5507132db23229b9e53aab4493748bcb1c1933f492cb"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py",
+      "original": "final-fix-app-quality-01-source-post/tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py",
+      "bytes": 59127,
+      "sha256": "ce7c94a1a250d48760ff2aa8672da464f2264c100b04fbeb689c8cd96bfd2faf"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/tldw_chatbook/Workspaces/project_index/__init__.py",
+      "original": "final-fix-app-quality-01-source-post/tldw_chatbook/Workspaces/project_index/__init__.py",
+      "bytes": 72,
+      "sha256": "e6292c8c8e9fee6da2ff9a54efe17396fa6927ccf294789d9dc89cd9dae9f26c"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/tldw_chatbook/Workspaces/project_index/allocation.py",
+      "original": "final-fix-app-quality-01-source-post/tldw_chatbook/Workspaces/project_index/allocation.py",
+      "bytes": 14796,
+      "sha256": "b7e5382376a086f056ca85f5be36b11048a87ee647a3ac129067cc88c57af30a"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/tldw_chatbook/Workspaces/project_index/lifetime.py",
+      "original": "final-fix-app-quality-01-source-post/tldw_chatbook/Workspaces/project_index/lifetime.py",
+      "bytes": 11341,
+      "sha256": "a1a86a8c91c7707cb906e9bf4337141198a0d3db0a56d49ea9d16394ad01e965"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/tldw_chatbook/Workspaces/project_index/models.py",
+      "original": "final-fix-app-quality-01-source-post/tldw_chatbook/Workspaces/project_index/models.py",
+      "bytes": 16588,
+      "sha256": "191d6de9468ee7a0885b1403598b5602dbc0ee5b54349a36b443230f4d89f49f"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/tldw_chatbook/Workspaces/project_index/recovery.py",
+      "original": "final-fix-app-quality-01-source-post/tldw_chatbook/Workspaces/project_index/recovery.py",
+      "bytes": 888,
+      "sha256": "2bfc64b6683d975c00e4f39598cc4a3f936078148683322b5574ed093ee9847f"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/tldw_chatbook/Workspaces/project_index/runtime.py",
+      "original": "final-fix-app-quality-01-source-post/tldw_chatbook/Workspaces/project_index/runtime.py",
+      "bytes": 13352,
+      "sha256": "33778a422021ee70e8364f5b67718dcbe71fcaac6acda2d22ce2c522dfdedf3c"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/tldw_chatbook/Workspaces/project_index/scanner.py",
+      "original": "final-fix-app-quality-01-source-post/tldw_chatbook/Workspaces/project_index/scanner.py",
+      "bytes": 22653,
+      "sha256": "5e34731b35153728779d59ad7c3566b61dfde8486055caa45e494b431ef5fd81"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/tldw_chatbook/Workspaces/project_index/semantic.py",
+      "original": "final-fix-app-quality-01-source-post/tldw_chatbook/Workspaces/project_index/semantic.py",
+      "bytes": 12275,
+      "sha256": "d0351bb50d2753859330a871c058b4006c5944082f0388d197920a5912afb715"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/tldw_chatbook/Workspaces/project_index/semantic_vectors.py",
+      "original": "final-fix-app-quality-01-source-post/tldw_chatbook/Workspaces/project_index/semantic_vectors.py",
+      "bytes": 1638,
+      "sha256": "a4cd45e0643db2e0e2ee8690b060dea8f6796b6caf99ce12108ba89616c1346f"
+    },
+    {
+      "member": "final-fix-app-quality-01-source-post/tldw_chatbook/Workspaces/project_index/service.py",
+      "original": "final-fix-app-quality-01-source-post/tldw_chatbook/Workspaces/project_index/service.py",
+      "bytes": 101279,
+      "sha256": "bca40d4cd5f6e6e94d01529029b94790439ecedeea217c38c2e8c6e3e89ca8fc"
+    },
+    {
+      "member": "task2-receipts/final-fix-app-quality-01-parent.log",
+      "original": "task2-receipts/final-fix-app-quality-01-parent.log",
+      "bytes": 1880,
+      "sha256": "5d3a6c45e4e76a151f5d460b767aa8d0e68eae76df2fe1bc4a6d75ecf0198b5a"
+    },
+    {
+      "member": "task2-receipts/final-fix-app-quality-01-pre.json",
+      "original": "task2-receipts/final-fix-app-quality-01-pre.json",
+      "bytes": 1960,
+      "sha256": "87d3050903bc6791e8580602a37b7b0a347dc161cd5642582470a0f332ebe137"
+    },
+    {
+      "member": "task2-receipts/final-fix-app-quality-01-test_cached_minilm_real_app_pa0-child.log",
+      "original": "task2-receipts/final-fix-app-quality-01-test_cached_minilm_real_app_pa0-child.log",
+      "bytes": 2036,
+      "sha256": "c9e047b138f61705a89d71d5f3e97284485e4d8796ed0604298e4586ab350d37"
+    },
+    {
+      "member": "task2-receipts/final-fix-app-quality-01-test_cached_minilm_real_app_pa0-child.xml",
+      "original": "task2-receipts/final-fix-app-quality-01-test_cached_minilm_real_app_pa0-child.xml",
+      "bytes": 396,
+      "sha256": "40e5e9514e26b2e2c900db0b6a8390807587107a114be24f3b5cf26b6b700117"
+    },
+    {
+      "member": "final-fix-app-quality-01-post.json",
+      "original": "final-fix-app-quality-01-post.json",
+      "bytes": 1070,
+      "sha256": "0d45820db8a354d36d97658bc81e4a1a0dc795b0cf121bf4a88e8d90b911ffdc"
+    },
+    {
+      "member": "final-fix-app-quality-01-process-retirement.json",
+      "original": "final-fix-app-quality-01-process-retirement.json",
+      "bytes": 167,
+      "sha256": "a8d218fe04559f35225ed12daa24b13cc3a45eca1a61bd896cd2a15b334ce44d"
+    },
+    {
+      "member": "final-fix-app-quality-01-runtime.stderr.bin",
+      "original": "final-fix-app-quality-01-runtime.stderr.bin",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "member": "final-fix-app-quality-01-runtime.stdout.json",
+      "original": "final-fix-app-quality-01-runtime.stdout.json",
+      "bytes": 1979,
+      "sha256": "c874e0be132eaa162149a0c3c8e77545851a5042f9fa6a87389260d15c15060a"
+    },
+    {
+      "member": "final-fix-app-quality-trust-01-permission-after.json",
+      "original": "final-fix-app-quality-trust-01-permission-after.json",
+      "bytes": 473,
+      "sha256": "0828efabab201b4d27388a15011b83ab29232c6cc7152a01c49a65279d536ffd"
+    },
+    {
+      "member": "final-fix-app-quality-trust-01-permission-before.json",
+      "original": "final-fix-app-quality-trust-01-permission-before.json",
+      "bytes": 502,
+      "sha256": "45138f60c7a1fabcf1ad4ccf581fa00f03f4a2fec0fe038f8a5b2016b7fff556"
+    },
+    {
+      "member": "repair-sdd-test-trust.ps1",
+      "original": "repair-sdd-test-trust.ps1",
+      "bytes": 2710,
+      "sha256": "21d61845123369d07704284eafd2e0adf890281a0decc92a0725ced7c5705a05"
+    },
+    {
+      "member": "run-qualified-targeted.ps1",
+      "original": "run-qualified-targeted.ps1",
+      "bytes": 3256,
+      "sha256": "0e41be43bc55eee244ba0e13d8290ddeeec57cdd4d9a5fb6d75dfe7de6041c36"
+    },
+    {
+      "member": "root-app-source-verification.txt",
+      "original": "root-app-source-verification.txt",
+      "bytes": 58,
+      "sha256": "59f6ca2b64c23aed490fc49ba422d360aac017d23db2788a2772bce5a9836582"
+    },
+    {
+      "member": "task4-hosted-windows-120758047150-success-raw.log",
+      "original": "task4-hosted-windows-120758047150-success-raw.log",
+      "bytes": 61220,
+      "sha256": "381dd0ff142cccbd864f9f97a5fe70da6a0a6d5faa9fc213e345775cec11d47c"
+    },
+    {
+      "member": "task4-hosted-windows-120758047150-success-job.json",
+      "original": "task4-hosted-windows-120758047150-success-job.json",
+      "bytes": 2459,
+      "sha256": "d2592b79db39896ed0f45b24149a3d057cdd9495434deea94e7d665c1c37dfe2"
+    }
+  ]
+}

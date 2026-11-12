@@ -1,0 +1,6 @@
+{
+  "sddl": "O:S-1-5-21-2888389458-149452071-4026681343-1002G:S-1-5-21-2888389458-149452071-4026681343-513D:AI(A;OICIID;0x1200a9;;;S-1-5-21-2888389458-149452071-4026681343-1004)(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;FA;;;S-1-5-21-2888389458-149452071-4026681343-1002)",
+  "matching_grants": 0,
+  "insertion_actor": "unestablished",
+  "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-20-workspace-project-semantic-index"
+}

@@ -12,8 +12,9 @@
 # measurements in its docstring where a textbook index was simply never
 # chosen because no media DB has ever run ANALYZE.
 
-# ADR-241: bounded project-index eligible directory frontier without ANALYZE.
+# ADR-241: project-index directory frontier and semantic publish eligibility without ANALYZE.
 directories_eligible	plan-pinned	Tests/DB/test_workspace_project_index_db.py::test_scan_unit_atomic_receipts_replay_and_indexed_attempt_frontier
+semantic_members_path	plan-pinned	Tests/DB/test_project_semantic_schema.py::test_semantic_publish_path_check_uses_covering_index_without_statistics
 
 # ADR-138: existing workflow history index, bounded history read.
 workflow_revisions_history	plan-pinned	Tests/DB/test_workflows_authoring_storage.py::test_history_page_uses_workflow_revisions_history_without_statistics

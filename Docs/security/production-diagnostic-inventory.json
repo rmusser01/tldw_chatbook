@@ -1234,7 +1234,7 @@
     },
     {
       "call_count": 43,
-      "diagnostic_digest": "ad1854a6edce4b57554d",
+      "diagnostic_digest": "a6dea29c37172292f826",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Embeddings/Embeddings_Lib.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2227,8 +2227,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 47,
-      "diagnostic_digest": "013dcd43bdb994d002e5",
+      "call_count": 51,
+      "diagnostic_digest": "0d1a0d5bf6611fa304cd",
       "owner": "TASK-494",
       "path": "tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -6820,24 +6820,6 @@
           ],
           "scope": "_HuggingFaceEmbedder.__init__",
           "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "a206be62eb9cfb94",
-          "method": "info",
-          "path_expressions": [
-            "cfg.model_name_or_path"
-          ],
-          "scope": "_openai_embedder",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "baf4cbf4b0163e69",
-          "method": "debug",
-          "path_expressions": [
-            "cfg.model_name_or_path"
-          ],
-          "scope": "_openai_embedder._embed",
-          "status": "legacy_unreviewed"
         }
       ],
       "path": "tldw_chatbook/Embeddings/Embeddings_Lib.py"
@@ -9678,29 +9660,6 @@
         }
       ],
       "path": "tldw_chatbook/RAG_Search/simplified/db_connection_pool.py"
-    },
-    {
-      "candidates": [
-        {
-          "call_digest": "f0c264a1cd02f74c",
-          "method": "debug",
-          "path_expressions": [
-            "model_path"
-          ],
-          "scope": "EmbeddingsServiceWrapper._build_config",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "7969661e8bde3c20",
-          "method": "info",
-          "path_expressions": [
-            "cache_dir"
-          ],
-          "scope": "EmbeddingsServiceWrapper._build_config",
-          "status": "legacy_unreviewed"
-        }
-      ],
-      "path": "tldw_chatbook/RAG_Search/simplified/embeddings_wrapper.py"
     },
     {
       "candidates": [

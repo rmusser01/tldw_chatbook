@@ -1,0 +1,71 @@
+{
+  "cwd": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui",
+  "argv": [
+    "C:/Users/GDesktop-1/Working/Github/tldw_tui/.venv/Scripts/python.exe",
+    "-c",
+    "import os,json,sqlite3; from tldw_chatbook.Workspaces.project_index.allocation import _SOURCE_ID; c=sqlite3.connect(\":memory:\"); source=c.execute(\"SELECT sqlite_source_id()\").fetchone()[0]; options={row[0] for row in c.execute(\"PRAGMA compile_options\")}; print(\"SQLite\",sqlite3.sqlite_version,source,sorted(options),flush=True); assert sqlite3.sqlite_version==\"3.49.1\" and source==_SOURCE_ID and {\"TEMP_STORE=1\",\"MAX_PAGE_SIZE=65536\",\"THREADSAFE=1\"}<=options; import importlib.util; print(\"sentence_transformers_present\",importlib.util.find_spec(\"sentence_transformers\") is not None,flush=True); import pytest; raise SystemExit(pytest.main([*json.loads(os.environ[\"TLDW_TEST_SELECTORS_JSON\"]),\"-q\",\"--timeout=180\",\"--tb=short\",\"--durations=0\",\"--no-showlocals\"]))"
+  ],
+  "hashes": [
+    {
+      "sha256": "15D2FAF05BBF5A4790B24137817E0AAE50C568D51212D261BC131449C7060C8D",
+      "path": ".github/workflows/derived-artifacts.yml"
+    },
+    {
+      "sha256": "1877D76C77D6E08A3F6EE8ED860A8AB6D72B602E1804802660CB15B1EEA80206",
+      "path": "Tests/Agents/test_project_index_tool.py"
+    },
+    {
+      "sha256": "7A5CEB4F12D479F0FBFCBEE30E8B52EB09F97E030D600EF32229D160B0F32B6C",
+      "path": "Tests/DB/test_project_semantic_schema.py"
+    },
+    {
+      "sha256": "93098339931F800071A00CAC974DBA66CEBD0E7371D894151FE7FF37B391A1BD",
+      "path": "Tests/RAG/test_project_projection_scope.py"
+    },
+    {
+      "sha256": "437B149C15CCB9C90289F4999C392314307CBE8269BE9D97CE814F0DC86358F6",
+      "path": "Tests/UI/test_project_semantic_consent.py"
+    },
+    {
+      "sha256": "B71EBC253990E9DB4FE3F1F85A07BA81E41C9ABF03A96DED197079430AAA7893",
+      "path": "Tests/Workspaces/test_project_index_allocation.py"
+    },
+    {
+      "sha256": "77AF0BB6626B58E3F3E0F1119F649E2B9CF47F73EC937D7174D30E7FF1182FE5",
+      "path": "Tests/Workspaces/test_project_semantic_generations.py"
+    },
+    {
+      "sha256": "FE9121B5784963B96FAB7B8595E5C7277B1BDFA59D74783AEFA752313F82517E",
+      "path": "Tests/Workspaces/test_project_semantic_search.py"
+    },
+    {
+      "sha256": "15B2933F7847C146A59C669F02B1C5D1B9C3DCE2A6D81AB60A3CCD126C0C81F3",
+      "path": "Tests/Workspaces/test_project_semantic_settings.py"
+    },
+    {
+      "sha256": "18C7A1706063B1B90290DF331F337F2B72961AC0D0072BA551AC00AA3DC1E538",
+      "path": "tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py"
+    },
+    {
+      "sha256": "B7E5382376A086F056CA85F5BE36B11048A87EE647A3AC129067CC88C57AF30A",
+      "path": "tldw_chatbook/Workspaces/project_index/allocation.py"
+    },
+    {
+      "sha256": "5333B8EE4EA78E9FBD0648B14713B1EFBE39A315AB058694575B8C0E3030220C",
+      "path": "tldw_chatbook/Workspaces/project_index/service.py"
+    }
+  ],
+  "targets": [
+    "Tests/DB/test_project_semantic_schema.py",
+    "Tests/Workspaces/test_project_semantic_settings.py",
+    "Tests/Workspaces/test_project_index_allocation.py::test_group_semantic_peer_qualifies_keyword_target_before_native_open",
+    "Tests/Workspaces/test_project_index_allocation.py::test_retained_generation_after_revoke_qualifies_peer_and_closes_probes",
+    "Tests/Workspaces/test_project_index_allocation.py::test_pure_keyword_group_uses_keyword_allowance",
+    "Tests/Workspaces/test_project_semantic_generations.py::test_unknown_registry_retirement_roots_model_and_native_owners",
+    "Tests/RAG/test_project_projection_scope.py::test_project_missing_local_package_is_setup_required",
+    "Tests/RAG/test_project_projection_scope.py::test_selected_keyless_compatible_endpoint_and_default_key_requirement",
+    "Tests/Workspaces/test_project_semantic_search.py::test_incompatible_ready_artifact_skips_query_model",
+    "Tests/Agents/test_project_index_tool.py::test_scan_to_public_search_casefolded_prefix",
+    "Tests/UI/test_project_semantic_consent.py::test_stage_without_disclosure_preserves_keyword_and_cancel_makes_no_provider_call"
+  ]
+}
