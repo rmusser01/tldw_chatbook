@@ -1313,8 +1313,11 @@ class ChatPersistenceService:
         parent_id: str | None,
         metadata_json: str | None,
     ) -> None:
-        """Save an anchorless turn's empty reply row before provider entry (TASK-39119)."""
-        with operation_owned_connection(self.db), self.db.transaction():
+        """Save an anchorless turn's empty reply row before provider entry (TASK-39119).
+
+        IMMEDIATE for the same reason as save_conversation_mixin_attempt.
+        """
+        with operation_owned_connection(self.db), self.db.transaction(immediate=True):
             self._create_pending_assistant(
                 conversation_id, message_id, parent_id, metadata_json
             )
