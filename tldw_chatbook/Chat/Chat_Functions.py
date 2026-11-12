@@ -1380,7 +1380,7 @@ def chat_api_call(
             raise ChatRateLimitError(
                 provider=endpoint_lower,
                 message=f"Rate limit exceeded for {endpoint_lower} (Status 429).",
-            )
+            ) from e
         if exhausted_status is not None and 500 <= exhausted_status < 600:
             logger.error(
                 "{} API call failed; status={}; reason=retries_exhausted",
@@ -1394,7 +1394,7 @@ def chat_api_call(
                     f"{exhausted_status}) after retries."
                 ),
                 status_code=exhausted_status,
-            )
+            ) from e
         logger.error(
             "Network error connecting to {}; error_type={}",
             endpoint_lower,
