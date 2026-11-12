@@ -1,11 +1,11 @@
 ---
 id: TASK-40132
 title: "Back up Plugins: capture the plugin registry, package bytes and plugin data instead of leaving them unsupported"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-10 16:15
-updated_date: 2026-11-10 22:39
+updated_date: 2026-11-12 15:12
 labels:
 - follow-up
 - backup
@@ -39,7 +39,7 @@ Today every one of these producers sits in the backup review's conservative `uns
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 A backup preview of a profile with an installed plugin and plugin data shows the plugins root as captured, not unsupported: the registry database, the package bytes and every plugin data root
-- [ ] #2 Inside each staging/<name>/ only snapshot/ is captured (an allow-list, implementing the owner's D1 text "Capture snapshot/ and the custody records"); every other staging member, known (host-git-config, host-ssh-*, repository.git, content/) or not (for example a lockfile residue), is excluded as one directory-level row without walking its contents, shown in the preview as excluded with its reason and named in the notes. runtime.lock is also excluded. Everything else under the plugins root, including the acquisition custody records, is captured
+- [x] #2 Inside each staging/<name>/ only snapshot/ is captured (an allow-list, implementing the owner's D1 text "Capture snapshot/ and the custody records"); every other staging member, known (host-git-config, host-ssh-*, repository.git, content/) or not (for example a lockfile residue), is excluded as one directory-level row without walking its contents, shown in the preview as excluded with its reason and named in the notes. runtime.lock is also excluded. Everything else under the plugins root, including the acquisition custody records, is captured
 - [x] #3 The registry database is captured consistently, like the other SQLite owners (schema catalog, WAL folded), with a test that is red before the change
 - [x] #4 While a plugin process or another plugin data writer is running, capture either waits for it to stop or is refused with a reason the preview shows, so no capture holds half-written plugin data; a test shows it
 - [x] #5 A restore puts the registry, packages and data back byte for byte. The plugin system then reports its documented state when the keyring marker is missing or does not match the restored files, and the user sees copy that says truthfully what works (an in-place restore with plugins unchanged since the backup needs only Unlock) and what does not yet (the other cases keep plugins off, with their files and data on disk), with no step that dead-ends; no plugin data is lost. Tests cover both
@@ -210,15 +210,16 @@ Implemented on dev ae9f9e8d21 plus the filing commit, 2026-11-10. Owner decision
 - `Tests/Backup_Recovery/test_detached_layout.py::test_detached_import_refuses_a_plugin_root_by_name` and `test_restore_plan.py::test_replace_keeps_an_excluded_directory_whole_without_listing_it`.
 - UI: `test_backup_data_groups.py::test_backup_review_explains_refused_live_plugins`, `test_plugins_browse.py::test_authority_recovery_copy_is_truthful_without_a_reset_step` and `test_plugin_review.py::test_unlock_mismatch_shows_restore_copy_not_passphrase_advice`, all on the UI census (the last appended at the tail in this round). The shard replay was not run, so the coordinator rebalances if needed.
 
-**Covering runs (review round, load 25–60).**
-- Tests/Plugins plus 12 Backup_Recovery files, the DB SQLite inventory and 5 CI census/workflow pins, at `-n 4`: 1902 passed, 19 failed. All 19 also fail at base 42fc21939d:
-  - 10 recovered-media console image specs;
-  - 2 shipped76 restore-plan cases;
-  - 3 `detached_layout._normalize_sqlite` SQLite-inventory census checks;
-  - `test_storage_worker_retires_its_workspace_lookup_connection`, `test_actual_console_registers_selected_managed_agent`, `test_actual_native_fields_stable_in_separate_processes` and `test_existing_owned_directory_metadata_uses_verified_node_rollback`.
-- `Tests/Architecture/test_backup_owner_inventory.py` (serial) and the module and screen size ratchets: 224 passed.
-- `test_plugin_review.py`, `test_plugins_browse.py` and `test_backup_data_groups.py`: 101 passed, 2 failed. One is `test_refresh_growth…[size1]`, which also fails at base (1 pass and 1 fail in two base runs). The other is `test_confirmed_explicit_test_survives_close_during_child_prune[success]`, which passed twice when run alone.
-- `./scripts/preflight.sh` passes, and `ruff --select F` is clean.
+**Covering runs (review r13g-rev2, at 43bcdccfd1, load 15–40).**
+- At `-n 4`: `Tests/Plugins`, the 30 `Tests/Backup_Recovery` files covering the touched dispatch, inventory, walker, planner, detached-layout and restore paths, `Tests/DB/test_private_sqlite_inventory.py`, `Tests/CI/test_plugin_qualification_workflow.py` and `Tests/CI/test_ui_pr_gate_census_checker.py`, with the e2e deselected (run on its own, above): 2185 passed, 29 failed, 7 skipped. The same command on the 29 failures at base 42fc21939d: 28 fail there too:
+  - 10 recovered-media console image specs, 2 shipped76 restore-plan cases, 3 private-SQLite inventory census checks;
+  - in `Tests/Backup_Recovery`: `test_complete_roundtrip` ×3 (two-profile captures), `test_inventory` ×2, `test_inventory_unused_owners` ×2, `test_operational_owners` ×2 (one is the `AppFooterStatus` pet-wiring census), `test_later_rollback_credential_ui` ×1;
+  - the three plugin-side failures also seen at rev1 (`test_storage_worker_retires_its_workspace_lookup_connection`, `test_actual_console_registers_selected_managed_agent`, `test_actual_native_fields_stable_in_separate_processes`).
+- The 29th, `test_inventory_unused_owners.py::test_fresh_app_complete_public_capture_preserves_real_bytes_and_resumes`, passes at HEAD alone and with its whole file at `-n 4`. It failed in the big run on its own 20 s capture watchdog (`InterruptedError: cancelled`) under load; the profile it captures has no plugin root.
+- `Tests/Architecture/test_backup_owner_inventory.py` (serial) with the module and screen size ratchets: 224 passed.
+- `test_plugin_review.py`, `test_plugins_browse.py` and `test_backup_data_groups.py` at `-n 4`: 104 passed.
+- `./scripts/preflight.sh` passes (UI census floor met), `check_markup_interpolation.py` is OK, and `ruff --select F` on the changed files is clean.
+- Review round r13g-rev1, for the record: 1902 passed and 19 failed (all red at base) on its narrower selection.
 
 **Docs (AC6).**
 - `backlog/docs/backup-recovery-owner-inventory.md`: the Plugins section, rows reclassified, and the I1 identity text.
