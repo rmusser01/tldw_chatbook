@@ -144,6 +144,7 @@ _GROUP_OWNERS = {
         "chat.attachments",
         "personas",
         "persona.assets",
+        "persona.actor_packs",
         "persona.visual_identity",
         "persona.visual_identity_builtin",
         "chat.dictionaries",

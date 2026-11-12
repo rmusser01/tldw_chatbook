@@ -791,7 +791,12 @@ def _owner_items(source, selected, root, config, context, owners, normal, cancel
                 raise ValueError("detached_owner_unavailable:plugins")
             add(owner_id, path, tree=True)
             continue
-        if owner_id in {"persona.assets", "persona.visual_identity", "skills"}:
+        if owner_id in {
+            "persona.assets",
+            "persona.actor_packs",
+            "persona.visual_identity",
+            "skills",
+        }:
             if owner_id != "skills" and core.status != "included":
                 path = (
                     root if owner.location == "data" else selected.parent

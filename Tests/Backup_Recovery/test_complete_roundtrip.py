@@ -1233,3 +1233,194 @@ def test_two_captured_profiles_restore_and_open_with_native_content(
     assert "TWO_PROFILE_RESTORED_AND_OPENED" in _run_profile_child(
         root, "stage2-restore", script, environment, timeout=75
     )
+
+
+# TASK-39116 review r13b-rev1: Actor Pack persona images (persona.actor_packs)
+# survive a real capture, archive, isolated restore and publication.
+_ACTOR_PRIVATE = r"""
+import asyncio,hashlib,json,os,sqlite3,sys,threading
+from pathlib import Path
+from Tests.network_guard import install,blocked_attempts
+install()
+for name in ('sounddevice','pyaudio'):sys.modules[name]=None
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+fixture=Path(os.environ['ACTOR_PACK_FIXTURE'])
+selector=Path(os.environ['TLDW_CONFIG_PATH'])
+def digest(path):return hashlib.sha256(path.read_bytes()).hexdigest()
+"""
+
+_ACTOR_SEED = (
+    _ACTOR_PRIVATE
+    + r"""
+from tldw_chatbook.app import TldwCli
+from tldw_chatbook.config import get_user_data_dir
+from tldw_chatbook.Persona_Visual.publication import publish_persona_visual
+from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
+from Tests.Persona_Visual.test_persona_visual_publication import _snapshot
+async def main():
+ app=TldwCli()
+ try:
+  db=app.chachanotes_db;root=get_user_data_dir();source=fixture/'persona-source';source.mkdir()
+  publish_persona_visual(PersonaVisualRepository(db),_snapshot(source),source_root=source,profile_root=root,authority_guard=lambda:True)
+  runtime=root/'actor_packs'/('a'*64)/'persona-runtime';runtime.mkdir(parents=True)
+  # Actor Pack activation's stored shape: the asset rows name actor_packs/ files.
+  with db.transaction() as cursor:
+   for row_id,relpath in cursor.execute('SELECT id,storage_relpath FROM persona_visual_assets').fetchall():
+    moved=runtime.relative_to(root).as_posix()+'/asset-%04d.png'%row_id
+    (root/relpath).rename(root/moved)
+    cursor.execute('UPDATE persona_visual_assets SET storage_relpath=? WHERE id=?',(moved,row_id))
+  (runtime/'manifest.json').write_text('{"assets":[]}')
+  files={path.relative_to(root).as_posix():digest(path) for path in (root/'actor_packs').rglob('*') if path.is_file()}
+  assert len(files)==2,files
+  (fixture/'actor-seed.json').write_text(json.dumps({'user_root':str(root),'files':files,'config_hex':selector.read_bytes().hex()},indent=2))
+  assert not blocked_attempts(),blocked_attempts()
+ finally:
+  await app._shutdown_app_owned_lifecycles();await app.tts_service.close();await app.tts_service.wait_closed()
+asyncio.run(main())
+"""
+)
+
+_ACTOR_CAPTURE = (
+    _ACTOR_PRIVATE
+    + r"""
+from tldw_chatbook.app import TldwCli
+from tldw_chatbook.Backup_Recovery.capture_service import preview_capture,capture
+from tldw_chatbook.Backup_Recovery.archive_writer import write_archive
+from tldw_chatbook.Backup_Recovery.runtime_maintenance import monitor_app
+from tldw_chatbook.Backup_Recovery import storage_admission
+from tldw_chatbook.config import get_user_data_dir
+async def main():
+ app=TldwCli();monitoring=asyncio.create_task(monitor_app(app))
+ cancel=threading.Event();watchdog=asyncio.get_running_loop().call_later(150,cancel.set)
+ try:
+  seed=json.loads((fixture/'actor-seed.json').read_text());source_root=get_user_data_dir()
+  options={'staging_parent':fixture,'temporary_media':False};preview=preview_capture((selector,),options=options)
+  blocking=[(item.owner,str(item.path),item.status) for item in preview.items if item.owner=='unknown' or item.status in {'unsupported','unavailable','missing_required'}]
+  assert preview.complete,(preview.issues,blocking)
+  owned={item.path.relative_to(source_root).as_posix():item.status for item in preview.items if item.owner=='persona.actor_packs' and item.path is not None and item.path.is_file()}
+  assert owned=={relative:'included' for relative in seed['files']},owned
+  destination=fixture/'actor.tldw-backup.zip'
+  captured=await asyncio.to_thread(capture,(selector,),preview.scope_digest,destination,options=options,cancel=cancel)
+  async with asyncio.timeout(10):
+   while storage_admission._pause is not None or app._backup_runtime_maintenance is not None:await asyncio.sleep(.01)
+  assert captured.inventory.complete
+  manifest=json.loads(captured.manifest_bytes);source={item.logical_id:item for item in captured.inventory.items}
+  rows=[row for row in manifest['files'] if row['owner_id']=='persona.actor_packs']
+  assert {source[row['logical_id']].path.relative_to(source_root).as_posix():row['sha256'] for row in rows}==seed['files']
+  assert all(digest(captured.root/row['payload'])==row['sha256'] for row in rows)
+  await asyncio.to_thread(write_archive,captured,destination,password=None,cancel=cancel)
+  mapping={};selected=fixture/'restore-destinations'
+  for row in manifest['directories']:
+   if row['parent_id'] is not None:continue
+   key=row['logical_id'];member=next((entry for entry in manifest['files'] if entry['root_id']==key),None)
+   original=source[key].path if key in source else source[member['logical_id']].path.parent
+   owner=member['owner_id'] if row.get('synthetic') else source[key].owner
+   if owner=='eval.definitions':target=selected/'inactive-eval'
+   elif original==source_root or source_root in original.parents:target=selected/'data'/'restored-actor'/original.relative_to(source_root)
+   elif original==selector.parent:target=selected/'config'
+   elif original==selector.parent/'custom':target=selected/'custom'
+   else:
+    assert owner=='persona.visual_identity_builtin',(key,owner,str(original))
+    target=selected/'inactive-builtin'
+   mapping[key]=str(target)
+  assert len(manifest['profile_ids'])==1
+  profile=manifest['profile_ids'][0];mapping['profile:'+profile+':paths.data_dir']=str(selected/'data')
+  (fixture/'actor-restore-input.json').write_text(json.dumps({'archive':str(destination),'mapping':mapping,'source_profile':profile},indent=2))
+  assert {relative:digest(source_root/relative) for relative in seed['files']}==seed['files']
+  assert selector.read_bytes().hex()==seed['config_hex'] and not blocked_attempts(),blocked_attempts()
+ finally:
+  cancel.set();watchdog.cancel();monitoring.cancel();await asyncio.gather(monitoring,return_exceptions=True)
+  await app._shutdown_app_owned_lifecycles();await app.tts_service.close();await app.tts_service.wait_closed()
+asyncio.run(main())
+"""
+)
+
+_ACTOR_RESTORE = (
+    _ACTOR_PRIVATE
+    + r"""
+from tldw_chatbook.Backup_Recovery.archive_reader import acquire,verify_sealed
+from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
+from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
+from tldw_chatbook.Backup_Recovery.isolated_restore import restore_isolated
+receipt=json.loads((fixture/'actor-restore-input.json').read_text())
+archive=acquire(Path(receipt['archive']),fixture/'actor-acquired',ArchiveLimits(),None,threading.Event())
+assert verify_sealed(archive).consistency=='coherent'
+plan=plan_restore(archive,mode='isolated',destinations={key:Path(path) for key,path in receipt['mapping'].items()},target=None,profile_names={receipt['source_profile']:'restored-actor'})
+profile=restore_isolated(archive,plan,fixture/'actor-control',threading.Event())
+(fixture/'actor-restored.json').write_text(json.dumps({'profile':profile}))
+assert not blocked_attempts(),blocked_attempts()
+"""
+)
+
+_ACTOR_READ = (
+    _ACTOR_PRIVATE
+    + r"""
+from tldw_chatbook.Backup_Recovery.isolated_restore import select_profile
+restored=json.loads((fixture/'actor-restored.json').read_text());select_profile(restored['profile'],fixture/'actor-control')
+from tldw_chatbook.config import get_user_data_dir,get_chachanotes_db_path
+seed=json.loads((fixture/'actor-seed.json').read_text());user_root=get_user_data_dir()
+assert user_root!=Path(seed['user_root'])
+restored_files={relative:digest(user_root/relative) for relative in seed['files']}
+connection=sqlite3.connect(get_chachanotes_db_path().as_uri()+'?mode=ro',uri=True)
+try:rows=connection.execute('SELECT storage_relpath,bytes,sha256 FROM persona_visual_assets').fetchall()
+finally:connection.close()
+assert rows and all(relpath.startswith('actor_packs/') and (user_root/relpath).stat().st_size==size and digest(user_root/relpath)==sha for relpath,size,sha in rows),rows
+source_files={relative:digest(Path(seed['user_root'])/relative) for relative in seed['files']}
+(fixture/'actor-readback.json').write_text(json.dumps({'seed_files':seed['files'],'restored_files':restored_files,'source_files':source_files,'rows':rows,'blocked_network_attempts':len(blocked_attempts())},indent=2))
+"""
+)
+
+
+def test_actor_pack_persona_images_survive_capture_and_isolated_restore(tmp_path):
+    root = tmp_path.resolve()
+    for name in ("home", "xdg-config", "xdg-data", "cache", "tmp", "profile"):
+        (root / name).mkdir(mode=0o700)
+    profile = root / "profile"
+    (profile / "custom").mkdir(mode=0o700)
+    (profile / "data").mkdir(mode=0o700)
+    selector = profile / "config.toml"
+    selector.write_text(
+        '[general]\nusers_name="default_user"\ndefault_tab="settings"\n'
+        "[first_run]\nsetup_completed=true\n[splash_screen]\nenabled=false\n"
+        "[AppRAGSearchConfig.rag.indexing]\nenabled=false\n"
+        f"[paths]\ndata_dir={json.dumps(str(profile / 'data'))}\n[database]\n"
+        + "".join(
+            f"{key}={json.dumps(str(profile / 'custom' / leaf))}\n"
+            for key, leaf in (
+                ("chachanotes_db_path", "notes.db"),
+                ("media_db_path", "media.db"),
+                ("prompts_db_path", "prompts.db"),
+            )
+        ),
+        encoding="utf-8",
+    )
+    selector.chmod(0o600)
+    environment = _base_child_environment()
+    environment.update(
+        HOME=str(root / "home"),
+        USERPROFILE=str(root / "home"),
+        XDG_CONFIG_HOME=str(root / "xdg-config"),
+        XDG_DATA_HOME=str(root / "xdg-data"),
+        XDG_CACHE_HOME=str(root / "cache"),
+        TMPDIR=str(root / "tmp"),
+        TLDW_CONFIG_PATH=str(selector),
+        ACTOR_PACK_FIXTURE=str(root),
+        PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
+        TLDW_TEST_MODE="1",
+        TLDW_DISABLE_CONFIG_WATCH="1",
+        PYTHONPATH=str(Path(__file__).resolve().parents[2]),
+    )
+    _run_profile_child(root, "actor-seed", _ACTOR_SEED, environment, timeout=180)
+    _run_profile_child(root, "actor-capture", _ACTOR_CAPTURE, environment, timeout=180)
+    restored_environment = _isolated_environment(root, environment)
+    for name, script in (
+        ("actor-restore", _ACTOR_RESTORE),
+        ("actor-read", _ACTOR_READ),
+    ):
+        _run_profile_child(root, name, script, restored_environment, timeout=180)
+    evidence = json.loads((root / "actor-readback.json").read_text())
+    assert evidence["restored_files"] == evidence["seed_files"]
+    assert evidence["source_files"] == evidence["seed_files"]
+    assert evidence["rows"] and evidence["blocked_network_attempts"] == 0

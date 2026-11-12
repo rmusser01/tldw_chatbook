@@ -2635,6 +2635,7 @@ _RAW_RECOVERY_LIMITS = {
     "tokenizers.custom": 256 * 1024**3,
     "skills": 256 * 1024**3,
     "persona.assets": 256 * 1024**3,
+    "persona.actor_packs": 256 * 1024**3,
     "persona.visual_identity": 256 * 1024**3,
     "persona.visual_identity_builtin": 256 * 1024**3,
     "tts.voices": 256 * 1024**3,

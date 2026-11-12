@@ -468,6 +468,9 @@ ARCHITECTURE_GUARD_TARGETS = (
     "Tests/Persona_Buddy/test_controller_failure_logging.py",
     # TASK-39053: the backup owner inventory, red since it landed, now matches.
     "Tests/Architecture/test_backup_owner_inventory.py",
+    # TASK-39116 review r13b-rev2: the detached layout's persona.actor_packs
+    # validation (both cases, ~25 s serial); the rest of that file is unlaned.
+    "Tests/Backup_Recovery/test_detached_layout.py::test_actor_pack_persona_images_are_validated_in_a_detached_source",
     # TASK-39060: whole, now that its persona/workspace boundary is green.
     "Tests/test_persistent_diagnostic_boundary.py",
     # TASK-39061: the shared log sanitizer.

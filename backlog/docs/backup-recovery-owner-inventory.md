@@ -220,7 +220,7 @@ to the linked source module and the cohorts above; unresolved mappings remain bl
 ## Exact persistence producer symbols
 
 A row is a reviewed **source candidate**, not a claim its entire module is durable.
-The census contains 1603 rows (TASK-39053 reconciliation; TASK-38605 deleted four dead producers). Its qualified symbol is the locator-consumer
+The census contains 1703 rows (TASK-39053 reconciliation; TASK-38605 deleted four dead producers; TASK-39111, TASK-39112 and TASK-39115 added 99). Its qualified symbol is the locator-consumer
 evidence; where canonical root selection is not yet extracted, the cohort table explicitly records that resolver
 blocker. New calls in an existing symbol also change the expected count and fail.
 
@@ -2969,6 +2969,250 @@ which admission re-verifies on each run. The app has no rebind for either yet
 | tldw_chatbook/Plugins/backup.py | _Plugins.capture | copy_private_sqlite | 1 | qualified | plugins |
 | tldw_chatbook/Plugins/backup.py | _runtime_lock | open | 1 | qualified | plugins; runtime.lock probe: preview never creates it, capture creates and holds it |
 
+## Census vocabulary extension (TASK-39111, TASK-39112, TASK-39115)
+
+Recomputed at dev ae9f9e8d21 (2026-11-10) with the test's own helpers, the scanner
+changes below add 99 producer rows and change or remove none:
+
+- tempfile creation (`NamedTemporaryFile`, `TemporaryFile`, `SpooledTemporaryFile`,
+  `TemporaryDirectory`, `mkstemp`, `mkdtemp`): 86 rows, 22 of them in symbols that
+  had no other row.
+- A name bound from a call to a module function that returns an `os` binding is
+  that `os`, in the assigning function's lexical scope. Tools' `_atomic_write_target`
+  (in `local_tool_impls` and the generated `remote_worker_bundle`) publishes through
+  `file_os = _write_file_os()`, so its `os.link`, two `os.unlink`, `os.replace` and the
+  Windows shim's `os.replace_open_target` are now counted. Both arms of a conditional
+  expression count (`replace = file_os.replace_open_target if ... else file_os.replace`).
+  Also counted (review r13b-rev1): a method helper (`self._os()`), a helper that
+  returns another helper's call, a helper call used in place (`h().replace(a, b)`),
+  any spelling of the return (`return(os)`, a continued line), and annotated or
+  walrus bindings (`f: T = h()`, `(f := h())`, which also apply to the native
+  aliases). Not counted, a known limit of this lexical scan: a returned local alias
+  (`m = os; return m`), a helper imported from another module, `os` held in an
+  attribute or container (`self.os = os`), and an alias a nested function binds from
+  an outer alias assigned later in the source.
+- Linux `renameat2` is counted the way `renameatx_np` is: called directly, through a
+  tuple alias, and through `getattr(libc, name)` where `name` is a string constant or
+  a local name bound to string constants. New rows: `TTS/profile_migration_namespace._rename_noreplace`,
+  `Backup_Recovery/native_platform.rename_noreplace` and both names in
+  `Notes/sync_paths._rename_with_flags`.
+- pydub `export` is counted as `pydub.export`, but only in a module that imports
+  pydub, so the Prompts, Evals, OPML, meetings and STTS-profile exporters of the same
+  name stay out. An export whose target (first argument or `out_f=`) is a
+  `BytesIO(...)`, or a name that the same function (not an enclosing one) binds
+  only to `BytesIO(...)`, writes no file and is not counted; a parameter, or a name
+  the function also binds another way (an assignment or walrus to anything else, a
+  loop, `with ... as`, `except ... as`, unpacking or comprehension target), is a file
+  target and is counted. Not seen, a known limit: a match-case capture, an import alias and
+  `global`/`nonlocal` rebinding of the name. Three modules import pydub (`TTS/audio_service`,
+  `TTS/audio_stitch`, `TTS/audiobook_generator`) with seven `export` calls; the
+  five BytesIO exports stay out, and the one new row is
+  `AudioService.create_m4b_with_chapters` `pydub.export` 2: the temporary `.m4a`
+  and, when ffmpeg fails, the chapterless M4B written straight to `output_path`.
+
+The rows apply the rules in the TASK-39053 reconciliation below, in order. Rule 2 (a
+new call in a reviewed symbol takes that symbol's disposition) covers 74 rows; the
+two symbols with mixed dispositions take their scratch rows' disposition (the
+preview SQLite copy, the compare scratch). The other 24 rows are in symbols with no
+other row, and each call was read in source:
+
+- Scratch in the system temporary directory (no `dir=`, or a caller default of
+  None), removed by its context or its caller, is `process_artifact` / `process`, as
+  the existing `VideoStore._atomic_publish` and `CodeExecutionRunner._execute_code`
+  rows are. It is outside every profile root; a durable result it stages is counted
+  at its own publication call. A child process's log or output capture file is
+  `process-transport`.
+- Scratch inside a reviewed module's own directory takes that module's cohort
+  (Chatbooks import extraction, File Notes git private proof and hook directories).
+  `Utils/secure_temp_files` is a generic boundary. `_rename_with_flags` renames
+  inside the pinned Notes sync root, so it is `external_input`, as `PinnedSyncRoot` is.
+- One row is in a Plugins symbol (`SourceService.commit_import.operation`); it takes
+  that symbol's disposition, `qualified` / `plugins`, which the Plugins capture
+  (TASK-40132) gave the symbol's other rows (2026-11-12, restack onto TASK-40132).
+
+The `pydub.export` row is `unsupported` / `tts`: its symbol's only other row is the
+system-temp `.m4a` (`process_artifact`), but the fallback export writes the M4B that
+`AudioBookGenerator._add_metadata` asks for, and the generator's reviewed rows are
+`unsupported` / `tts`.
+
+**Accepted limit: subprocess outputs** (owner decision 2026-11-10, TASK-39111: "pydub
+rows, subprocess as limit (Recommended)"). Files a child process writes are not
+counted. On ae9f9e8d21 production has 71 `subprocess.run` / `Popen` / `call` /
+`check_call` / `check_output` and `asyncio.create_subprocess_exec` / `_shell` calls
+in 58 files; the census cannot tell from the call which of them write a file or
+where. Writers found in review: ffmpeg in `AudioService.create_m4b_with_chapters`
+(the M4B at `output_path`), in `STT/parakeet_onnx._prepared_wav` and
+`STT/transcribe_cpp._pcm_16k_mono` (temporary WAVs) and in `stts_events` (:2641, a
+converted file next to its input); the stable-diffusion.cpp binary's image in
+`StableDiffusionCppAdapter.generate`'s temporary directory. yt-dlp runs as a
+subprocess only in `Media_Playback/stream_resolve`, to resolve a stream URL on
+stdout; the Local_Ingestion downloads use the yt-dlp library, an in-process
+third-party writer that is likewise not counted. A process's own scratch, created
+with tempfile in the calling symbol, is counted at that call. Reviewing a new
+subprocess writer is the owner review's job, not the census's.
+
+| Module | Producer symbol | Call | Count | Classification | Resolver / adapter cohort |
+| --- | --- | --- | --- | --- | --- |
+| tldw_chatbook/Agents/agent_worktree.py | _apply_patch | NamedTemporaryFile | 1 | unsupported | agents |
+| tldw_chatbook/Agents/agent_worktree_recovery.py | recover_agent_worktree | NamedTemporaryFile | 1 | process_artifact | process |
+| tldw_chatbook/Backup_Recovery/crypto.py | transform | mkstemp | 1 | generic_boundary | generic |
+| tldw_chatbook/Backup_Recovery/native_platform.py | rename_noreplace | renameat2 | 1 | generic_boundary | backup_native_storage |
+| tldw_chatbook/Backup_Recovery/publication.py | _validate_installed | mkdtemp | 1 | generic_boundary | backup_recovery_publication |
+| tldw_chatbook/Backup_Recovery/storage_admission.py | _PreviewScope.sqlite_target | mkdtemp | 1 | disposable | private preview SQLite copy |
+| tldw_chatbook/Character_Chat/buddy_conversion.py | publish_buddy_character | mkdtemp | 1 | unsupported | assets |
+| tldw_chatbook/Chat/console_generate_video.py | _stage_pending_video | TemporaryFile | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Chat/console_scratch_space.py | ConsoleScratchSpaceManager.snapshot | mkdtemp | 1 | process_artifact | process |
+| tldw_chatbook/Chat/console_trace_regex_worker.py | run_custom_pii_batch | TemporaryFile | 1 | process_artifact | process-transport |
+| tldw_chatbook/Chatbooks/chatbook_creator.py | ChatbookCreator.__init__ | mkdtemp | 1 | disposable | runtime.chatbook_scratch:data/temp/chatbooks; per-run-finally-cleanup |
+| tldw_chatbook/Chatbooks/chatbook_creator.py | ChatbookCreator.create_chatbook | mkdtemp | 1 | disposable | runtime.chatbook_scratch:data/temp/chatbooks; per-run-finally-cleanup |
+| tldw_chatbook/Chatbooks/chatbook_importer.py | ChatbookImporter._create_extract_dir | mkdtemp | 1 | generic_boundary | runtime.chatbook_scratch:data/temp/imports; external-input-or-extracted-per-run-read; destination-DB-owners |
+| tldw_chatbook/Chatbooks/chatbook_importer.py | ChatbookImporter._validate_same_identity_conversation | TemporaryDirectory | 1 | disposable | tempfile.TemporaryDirectory compare scratch; context cleanup |
+| tldw_chatbook/DB/Prompts_DB.py | export_prompt_keywords_to_csv | mkstemp | 1 | unsupported | sqlite |
+| tldw_chatbook/DB/prompt_export.py | export_prompts_formatted | mkstemp | 2 | unsupported | sqlite |
+| tldw_chatbook/Evals/specialized_runners.py | CodeExecutionRunner._execute_code | TemporaryDirectory | 1 | process_artifact | evals |
+| tldw_chatbook/Image_Generation/adapters/stable_diffusion_cpp_adapter.py | StableDiffusionCppAdapter.generate | TemporaryDirectory | 1 | process_artifact | process |
+| tldw_chatbook/Library/collections_legacy_recovery.py | LegacyCollectionsRecovery._export_json_unverified | mkstemp | 1 | unsupported | library.legacy_recovery |
+| tldw_chatbook/Local_Ingestion/Book_Ingestion_Lib.py | process_zip_of_epubs | TemporaryDirectory | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Local_Ingestion/Image_Processing_Lib.py | extract_images_from_pdf | NamedTemporaryFile | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Local_Ingestion/Image_Processing_Lib.py | preprocess_image_for_ocr | NamedTemporaryFile | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Local_Ingestion/OCR_Backends.py | DocextOCRBackend.process_pdf | NamedTemporaryFile | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Local_Ingestion/PDF_Processing_Lib.py | process_pdf | mkdtemp | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Local_Ingestion/audio_processing.py | LocalAudioProcessor.process_audio_files | TemporaryDirectory | 1 | process_artifact | process |
+| tldw_chatbook/Local_Ingestion/parakeet_v2_installer.py | install_verified_parakeet_v2 | mkdtemp | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Local_Ingestion/transcription_service.py | _LegacyTranscriptionBackend._ensure_wav_format | NamedTemporaryFile | 1 | process_artifact | process |
+| tldw_chatbook/Local_Ingestion/transcription_service.py | _LegacyTranscriptionBackend._transcribe_buffer_with_parakeet_mlx | NamedTemporaryFile | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Local_Ingestion/transcription_service.py | _LegacyTranscriptionBackend._transcribe_with_parakeet_mlx | NamedTemporaryFile | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Local_Ingestion/transcription_service.py | _LegacyTranscriptionBackend.transcribe_buffer | NamedTemporaryFile | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Local_Ingestion/video_processing.py | LocalVideoProcessor._write_temp_cookiefile | NamedTemporaryFile | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Local_Ingestion/video_processing.py | LocalVideoProcessor.process_videos | TemporaryDirectory | 1 | process_artifact | process |
+| tldw_chatbook/MCP/permission_store.py | MCPPermissionStore._save_locked | mkstemp | 1 | unsupported | mcp |
+| tldw_chatbook/Media/local_media_reading_service.py | LocalMediaReadingService._default_url_file_downloader | mkstemp | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Media/local_media_reading_service.py | LocalMediaReadingService._sync_git_repository_source_items | TemporaryDirectory | 1 | process_artifact | process |
+| tldw_chatbook/Model_Artifacts/service.py | ModelArtifactService._download_stage_for | mkdtemp | 1 | unsupported | models |
+| tldw_chatbook/Model_Artifacts/service.py | ModelArtifactService._retire_download_stage_operation | mkdtemp | 1 | unsupported | models |
+| tldw_chatbook/Notes/file_notes_git_network.py | NetworkContextFactory.create | mkdtemp | 1 | generic_boundary | external-git-source-or-disposable-private-proof |
+| tldw_chatbook/Notes/file_notes_git_service.py | _create_private_hooks_directory | mkdtemp | 1 | generic_boundary | external-git-source-or-disposable-private-proof |
+| tldw_chatbook/Notes/file_notes_git_service.py | _create_private_push_proof_directory | mkdtemp | 1 | generic_boundary | external-git-source-or-disposable-private-proof |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.export_exact_file | mkstemp | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.export_revision_file | mkstemp | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/file_notes_service.py | FileNotesService.save_file | mkstemp | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/sync_paths.py | _rename_with_flags | renameat2 | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/sync_paths.py | _rename_with_flags | renameatx_np | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Persona_Buddy/library.py | BuddyLibrary.publish_review | TemporaryDirectory | 1 | unsupported | assets |
+| tldw_chatbook/Petdex/review.py | review_petdex_import | TemporaryDirectory | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Petdex/review.py | write_native_export | NamedTemporaryFile | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Plugins/source_service.py | SourceService.commit_import.operation | TemporaryDirectory | 1 | qualified | plugins |
+| tldw_chatbook/Prompt_Management/Prompts_Interop.py | <module> | mkdtemp | 1 | unsupported | miscellaneous |
+| tldw_chatbook/RAG_Search/eval/regression.py | RegressionDetector._save_atomic | mkstemp | 1 | unsupported | rag |
+| tldw_chatbook/STT/executor.py | LocalSTTExecutor._start_worker_locked | mkdtemp | 1 | process_artifact | process |
+| tldw_chatbook/STT/parakeet_onnx.py | _prepared_wav | NamedTemporaryFile | 1 | process_artifact | process |
+| tldw_chatbook/STT/transcribe_cpp.py | _pcm_16k_mono | NamedTemporaryFile | 1 | process_artifact | process |
+| tldw_chatbook/Skills_Interop/local_skills_service.py | LocalSkillsService.run_skill_script._run_in_scratch_dir | mkdtemp | 1 | unsupported | skills |
+| tldw_chatbook/Skills_Interop/local_skills_service.py | LocalSkillsService.seed_builtin_skills | TemporaryDirectory | 1 | process_artifact | process |
+| tldw_chatbook/Skills_Interop/skill_script_runner.py | run_script_subprocess | mkdtemp | 1 | process_artifact | process |
+| tldw_chatbook/TTS/audio_service.py | AudioService.create_m4b_with_chapters | NamedTemporaryFile | 1 | process_artifact | process |
+| tldw_chatbook/TTS/audio_service.py | AudioService.create_m4b_with_chapters | pydub.export | 2 | unsupported | tts |
+| tldw_chatbook/TTS/audio_service.py | write_ffmetadata_file | NamedTemporaryFile | 1 | unsupported | tts |
+| tldw_chatbook/TTS/audiobook_generator.py | AudioBookGenerator._combine_chapters | NamedTemporaryFile | 1 | unsupported | tts |
+| tldw_chatbook/TTS/audiobook_generator.py | AudioBookGenerator._generate_chapter_audio | NamedTemporaryFile | 1 | unsupported | tts |
+| tldw_chatbook/TTS/backends/chatterbox.py | ChatterboxTTSBackend._transcribe_audio | NamedTemporaryFile | 1 | unsupported | tts |
+| tldw_chatbook/TTS/backends/kokoro.py | KokoroTTSBackend._initialize_onnx | mkstemp | 2 | unsupported | tts |
+| tldw_chatbook/TTS/backends/kokoro.py | _kokoro_stream_download | NamedTemporaryFile | 1 | unsupported | tts |
+| tldw_chatbook/TTS/profile_migration_namespace.py | _rename_noreplace | renameat2 | 1 | unsupported | tts |
+| tldw_chatbook/TTS/profile_repository.py | TTSProfileRepository._worker_backup_to | mkstemp | 1 | unsupported | tts |
+| tldw_chatbook/TTS/profile_repository.py | TTSProfileRepository._worker_create_recovery_backup | mkstemp | 1 | unsupported | tts |
+| tldw_chatbook/TTS/profile_schema.py | _validate_profile_candidate | mkdtemp | 1 | unsupported | tts |
+| tldw_chatbook/TTS/profile_schema.py | _validate_profile_candidate | mkstemp | 1 | unsupported | tts |
+| tldw_chatbook/Tool_Packs/receipt_store.py | ToolPackReceiptStore._commit | mkstemp | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Tools/local_tool_impls.py | _atomic_write_target | os.link | 1 | external_input | external |
+| tldw_chatbook/Tools/local_tool_impls.py | _atomic_write_target | os.replace | 1 | external_input | external |
+| tldw_chatbook/Tools/local_tool_impls.py | _atomic_write_target | os.replace_open_target | 1 | external_input | external |
+| tldw_chatbook/Tools/local_tool_impls.py | _atomic_write_target | os.unlink | 2 | external_input | external |
+| tldw_chatbook/Tools/raw_cli_executor.py | _open_spool | TemporaryFile | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Tools/raw_cli_executor.py | _open_spool | mkstemp | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Tools/remote_worker_bundle.py | _atomic_write_target | os.link | 1 | external_input | external |
+| tldw_chatbook/Tools/remote_worker_bundle.py | _atomic_write_target | os.replace | 1 | external_input | external |
+| tldw_chatbook/Tools/remote_worker_bundle.py | _atomic_write_target | os.replace_open_target | 1 | external_input | external |
+| tldw_chatbook/Tools/remote_worker_bundle.py | _atomic_write_target | os.unlink | 2 | external_input | external |
+| tldw_chatbook/UI/Navigation/buddy_management.py | BuddyManagementCoordinator._review_petdex | TemporaryDirectory | 1 | unsupported | miscellaneous |
+| tldw_chatbook/UI/Wizards/first_run_voice_omnivoice.py | OmniVoiceStepBase._play_sample | NamedTemporaryFile | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Utils/atomic_file_ops.py | atomic_copy | mkstemp | 1 | generic_boundary | generic |
+| tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_bytes | mkstemp | 1 | generic_boundary | generic |
+| tldw_chatbook/Utils/atomic_file_ops.py | atomic_write_text | mkstemp | 1 | generic_boundary | generic |
+| tldw_chatbook/Utils/private_paths.py | atomic_private_write_bytes | mkstemp | 1 | generic_boundary | private helper; exact active runtime source adoption only; other sources ordinary |
+| tldw_chatbook/Utils/secure_temp_files.py | SecureTempFileManager.create_temp_dir | mkdtemp | 1 | generic_boundary | generic |
+| tldw_chatbook/Utils/secure_temp_files.py | create_secure_temp_file | NamedTemporaryFile | 1 | generic_boundary | generic |
+| tldw_chatbook/Utils/secure_temp_files.py | secure_temp_dir | mkdtemp | 1 | generic_boundary | generic |
+| tldw_chatbook/Utils/secure_temp_files.py | secure_temp_file | NamedTemporaryFile | 1 | generic_boundary | generic |
+| tldw_chatbook/Video_Generation/video_store.py | VideoStore._atomic_publish | NamedTemporaryFile | 1 | process_artifact | process |
+| tldw_chatbook/Web_Scraping/cookie_scraping/cookie_cloner.py | _private_cookie_clone | TemporaryDirectory | 1 | external_input | external |
+| tldw_chatbook/Web_Server/artifact_share.py | ArtifactShareController.start_share | TemporaryFile | 1 | process_artifact | process-transport |
+| tldw_chatbook/Web_Server/artifact_share_manifest.py | stage_share | mkstemp | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Web_Server/session_store.py | WebSessionStore.save | mkstemp | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Web_Server/webauthn_store.py | WebAuthnCredentialStore.save | mkstemp | 1 | unsupported | miscellaneous |
+| tldw_chatbook/css/build_css.py | _atomic_write_text | NamedTemporaryFile | 1 | unsupported | miscellaneous |
+| tldw_chatbook/css/check_bundle_sync.py | main | TemporaryDirectory | 1 | process_artifact | process |
+
+## Plugins, Actor Packs and Personal Context cohorts (TASK-39116)
+
+The owner chose each package's cohort on 2026-11-10:
+
+- **Plugins: "Capture all".** The option as offered read: "Full capture: registry
+  schema catalog, quiescing plugin processes, an execution gate. Large, and a
+  restore still lands in recovery_required without the keyring marker." That work,
+  including the Plugins rows, is TASK-40132; the Plugins rows are unchanged here.
+- **Actor_Packs: "Capture (Recommended)".** The option read: "Capture actor_packs/
+  with the persona asset group and fix the persona.assets validator so it accepts
+  that folder (it currently fails on it). Small immutable images and JSON, no
+  secrets." Installed here, below.
+- **Personal Context:** the 2026-11-06 ruling stands: "Capture it: back up the
+  database and design key custody so a restore can read it — a larger feature that
+  needs its own design task." TASK-39148's design (`Docs/superpowers/specs/2026-11-10-personal-context-backup-key-custody-design.md`) was approved on
+  2026-11-10 ("Approve all 11"); by its decision 1 the profile key travels as a
+  credential record inside the encrypted archive, only when a backup includes
+  credentials. The Personal Context rows and the two `personal_context.*` owners
+  above stay as they are until its implementation tasks (TASK-40133 to TASK-40136,
+  TASK-40138 and TASK-40139) land.
+
+### `persona.actor_packs`
+
+Activating an Actor Pack that has a persona-runtime section publishes its images and
+`manifest.json` under `<user data>/actor_packs/<content digest>/persona-runtime/`
+(`Actor_Packs/activation.py` `_prepare_persona_sections`), and ChaChaNotes
+`persona_visual_assets` rows name those files. Until TASK-39116 the folder previewed
+as owner `unknown`, and `persona.assets` reported the whole owner unsupported
+(`references_unavailable`), because it resolved every row inside `persona_visual/`.
+
+`Persona_Visual/recovery.py` now installs `persona.actor_packs`, a second `_Assets`
+tree owner rooted at `actor_packs/`. The two owners split the `persona_visual_assets`
+rows: a locator that starts with `actor_packs/` belongs to `persona.actor_packs`,
+every other row to `persona.assets` (so a stray locator, including one that is
+exactly `actor_packs`, still fails there). Each owner checks its rows' files, sizes and SHA-256 digests in
+discovery, `validate_dependencies` and `validate_restore_dependencies`. The new owner
+is in the `conversations` group beside `persona.assets`, has the same 256 GiB raw-file
+limit, is a ChaChaNotes core dependency when such rows exist (the core's two queries
+test `substr(storage_relpath,1,12) = 'actor_packs/'`, the same prefix), and the
+detached layout discovers it through its own validator. The shared-visual half of an activation lives under
+`visual_identities/actor_packs/` and was already captured by
+`persona.visual_identity`.
+
+Limits, as of 2026-11-10: activation writes (`_publish_immutable`,
+`_cleanup_published`) are raw native writes that take no participant token, as the
+activation's writes under `visual_identities/actor_packs/` already were. The owner is
+not in the later-rollback safety scope that `persona.assets` and the builtin owner
+have (neither is `persona.visual_identity`), and it has no recovery-review label of
+its own ("Other saved data").
+
+The Actor_Packs rows: activation producers are `qualified` under the owner they write
+into; import staging rows, and `_preflight_space` (which checks free space on the
+staging root and, before activation, on the profile data root), take the installed
+`actor_packs.import_staging` owner,
+which reports staged packs `unsupported` and an empty root unused; reads of the
+user's selected archive are `external_input` / `external`; publication into the
+user-confirmed export destination is `external_input` /
+`external-notes-workspace-or-export`; the archive writer serializes into its
+caller's stream (`generic_boundary`). The three image-decode rows stay `memory`.
+
 ## Census reconciliation (TASK-39053)
 
 This inventory had not matched production since it landed. Recomputed at dev
@@ -3001,7 +3245,10 @@ arguments to `inspect.signature`, `isinstance`, `issubclass` and `callable`, whi
 run nothing. `tempfile`
 creation (86 rows if counted), third-party writers such as pydub `AudioSegment.export`,
 subprocess outputs and dynamic bindings such as `Tools/local_tool_impls`'
-`file_os` are outside the vocabulary.
+`file_os` are outside the vocabulary. (Since TASK-39111, TASK-39112 and TASK-39115,
+tempfile creation, `file_os`, `renameat2` and pydub `export` are counted, and subprocess
+outputs are an accepted limit: see the census vocabulary
+extension above.)
 
 With these forms counted, the drift is 714 added, 166 gone and 13 changed
 producer rows. The owner signed off the cohort table in TASK-39053 on 2026-11-06.
@@ -3241,36 +3488,36 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/MCP/permission_store.py | MCPPermissionStore._save_locked | mkdir | 1 | unsupported | mcp |
 | tldw_chatbook/MCP/permission_store.py | MCPPermissionStore._save_locked | os.replace | 1 | unsupported | mcp |
 | tldw_chatbook/MCP/permission_store.py | _fsync_parent_directory | open | 2 | unsupported | mcp |
-| tldw_chatbook/Actor_Packs/activation.py | ActorPackActivationService._prepare_character_sections | secure_private_directory | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/activation.py | ActorPackActivationService._prepare_persona_sections | secure_private_directory | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/activation.py | _cleanup_published | os.unlink | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/activation.py | _publish_immutable | open | 2 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/activation.py | _publish_immutable | os.unlink | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/activation.py | _publish_immutable | write | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/export.py | write_actor_pack_archive | ZipFile | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/export.py | write_actor_pack_archive | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/export.py | write_actor_pack_archive | write | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | ActorPackImportService.inspect_archive | ZipFile | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | ActorPackImportService.sweep_staging | secure_private_directory | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _candidate_current | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _cleanup_candidate | open | 2 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _create_candidate | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _create_candidate | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _extract_member | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _extract_member | open | 2 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _pin_source | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _preflight_space | secure_private_directory | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _read_candidate_authority | open | 2 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _read_member | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _read_staged | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _remove_directory_contents | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _remove_directory_contents | os.unlink | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _stage_root | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/importer.py | _write_all | write | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/publication.py | _open_parent | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/publication.py | _remove_owned_temporary | os.unlink | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/publication.py | publish_actor_pack | open | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Actor_Packs/publication.py | publish_actor_pack | os.replace | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Actor_Packs/activation.py | ActorPackActivationService._prepare_character_sections | secure_private_directory | 1 | qualified | persona.visual_identity; Actor Pack activation publication, no participant token |
+| tldw_chatbook/Actor_Packs/activation.py | ActorPackActivationService._prepare_persona_sections | secure_private_directory | 1 | qualified | persona.actor_packs; Actor Pack activation publication, no participant token |
+| tldw_chatbook/Actor_Packs/activation.py | _cleanup_published | os.unlink | 1 | qualified | persona.actor_packs / persona.visual_identity; Actor Pack activation publication, no participant token |
+| tldw_chatbook/Actor_Packs/activation.py | _publish_immutable | open | 2 | qualified | persona.actor_packs / persona.visual_identity; Actor Pack activation publication, no participant token |
+| tldw_chatbook/Actor_Packs/activation.py | _publish_immutable | os.unlink | 1 | qualified | persona.actor_packs / persona.visual_identity; Actor Pack activation publication, no participant token |
+| tldw_chatbook/Actor_Packs/activation.py | _publish_immutable | write | 1 | qualified | persona.actor_packs / persona.visual_identity; Actor Pack activation publication, no participant token |
+| tldw_chatbook/Actor_Packs/export.py | write_actor_pack_archive | ZipFile | 1 | generic_boundary | caller-supplied stream: Actor Pack export destination (external) or buddy-conversion staging (assets) |
+| tldw_chatbook/Actor_Packs/export.py | write_actor_pack_archive | open | 1 | generic_boundary | caller-supplied stream: Actor Pack export destination (external) or buddy-conversion staging (assets) |
+| tldw_chatbook/Actor_Packs/export.py | write_actor_pack_archive | write | 1 | generic_boundary | caller-supplied stream: Actor Pack export destination (external) or buddy-conversion staging (assets) |
+| tldw_chatbook/Actor_Packs/importer.py | ActorPackImportService.inspect_archive | ZipFile | 1 | external_input | external |
+| tldw_chatbook/Actor_Packs/importer.py | ActorPackImportService.sweep_staging | secure_private_directory | 1 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/importer.py | _candidate_current | open | 1 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/importer.py | _cleanup_candidate | open | 2 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/importer.py | _create_candidate | mkdir | 1 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/importer.py | _create_candidate | open | 1 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/importer.py | _extract_member | mkdir | 1 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/importer.py | _extract_member | open | 2 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/importer.py | _pin_source | open | 1 | external_input | external |
+| tldw_chatbook/Actor_Packs/importer.py | _preflight_space | secure_private_directory | 1 | unsupported | actor_packs.import_staging; creates the staging root, and before activation verifies the profile data root (free-space check) |
+| tldw_chatbook/Actor_Packs/importer.py | _read_candidate_authority | open | 2 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/importer.py | _read_member | open | 1 | external_input | external |
+| tldw_chatbook/Actor_Packs/importer.py | _read_staged | open | 1 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/importer.py | _remove_directory_contents | open | 1 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/importer.py | _remove_directory_contents | os.unlink | 1 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/importer.py | _stage_root | open | 1 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/importer.py | _write_all | write | 1 | unsupported | actor_packs.import_staging |
+| tldw_chatbook/Actor_Packs/publication.py | _open_parent | open | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Actor_Packs/publication.py | _remove_owned_temporary | os.unlink | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Actor_Packs/publication.py | publish_actor_pack | open | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Actor_Packs/publication.py | publish_actor_pack | os.replace | 1 | external_input | external-notes-workspace-or-export |
 | tldw_chatbook/Audio/diarizer_worker.py | read_pcm16_span | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Audio/meeting_capture.py | MeetingCapture._on_mic_frame | write | 3 | unsupported | miscellaneous |
 | tldw_chatbook/Audio/meeting_owner.py | MeetingSessionOwner.start | mkdir | 1 | unsupported | miscellaneous |
