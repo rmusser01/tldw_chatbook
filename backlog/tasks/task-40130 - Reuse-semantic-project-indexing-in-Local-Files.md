@@ -57,3 +57,4 @@ Let a person find files by meaning or use keyword and semantic retrieval togethe
 - The held-constructor fixture now begins from a v2 catalog without v4 tables. The responsive shutdown check passed while the real migration was held and released.
 - The mounted Settings theme cases now retain the real boot backfill worker at admission, including when it finishes before the pilot observes the app. The combined regression run passed 40 cases and skipped the two dependency-qualified cases.
 - Kept semantic cleanup deletes explicit and restored the reviewed literal keyword-table loop. The SQL mutation inventory passes, along with v3 cleanup, v4 semantic revocation, and the native detached and owned-namespace cleanup paths.
+- Aligned the four OpenAI response ordering fixtures with the owned HTTP session contract. They still verify indexed and fallback ordering without a network connection. All 17 response ordering, HTTP lifecycle, and logging checks passed.
