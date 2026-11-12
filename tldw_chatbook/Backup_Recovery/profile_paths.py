@@ -74,10 +74,13 @@ def setting(
     return values.get(key, default)
 
 
-def data_base(config: Mapping[str, object]) -> Path:
+def configured_data_base(config: Mapping[str, object]) -> object:
     selected = setting(config, "paths", "data_dir")
-    if selected is None:
-        selected = setting(config, "Paths", "data_dir")
+    return setting(config, "Paths", "data_dir") if selected is None else selected
+
+
+def data_base(config: Mapping[str, object]) -> Path:
+    selected = configured_data_base(config)
     if selected and not isinstance(selected, str):
         raise ValueError("invalid_config_path")
     return lexical_path(selected) if selected else selected_default_base_data_dir()

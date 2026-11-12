@@ -80,9 +80,7 @@ def selection(source, route, target):
     if data is None or source._CONFIG_CACHE_SOURCE != selected:
         raise bootstrap.RecoveryRequired("config_directory_selection_unavailable")
     if route == "config_default_root":
-        configured = profile_paths.setting(data, "paths", "data_dir")
-        if configured is None:
-            configured = profile_paths.setting(data, "Paths", "data_dir")
+        configured = profile_paths.configured_data_base(data)
         conventional = profile_paths.lexical_path(profile_paths.default_base_data_dir())
         fallback = conventional.parents[2] / profile_paths.DEFAULT_DATA_FALLBACK_DIRECTORY
         selected_root = profile_paths.lexical_path(target)

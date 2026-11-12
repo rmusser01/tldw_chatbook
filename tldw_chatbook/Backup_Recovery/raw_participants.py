@@ -30,7 +30,7 @@ from . import dictionary_file_participants as dictionary_files
 from . import mcp_source_participants as mcp_sources
 from . import settings_file_participants as settings_files
 from . import storage_admission as storage
-from .profile_paths import lexical_path, user_data_dir
+from .profile_paths import configured_data_base, lexical_path, user_data_dir
 from .admission import _ORDINARY_PAUSE_REQUEST_BINDING
 
 
@@ -950,7 +950,7 @@ def scope(
             )
         if route in {"config_data", "config_default_root", "config_chat_dicts", "config_models"}:
             directories += (selected,) if selected not in directories else ()
-            if route == "config_data":
+            if route == "config_data" and not configured_data_base(source._CONFIG_CACHE):
                 base = selected.parent
                 if (
                     base == lexical_path(source._selected_default_base_data_dir())
