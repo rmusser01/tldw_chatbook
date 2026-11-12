@@ -323,10 +323,14 @@ class LibraryLocalRagSearchService:
             if getattr(self, "_route_read_warned", None) == generation:
                 return None
             self._route_read_warned = generation
+            # Named placeholder, not `{}` + a positional argument: ruff's
+            # PLE1205 reads this module's re-bound `logger` as stdlib logging
+            # and counts a positional argument as one too many (the ruff
+            # ratchet, Tests/lint/ruff_gate.py, failed on it).
             logger.warning(
                 "Library RAG: active profile route unreadable; resolving the "
-                "runtime instead | exception_type={}",
-                type(exc).__name__,
+                "runtime instead | exception_type={exception_type}",
+                exception_type=type(exc).__name__,
             )
             return None
 

@@ -298,6 +298,8 @@ async def test_an_unreadable_profile_warns_once_per_generation(
             await service.search("Fresnel lens", ("notes",), "rag", top_k=5)
         assert len(reads) == 3, "every search must retry the profile read"
         assert len(warnings) == 1, warnings
+        # The warning names the failure's type, never a raw placeholder.
+        assert "exception_type=OSError" in warnings[0], warnings
 
         reset_shared_rag_service()
         await service.search("Fresnel lens", ("notes",), "rag", top_k=5)
