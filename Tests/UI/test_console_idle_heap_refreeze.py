@@ -41,25 +41,59 @@ pytestmark = pytest.mark.bootstrap_profile
 
 
 class BusySampler:
-    """Reads the Console's busy check on every loop turn until stopped.
+    """Reads the Console's busy check on every actual loop turn until stopped.
 
     Two probes can miss a gap between hand-offs (press to admission,
     admission to custody, custody to the transcript poll); a re-freeze that
     found one would land inside the send window.
+    Observe existing turns instead of scheduling a sleep(0) task: an always-ready
+    observer can starve the native work whose custody this test is checking.
     """
 
     def __init__(self, console) -> None:
         self.samples: list[bool] = []
         self._console = console
-        self._task = asyncio.get_running_loop().create_task(self._run())
+        self._loop = asyncio.get_running_loop()
+        self._previous_override = vars(self._loop).get("_run_once")
+        self._original_run_once = self._loop._run_once
+        self._stopped = False
+        self.samples.append(console_transcript._console_heap_busy(self._console))
+        self._loop._run_once = self._run_once
 
-    async def _run(self) -> None:
-        while True:
-            self.samples.append(console_transcript._console_heap_busy(self._console))
-            await asyncio.sleep(0)
+    def _run_once(self) -> None:
+        self.samples.append(console_transcript._console_heap_busy(self._console))
+        self._original_run_once()
 
     def stop(self) -> None:
-        self._task.cancel()
+        if self._stopped:
+            return
+        self._stopped = True
+        if self._previous_override is None:
+            del self._loop._run_once
+        else:
+            self._loop._run_once = self._previous_override
+
+
+async def test_busy_sampler_detects_a_single_event_loop_turn_gap() -> None:
+    """Observing real loop turns must still detect a one-turn custody gap."""
+    console = BusyScreen()
+    console._console_send_flight.tasks.add(object())
+    loop = asyncio.get_running_loop()
+    previous_override = vars(loop).get("_run_once")
+    sampler = BusySampler(console)
+    try:
+        await asyncio.sleep(0)
+        console._console_send_flight.tasks.clear()
+        await asyncio.sleep(0)
+        console._console_send_flight.tasks.add(object())
+        await asyncio.sleep(0)
+    finally:
+        sampler.stop()
+        sampler.stop()
+    assert vars(loop).get("_run_once") is previous_override
+    assert sampler.samples[0] is True
+    assert False in sampler.samples
+    assert sampler.samples[-1] is True
 
 
 def sending(console) -> bool:
@@ -318,8 +352,10 @@ async def test_mounted_received_custody_blocks_completion_and_idle_timer_reclaim
             # A prior run-settled timer can reclaim the cycle before this
             # warmup request fires. Observe both outcomes within the same bound.
             await until(
-                lambda: reference() is None
-                and ("refreeze", "first_send_preimport") in refreezer.actions,
+                lambda: (
+                    reference() is None
+                    and ("refreeze", "first_send_preimport") in refreezer.actions
+                ),
                 timeout=10,
             )
             assert ("refreeze", "first_send_preimport") in refreezer.actions
@@ -451,6 +487,6 @@ def test_a_new_chat_gaining_its_conversation_id_is_not_a_switch(
 
     screen.conversation = "c2"  # a real switch in the same tab
     console_transcript.note_console_conversation_painted(screen)
-    assert (
-        refreezer.compaction_due()
-    ), "the rows frozen while the new chat was shown were left stranded"
+    assert refreezer.compaction_due(), (
+        "the rows frozen while the new chat was shown were left stranded"
+    )
