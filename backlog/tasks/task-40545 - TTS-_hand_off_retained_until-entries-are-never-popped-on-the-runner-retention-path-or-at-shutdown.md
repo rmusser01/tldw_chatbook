@@ -17,7 +17,7 @@ priority: low
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-`_hand_off_retained_until` (a `dict[Path, float]`) gets one entry per clip handed to the default app on Windows, and its entries are popped only in `_discard_tts_artifact`'s delete paths. On the runner-retention path (`_cleanup_audio_file` deleting after the retention delay) and at shutdown's sweep, the clip is deleted but its entry is left behind, as is the entry of a clip deleted by `observe_late_delete`. The cost is one stale Path to float pair per handed-off clip for the life of the process, so it is a small leak. It exists on dev today (`4b90eb860b`); no open PR fixes it. TASK-39040 introduced the dict (merged in #3426); the owner-visible effect is nil. Found in #3426's round-3 re-review, recorded in the burn-down ledger.
+`_hand_off_retained_until` (a `dict[Path, float]`) gets one entry per clip handed to the default app on Windows, and its entries are popped only in the discard path (`_discard_tts_artifact`) and that path's retained-delete timer (`delete_later` in `_schedule_retained_artifact_delete`). On the runner-retention path (`_cleanup_audio_file` deleting after the retention delay) and at shutdown's sweep, the clip is deleted but its entry is left behind, as is the entry of a clip deleted by `observe_late_delete`. The cost is one stale Path to float pair per handed-off clip for the life of the process, so it is a small leak. It exists on dev today (`4b90eb860b`); no open PR fixes it. TASK-39040 introduced the dict (merged in #3426); the owner-visible effect is nil. Found in #3426's round-3 re-review, recorded in the burn-down ledger.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
