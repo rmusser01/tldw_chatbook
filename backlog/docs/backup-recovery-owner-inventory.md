@@ -3388,6 +3388,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Backup_Recovery/destinations.py | _configs | ZipFile | 1 | generic_boundary | backup_control_reader |
 | tldw_chatbook/Backup_Recovery/effective_roots.py | effective_roots | open | 1 | generic_boundary | backup_control_reader |
 | tldw_chatbook/Widgets/settings_theme_editor.py | SettingsThemeEditor._parse_import | open | 1 | unsupported | caller-selected-external-theme-export |
+| tldw_chatbook/Agents/full_agent_tools_upgrade.py | _read_runs_signal | connect_private_sqlite | 1 | unsupported | agents.full_agent_tools_upgrade |
 | tldw_chatbook/Chat/console_launch_wake.py | pending_conversations_at_launch | connect_private_sqlite | 1 | unsupported | chat.launch_wake |
 | tldw_chatbook/Chat/console_trace_maintenance.py | PhysicalTraceCompactor._open_maintenance_connection | connect_private_sqlite | 1 | unsupported | chat.trace_maintenance |
 | tldw_chatbook/Chatbooks/local_chatbook_service.py | LocalChatbookService._save_registry | atomic_write_json | 1 | unsupported | chatbooks.registry; participant-task10 |
