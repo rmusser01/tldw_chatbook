@@ -264,6 +264,7 @@ async def test_row3_generation_disabled_is_evidence_only_without_generation_call
     assert outcome.source_refs == [{"source": "media", "id": "r1", "title": "Title r1"}]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_row4_ready_answer_is_synthesized_finding(monkeypatch):
     async def fake_search(app, request):
@@ -284,6 +285,7 @@ async def test_row4_ready_answer_is_synthesized_finding(monkeypatch):
     assert outcome.evidence_summary["answer_present"] is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "status", [ANSWER_STATUS_ABSTAINED, ANSWER_STATUS_NO_EVIDENCE, ANSWER_STATUS_FAILED]
@@ -308,6 +310,7 @@ async def test_row5_optional_not_ready_is_evidence_only_with_answer_dropped(monk
     assert outcome.failure_reason is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "status", [ANSWER_STATUS_ABSTAINED, ANSWER_STATUS_NO_EVIDENCE, ANSWER_STATUS_FAILED]
@@ -379,6 +382,7 @@ def test_resolve_finding_policy_absent_resolves_to_balanced_default():
     assert high_confidence_only is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_high_confidence_only_drops_weak_scored_rows(monkeypatch):
     strong = _row(result_id="strong", score=0.9)

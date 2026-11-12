@@ -199,6 +199,7 @@ def _count_snapshots(subs_db: SubscriptionsDB, subscription_id: int) -> int:
 # --- AC#1 + AC#2 -----------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scheduled_url_check_creates_a_run_the_runs_pane_can_read(
     tmp_path, monkeypatch
@@ -246,6 +247,7 @@ async def test_scheduled_url_check_creates_a_run_the_runs_pane_can_read(
     assert latest["stats"]["new_items_found"] == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scheduled_check_produces_the_item_and_snapshot(tmp_path, monkeypatch):
     """The real monitor's side effects reach the DB through the scheduler."""
@@ -279,6 +281,7 @@ async def test_scheduled_check_produces_the_item_and_snapshot(tmp_path, monkeypa
 # --- the two deleted divergences -------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scheduled_sitemap_source_is_actually_checked(tmp_path, monkeypatch):
     """Regression: the handler's URL tuple omitted `sitemap` entirely.
@@ -314,6 +317,7 @@ async def test_scheduled_sitemap_source_is_actually_checked(tmp_path, monkeypatc
     assert [url for url in fetched if url != index] == pages
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scheduled_url_list_checks_every_url(tmp_path, monkeypatch):
     """Regression: `url_list` was handed whole to ONE `check_url` call.
@@ -347,6 +351,7 @@ async def test_scheduled_url_list_checks_every_url(tmp_path, monkeypatch):
 # --- shadow mode -----------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_shadow_mode_creates_no_run_row_item_or_snapshot(tmp_path, monkeypatch):
     """Shadow mode stays a no-mutation probe: it must not join the run table."""
@@ -375,6 +380,7 @@ async def test_shadow_mode_creates_no_run_row_item_or_snapshot(tmp_path, monkeyp
 # --- failure path and auto-pause parity ------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_fetch_marks_run_failed_and_bumps_failures_once(
     tmp_path, monkeypatch
@@ -417,6 +423,7 @@ async def test_failed_fetch_marks_run_failed_and_bumps_failures_once(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failure_around_execution_still_records_run_and_error(
     tmp_path, monkeypatch
@@ -454,6 +461,7 @@ async def test_failure_around_execution_still_records_run_and_error(
     assert "source vanished mid-run" not in json.dumps({"run": rows[0], "source": row})
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failure_recorder_itself_raising_still_records_the_check_error(
     tmp_path, monkeypatch
@@ -505,6 +513,7 @@ async def test_failure_recorder_itself_raising_still_records_the_check_error(
     assert recorder_canary not in rendered
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_scheduled_check_is_logged_with_safe_recovery_only(
     tmp_path, monkeypatch
@@ -548,6 +557,7 @@ async def test_failed_scheduled_check_is_logged_with_safe_recovery_only(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_launch_failure_uses_safe_fallback_for_logs_and_source_row(
     tmp_path, monkeypatch
@@ -581,6 +591,7 @@ async def test_launch_failure_uses_safe_fallback_for_logs_and_source_row(
     assert canary not in "".join(records) + json.dumps(source)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_final_scheduled_failure_write_cannot_escape_or_leak_to_loop_logs(
     tmp_path, monkeypatch
@@ -623,6 +634,7 @@ async def test_final_scheduled_failure_write_cannot_escape_or_leak_to_loop_logs(
     assert fallback_canary not in rendered
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_shadow_reports_unsupported_types_distinctly_from_unknown_ones(
     tmp_path, monkeypatch
@@ -689,6 +701,7 @@ def _subscription_of_unsupported_type(subs_db: SubscriptionsDB) -> int:
 # --- guards the handler keeps ----------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("gate", [{"is_paused": 1}, {"is_active": 0}])
 async def test_paused_or_inactive_source_creates_no_run_row(

@@ -978,6 +978,7 @@ def test_server_client_is_always_present(db):
     assert svc.server_client.notifications_service is None
 
 
+@pytest.mark.bootstrap_profile
 def test_app_wiring_briefing_projection_is_live_not_a_frozen_none():
     """Seam-level liveness proof for the app.py construction-order fix
     (task-1810): `_wire_watchlists_and_notifications_services` must pass a

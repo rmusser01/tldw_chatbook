@@ -34,6 +34,7 @@ def db():
             database.close()
 
 
+@pytest.mark.bootstrap_profile
 def test_get_scheduled_tasks_db_path_returns_path():
     path = get_scheduled_tasks_db_path()
     assert path.name == "tldw_chatbook_scheduled_tasks.db"
