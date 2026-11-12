@@ -4,7 +4,7 @@ title: "Six UI Fast Lane shards already run 15.0-16.9 min of their 20 min cap, s
 status: In Progress
 assignee: ['@claude']
 created_date: 2026-11-07 02:28
-updated_date: '2026-11-12 19:40'
+updated_date: '2026-11-12 19:56'
 labels:
 - follow-up
 - ci
@@ -151,3 +151,18 @@ The after column is 14.87-14.90 on every shard with the untimed entries at 1.0 t
   - TASK-39170: 1
 
   Only the cred stream's 71 were rebalanced, on its own branch at base 1913, and the restack then shifted them by 11 slots. The header (`:11-16`) still describes the 11-09 deal. A charge, replay and `--rebalance 13.3 --write` of the stacked census is due before the round-13 PR, and shard 5 is the one to relieve. This criterion then needs 12 PR runs after that deal.
+
+**Round-13 re-deal (2026-11-12, at the top of the round-13 stack, branch fu/r13-closeout).** AC#1 stays open until 12 PR runs after this deal.
+- **Weights.** The cached runs the header named were gone with the old scratch directory, so the weights were re-read, read-only, from the 28 latest PR runs with all 36 UI shards finished: 42887475221 (2026-11-10 19:39Z) to 43248578539 (2026-11-12 15:30Z), 24 before #3500 and 4 after. Run 43085804799 is left out (its own change), and so are the 40 failed shard logs. Each entry is charged at its slowest run.
+- **Charges for the 117 round-13 tail entries, none of which any CI log times.**
+  - The cred stream's 71: its own charges (TASK-39154/39170, local serial at load 40-55).
+  - 8 from their task notes, at the slowest serial time recorded there (load 44-90): TASK-39130's five nodes (42.8, 40.3, 22.5, 42.0 and 44.5 s), TASK-39153's `test_console_inspector_rail_minors.py` (94.0 s) and TASK-39171's two theme-picker nodes (38.5 and 46.4 s).
+  - The other 38 (TASK-39169 13, TASK-40132 17, TASK-38948 7, TASK-39170 1) had no serial record. They were measured in one serial batch through run.sh with the UI lane's flags (`-p no:xdist --timeout=180 --durations=0`): 51 passed in 191 s at load 7-10.
+  - **Calibration.** At that load, 14 entries already timed by the 28 runs, rerun serially in the same session, took 1.6-3.3 times as long in CI's slowest run as here (2.1 weighted by time; 3.3 and 15 on two sub-second entries). So the 38 are charged at their local seconds times 2.61, the top of the 3-10 s band 32 of them sit in. That is 186 s local, charged 485 s. At raw local seconds, the replay would have under-priced them; the lesson in `lessons-testing-evidence.md` records it.
+- **Replay** (`scripts/ui_lane_shard_replay.py --shards 36`, through run.sh): as listed (the stacked census), max shard 17.7 pytest min (shard 17), with shard 5 at 16.6, which matches its 18.4-min CI job.
+- **`--rebalance 13.3 --write`:** 24 swaps (48 entries moved). Every shard now replays at 13.2-13.3 pytest min, about 476 over 36, so about 14.9-15.0 min a job with setup.
+- **Sensitivity checks.**
+  - Charging the 38 at 2.11 instead also reached 13.3, in 21 swaps.
+  - Charging them at 3.29 replays this deal at a max of 13.4, and 17 more swaps would bring it back to 13.3.
+- **The margin is now gone.** The floor is 13.24 a shard, so the next tail entries cannot be absorbed by a re-deal. That needs the owner's shard-count decision (37 shards would replay at about 12.9).
+- **Checks.** The entry set is unchanged (2028; `MINIMUM_FILES` stays 2028). The census header now describes this deal and how to charge on a quiet host.

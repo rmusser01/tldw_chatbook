@@ -109,6 +109,8 @@ A separate trap in the same test: the held provider read gave up waiting for the
 
 **What to do.** Before pricing untimed entries, rerun a dozen timed entries in the same local run and divide. Charge at the measured ratio's upper end (here 1.0 times local), not at a fixed multiple, and record the load.
 
+**The ratio flips with load (round-13 re-deal, 2026-11-12).** On the same 18-CPU machine at load about 10, fourteen timed census entries took 1.6-3.3 times as long in CI's slowest run (28 PR runs) as serially here; 2.1 weighted by time, and 2.6 at the top of the 3-10 s band most new entries sat in. Charging the 38 entries measured that day at their raw local seconds (186 s in all) would have priced them at well under half of the about 485 s the ratio projects for CI; with every shard dealt to 13.2-13.3 pytest min, a gap that size is the whole margin. The ratio is a property of the day's load, not a constant: measure it in the same session as the entries you price.
+
 ## A census's "gone" row can be a live producer the scanner stopped seeing (TASK-39053, 2026-11-06)
 
 **Incident.** The backup owner inventory reported 194 gone producer rows, and the task that filed it read them as removed or moved code. But 24 of them were live `os.replace` / `os.unlink` calls. Their modules had switched to `from tldw_chatbook.Utils.platform_files import os`, and the census only bound `os` from `import os`. Other reviewed rows looked gone for the same kind of reason:
