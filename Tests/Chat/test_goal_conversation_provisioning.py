@@ -1,6 +1,8 @@
 """Real three-store setup survives lost replies without adopting unrelated history."""
 
+import asyncio
 import importlib
+import time
 from dataclasses import replace
 
 import pytest
@@ -12,6 +14,7 @@ pytestmark = pytest.mark.bootstrap_profile
 
 from Tests.Agents.test_goal_models import request
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.console_execution_owner import ConsoleExecutionOwner
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
@@ -20,31 +23,38 @@ from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
 
 @pytest_asyncio.fixture
 async def stores(tmp_path):
-    runs = owned_agent_runs_db(tmp_path / "runs.db")
-    chat = CharactersRAGDB(tmp_path / "chat.db", "test")
-    workspace_db = WorkspaceDB(tmp_path / "workspace.db")
-    registry = LocalWorkspaceRegistryService(workspace_db)
-    registry.create_workspace(workspace_id="workspace", name="Workspace")
-    root = tmp_path / "fixture"
-    root.mkdir()
-    registry.save_runtime_binding(
-        WorkspaceRuntimeBinding(
-            workspace_id="workspace",
-            binding_id="binding",
-            binding_kind="local-filesystem",
-            label="Fixture",
-            locator=str(root),
-            status="ready",
-            metadata={"access": "rw"},
+    path = tmp_path / "runs.db"
+    with ConsoleExecutionOwner.acquire(path) as owner:
+        runs = owned_agent_runs_db(path, execution_owner=owner)
+        chat = CharactersRAGDB(tmp_path / "chat.db", "test")
+        workspace_db = WorkspaceDB(tmp_path / "workspace.db")
+        registry = LocalWorkspaceRegistryService(workspace_db)
+        registry.create_workspace(workspace_id="workspace", name="Workspace")
+        root = tmp_path / "fixture"
+        root.mkdir()
+        registry.save_runtime_binding(
+            WorkspaceRuntimeBinding(
+                workspace_id="workspace",
+                binding_id="binding",
+                binding_kind="local-filesystem",
+                label="Fixture",
+                locator=str(root),
+                status="ready",
+                metadata={"access": "rw"},
+            )
         )
-    )
-    persistence = ChatPersistenceService(chat, workspace_registry=registry)
-    yield runs, persistence, registry, request(str(root))
-    for runtime in getattr(runs, "_goal_test_runtimes", ()):
-        await runtime.dispose()
-    runs.close()
-    chat.close_connection()
-    workspace_db.close()
+        persistence = ChatPersistenceService(chat, workspace_registry=registry)
+        yield runs, persistence, registry, request(str(root))
+        for runtime in getattr(runs, "_goal_test_runtimes", ()):
+            await runtime.dispose()
+        runs.close()
+        runs.close_idle_connections()
+        # A cancelled view can leave its admitted native read in flight.
+        participant = runs._maintenance_participant
+        participant.close_admission()
+        assert await asyncio.to_thread(participant.drain, time.monotonic() + 3)
+        chat.close_connection()
+        workspace_db.close()
 
 
 def service(stores):
@@ -187,7 +197,7 @@ def test_reopen_all_stores_after_chat_commit_recovers_same_conversation(
     runs.close()
     persistence.db.close_connection()
     registry.db.close()
-    reopened_runs = owned_agent_runs_db(paths[0])
+    reopened_runs = owned_agent_runs_db(paths[0], execution_owner=runs._execution_owner)
     reopened_chat = CharactersRAGDB(paths[1], "test")
     reopened_workspaces = WorkspaceDB(paths[2])
     try:

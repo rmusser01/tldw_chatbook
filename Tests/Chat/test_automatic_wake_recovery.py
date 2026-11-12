@@ -22,6 +22,7 @@ from tldw_chatbook.Chat.console_conversation_hydration import (
     console_messages_from_conversation_tree,
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
+from tldw_chatbook.Chat.console_execution_owner import ConsoleExecutionOwner
 from tldw_chatbook.Chat.console_fleet_wake import ConsoleFleetWakeCoordinator
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -29,7 +30,10 @@ pytestmark = pytest.mark.bootstrap_profile
 
 @pytest.fixture
 def rig(tmp_path):
-    return _controller_rig(tmp_path)
+    with ConsoleExecutionOwner.acquire(tmp_path / "runs.db") as owner:
+        resources = _controller_rig(tmp_path, execution_owner=owner)
+        yield resources
+        assert resources[2].close_idle_connections()
 
 
 def replacement(rig):
