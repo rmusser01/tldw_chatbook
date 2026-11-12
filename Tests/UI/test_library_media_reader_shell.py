@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 from textual.containers import Horizontal
 from textual.widgets import Button
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.test_library_shell import (
@@ -22,6 +24,7 @@ from Tests.UI.test_library_shell import (
     _wait_for_library_shell,
     _wait_for_selector,
 )
+from tldw_chatbook import config as app_config
 from tldw_chatbook.Library.library_media_reader_state import (
     MEDIA_READER_LAYOUT_PROFILE,
     MediaReaderLayoutPreferences,
@@ -1354,15 +1357,16 @@ async def test_failed_settings_reconciliation_does_not_project_cached_guess(
 
 
 @pytest.mark.asyncio
-async def test_persisted_shared_library_read_honors_real_legacy_config(
-    monkeypatch, tmp_path
-):
-    config_path = tmp_path / "config.toml"
+@private_profile_test
+async def test_persisted_shared_library_read_honors_real_legacy_config(request):
+    # TASK-39130: the bound config source refuses a TLDW_CONFIG_PATH redirect
+    # (RecoveryRequired raw_source_selection_changed, which the reader's
+    # broad except turned into None), so write this child's own profile.
+    config_path = Path(app_config._get_effective_config_path())
     config_path.write_text(
         "[library.media_reader]\nlibrary_open = false\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
 
     physical_value = await LibraryScreen._read_library_reader_persisted_preference(
         object(), "library.reader", "library_open"
@@ -1372,12 +1376,11 @@ async def test_persisted_shared_library_read_honors_real_legacy_config(
 
 
 @pytest.mark.asyncio
-async def test_persisted_items_read_uses_default_when_key_is_absent(
-    monkeypatch, tmp_path
-):
-    config_path = tmp_path / "config.toml"
+@private_profile_test
+async def test_persisted_items_read_uses_default_when_key_is_absent(request):
+    # TASK-39130: as above, the child's own profile instead of a redirect.
+    config_path = Path(app_config._get_effective_config_path())
     config_path.write_text("", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
 
     physical_value = await LibraryScreen._read_library_reader_persisted_preference(
         object(), "library.media_reader", "items_open"

@@ -5249,6 +5249,9 @@ class LibraryScreen(BaseAppScreen):
             "library-notes-filter": "filter",
             "library-notes-new": "new-note",
             "library-notes-select-toggle": "select-toggle",
+            # TASK-39130: their presses rebuild the canvas they sit in.
+            "library-notes-select-all": "select-all",
+            "library-notes-select-clear": "select-clear",
             "library-note-title": "title",
             "library-note-body": "body",
             "library-note-preview-region": "preview-body",

@@ -1216,6 +1216,8 @@ jobs:
     # git history (TASK-39055 retired those nodes). The profile inventory's
     # CLI test is left out: preflight's census step runs the same CLI (but
     # not its `--print-occurrences` check, which is unlaned).
+    # TASK-39153: the persistent terminal privacy boundary runs last; its one
+    # bootstrap_profile node must not precede a sandboxed suite (TASK-32873).
     name: Architecture guard contracts
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
     runs-on: ubuntu-latest
@@ -1272,6 +1274,7 @@ jobs:
             Tests/Architecture/test_console_realtime_controller_boundary.py \
             Tests/Architecture/test_console_review_selection_controller_boundary.py \
             Tests/Architecture/test_console_wave6_inventory.py \
+            Tests/Architecture/test_persistent_terminal_privacy_boundary.py \
             --timeout=180 \
             --tb=short
 
@@ -1401,7 +1404,11 @@ jobs:
       # Console files of TASK-39154 (rewind/summarize, per-session run state),
       # TASK-39164 (edit-and-resend, regenerate branching) and TASK-40097's
       # controller node are bootstrap_profile and follow the goal recovery file.
-      # Last, TASK-39163's automatic Library preparation file (bootstrap_profile).
+      # Then TASK-39163's automatic Library preparation file (bootstrap_profile).
+      # TASK-39153 appends the Library ingest flow file (bootstrap_profile, 13 tests).
+      # test_closed_loop_pending_submit_is_emergency_detachment: deselected
+      # 2026-11-12: red on dev e0186fa10a (console_send_diagnostic ContextVar
+      # token reset across contexts), follow-up filed; remove when fixed.
       - name: Run the recovered suites
         run: |
           pytest \
@@ -1436,6 +1443,8 @@ jobs:
             Tests/Chat/test_console_regenerate_branching.py \
             Tests/Chat/test_console_chat_controller.py::test_review_hook_gives_a_mutating_builtin_the_mutation_effect \
             Tests/Chat/test_console_automatic_library_preparation.py \
+            Tests/integration/test_library_ingest_flow.py \
+            --deselect="Tests/Chat/test_console_automatic_library_preparation.py::test_closed_loop_pending_submit_is_emergency_detachment" \
             --storage-lease-guard \
             --timeout=180 \
             --tb=short
@@ -1674,3 +1683,70 @@ jobs:
           WAIT_RUN: ${{ inputs.wait_run }}
         run: python3 scripts/merge_queue.py
 
+  library-shell-dev:
+    needs: [preflight]
+    # TASK-39153 (owner decision 2026-11-10, "Push-to-dev job only"):
+    # Tests/UI/test_library_shell.py runs whole, split by node, on every push
+    # to dev, and never on a pull request. It is ~100-150 serial minutes
+    # (TASK-39152's three whole-file runs; TASK-39153's notes), too much for
+    # the 36-shard UI lane's room, so a regression shows up within one merge
+    # instead of on the PR. NOT in the aggregate's needs and not a required
+    # context: a red shard never blocks a PR. No schedule: a `schedule`
+    # trigger only runs the default branch's (main's) copy of this file.
+    #
+    # Each shard collects the file and runs every 14th node
+    # (scripts/library_shell_push_shard.py, round-robin in collection order,
+    # so one slow test's parametrized cases spread out), leaving out the
+    # product-defect nodes listed in scripts/library_shell_push_deselect.txt.
+    # Replayed from those runs' per-node times (each node at its slowest of
+    # three), 14 shards carry at most 11.3 local pytest minutes, about 14 min
+    # with setup at CI's measured 1.0x-of-local upper bound: 6 min under the
+    # cap. All 14 run locally with these commands (7 at once, load 33-49)
+    # took 5.1-8.0 pytest min a shard. Seven at once, so a dev push borrows
+    # half the runners a PR's UI lane does; the run takes two waves. A newer
+    # push to dev cancels it (the workflow's concurrency rule), like every
+    # push run.
+    #
+    # Same minimal dependency set, serial pytest and flags as ui-fast-lane;
+    # the file's module bootstrap_profile marker is its isolation (TASK-39141).
+    name: Library shell (push to dev)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      # Report every shard, so one red shard does not hide another.
+      fail-fast: false
+      max-parallel: 7
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
+      - name: Install fast-lane dependencies
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
+
+      - name: Run the Library shell shard
+        run: |
+          # Written to files first so a failing collection or a stale deselect
+          # entry fails the step (bash -e) instead of yielding an empty list.
+          pytest --collect-only -q Tests/UI/test_library_shell.py \
+            > "$RUNNER_TEMP/library-shell-collected.txt"
+          python scripts/library_shell_push_shard.py \
+            "${{ strategy.job-index }}" "${{ strategy.job-total }}" \
+            "$RUNNER_TEMP/library-shell-collected.txt" \
+            > "$RUNNER_TEMP/library-shell-shard.txt"
+          mapfile -t SHARD < "$RUNNER_TEMP/library-shell-shard.txt"
+          # An empty shard would make bare `pytest` collect the whole tree.
+          test "${#SHARD[@]}" -gt 0
+          echo "Library shell shard $(( ${{ strategy.job-index }} + 1 ))/${{ strategy.job-total }}: ${#SHARD[@]} nodes."
+          pytest "${SHARD[@]}" \
+            --timeout=180 \
+            --durations=0 --durations-min=0 \
+            --tb=short

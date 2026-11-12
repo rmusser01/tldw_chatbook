@@ -969,6 +969,10 @@ MINIMUM_FILES = 1996
 # and its Try-then-clean category switch node at the tail. The floor is the
 # measured entry count.
 MINIMUM_FILES = 1998
+# TASK-39130 / TASK-39153 (2026-11-10): append five re-pinned Library nodes
+# and the Console inspector rail minors file at the tail. The floor is the
+# measured entry count.
+MINIMUM_FILES = 2004
 
 
 def read_census(path: Path) -> list[str]:

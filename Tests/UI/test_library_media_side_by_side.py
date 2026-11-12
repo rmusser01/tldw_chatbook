@@ -604,6 +604,7 @@ async def test_compact_media_viewer_back_follows_single_page_clamp() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # TASK-39130: _build_test_app reads config
 async def test_compact_media_viewer_back_empty_page_focuses_recovery_control() -> None:
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
@@ -629,15 +630,22 @@ async def test_compact_media_viewer_back_empty_page_focuses_recovery_control() -
             ),
             message="Exact empty Media result never applied in the viewer.",
         )
-        reads_before_back = len(service.search_calls)
+        reads_after_empty = len(service.search_calls)
 
-        screen.query_one("#library-media-back", Button).press()
+        # task-32043/32086 (80e4cd7056, 2026-09-08): an exact empty page
+        # resets the Reader and returns the canvas to its list by itself, so
+        # there is no "‹ Back" left to press. The return still owes the
+        # keyboard a landing: the Import recovery action. TASK-39130: red on
+        # dev -- the reset's whole-screen recompose leaves focus at None.
         await _wait_for_condition(
             pilot,
             lambda: getattr(screen.focused, "id", None) == "library-media-empty-import",
-            message="Empty viewer return did not focus the Import recovery action.",
+            message=lambda: (
+                "Empty viewer return did not focus the Import recovery action; "
+                f"focus is {screen.focused!r}."
+            ),
         )
-        assert len(service.search_calls) == reads_before_back
+        assert len(service.search_calls) == reads_after_empty
 
 
 @pytest.mark.asyncio
@@ -789,6 +797,7 @@ async def test_trash_view_stays_single_column_at_wide_width() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # TASK-39130: _build_test_app reads config
 async def test_media_trash_collapse_choices_survive_filter_and_page_refresh() -> None:
     """Real pane-grip activation remains durable across Trash recomposes."""
     from textual.widgets import Input
@@ -823,12 +832,12 @@ async def test_media_trash_collapse_choices_survive_filter_and_page_refresh() ->
             lambda: not screen._media_state.reader_layout.library_open,
             message="Library grip did not collapse the Library pane.",
         )
-        # task-31633: with the one-cell grips (AC#2) and list growth (AC#1)
-        # the Items pane is already on its 56-cell comfort ceiling at this
-        # size, so the collapsed rail's cells go to the Reader instead. The
-        # collapse still moves cells -- just not into a pane that is full.
-        assert items.region.width >= initial_width
-        assert shell.work.region.width > initial_reader_width
+        # task-31979 (9187bc0307, after task-31633's pin): the Trash Reader
+        # holds no item, so the Items list takes the freed width down to the
+        # Reader's floor. The collapsed rail's cells go to the list, and the
+        # Reader keeps its floor.
+        assert items.region.width > initial_width
+        assert shell.work.region.width == initial_reader_width
 
         search = screen.query_one("#library-media-trash-search", Input)
         search.focus()

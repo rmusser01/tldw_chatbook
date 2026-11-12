@@ -24,12 +24,14 @@ tldw_chatbook.Agents.agent_service
 tldw_chatbook.Agents.agent_stream
 tldw_chatbook.Agents.approval_provenance
 tldw_chatbook.Agents.builtin_tool_gate
+tldw_chatbook.Agents.execution_capacity
 tldw_chatbook.Agents.fleet_coordinator
 tldw_chatbook.Agents.human_input_wait
 tldw_chatbook.Agents.library_rag_tool_provider
 tldw_chatbook.Agents.library_tool_provider
 tldw_chatbook.Agents.mcp_tool_provider
 tldw_chatbook.Agents.native_tools
+tldw_chatbook.Agents.ordinary_tree
 tldw_chatbook.Agents.plain_chat_tool_surface
 tldw_chatbook.Agents.project_instruction_resolver
 tldw_chatbook.Agents.project_instruction_runtime
@@ -41,6 +43,7 @@ tldw_chatbook.Agents.run_log_search
 tldw_chatbook.Agents.session_todo_store
 tldw_chatbook.Agents.tool_catalog
 tldw_chatbook.Agents.tool_refusals
+tldw_chatbook.Agents.workflow_task_scope
 tldw_chatbook.Audio
 tldw_chatbook.Audio.streaming_sink
 tldw_chatbook.Audio_Services_Interop
@@ -154,7 +157,6 @@ tldw_chatbook.Chat.console_chat_start
 tldw_chatbook.Chat.console_chat_store
 tldw_chatbook.Chat.console_command_grammar
 tldw_chatbook.Chat.console_command_suggestions
-tldw_chatbook.Chat.console_compaction_hooks
 tldw_chatbook.Chat.console_configuration_capture
 tldw_chatbook.Chat.console_context_compaction
 tldw_chatbook.Chat.console_context_policy
@@ -192,6 +194,7 @@ tldw_chatbook.Chat.console_local_review_hook
 tldw_chatbook.Chat.console_memory_banner
 tldw_chatbook.Chat.console_message_actions
 tldw_chatbook.Chat.console_onboarding_state
+tldw_chatbook.Chat.console_ordinary_tree
 tldw_chatbook.Chat.console_paste_attach
 tldw_chatbook.Chat.console_prefill
 tldw_chatbook.Chat.console_preparation_reads
@@ -293,11 +296,9 @@ tldw_chatbook.DB.VisualIdentity_DB
 tldw_chatbook.DB.Workspace_DB
 tldw_chatbook.DB.base_db
 tldw_chatbook.DB.canvas_payload_validation
-tldw_chatbook.DB.character_conversation_search
 tldw_chatbook.DB.keyword_store
 tldw_chatbook.DB.library_search_engine
 tldw_chatbook.DB.private_sqlite
-tldw_chatbook.DB.private_sqlite_files
 tldw_chatbook.DB.private_sqlite_process
 tldw_chatbook.DB.private_sqlite_protocol
 tldw_chatbook.DB.recovery_sqlite
@@ -925,11 +926,9 @@ tldw_chatbook.Widgets.Console.console_image_viewer_modal
 tldw_chatbook.Widgets.Console.console_inspector_ownership
 tldw_chatbook.Widgets.Console.console_inspector_section
 tldw_chatbook.Widgets.Console.console_library_access_modal
-tldw_chatbook.Widgets.Console.console_library_search_modal
 tldw_chatbook.Widgets.Console.console_message_more_menu
 tldw_chatbook.Widgets.Console.console_project_instructions
 tldw_chatbook.Widgets.Console.console_prompts_state
-tldw_chatbook.Widgets.Console.console_rag_settings_modal
 tldw_chatbook.Widgets.Console.console_rail_handle
 tldw_chatbook.Widgets.Console.console_retrieval_scope_row
 tldw_chatbook.Widgets.Console.console_run_inspector
@@ -991,6 +990,7 @@ tldw_chatbook.Workspaces.eligibility
 tldw_chatbook.Workspaces.models
 tldw_chatbook.Workspaces.registry_service
 tldw_chatbook.Workspaces.workspace_tree_state
+tldw_chatbook.Workspaces.worktree_activity
 tldw_chatbook.Writing_Interop
 tldw_chatbook.Writing_Interop.local_writing_service
 tldw_chatbook.Writing_Interop.server_writing_service

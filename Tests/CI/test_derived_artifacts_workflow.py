@@ -125,6 +125,9 @@ def test_workflow_has_one_fast_prerequisite_and_one_required_aggregator():
         "recovered-suites",
         "derived-artifacts",
         "queue-tick",
+        # TASK-39153 (owner decision 2026-11-10): Tests/UI/test_library_shell.py
+        # by node on pushes to dev; never a PR job, never in the aggregate.
+        "library-shell-dev",
     ]
 
 
@@ -605,3 +608,102 @@ def test_pr3023_membership_rejects_actual_workflow_drift(monkeypatch, mutation):
     monkeypatch.setattr(f"{__name__}._workflow", lambda: workflow)
     with pytest.raises(AssertionError):
         test_pr3023_critical_targets_run_in_required_admission_step()
+
+
+def _library_shell_shard_module():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "library_shell_push_shard",
+        PROJECT_ROOT / "scripts" / "library_shell_push_shard.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_library_shell_runs_by_node_on_dev_pushes_only_and_is_never_required():
+    """TASK-39153 (owner decision 2026-11-10, "Push-to-dev job only").
+
+    The file runs whole, split by node, on each push to dev and on no pull
+    request; a red shard must never reach the required aggregate. Same
+    install line and serial pytest flags as the UI lane.
+    """
+    import shlex
+
+    workflow = _workflow()
+    jobs = workflow["jobs"]
+    job = jobs["library-shell-dev"]
+    assert job["needs"] == ["preflight"]
+    assert job["if"] == "github.event_name == 'push' && github.ref == 'refs/heads/dev'"
+    assert "library-shell-dev" not in jobs["derived-artifacts"]["needs"]
+    assert not any(
+        "library-shell-dev" in str(step.get("if", "")) + str(step.get("run", ""))
+        for step in jobs["derived-artifacts"]["steps"]
+    )
+    assert job["timeout-minutes"] == 20
+    strategy = job["strategy"]
+    assert strategy["fail-fast"] is False
+    assert strategy["matrix"] == {"shard": list(range(1, 15))}
+    assert strategy["max-parallel"] == 7
+    assert not job.get("continue-on-error", False)
+    install = next(
+        s for s in job["steps"] if s.get("name") == "Install fast-lane dependencies"
+    )
+    fast = next(
+        s
+        for s in jobs["pr-fast-lane"]["steps"]
+        if s.get("name") == "Install fast-lane dependencies"
+    )
+    assert shlex.split(install["run"]) == shlex.split(fast["run"])
+    run = next(
+        s for s in job["steps"] if s.get("name") == "Run the Library shell shard"
+    )["run"]
+    assert "pytest --collect-only -q Tests/UI/test_library_shell.py" in run
+    assert "python scripts/library_shell_push_shard.py" in run
+    assert 'test "${#SHARD[@]}" -gt 0' in run
+    ui_run = next(
+        s
+        for s in jobs["ui-fast-lane"]["steps"]
+        if s.get("name") == "Run the gated Tests/UI slice"
+    )["run"]
+    for flag in ("--timeout=180", "--durations=0 --durations-min=0", "--tb=short"):
+        assert flag in run and flag in ui_run
+    assert "-n" not in shlex.split(run.replace("\\\n", " "), comments=True)
+
+
+def test_library_shell_shards_partition_the_kept_nodes():
+    """Every kept node runs in exactly one shard, in collection order; the
+    deselected ones run in none; a stale deselect entry is refused."""
+    module = _library_shell_shard_module()
+    target = module.TARGET
+    nodes = [f"{target}::test_{index}" for index in range(30)]
+    collect = "\n".join([*nodes, "", "30 tests collected in 1.00s"])
+    assert module.collected_nodes(collect) == nodes
+    deselected = [nodes[3], nodes[17]]
+    shards = [module.shard(nodes, deselected, index, 4) for index in range(4)]
+    flat = [node for shard in shards for node in shard]
+    assert sorted(flat) == sorted(set(nodes) - set(deselected))
+    assert len(flat) == len(set(flat))
+    for shard in shards:
+        assert shard == sorted(shard, key=nodes.index)
+    with pytest.raises(ValueError, match="deselected but not collected"):
+        module.shard(nodes, [f"{target}::test_gone"], 0, 4)
+    with pytest.raises(ValueError):
+        module.shard(nodes, [], 4, 4)
+
+
+def test_library_shell_deselect_entries_resolve_and_each_says_why():
+    """Each left-out node is a test the file defines, under a reason line."""
+    module = _library_shell_shard_module()
+    lines = module.DESELECT_PATH.read_text(encoding="utf-8").splitlines()
+    entries = module.read_deselected()
+    assert entries, "an empty list would mean the file is green: remove the list"
+    assert len(entries) == len(set(entries))
+    resolve = _census_checker().resolve_node
+    for entry in entries:
+        file_part, _, node = entry.partition("::")
+        assert file_part == module.TARGET
+        assert resolve(PROJECT_ROOT / file_part, node) is None, entry
+        above = lines[lines.index(entry) - 1]
+        assert above.startswith("# ") and len(above) > 2, f"{entry} has no reason line"

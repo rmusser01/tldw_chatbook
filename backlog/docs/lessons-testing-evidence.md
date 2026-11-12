@@ -12,6 +12,12 @@
 
 **What to do.** When a timed block detector fires, read the stack it recorded before trusting it: `selectors.select` means idle, not blocked. Detect a blocked loop by liveness (a posted callback that does not run), with patience, not by a timer on the whole sequence. Before calling a wait a product defect, check whether the harness routes the code differently: a test App that hosts a screen on its own App changes `widget.app`.
 
+## An empty node list makes pytest collect the whole tree (TASK-39128, 2026-11-10)
+
+**Incident.** A loop meant to run 12 census nodes ten times read them with `mapfile -t NODES < list` and ran `pytest "${NODES[@]}" -n 4`. The script ran under `/bin/bash`, which on macOS is bash 3.2 and has no `mapfile`. The array stayed empty, so pytest got no paths and fell back to `testpaths = ["Tests"]`: the first "run" collected the whole tree, hit collection errors in unrelated files and crashed its xdist workers after 11 minutes at load 60-80, and its summary line read like a failure of the 12 nodes.
+
+**What to do.** In a loop script, read lists with `while IFS= read -r l; do A+=("$l"); done < list` (bash 3.2 and zsh both take it), and refuse to start when the count is not the one you expect (`[ ${#A[@]} -eq 12 ] || exit 9`). Never let a computed argument list reach `pytest` unchecked: empty means everything.
+
 ## A parent source pin does not bind a private pytest child's Core import (PR3036, 2026-11-07)
 
 **Incident.** The approval launcher verified selected Main, Core and Tests origins in its `-I` parent after inserting the selected paths into `sys.path`. `Tests.private_profile` then spawned a fresh interpreter: only Main survived through its working directory, and Core resolved through the primary checkout's editable installation. A real child-environment metadata probe reproduced that foreign origin even though all 14 Core Python files happened to have identical content. Earlier parent-origin receipts therefore did not prove complete child-source closure. Performance helper environments had the same omission, including one first-use environment whitelist that dropped `PYTHONPATH` entirely.

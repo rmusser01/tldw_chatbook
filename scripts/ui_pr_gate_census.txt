@@ -2876,3 +2876,13 @@ Tests/UI/test_destination_visual_parity_correction.py::test_library_source_brows
 # (it now waits out the Appearance pane swap). Serial 19-39 s and 31-46 s.
 Tests/UI/test_settings_theme_picker_screen.py::test_highlighted_launch_and_override_status_is_on_screen[size0]
 Tests/UI/test_settings_theme_picker_screen.py::test_try_then_clean_category_switch_restores_the_pre_editor_theme
+# TASK-39130 (2026-11-10): five Library nodes red on dev in no lane, now
+# re-pinned or on their own profile (22-45 s each serially, load 52-90).
+Tests/UI/test_library_canvas_sync_defects.py::test_entry_canvas_sync_does_not_focus_an_unrelated_replacement_row
+Tests/UI/test_library_media_side_by_side.py::test_media_trash_collapse_choices_survive_filter_and_page_refresh
+Tests/UI/test_library_notes_w5_kbd_focus.py::test_e_runs_export_selected_only_once_something_is_selected
+Tests/UI/test_library_media_reader_shell.py::test_persisted_shared_library_read_honors_real_legacy_config
+Tests/UI/test_library_media_reader_shell.py::test_persisted_items_read_uses_default_when_key_is_absent
+# TASK-39153 (2026-11-10): the Console inspector rail minors file whole
+# (bootstrap_profile, 5 tests, 73-94 s serially at load 72-88).
+Tests/UI/test_console_inspector_rail_minors.py
