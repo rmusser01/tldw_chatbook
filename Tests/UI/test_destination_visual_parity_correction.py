@@ -1057,7 +1057,11 @@ async def test_source_prep_destinations_use_list_detail_inspector_workbench(
     route, contract
 ):
     app = _build_test_app()
-    host = _visual_destination_harness(app, route)
+    host = (
+        _ProductionDestinationHarness(app, route)
+        if route == "artifacts"
+        else _visual_destination_harness(app, route)
+    )
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, contract["workbench"])
@@ -1089,7 +1093,11 @@ async def test_source_prep_default_empty_or_unavailable_states_preserve_workbenc
     route, contract
 ):
     app = _build_test_app()
-    host = _visual_destination_harness(app, route)
+    host = (
+        _ProductionDestinationHarness(app, route)
+        if route == "artifacts"
+        else _visual_destination_harness(app, route)
+    )
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, contract["workbench"])
@@ -1937,7 +1945,11 @@ async def test_source_prep_loading_states_preserve_workbench_geometry(
 ):
     monkeypatch.setattr(screen_cls, refresh_method, lambda self, *_a, **_k: None)
     app = _build_test_app()
-    host = _visual_destination_harness(app, route)
+    host = (
+        _ProductionDestinationHarness(app, route)
+        if route == "artifacts"
+        else _visual_destination_harness(app, route)
+    )
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, loading_marker)
@@ -2394,7 +2406,7 @@ async def test_runtime_and_settings_destinations_use_pane_layouts(
     route, strip, workbench, panes, actions
 ):
     app = _build_test_app()
-    host = DestinationHarness(app, route)
+    host = _ProductionDestinationHarness(app, route)
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, workbench)
@@ -2697,7 +2709,7 @@ async def test_settings_advanced_config_controls_use_action_and_status_rows():
 @pytest.mark.asyncio
 async def test_acp_runtime_blocked_state_uses_setup_and_compatibility_columns():
     app = _build_test_app()
-    host = DestinationHarness(app, "acp")
+    host = _ProductionDestinationHarness(app, "acp")
     async with host.run_test(size=(140, 42)) as pilot:
         screen = _active_destination_screen(host)
         await _wait_for_selector(screen, pilot, "#acp-workbench")
