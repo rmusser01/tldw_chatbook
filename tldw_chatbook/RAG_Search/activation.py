@@ -185,7 +185,13 @@ def _call_scope(arguments, *, transfer=None):
     attached = getattr(service, "_projection_service", None)
     if attached is not None:
         service = attached() or service
-    sources = [("rag.projections", arguments.get("persist_directory"))]
+    persist_directory = arguments.get("persist_directory")
+    if persist_directory is not None:
+        from .simplified.config import reject_nul_chroma_persist_directory
+
+        # Admission translates storage errors into a recovery refusal.
+        reject_nul_chroma_persist_directory(persist_directory)
+    sources = [("rag.projections", persist_directory)]
     manager = arguments.get("profile_manager")
     if manager is not None:
         sources.append(("rag.definitions", manager.profiles_dir))

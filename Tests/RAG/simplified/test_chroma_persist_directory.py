@@ -53,11 +53,14 @@ def test_both_sites_reject_dangerous_path_identically(tmp_path):
     """An invalid (null-byte-containing) path is rejected the same way by both."""
     dangerous = str(tmp_path) + "/evil\x00dir"
 
-    with pytest.raises(ValueError):
-        ChromaVectorStore(persist_directory=dangerous)
+    with patch("chromadb.PersistentClient") as client:
+        with pytest.raises(ValueError, match="path contains a null byte") as store_error:
+            ChromaVectorStore(persist_directory=dangerous)
+        with pytest.raises(ValueError, match="path contains a null byte") as index_error:
+            collection_indexes._client(dangerous)
 
-    with pytest.raises(ValueError):
-        collection_indexes._client(dangerous)
+    assert str(store_error.value) == str(index_error.value)
+    client.assert_not_called()
 
 
 @pytest.mark.parametrize("bad_value", [123, ["a", "b"], {"x": 1}])
