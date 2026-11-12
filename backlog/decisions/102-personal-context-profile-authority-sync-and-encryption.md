@@ -275,6 +275,16 @@ profile, interview and controlled learning, server canonical store, Sync and
 multi-device behavior, then legacy retirement. An implementation may be
 disabled at runtime without deleting data or silently stopping synchronization.
 
+## 2026-11-10 note (TASK-39148, owner-approved)
+
+"`device_only` records never leave Chatbook" means they are never synced and never sent to a model. A user-made local backup includes device-only records, as **Export recovery copy** already does: the archive is the user's own copy (TASK-39148 decision 8).
+
+"Never sent to a model" is qualified by [ADR-203](203-personal-context-provider-disclosure-authority.md) (Accepted). The hard ceiling is Sync and automatic remote model egress. Qualified Chatbook-owned local model execution, and separately authorized owner exports, are distinguished from that ceiling, and this note does not narrow ADR-203.
+
+The profile key travels in a backup only inside an encrypted archive, as a credential record. There is still no plaintext-key fallback. A missing or changed key still locks the profile, and nothing silently replaces the key.
+
+Design: [Personal Context backup and key custody](../../Docs/superpowers/specs/2026-11-10-personal-context-backup-key-custody-design.md). Implementation: TASK-40133 to TASK-40136, TASK-40138 and TASK-40139.
+
 ## Links
 
 - [Approved design](../../Docs/superpowers/specs/2026-08-28-unified-personal-context-profile-design.md)

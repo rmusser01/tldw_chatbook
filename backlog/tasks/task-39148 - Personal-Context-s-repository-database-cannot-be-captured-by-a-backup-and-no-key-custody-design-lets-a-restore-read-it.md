@@ -1,8 +1,10 @@
 ---
 id: TASK-39148
 title: "Personal Context's repository database cannot be captured by a backup, and no key custody design lets a restore read it"
-status: To Do
+status: Done
+assignee: ['@claude']
 created_date: 2026-11-08 06:54
+updated_date: 2026-11-10 20:07
 labels:
 - follow-up
 - backup
@@ -19,6 +21,7 @@ references:
 - tldw_chatbook/Personal_Context/interview_launch.py
 - backlog/docs/backup-recovery-owner-inventory.md
 - Docs/User_Guide/settings/personal-context-profile.md
+- Docs/superpowers/specs/2026-11-10-personal-context-backup-key-custody-design.md
 dependencies:
 - TASK-39110
 ---
@@ -45,7 +48,112 @@ Found in round 12 of the 2026-10-23 burn-down (backup stream, TASK-39110 on roun
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A design (spec or ADR) answers each open question above, and the owner approves it before any capture code lands
-- [ ] #2 Every owner decision the design needs is recorded verbatim with its date
-- [ ] #3 The implementation is filed as tasks that each deliver one testable outcome: capture of the repository; a restore that reads its records; a restore where the key is unavailable, with no data loss and copy that says what to do; and the detached-layout treatment of the drafts file
+- [x] #1 A design (spec or ADR) answers each open question above, and the owner approves it before any capture code lands
+- [x] #2 Every owner decision the design needs is recorded verbatim with its date
+- [x] #3 The implementation is filed as tasks that each deliver one testable outcome: capture of the repository; a restore that reads its records; a restore where the key is unavailable, with no data loss and copy that says what to do; and the detached-layout treatment of the drafts file
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Read the custody code (`Personal_Context/key_protector.py`, `repository.py`, `link_key_custody.py`, `link_service.py`), the backup and restore machinery (`Backup_Recovery/capture.py`, `credentials.py`, `replacement.py`, `isolated_restore.py`, `activation.py`, `detached_layout.py`), ADR-102, ADR-126, the owner inventory, and TASK-39110, TASK-39116 and TASK-40132.
+2. Write `Docs/superpowers/specs/2026-11-10-personal-context-backup-key-custody-design.md`. For each open question, give the code facts with file:line, two or three options with trade-offs, and a recommendation. End with "Decisions for the owner" and "Filed implementation tasks (proposed)".
+3. The coordinator brings the decisions to the owner. Record each ruling verbatim with its date (AC#2).
+4. After approval, file the implementation tasks listed in the spec (AC#3). Then fold the approved decisions into ADR-102 and ADR-126 notes. No capture code lands before approval (AC#1).
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Approach.** This was a design-only task; it changed no product code. I read the custody code, the backup and restore machinery, ADR-102, ADR-126, and TASK-39110, 39116 and 40132.
+- The spec `Docs/superpowers/specs/2026-11-10-personal-context-backup-key-custody-design.md` answers each open question in the description (Q1–Q6). Each answer gives facts from code with file:line, two or three options with trade-offs, and a recommendation.
+- The spec was drafted on branch fu/r13-pcdesign from base dev ae9f9e8d21, and the owner then approved it.
+
+**Owner rulings, verbatim:**
+- 2026-11-06 (TASK-39110 AC#2): "Capture it: back up the database and design key custody so a restore can read it — a larger feature that needs its own design task."
+- 2026-11-10: "Draft it now."
+- 2026-11-10 (AskUserQuestion): "Approve all 11". The option text was: "Record approval of the 11 recommendations as written and file the implementation tasks: key reference (schema v9), capture, readable restore, restore without a key, no link resume, detached-layout treatment."
+
+**The 11 approved decisions, as the spec words them:**
+1. Carry the Personal Context profile key as a credential record inside the encrypted archive (only when a backup includes credentials, which already forces encryption), rather than a separate Personal Context passphrase or no key at all.
+2. Give the repository a stored key reference (schema v9 `profile_meta.key_account`), so restore installs the key into a fresh keyring account and never overwrites an existing one (ADR-126 decision 8), rather than overwriting the path-keyed entry after escrowing it (which needs an ADR-126 amendment) or refusing replace-restore.
+3. When a backup does not include credentials, capture the database without its key and say so in the preview and restore plan, rather than refusing Personal Context capture.
+4. Install the restored key as it is and file re-encryption after restore as a separate follow-up, rather than re-encrypting every record during restore.
+5. Never capture the device wrapping key, staged integrity keys or dataset staging keys, and never resume a restored link; Personal Context sync stays off until a fresh reviewed first link, rather than restoring or re-wrapping link keys.
+6. Keep Personal Context locked in isolated restored profiles (they run with a null keyring), with its key retained in the encrypted restore copy, rather than giving isolated profiles keyring access.
+7. Refuse Personal Context capture while a first-link freeze or rebaseline marker exists, rather than capturing mid-link state.
+8. Include device-only records in the backup, as Export recovery copy already does, and record that ADR-102's "never leave Chatbook" means never synced or sent to a model, rather than filtering them out of the capture.
+9. Put the repository in a new selectable "Personal Context" backup group, rather than in the existing "Settings" group.
+10. Add the interview drafts to the detached-layout fixed owner list as excluded, and refuse the repository there by name, rather than refusing both as unknown content.
+11. Leave `PassphraseProfileKeyProtector` unshipped and out of this work (it has no production caller), rather than adopting it as the backup key carrier.
+
+**Filed tasks (AC#3).** Each delivers one testable outcome:
+- TASK-40133: key reference (schema v9). This is the foundation the others build on.
+- TASK-40134: capture the repository database.
+- TASK-40135: a replace restore makes the restored records readable.
+- TASK-40136: a restore without a usable key keeps the data and says what to do.
+- TASK-40139: a restored profile does not resume its old link. This includes the `personal_context_sync_profile_binding_conflict` rebind, and depends on TASK-40137's ruling.
+- TASK-40138: the detached-layout treatment, by name.
+
+Follow-ups:
+- TASK-40137 (security): investigate whether a restored `runtime.sync_state` lets Notes and Chat sync resume as the old device. It rules who may approve `config` and `runtime.sync_state` after a restore.
+- TASK-40140: re-encrypt the profile after a restore (decision 4).
+
+**ADR notes.** Added dated notes, "2026-11-10 note (TASK-39148, owner-approved)":
+- ADR-102: decision 8's reading of "never leave Chatbook".
+- ADR-126: restore never overwrites a keyring entry, and the stored key reference keeps that rule workable.
+
+**Files:**
+- the spec;
+- `backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md`;
+- `backlog/decisions/126-complete-local-backup-and-recovery.md`;
+- the eight new task files, TASK-40133 to TASK-40140.
+- This task needed no tests, because it is design-only. Preflight runs through the scratch wrapper.
+
+**Review r13k-rev1 fixes (2026-11-10).** The review found four Important and eight Minor issues, and all are fixed. The 11 decisions are unchanged.
+- **Key reference.** It is a non-secret name that exclude mode keeps unchanged, and every restore installs into a fresh account.
+- **Authentication.** A key is used, and an account changed or deleted, only after it authenticates the database. Detection never relies on `key_version`.
+- **Stamping and gates.**
+  - Migration adds an empty `key_account` column; the repository writes the reference the first time the path-derived account's key authenticates the database.
+  - The sync gate moved into TASK-40134 and covers automation-only restores.
+  - The rebind leaves Notes and Chat sync state unchanged, pinned by a test.
+- **ADR-102 note.** It now carries ADR-203's qualifier.
+- **Corrections.** F3 and F9 are corrected.
+- **TASK-39116.** Left untouched.
+
+**Review r13k-rev2 fixes (2026-11-10).** The review found four Important and ten Minor issues, and all are fixed. The decisions' text is unchanged.
+- **New profiles.** Creating or re-creating a profile writes a new, unused key account and never adopts an existing one (TASK-40133).
+- **Restore marker.** A restore that installs no key stamps the `recovery:setup_required` marker, recording the reason, and leaves every other table unchanged.
+- **Task split.**
+  - TASK-40134 is safe on its own, through the restore change revised in rev3 below.
+  - The same-device key-less restore criterion and the "readable only on this device, and only until Personal Context is linked or removed" preview copy moved to TASK-40135.
+  - The same-PR landing note was dropped.
+- **Mismatch.** A manifest-authentication failure at open reports a key mismatch.
+- **Fresh link.** It is scoped to restores that publish the repository or `runtime.sync_state`.
+- **Citations.** They now point at `publication.py:592-604`.
+
+**Review r13k-rev3 fixes (2026-11-10).** The review found one Important and two Minor issues, and all are fixed. The decisions' text is unchanged.
+- **TASK-40134.** Until readable restores ship, no restore publishes the repository. The live database is left byte-for-byte unchanged, the archive keeps its copy, and the plan says Personal Context was not restored.
+- **TASK-40135.** Replace restores now publish the repository, and a restore that will end locked is announced in the plan before it runs.
+- **TASK-40136.** Isolated restores now publish the repository.
+- **The link task** (now TASK-40139) depends on TASK-40135.
+- **Markers.** Every marker a task writes has the form `recovery:setup_required:<reason>`, and the marker criteria compare "every table except `profile_meta.key_account`".
+
+**Review r13k-rev4 fixes (2026-11-10).** The review found one Important, two Minor and two factual items, and all are fixed. The decisions' text is unchanged.
+- **TASK-40134's interim review** approves Personal Context sync only after restores that published neither the repository nor `runtime.sync_state`. Otherwise sync stays off with a named reason; the link task (now TASK-40139) builds on this.
+- **Isolated restores** leave the repository out, and the plan says so, pinned in TASK-40134 AC#5.
+- **Isolated restore of a key-less archive** uses the key-not-in-backup reason and copy.
+- **Locked-state copy** no longer mentions Remove local profile, which a locked service refuses (`service.py:184-186`).
+- **The spec's out-of-scope `runtime.sync_state` item and the investigation task** (now TASK-40137) state that Sync V2 calls are gated through `_sync_call` (`server_sync_service.py:85-88`).
+
+**Review r13k-rev5 fixes (2026-11-10).** The review found one Important and two Minor issues, and all are fixed. The decisions' text is unchanged.
+- **Ids swapped.** These ids exist only on this unmerged branch, so I swapped two of them. TASK-40137 is now the `runtime.sync_state` investigation, and TASK-40139 is the link task, which depends on TASK-40137. Every reference is updated: spec, tasks, ADR notes and these notes.
+- **What the Personal Context review approves.** Only `personal_context.repository`, never `config` or `runtime.sync_state` (spec Q3, TASK-40134, TASK-40139).
+  - After that review, Notes and Chat `sync_once` stays refused (TASK-40139).
+  - The fresh link passes `_sync_call` under TASK-40137's ruling, which is now that task's outcome. If the ruling needs an owner decision, the link task stops and brings it to the owner.
+- **Isolated restores.** They use key-not-in-backup only when no account on this device authenticates the restored database.
+- **This note's wording.** It now names the spec's out-of-scope `runtime.sync_state` item, not F1.
+
+**Review r13k-rev6 fixes (2026-11-10).** The review found one Important and two Minor issues, and all are fixed. The decisions' text is unchanged.
+- **TASK-40139 AC#6 (new).** After the fresh first link, Personal Context sync runs, and Notes and Chat sync never sends the old device id. The stop rule now also covers a ruling that requires a guard or review that has not shipped.
+- **Review wording.** The spec and TASK-40134 now say the review approves `personal_context.repository`, not Personal Context sync. TASK-40134 AC#10's copy does not claim sync resumes.
+- **Filed-task list.** It now says that dependencies, not list order, set the landing order.
+<!-- SECTION:NOTES:END -->

@@ -1713,3 +1713,21 @@ This replaces repeated root-to-parent traversals, whose native opens grow
 quadratically with path depth. Reject skipping ancestor intent checks, caching a
 settled verdict, or bypassing admission when a process already owns a live lease:
 surviving creation intent and changed path/security evidence must still refuse.
+
+### 2026-11-10 note (TASK-39148, owner-approved)
+
+Personal Context's repository is captured with its profile key as a `personal_context` credential record, only in encrypted archives (`include` and `rollback` modes).
+- A backup without credentials carries the database alone.
+- The database's key reference (`profile_meta.key_account`, Personal Context schema v9) is a non-secret account name. `exclude` mode leaves it unchanged, unlike the citation column.
+
+Restore still never overwrites a keyring entry (decision 8). The stored key reference keeps that rule workable:
+- Every replace-restore installs key material into a fresh account and rewrites the staged reference.
+- The material comes from the archive or, for a key-less archive, from the account the archive names on this device. If that reference is empty, it comes from the target path's legacy account.
+- The material is used only after it authenticates the restored database.
+- A restore that installs no key, including every isolated restore (which has no keyring), stamps the marker `recovery:setup_required:<reason>` instead. The reason records the restore case.
+- No two databases, live or retained, therefore name one account.
+- A restore deletes only an account it created itself.
+
+This is the first non-server credential that restore writes back to the keyring. Link keys (the device wrapping key, staged integrity keys and dataset staging keys) are never captured, and a restored repository does not resume its link. Isolated restored profiles keep Personal Context locked.
+
+Design: [Personal Context backup and key custody](../../Docs/superpowers/specs/2026-11-10-personal-context-backup-key-custody-design.md). Implementation: TASK-40133 to TASK-40136, TASK-40138 and TASK-40139.
