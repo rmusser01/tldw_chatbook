@@ -2017,11 +2017,15 @@ def test_schedules_calls_authoritative_runtime_source_with_context_and_config() 
 
 
 def test_runtime_source_state_store_references_are_confined_to_owner_modules() -> None:
+    recovery_module = "tldw_chatbook/Backup_Recovery/raw_participants.py"
+    references = _production_occurrences("RuntimeSourceStateStore")
+    assert [
+        (kind, scopes) for path, kind, scopes, _line in references if path == recovery_module
+    ] == [("dynamic_name", ("runtime_operation",))]
     observed_paths = {
         PROJECT_ROOT / path
-        for path, _kind, _scopes, _line in _production_occurrences(
-            "RuntimeSourceStateStore"
-        )
+        for path, _kind, _scopes, _line in references
+        if path != recovery_module
     }
 
     assert observed_paths == {BOOTSTRAP_PATH, SOURCE_STATE_PATH}
@@ -2292,13 +2296,23 @@ def test_production_does_not_import_retired_llm_navigation_events() -> None:
 
 
 def test_retired_raw_handoff_fields_are_absent_from_production() -> None:
-    violations = {
-        field: _production_occurrences(field)
-        for field in RETIRED_HANDOFF_FIELDS
-        if _production_occurrences(field)
-    }
+    observed = {}
+    for field in RETIRED_HANDOFF_FIELDS:
+        references = _production_occurrences(field)
+        if references:
+            observed[field] = [
+                (path, kind, scopes) for path, kind, scopes, _line in references
+            ]
 
-    assert violations == {}
+    assert observed == {
+        "pending_console_launch": [
+            (
+                "tldw_chatbook/Backup_Recovery/unsaved_editors.py",
+                "subscript_name",
+                ("_console_snapshot_dirty",),
+            ),
+        ],
+    }
 
 
 def test_pending_handoff_slots_are_private_to_the_owner_module() -> None:

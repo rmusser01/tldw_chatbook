@@ -113,6 +113,8 @@ def test_template_cli_rereads_after_input_without_holding_admission(
 def test_runtime_serialization_is_inside_admitted_source(
     tmp_path, local_root, monkeypatch
 ):
+    from types import SimpleNamespace
+
     from tldw_chatbook.runtime_policy import source_state
     from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
@@ -124,7 +126,7 @@ def test_runtime_serialization_is_inside_admitted_source(
         seen.append(bool(storage._raw_operations))
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(source_state.json, "dumps", serialize)
+    monkeypatch.setattr(source_state, "json", SimpleNamespace(dumps=serialize))
     source.save(RuntimeSourceState())
     assert seen == [True]
 
