@@ -357,6 +357,45 @@ def test_the_one_line_writer_handles_other_table_shapes(
     assert light_surface_configured() is False
 
 
+def test_the_one_line_writer_runs_at_the_config_write_switch_interval(
+    profile, monkeypatch
+) -> None:
+    """dev's TASK-38987: every config write runs its locked write at a short
+    switch interval, because beside a thread running Python each of a write's
+    ~10,000 GIL-releasing syscalls otherwise waits out that thread's 5 ms
+    interval; the interval in force before is restored after. The upgrade
+    writes from a worker thread beside the UI loop, so its one-line writer
+    must too (TASK-34100.5.3.2 rebase onto dev)."""
+    import sys
+
+    import tldw_chatbook.config as config_module
+
+    seen: list[float] = []
+    commit = config_module._commit_serialized_cli_config_unlocked
+
+    def recording_commit(*args, **kwargs):
+        seen.append(sys.getswitchinterval())
+        return commit(*args, **kwargs)
+
+    monkeypatch.setattr(
+        config_module, "_commit_serialized_cli_config_unlocked", recording_commit
+    )
+    profile.config_path.write_text("# mine\n[tools]\n", encoding="utf-8")
+    previous = sys.getswitchinterval()
+    sys.setswitchinterval(0.005)
+    try:
+        assert config_module.insert_absent_cli_config_bool(
+            "tools", "full_agent_tools_enabled", True
+        )
+        assert seen and seen[0] < 0.001, seen
+        assert sys.getswitchinterval() == 0.005
+    finally:
+        sys.setswitchinterval(previous)
+    assert profile.config_path.read_text(encoding="utf-8") == (
+        "# mine\n[tools]\nfull_agent_tools_enabled = true\n"
+    )
+
+
 def test_a_tools_table_that_cannot_take_a_line_fails_closed_untouched(
     profile,
 ) -> None:

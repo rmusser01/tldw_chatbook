@@ -6433,7 +6433,14 @@ def insert_absent_cli_config_bool(section: str, key: str, value: bool) -> bool:
     if not (_BARE_TOML_KEY.fullmatch(section) and _BARE_TOML_KEY.fullmatch(key)):
         raise ValueError("config_text_insert_key_not_bare")
     config_path = _get_effective_config_path()
-    with _config_write_lock(config_path):
+    # TASK-38987: like every config write, the whole locked write runs at a
+    # short switch interval; the upgrade writes from a worker thread beside
+    # the running UI loop. Imported here, off the boot import path.
+    from tldw_chatbook.Utils.switch_interval import switch_interval_at_most
+
+    with switch_interval_at_most(_CONFIG_WRITE_SWITCH_INTERVAL), _config_write_lock(
+        config_path
+    ):
         serialized = _try_read_cli_config_serialized_unlocked(config_path)
         if serialized is None:
             raise FileNotFoundError("config_file_absent")

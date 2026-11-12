@@ -903,6 +903,9 @@ _BUDGETS: dict[str, int] = {
     # owner decision 2026-10-04 (expand limits): TASK-34100.5.3.2 +119 on
     # dev's measured 8,835 (the one-line config writer that keeps the user's
     # comments and layout, review round 1 F1-10): 8862 -> 8954.
+    # owner decision 2026-10-04 (expand limits): TASK-34100.5.3.2 +7 (that
+    # writer runs at dev's short config-write switch interval, TASK-38987):
+    # 8954 -> 8961.
     "tldw_chatbook/config.py": 8837,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
