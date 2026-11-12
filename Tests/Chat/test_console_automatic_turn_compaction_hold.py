@@ -309,8 +309,21 @@ async def test_a_resumed_wake_survives_a_concurrent_database_writer(
     read "Mix-in attempt could not be saved; response was not sent." and the
     wake's results were used up. The save reads, then writes; another
     connection committing in between must make that writer wait, not fail
-    this one.
+    this one. Since TASK-39119 an anchorless wake saves its empty reply row
+    with save_pending_assistant instead, so both reply-row saves are hooked.
     """
+
+    reply_row_saves = {"save_conversation_mixin_attempt", "save_pending_assistant"}
+
+    def _called_from_a_reply_row_save() -> bool:
+        frame = sys._getframe(2)
+        for _ in range(3):
+            if frame is None:
+                return False
+            if frame.f_code.co_name in reply_row_saves:
+                return True
+            frame = frame.f_back
+        return False
 
     try:
         await rig.over_the_ask_trigger()
@@ -324,8 +337,7 @@ async def test_a_resumed_wake_survives_a_concurrent_database_writer(
         writer: list[str] = []
 
         def create_while_another_connection_writes(*args, **kwargs):
-            caller = sys._getframe(1).f_code.co_name
-            if caller == "save_conversation_mixin_attempt" and not writer:
+            if _called_from_a_reply_row_save() and not writer:
                 # The save's transaction has read; another connection writes.
                 persistence.db.get_connection().execute(
                     "SELECT count(*) FROM messages"

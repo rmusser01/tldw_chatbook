@@ -1149,7 +1149,11 @@ _BUDGETS: dict[str, int] = {
     # says why it starts BEGIN IMMEDIATE (dev 591a723c0d made the same switch;
     # a deferred start refused a turn with "database is locked").
     # 2026-11-12: re-measured after rebasing onto dev 4b90eb860b (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 4258 -> 4262.
-    "tldw_chatbook/Chat/chat_persistence_service.py": 4262,
+    # 2026-11-12 (TASK-33621.80, owner rule: a fix over a size ratchet raises
+    # the row by its exact growth): 4262 -> 4265 (+3) -- save_pending_assistant,
+    # the anchorless reply-row save a resumed wake takes since TASK-39119, also
+    # starts BEGIN IMMEDIATE, so a concurrent writer no longer fails it.
+    "tldw_chatbook/Chat/chat_persistence_service.py": 4265,
     "tldw_chatbook/UI/Screens/evals_screen.py": 4211,
     # 2026-11-02, TASK-37655 review (owner rule: a fix over a size ratchet
     # raises the row with a dated comment): dev 88af9f9379's 4,304 + 1 = 4,305. The
