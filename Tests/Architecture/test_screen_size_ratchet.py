@@ -350,6 +350,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # Raised again for TASK-41307, 2026-11-17: +1 method (the held-slots
     # segment opens its list; Console_Modules/agent.py) and +11 lines.
     # 2026-11-18: rebased onto dev 45b1949ca3 (dev's row + this branch's growth, measured): 24592.
+    #: 2026-11-12: re-measured after rebasing onto dev 4b90eb860b (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24608/741 -> 24542/741.
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24592, 743),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
