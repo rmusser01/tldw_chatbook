@@ -1108,6 +1108,28 @@ _OWNER_START = "d" * 64
 _OWNER_TOKEN = "e" * 64
 
 
+@pytest.fixture
+def synthetic_campaign_process_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Keep maintenance tests on the real lock with a fixture-owned process identity."""
+    acquire = profile.acquire_campaign_lock
+    real_probe = profile.process_start_identity
+    owner_pid = os.getpid()
+
+    def identity(pid):
+        return _OWNER_START if pid == owner_pid else real_probe(pid)
+
+    def acquire_fixture(campaign_root, **kwargs):
+        if (
+            kwargs.get("pid") is None
+            and "process_start_probe" not in kwargs
+            and campaign_root.is_relative_to(tmp_path)
+        ):
+            kwargs["process_start_probe"] = identity
+        return acquire(campaign_root, **kwargs)
+
+    monkeypatch.setattr(profile, "acquire_campaign_lock", acquire_fixture)
+
+
 def _acquire_lock(campaign_root: Path, *, pid: int = 123):
     return profile.acquire_campaign_lock(
         campaign_root,
@@ -4828,6 +4850,7 @@ def test_implementation_base_revision_fails_closed_on_missing_or_drifted_ref(
         profile.resolve_implementation_base_revision(tmp_path, run_command=run)
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.parametrize(
     ("returncode", "stdout", "code"),
     (
@@ -4867,6 +4890,7 @@ def test_manifest_correction_resolves_fixed_ref_before_creating_stage(
     assert not (attempt / "corrections").exists()
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.parametrize(
     "code",
     (
@@ -4910,6 +4934,7 @@ def test_correction_approval_rejects_prebuilt_root_without_fixed_ref_authority(
     ] == ["running", "complete_pending_review", "changes_required"]
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_reopen_review_registers_later_rejection_and_correction_identity(
     tmp_path: Path,
 ) -> None:
@@ -4951,6 +4976,7 @@ def test_reopen_review_registers_later_rejection_and_correction_identity(
     )
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.parametrize("append_committed", (False, True))
 def test_reopen_review_reconciles_marker_to_lineage_crash_window(
     tmp_path: Path,
@@ -5028,6 +5054,7 @@ def test_reopen_review_reconciles_marker_to_lineage_crash_window(
     assert events == ["marker", "directory"]
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.parametrize("failure", ("marker", "directory"))
 def test_reopen_review_refsyncs_incomplete_marker_before_lineage_retry(
     tmp_path: Path,
@@ -5113,6 +5140,7 @@ def test_reopen_review_refsyncs_incomplete_marker_before_lineage_retry(
     assert events == ["marker", "directory", "lineage"]
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.parametrize(
     ("problem", "code"),
     (
@@ -5173,6 +5201,7 @@ def test_reopen_review_rejects_ambiguous_or_unbound_transition(
         )
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.parametrize("name", sorted(REVIEWED_ARTIFACT_NAMES))
 def test_manifest_correction_rejects_any_change_to_original_approved_files(
     tmp_path: Path, name: str
@@ -5190,6 +5219,7 @@ def test_manifest_correction_rejects_any_change_to_original_approved_files(
     assert not (attempt / "corrections" / ".correction-001-stage").exists()
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_review_registry_rejects_duplicate_numeric_identity_across_roots(
     tmp_path: Path,
 ) -> None:
@@ -5219,6 +5249,7 @@ def test_review_registry_rejects_duplicate_numeric_identity_across_roots(
         profile._registered_review_receipts(attempt)
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_reopen_review_rejects_lexical_path_traversal(
     tmp_path: Path,
 ) -> None:
@@ -5250,6 +5281,7 @@ def test_reopen_review_rejects_lexical_path_traversal(
         )
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_receipt_location_rejects_symlinked_correction_root(tmp_path: Path) -> None:
     campaign, attempt, _approved, _digest, _raw_sha256 = _approve_review_attempt(
         tmp_path
@@ -5270,6 +5302,7 @@ def test_receipt_location_rejects_symlinked_correction_root(tmp_path: Path) -> N
         profile._validate_receipt_location(attempt, aliased)
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_manifest_correction_rename_failure_leaves_no_partial_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -5293,6 +5326,7 @@ def test_manifest_correction_rename_failure_leaves_no_partial_root(
     assert all((attempt / name).read_bytes() == data for name, data in original.items())
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.parametrize(
     ("name", "code"),
     tuple(
@@ -5328,6 +5362,7 @@ def test_registered_correction_rejects_later_artifact_changes(
         profile.register_review_receipt(campaign, "attempt-0001", receipt)
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_correction_approval_requires_a_still_later_review_number(
     tmp_path: Path,
     synthetic_correction_authority: None,
@@ -5346,6 +5381,7 @@ def test_correction_approval_requires_a_still_later_review_number(
         profile.register_review_receipt(campaign, "attempt-0001", stale)
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_manifest_correction_post_rename_failure_retains_only_complete_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -5371,6 +5407,7 @@ def test_manifest_correction_post_rename_failure_retains_only_complete_root(
     profile._validate_correction_contents(attempt, correction)
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_post_rename_correction_republishes_parent_before_approval_marker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -5468,6 +5505,7 @@ def test_post_rename_correction_republishes_parent_before_approval_marker(
     ]
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_versioned_manifest_correction_preserves_original_and_promotes_by_path(
     tmp_path: Path,
     synthetic_correction_authority: None,
@@ -5545,6 +5583,7 @@ def test_versioned_manifest_correction_preserves_original_and_promotes_by_path(
     )
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.parametrize("append_committed", (False, True))
 def test_correction_approval_reconciles_marker_to_lineage_crash_window(
     tmp_path: Path,
@@ -5609,6 +5648,7 @@ def test_correction_approval_reconciles_marker_to_lineage_crash_window(
     assert events == ["marker", "directory"]
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.parametrize("failure", ("marker", "directory"))
 def test_correction_approval_refsyncs_incomplete_marker_before_lineage_retry(
     tmp_path: Path,
@@ -5687,6 +5727,7 @@ def test_correction_approval_refsyncs_incomplete_marker_before_lineage_retry(
     assert events == ["marker", "directory", "lineage"]
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_correction_receipt_and_registry_namespaces_fsync_every_parent_link(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -5728,6 +5769,7 @@ def test_correction_receipt_and_registry_namespaces_fsync_every_parent_link(
     assert events == watched
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.parametrize(
     ("failure", "code"),
     (
@@ -5786,6 +5828,7 @@ def test_correction_namespace_fsync_failure_is_stable_and_retryable(
     )
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_correction_approval_rejects_wrong_root_or_unchanged_digest(
     tmp_path: Path,
 ) -> None:
@@ -5814,6 +5857,7 @@ def test_correction_approval_rejects_wrong_root_or_unchanged_digest(
         profile.register_review_receipt(campaign, "attempt-0001", receipt)
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_review_receipt_has_exact_privacy_safe_schema(tmp_path: Path) -> None:
     campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
     receipt_path = _write_review_receipt(attempt, digest)
@@ -5836,6 +5880,7 @@ def test_review_receipt_has_exact_privacy_safe_schema(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.parametrize(
     ("mutation", "code"),
     (
@@ -5862,6 +5907,7 @@ def test_review_receipt_rejects_unknown_or_sensitive_fields(
         profile.register_review_receipt(campaign, "attempt-0001", receipt_path)
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.parametrize("field", ("attempt_id", "artifact_set_sha256", "verdict"))
 def test_review_registration_rejects_attempt_digest_or_verdict_mismatch(
     tmp_path: Path, field: str
@@ -5880,6 +5926,7 @@ def test_review_registration_rejects_attempt_digest_or_verdict_mismatch(
         profile.register_review_receipt(campaign, "attempt-0001", receipt_path)
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_changes_required_preserves_raw_and_blocks_reacquisition(
     tmp_path: Path,
 ) -> None:
@@ -5901,6 +5948,7 @@ def test_changes_required_preserves_raw_and_blocks_reacquisition(
         profile.require_campaign_acquisition(campaign / "attempts.jsonl")
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.parametrize("append_committed", (False, True))
 def test_registered_changes_receipt_reconciles_append_failure_without_duplicate(
     tmp_path: Path,
@@ -5933,6 +5981,7 @@ def test_registered_changes_receipt_reconciles_append_failure_without_duplicate(
     ] == ["running", "complete_pending_review", "changes_required"]
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_registered_rejection_blocks_unchanged_approval_and_promotion_after_crash(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -5986,6 +6035,7 @@ def test_registered_rejection_blocks_unchanged_approval_and_promotion_after_cras
     ]
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_dead_maintenance_lock_after_changes_append_recovers_without_ledger_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -6018,6 +6068,7 @@ def test_dead_maintenance_lock_after_changes_append_recovers_without_ledger_muta
     assert not (campaign / ".campaign-lock").exists()
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_corrected_derived_artifacts_require_new_digest_and_receipt(
     tmp_path: Path,
 ) -> None:
@@ -6052,6 +6103,7 @@ def test_corrected_derived_artifacts_require_new_digest_and_receipt(
     assert lineage[-1]["raw_sha256"] == raw_sha256
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_registered_receipt_is_immutable(tmp_path: Path) -> None:
     campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
     receipt = _write_review_receipt(attempt, digest)
@@ -6066,6 +6118,7 @@ def test_registered_receipt_is_immutable(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_smoke_receipt_cannot_be_registered_or_promoted(tmp_path: Path) -> None:
     campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(
         tmp_path, verdict="smoke"
@@ -6089,6 +6142,7 @@ def test_smoke_receipt_cannot_be_registered_or_promoted(tmp_path: Path) -> None:
     assert not (attempt / "reviews" / ".registered").exists()
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.parametrize("severity", ("critical", "important"))
 def test_approved_receipt_rejects_blocking_findings_at_every_entrypoint(
     tmp_path: Path, severity: str
@@ -6116,6 +6170,7 @@ def test_approved_receipt_rejects_blocking_findings_at_every_entrypoint(
         )
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_approved_receipt_allows_only_minor_findings(tmp_path: Path) -> None:
     campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
     receipt = _write_review_receipt(
@@ -6135,6 +6190,7 @@ def test_approved_receipt_allows_only_minor_findings(tmp_path: Path) -> None:
     assert (tmp_path / "published").is_dir()
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.parametrize("later_receipt", (False, True))
 def test_receipt_bytes_and_reviews_directory_are_durable_before_identity_marker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, later_receipt: bool
@@ -6185,6 +6241,7 @@ def test_receipt_bytes_and_reviews_directory_are_durable_before_identity_marker(
     assert marker.read_bytes() == b""
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.parametrize("later_receipt", (False, True))
 @pytest.mark.parametrize("failure", ("receipt", "reviews"))
 def test_receipt_pre_marker_durability_failure_never_creates_identity(
@@ -6232,6 +6289,7 @@ def test_receipt_pre_marker_durability_failure_never_creates_identity(
     )
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_receipt_changed_after_pre_marker_fsync_is_not_registered(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -6258,6 +6316,7 @@ def test_receipt_changed_after_pre_marker_fsync_is_not_registered(
     assert not (reviews / ".registered").exists()
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.parametrize("later_receipt", (False, True))
 @pytest.mark.parametrize("decision", ("approved", "changes_required"))
 def test_receipt_marker_fsync_failure_is_stable_and_preserves_marker(
@@ -6326,6 +6385,7 @@ def test_receipt_marker_fsync_failure_is_stable_and_preserves_marker(
     assert events[-2:] == ["marker", "registry"]
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_concurrent_changes_required_registration_has_one_stable_loser(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -6364,6 +6424,7 @@ def test_concurrent_changes_required_registration_has_one_stable_loser(
     assert not (campaign / ".campaign-lock").exists()
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_changes_required_winner_serializes_against_promotion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -6413,6 +6474,7 @@ def test_changes_required_winner_serializes_against_promotion(
     )
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_promotion_winner_blocks_later_changes_required_review(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -6495,6 +6557,7 @@ def test_promotion_rejects_missing_nonapproved_or_mismatched_receipt(
     assert attempt.is_dir()
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_promotion_rejects_any_preexisting_destination(tmp_path: Path) -> None:
     campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
     receipt = _write_review_receipt(attempt, digest)
@@ -6533,6 +6596,7 @@ def test_atomic_directory_rename_never_replaces_existing_empty_destination(
     assert list(occupied.iterdir()) == []
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.skipif(sys.platform != "darwin", reason="Darwin mode workaround only")
 def test_native_setup_and_mode_restore_double_failure_is_stable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -6595,6 +6659,7 @@ def test_native_setup_and_mode_restore_double_failure_is_stable(
     assert not (campaign / ".campaign-lock").exists()
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_promotion_empty_destination_race_preserves_staging_and_attempt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -6625,6 +6690,7 @@ def test_promotion_empty_destination_race_preserves_staging_and_attempt(
     assert attempt.is_dir()
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_promotion_boundary_mutation_fails_final_recheck(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -6659,6 +6725,7 @@ def test_promotion_boundary_mutation_fails_final_recheck(
     assert attempt.is_dir()
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_promotion_seals_and_fsyncs_stage_before_atomic_rename(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -6702,6 +6769,7 @@ def test_promotion_seals_and_fsyncs_stage_before_atomic_rename(
     assert stat.S_IMODE(destination.stat().st_mode) == 0o555
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_sealed_stage_blocks_post_verify_name_replacement_before_native_rename(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -6756,6 +6824,7 @@ def test_sealed_stage_blocks_post_verify_name_replacement_before_native_rename(
     assert stat.S_IMODE(destination.stat().st_mode) == 0o555
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.skipif(sys.platform != "darwin", reason="Darwin immutable flags only")
 def test_failed_native_rename_never_clears_foreign_destination_flags(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -6806,6 +6875,7 @@ def test_failed_native_rename_never_clears_foreign_destination_flags(
     } == foreign_state
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.skipif(sys.platform != "darwin", reason="Darwin immutable flags only")
 def test_post_syscall_destination_swap_fails_without_mutating_foreign_tree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -6850,6 +6920,7 @@ def test_post_syscall_destination_swap_fails_without_mutating_foreign_tree(
     )
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.skipif(sys.platform != "darwin", reason="Darwin immutable flags only")
 def test_failed_native_rename_stage_root_swap_mutates_only_owned_fds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -6896,6 +6967,7 @@ def test_failed_native_rename_stage_root_swap_mutates_only_owned_fds(
     )
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.skipif(sys.platform != "darwin", reason="Darwin immutable flags only")
 @pytest.mark.parametrize("native_success", (False, True))
 def test_failed_native_rename_leaf_swap_never_mutates_foreign_leaf(
@@ -6963,6 +7035,7 @@ def test_failed_native_rename_leaf_swap_never_mutates_foreign_leaf(
     assert not (owned_readme.stat().st_flags & stat.UF_IMMUTABLE)
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.parametrize("failure", ("file", "stage_directory"))
 def test_promotion_pre_rename_fsync_failure_preserves_source_and_stage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
@@ -7007,6 +7080,7 @@ def test_promotion_pre_rename_fsync_failure_preserves_source_and_stage(
     assert not (campaign / ".campaign-lock").exists()
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_promotion_parent_fsync_failure_retains_destination_as_uncertain(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -7032,6 +7106,7 @@ def test_promotion_parent_fsync_failure_retains_destination_as_uncertain(
     assert not (campaign / ".campaign-lock").exists()
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.skipif(sys.platform != "darwin", reason="Darwin immutable flags only")
 @pytest.mark.parametrize("failure", ("mode", "flags"))
 def test_post_rename_restore_failure_is_stable_and_closes_owned_descriptors(
@@ -7100,6 +7175,7 @@ def test_post_rename_restore_failure_is_stable_and_closes_owned_descriptors(
     assert not (campaign / ".campaign-lock").exists()
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 @pytest.mark.skipif(sys.platform != "darwin", reason="Darwin flag durability only")
 @pytest.mark.parametrize("failure", (None, "leaf", "directory"))
 def test_restored_publication_metadata_is_fsynced_before_parent(
@@ -7198,6 +7274,7 @@ def test_restored_publication_metadata_is_fsynced_before_parent(
     assert not (campaign / ".campaign-lock").exists()
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_windows_promotion_fails_closed_without_directory_durability(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -7217,6 +7294,7 @@ def test_windows_promotion_fails_closed_without_directory_durability(
     assert not (tmp_path / "published").exists()
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_promotion_rejects_source_changed_after_review(tmp_path: Path) -> None:
     campaign, attempt, digest, _raw_sha256 = _prepare_review_attempt(tmp_path)
     receipt = _write_review_receipt(attempt, digest)
@@ -7228,6 +7306,7 @@ def test_promotion_rejects_source_changed_after_review(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_promotion_rejects_destination_copy_corruption(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -7253,6 +7332,7 @@ def test_promotion_rejects_destination_copy_corruption(
     assert (attempt / "README.md").read_bytes() == b"# Confirmation\n"
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_promotion_rejects_source_mutation_between_copy_and_verification(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -7279,6 +7359,7 @@ def test_promotion_rejects_source_mutation_between_copy_and_verification(
     assert not destination.exists()
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_successful_promotion_publishes_exact_five_plus_receipt(
     tmp_path: Path,
 ) -> None:
@@ -7301,6 +7382,7 @@ def test_successful_promotion_publishes_exact_five_plus_receipt(
     assert attempt.is_dir()
 
 
+@pytest.mark.usefixtures("synthetic_campaign_process_identity")
 def test_digest_register_and_promote_actions_never_contact_provider(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
