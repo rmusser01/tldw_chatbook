@@ -941,8 +941,8 @@ are kept with the TASK-38298 evidence):
   261-sequences shape both reconstruct to exactly the new request. The head
   recorded before the chain still reconstructs its 259 rows. The next send plans
   as a plain append. Trace GC keeps every link and sweeps nothing. A 1,999-row
-  history needs 9 links (11 nodes, 9 replacement rows and 11 events), and its cold
-  projection reads in 0.02 s.
+  history needs 8 links plus the final link (11 nodes, 9 replacement rows and 11
+  events), and its cold projection reads in 0.02 s.
 
 **Decision: record it as a chained replacement.** This applies only where the
 rewritten tail is already admitted: FRESH or AGENT_FIRST, the whole tail after the
@@ -954,8 +954,8 @@ The one difference is that the replaced range's stored span exceeds 256.
    a run of dead sequences between groups is not replaced again. The existing
    check that no unchanged live row lies inside the replaced range still applies
    to the whole range.
-2. Each group becomes one ordinary replacement row: one predecessor head, one
-   contiguous range and one replacement node. That node is a content-free
+2. Each group becomes one ordinary replacement row, a link: one predecessor head,
+   one contiguous range and one replacement node. That node is a content-free
    placeholder (`reference_kind` omission, component `surface_replacement`, a new
    reason code `replacement_chain_link`). It carries no conversation content, and
    no gap event is written for it.
@@ -967,6 +967,9 @@ The one difference is that the replaced range's stored span exceeds 256.
 4. The final link spans the placeholders, so at most 256 groups are allowed: about
    65,536 stored sequences, roughly 32,000 exchanges. A wider rewrite is refused
    as today.
+
+In this amendment a link is one group's replacement row. The final link is
+counted separately, so a chain of N links writes N + 1 replacement rows.
 
 Truthfulness: the call's reconstructed request is exactly what the provider
 received. No call's head lies between links, so no call's surface contains a
@@ -1027,7 +1030,7 @@ excluded, as the reference gate times it; 20 interleaved rounds per shape on an 
 Pro under a shared load average of 28 to 48, so wall times are noisy and thread
 CPU is the steadier figure):
 
-| Shape | Links | Wall p50 / p95 | Thread CPU p50 / p95 |
+| Shape | Links (plus the final link) | Wall p50 / p95 | Thread CPU p50 / p95 |
 | --- | --- | --- | --- |
 | Append, 259 recorded rows | 0 | 3.2 / 10.0 ms | 3.2 / 4.9 ms |
 | One replacement, 256 rows | 0 | 7.8 / 20.4 ms | 6.5 / 10.1 ms |
