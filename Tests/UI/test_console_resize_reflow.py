@@ -1308,10 +1308,12 @@ async def test_height_resize_requests_one_coalesced_context_reconcile(
         )
         monkeypatch.setattr(rail, "_run_allocation_reconcile", reconcile_spy)
         compact_flips: list[bool] = []
+        compact_passes: list[int] = []
         original_set_compact = PortraitRadio.set_compact
 
         def set_compact_spy(radio: PortraitRadio, compact: bool) -> None:
             compact_flips.append(compact)
+            compact_passes.append(reconcile_runs)
             original_set_compact(radio, compact)
 
         monkeypatch.setattr(PortraitRadio, "set_compact", set_compact_spy)
@@ -1328,12 +1330,13 @@ async def test_height_resize_requests_one_coalesced_context_reconcile(
         cue = rail.query_one("#console-left-rail-outer-hint", Static)
         assert console.query_one("#console-shell").has_class("-console-compact")
         assert helper_calls >= 1
-        # Every request the resize makes coalesces into one pass. Since
-        # b333cebdfe that pass flips the Character radio's voice meter to
-        # compact (it no longer fits in 30 rows), which changes the body's
-        # height, so the radio asks for exactly one follow-up pass (TASK-39158).
+        # The first pass changes the Character radio's geometry (b333cebdfe,
+        # TASK-39158). Its follow-up may precede the bounded section's demand
+        # update, which then needs one further pass. Pin the first-pass flip
+        # and bounded convergence; the stability assertion below forbids a loop.
         assert compact_flips == [True]
-        assert reconcile_runs == 1 + len(compact_flips)
+        assert compact_passes == [1]
+        assert 2 <= reconcile_runs <= 3
         assert outer.content_region.height < before_viewport_height
         assert (
             before_allocations

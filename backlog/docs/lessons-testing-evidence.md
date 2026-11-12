@@ -14181,9 +14181,20 @@ and owner and require no public diagnostic. Test an already-closed-loop
 emergency separately: require fail-closed ownership cleanup and no dispatch,
 capture the expected destroyed-pending diagnostic through the loop's public
 exception handler, and assert warning capture contains no unhandled
-never-awaited coroutine. Never mutate private Task warning flags or manually
-close its coroutine; those operations change the behavior the test is meant to
-observe.
+never-awaited coroutine. Never mutate private Task warning flags or manually close its coroutine as
+proof that production shutdown or implicit garbage collection cleaned it up.
+Those operations change the behavior under observation.
+
+**Follow-up (PR3496, 2026-11-12).** The same emergency test's retained Context
+started rooting its Task through hook/agent attribution. Registry detachment
+and no-dispatch assertions passed, but `context.run(gc.collect)` could not
+collect that externally rooted cycle. The fixture now checks detachment and
+that the Task is still pending first, then explicitly unwinds the coroutine in
+its owning Context as test teardown. It still requires the genuine pending-Task
+diagnostic and restored context scopes, with no warning suppression. The focused
+closed/live-loop controls passed on Windows. This qualifies emergency detachment
+and fixture teardown only; it deliberately makes no implicit-GC or production
+shutdown-clean claim. Keep those evidence boundaries separate.
 
 ## An isolated recovery widget does not prove one mounted action owner (TASK-19900.3, 2026-08-23)
 
