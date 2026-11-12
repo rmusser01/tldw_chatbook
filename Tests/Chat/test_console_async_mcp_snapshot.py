@@ -304,9 +304,9 @@ async def test_async_snapshot_wrong_source_during_read_freezes_empty_maximum(
 
 @pytest.mark.asyncio
 async def test_async_snapshot_preserves_default_downgrade_audit_and_fresh_gate(
-    snapshot_case,
+    captured_snapshot_case,
 ):
-    case = snapshot_case
+    case = captured_snapshot_case
     _loop_projection(case)
     case.permissions.set_tool_state(
         "local:one", "first", "allow", definition_hash="0" * 64
@@ -343,9 +343,9 @@ async def test_async_snapshot_preserves_default_downgrade_audit_and_fresh_gate(
 
 @pytest.mark.asyncio
 async def test_async_snapshot_cancel_drains_real_producer_and_native_read(
-    snapshot_case,
+    captured_snapshot_case,
 ):
-    case = snapshot_case
+    case = captured_snapshot_case
     _loop_projection(case)
     probe = _MaximumProbe(case.source, case.permissions, hold=True)
     with probe.installed():
@@ -401,9 +401,9 @@ async def test_custom_injected_snapshot_provider_preserves_sync_contract(snapsho
 @pytest.mark.asyncio
 @pytest.mark.parametrize("state", ["cold", "kill", "corrupt"])
 async def test_async_snapshot_preserves_original_permission_source_semantics(
-    snapshot_case, state
+    captured_snapshot_case, state
 ):
-    case = snapshot_case
+    case = captured_snapshot_case
     _, observed = _loop_projection(case)
     if state == "cold":
         case.service._permission_store = None
@@ -438,9 +438,9 @@ async def test_async_snapshot_preserves_original_permission_source_semantics(
 
 @pytest.mark.asyncio
 async def test_async_snapshot_permission_retarget_after_read_never_redirects(
-    snapshot_case, tmp_path
+    captured_snapshot_case, tmp_path
 ):
-    case = snapshot_case
+    case = captured_snapshot_case
     _loop_projection(case)
     old_path = case.permissions.path
     replacement = tmp_path / "other-permissions.json"
@@ -901,9 +901,9 @@ async def test_actual_queued_capture_rejects_replaced_controller_before_queue_or
 
 @pytest.mark.asyncio
 async def test_async_maximum_rejects_replaced_inventory_callback_during_native_read(
-    snapshot_case, monkeypatch
+    captured_snapshot_case, monkeypatch
 ):
-    case = snapshot_case
+    case = captured_snapshot_case
     _loop_projection(case)
     invoked = []
     probe = _MaximumProbe(case.source, case.permissions, hold=True)
@@ -920,11 +920,13 @@ async def test_async_maximum_rejects_replaced_inventory_callback_during_native_r
 
             monkeypatch.setattr(case.local, "get_inventory", replacement)
             probe.release.set()
-            context = await task
+            with pytest.raises(
+                bootstrap.RecoveryRequired, match="console_snapshot_owner_changed"
+            ):
+                await task
             assert (
                 not invoked
             ), "a replaced service callback executed after native worker acceptance"
-            assert not context.mcp_definition_maximum
             assert all(
                 lease not in storage_admission._live_leases for lease in probe.leases
             )
@@ -935,7 +937,7 @@ async def test_async_maximum_rejects_replaced_inventory_callback_during_native_r
 @pytest.mark.asyncio
 @pytest.mark.parametrize("change", ["binding", "governance"])
 async def test_async_maximum_rejects_field_equal_source_owner_replacement(
-    snapshot_case, change
+    captured_snapshot_case, change
 ):
     from tldw_chatbook.Backup_Recovery import mcp_source_participants
 
@@ -947,7 +949,7 @@ async def test_async_maximum_rejects_field_equal_source_owner_replacement(
                 and self.thread is other.thread
             )
 
-    case = snapshot_case
+    case = captured_snapshot_case
     _loop_projection(case)
     governance = EqualGovernance()
     case.local.policy_enforcer = governance
@@ -1186,7 +1188,7 @@ async def test_standard_provider_shared_keeper_accepts_only_its_lazy_publication
 @pytest.mark.asyncio
 @pytest.mark.parametrize("method", ["inventory", "permission_marker"])
 async def test_async_maximum_rejects_equal_callable_in_retained_binding_slot(
-    snapshot_case, monkeypatch, method
+    captured_snapshot_case, monkeypatch, method
 ):
     class EqualCallable:
         def __eq__(self, other):
@@ -1195,7 +1197,7 @@ async def test_async_maximum_rejects_equal_callable_in_retained_binding_slot(
         def __call__(self, *args, **kwargs):
             raise AssertionError("replacement callback must not execute")
 
-    case = snapshot_case
+    case = captured_snapshot_case
     _loop_projection(case)
     probe = _MaximumProbe(case.source, case.permissions, hold=True)
     with probe.installed():
@@ -1214,8 +1216,10 @@ async def test_async_maximum_rejects_equal_callable_in_retained_binding_slot(
             assert replacement == original and replacement is not original
             monkeypatch.setattr(owner, name, replacement)
             probe.release.set()
-            captured = await pending
-            assert not captured.mcp_definition_maximum
+            with pytest.raises(
+                bootstrap.RecoveryRequired, match="console_snapshot_owner_changed"
+            ):
+                await pending
             assert all(
                 lease not in storage_admission._live_leases for lease in probe.leases
             )
