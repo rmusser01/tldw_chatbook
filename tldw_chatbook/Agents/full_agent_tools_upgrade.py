@@ -23,7 +23,7 @@ nothing written to their config.
   step log or the pre-v13 JSON blob, or any sub-agent run, which only
   ``spawn_subagent`` creates).
 
-How it runs (``run_for_app``): once per launch, as the first staggered boot
+How it runs (``run_for_profile``): once per launch, as the first staggered boot
 worker, on a worker thread after the UI is ready, so it never blocks startup
 or the UI loop. In order:
 
@@ -73,7 +73,7 @@ __all__ = [
     "UpgradeOutcome",
     "UpgradeResult",
     "detect_agent_feature_use",
-    "run_for_app",
+    "run_for_profile",
     "run_full_agent_tools_upgrade",
 ]
 
@@ -393,40 +393,54 @@ def _logged(result: UpgradeResult) -> UpgradeResult:
     return result
 
 
-def _agent_runs_path(app: Any) -> Path | None:
+def _agent_runs_path(chachanotes_db: Any) -> Path | None:
     """The Console's runs database: ``agent_runs.db`` beside ChaChaNotes."""
-    db_path = getattr(getattr(app, "chachanotes_db", None), "db_path", None)
+    db_path = getattr(chachanotes_db, "db_path", None)
     if not db_path or str(db_path) == ":memory:" or str(db_path).startswith("file:"):
         return None
     return Path(db_path).parent / "agent_runs.db"
 
 
-def _mirror_into_app_config(app: Any) -> None:
+def _mirror_into_app_config(app_config: Any) -> None:
     """Keep the app's in-memory config in step with the written key.
 
     Setup's Tools step and Summary read ``app.app_config``; the MCP hub's
     gate save mirrors the same way (TASK-34100.5.3 review, B-F5).
     """
-    config = getattr(app, "app_config", None)
-    if not isinstance(config, dict):
+    if not isinstance(app_config, dict):
         return
-    tools = config.get("tools")
+    tools = app_config.get("tools")
     if not isinstance(tools, dict):
-        tools = config["tools"] = {}
+        tools = app_config["tools"] = {}
     tools[FULL_AGENT_TOOLS_GATE_KEY] = True
 
 
-def run_for_app(app: Any) -> UpgradeResult:
+def run_for_profile(
+    *,
+    workspace_db: Any,
+    chachanotes_db: Any,
+    app_config: Any,
+    call_from_thread: Callable[..., Any],
+) -> UpgradeResult:
     """The boot worker's body: run the upgrade for the app's own profile.
 
     Runs on a worker thread. Closes the thread's workspaces-database
-    connection when done, and mirrors a written key into ``app.app_config``
-    on the UI thread.
+    connection when done, and mirrors a written key into ``app_config`` on
+    the UI thread through ``call_from_thread``.
+
+    Args:
+        workspace_db: The app's ``WorkspaceDB`` (``None`` fails closed).
+        chachanotes_db: The app's ChaChaNotes database; the runs database
+            sits beside it.
+        app_config: The app's in-memory config dict.
+        call_from_thread: The app's ``call_from_thread``.
+
+    Returns:
+        The outcome. Never raises.
     """
-    workspace_db = getattr(app, "local_workspace_db", None)
     try:
         result = run_full_agent_tools_upgrade(
-            workspace_db=workspace_db, agent_runs_path=_agent_runs_path(app)
+            workspace_db=workspace_db, agent_runs_path=_agent_runs_path(chachanotes_db)
         )
     finally:
         close = getattr(workspace_db, "close", None)
@@ -437,7 +451,7 @@ def run_for_app(app: Any) -> UpgradeResult:
                 pass
     if result.outcome is UpgradeOutcome.KEPT_ON:
         try:
-            app.call_from_thread(_mirror_into_app_config, app)
+            call_from_thread(_mirror_into_app_config, app_config)
         except Exception:  # noqa: BLE001 -- the app may be closing; config is saved
             pass
     return result

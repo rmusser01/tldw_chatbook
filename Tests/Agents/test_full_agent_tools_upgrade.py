@@ -31,7 +31,7 @@ from tldw_chatbook.Agents.full_agent_tools_upgrade import (
     SIGNAL_WORKSPACE_BINDING,
     UpgradeOutcome,
     _write_full_agent_tools_on,
-    run_for_app,
+    run_for_profile,
     run_full_agent_tools_upgrade,
 )
 from tldw_chatbook.Agents.plain_chat_tool_surface import light_surface_configured
@@ -549,19 +549,19 @@ def test_the_boot_worker_body_mirrors_the_written_key_into_app_config(
         calls.append(function.__name__)
         return function(*args)
 
-    app = SimpleNamespace(
-        local_workspace_db=profile.workspace_db,
+    app_config = {"tools": {"read_file_enabled": True}}
+
+    result = run_for_profile(
+        workspace_db=profile.workspace_db,
         # The runs database sits beside ChaChaNotes.
         chachanotes_db=SimpleNamespace(db_path=profile.data / "ChaChaNotes.db"),
-        app_config={"tools": {"read_file_enabled": True}},
+        app_config=app_config,
         call_from_thread=call_from_thread,
     )
 
-    result = run_for_app(app)
-
     assert result.outcome is UpgradeOutcome.KEPT_ON
     assert calls == ["_mirror_into_app_config"]
-    assert app.app_config["tools"] == {
+    assert app_config["tools"] == {
         "read_file_enabled": True,
         "full_agent_tools_enabled": True,
     }
