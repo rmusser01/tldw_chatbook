@@ -67,6 +67,34 @@ def _live_app_config(app_instance: Any) -> Optional[dict]:
     return app_config if isinstance(app_config, dict) else None
 
 
+_ABSENT = object()
+
+
+def _appearance_snapshot(app_config: dict) -> tuple[Any, bool, Any]:
+    """``app_config``'s ``[appearance]`` as it is now, to put back unchanged."""
+    table = app_config.get("appearance", _ABSENT)
+    if isinstance(table, dict):
+        return table, "reduce_motion" in table, table.get("reduce_motion")
+    return table, False, None
+
+
+def _restore_appearance(app_config: dict, snapshot: tuple[Any, bool, Any]) -> None:
+    """Put ``[appearance]`` back as ``_appearance_snapshot`` saw it."""
+    table, had_key, value = snapshot
+    if not isinstance(table, dict):
+        # The live change made (or replaced) the table: take it away again.
+        if table is _ABSENT:
+            app_config.pop("appearance", None)
+        else:
+            app_config["appearance"] = table
+        return
+    if had_key:
+        table["reduce_motion"] = value
+    else:
+        table.pop("reduce_motion", None)
+    app_config["appearance"] = table
+
+
 class WelcomeFooter(Vertical):
     """Welcome's quiet rows, placed below the nav bar.
 
@@ -74,6 +102,10 @@ class WelcomeFooter(Vertical):
     animated surfaces read (Buddy, character expressions); WelcomeStep writes
     it on Next, as its own change, and the splash honours the saved value from
     the next launch. It is offered only where it can apply live.
+
+    Pre-merge review (2026-11-12): until Next saves it, the live change is
+    undone when setup closes (Skip setup, Exit setup) -- left applied but
+    unsaved, a later Settings ▸ Appearance save wrote it.
     """
 
     DEFAULT_CLASSES = "setup-welcome-footer"
@@ -81,6 +113,8 @@ class WelcomeFooter(Vertical):
     def __init__(self, app_instance: Any = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._app_instance = app_instance
+        #: ``[appearance]`` before this run's unsaved live change, else None.
+        self._before_live: Optional[tuple[Any, bool, Any]] = None
 
     def compose(self) -> ComposeResult:
         # One row, so the step body keeps its height at 80x24 (live: two rows
@@ -116,11 +150,24 @@ class WelcomeFooter(Vertical):
         app_config = _live_app_config(self._app_instance)
         if app_config is None:
             return
+        if self._before_live is None:
+            self._before_live = _appearance_snapshot(app_config)
         appearance = app_config.get("appearance")
         if not isinstance(appearance, dict):
             appearance = {}
             app_config["appearance"] = appearance
         appearance["reduce_motion"] = bool(event.value)
+
+    def keep_live_change(self) -> None:
+        """Welcome's Next saved the shown value: nothing to undo any more."""
+        self._before_live = None
+
+    def undo_live_change(self) -> None:
+        """Put the in-memory ``[appearance]`` back when the change went unsaved."""
+        before, self._before_live = self._before_live, None
+        app_config = _live_app_config(self._app_instance)
+        if before is not None and app_config is not None:
+            _restore_appearance(app_config, before)
 
     @on(Button.Pressed, "#setup-backup-restore")
     def open_backup_restore(self, event: Button.Pressed) -> None:
@@ -195,6 +242,9 @@ class WelcomeStep(SetupStep):
         them, or the new step's rows collide with the old id (review F11).
         """
         footer, self._footer = self._footer, None
+        if footer is not None:
+            # Pre-merge review (2026-11-12): setup closed before Next saved it.
+            footer.undo_live_change()
         if footer is not None and footer.parent is not None and footer.parent is not self:
             footer.remove()
 
@@ -241,12 +291,15 @@ class WelcomeStep(SetupStep):
     async def commit(self) -> tuple[bool, str]:
         """Write "Reduce motion" only when it changed here (spec §4.3)."""
         chosen = self._reduce_motion_choice()
-        if chosen is None or chosen == self._reduce_motion_at_mount:
-            return True, ""
-        ok = await self.wizard.commit_config({"appearance": {"reduce_motion": chosen}})
-        if not ok:
-            return False, "Saving the reduce-motion setting failed."
-        self._reduce_motion_at_mount = chosen
+        if chosen is not None and chosen != self._reduce_motion_at_mount:
+            ok = await self.wizard.commit_config(
+                {"appearance": {"reduce_motion": chosen}}
+            )
+            if not ok:
+                return False, "Saving the reduce-motion setting failed."
+            self._reduce_motion_at_mount = chosen
+        if self._footer is not None:
+            self._footer.keep_live_change()  # what is shown is what is saved
         return True, ""
 
     def get_step_data(self) -> Dict[str, Any]:
