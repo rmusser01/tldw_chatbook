@@ -227,7 +227,7 @@ def test_the_config_is_restored_even_when_an_earlier_teardown_step_raises(
     output = result.stdout + result.stderr
     # The writer itself passes and then errors at teardown, as designed.
     assert "Native app workers remain uncertain" in output, output[-6000:]
-    summary = output.strip().splitlines()[-1]
+    summary = result.stdout.strip().rsplit("\n", 1)[-1]
     assert re.search(r"\b2 passed\b", summary), output[-6000:]
     assert re.search(r"\b1 error\b", summary), output[-6000:]
     assert "failed" not in summary, output[-6000:]
