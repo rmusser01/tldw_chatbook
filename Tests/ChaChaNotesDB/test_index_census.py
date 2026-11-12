@@ -30,11 +30,11 @@ divergence the parity sweep normalizes away is also caught.
 
 UNIQUE-ness decisions (AC #2): the UNIQUE flag is pinned for ALL indexes via
 ``IndexPin.unique`` — losing UNIQUE silently legalizes duplicate rows that
-application code assumes cannot exist, so every one of the twenty-six is treated
-as integrity-bearing:
+application code assumes cannot exist, so every UNIQUE index is treated as
+integrity-bearing:
 
-* ``idx_canvas_revisions_canvas_sequence`` — one monotonic sequence position
-  per Canvas, including sibling branches.
+* ``uq_canvas_revisions_single_root`` — one root revision per Canvas (partial).
+  The non-unique sequence index lets sibling revisions share a position.
 * ``character_conversation_search_one_ready_generation`` — at most one ready
   character-search projection generation per data authority (partial).
 * ``uq_canvas_documents_id_conversation`` — supports the same-owner composite
@@ -149,7 +149,7 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
         "canvas_documents", False, ("conversation_id", "deleted", "created_at", "id")
     ),
     "idx_canvas_revisions_canvas_sequence": IndexPin(
-        "canvas_revisions", True, ("canvas_id", "sequence")
+        "canvas_revisions", False, ("canvas_id", "sequence", "id")
     ),
     "idx_canvas_revisions_origin_message": IndexPin(
         "canvas_revisions", False, ("origin_message_id", "canvas_id", "sequence")
@@ -204,6 +204,15 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
         "console_conversation_memory_selections",
         False,
         ("conversation_id", "active", "sequence"),
+    ),
+    "idx_console_mixin_attempt_assistant": IndexPin(
+        "console_prompt_mixin_attempts", False, ("assistant_message_id",)
+    ),
+    "idx_console_mixin_attempt_user": IndexPin(
+        "console_prompt_mixin_attempts", False, ("user_message_id",)
+    ),
+    "idx_console_mixin_revision_digest": IndexPin(
+        "console_prompt_mixin_revisions", False, ("conversation_id", "digest")
     ),
     "idx_console_trace_artifacts_identity": IndexPin(
         "console_trace_artifacts",
@@ -334,6 +343,9 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
     ),
     "idx_conversations_archive": IndexPin(
         "conversations", False, ("archived", "deleted", "last_modified", "id")
+    ),
+    "idx_conversations_archive_chronology": IndexPin(
+        "conversations", False, ("deleted", "archived", "archived_at", "id")
     ),
     "idx_conversations_archived_browse_order": IndexPin(
         "conversations", False, ("archived", "last_modified", "id")
@@ -596,6 +608,9 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
         "keyword_collections", True, ("sync_id",)
     ),
     "uq_keywords_sync_id": IndexPin("keywords", True, ("sync_id",)),
+    "uq_canvas_revisions_single_root": IndexPin(
+        "canvas_revisions", True, ("canvas_id",)
+    ),
     "uq_console_trace_calls_idempotency": IndexPin(
         "console_trace_calls", True, ("idempotency_key",)
     ),
