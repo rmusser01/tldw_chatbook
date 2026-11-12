@@ -36,6 +36,7 @@ class _CapturingHost(App[None]):
         return super().post_message(message)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_studio_preferences_action_is_visible_and_reachable() -> None:
     app = _CapturingHost()
@@ -48,6 +49,7 @@ async def test_studio_preferences_action_is_visible_and_reachable() -> None:
         assert pane.region.contains_region(button.region)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_playground_opens_studio_editor_without_writing_global_defaults() -> None:
     app = _CapturingHost()

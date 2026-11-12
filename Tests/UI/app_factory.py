@@ -303,6 +303,7 @@ def _build_test_app(
     preserve_profile_admission: bool = False,
     config_overrides: Mapping[str, Any] | None = None,
     user_data_dir: Path | None = None,
+    tts_profiles_db_path: Path | None = None,
 ) -> TldwCli:
     """Build a TldwCli instance with every real I/O seam faked out.
 
@@ -316,6 +317,8 @@ def _build_test_app(
         user_data_dir: Existing private test profile directory. Factory-created
             handles still retire through exact-owner cleanup; the caller owns
             directory deletion. Defaults to a fresh factory-owned directory.
+        tts_profiles_db_path: Path captured by the lazy TTS profile repository.
+            Defaults to the profile database inside the app's test directory.
         preserve_profile_admission: Defaults to False, which clears
             ``library_new_profile_admission``. `app.py` sets that flag from
             `first_profile_created_this_session()`, and the per-test config
@@ -502,7 +505,7 @@ def _build_test_app(
             # TASK-33665: read in `__init__`, opened lazily on first TTS use.
             patch_app_global(
                 "get_tts_profiles_db_path",
-                return_value=user_data_dir / "tts_profiles.sqlite",
+                return_value=tts_profiles_db_path or user_data_dir / "tts_profiles.sqlite",
             ),
             patch(
                 "tldw_chatbook.Video_Generation.video_store.get_user_data_dir",

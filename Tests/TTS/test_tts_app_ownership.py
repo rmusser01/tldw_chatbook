@@ -158,6 +158,7 @@ def test_tts_package_exports_profile_repository_owner() -> None:
     assert tts_package.TTSProfileRepository is TTSProfileRepository
 
 
+@pytest.mark.bootstrap_profile
 def test_app_captures_profile_repository_path_without_constructing_owner(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -171,26 +172,14 @@ def test_app_captures_profile_repository_path_without_constructing_owner(
         return repository
 
     monkeypatch.setattr(
-        app_module,
-        "get_tts_profiles_db_path",
-        Mock(return_value=database_path),
-        raising=False,
-    )
-    monkeypatch.setattr(
         profile_repository_module,
         "TTSProfileRepository",
         build_repository,
         raising=False,
     )
     _isolate_constructor_paths(monkeypatch, tmp_path)
-    monkeypatch.setattr(
-        app_module,
-        "get_tts_profiles_db_path",
-        Mock(return_value=database_path),
-        raising=False,
-    )
 
-    app = _build_test_app()
+    app = _build_test_app(tts_profiles_db_path=database_path)
 
     assert repositories == []
     assert app._tts_profile_repository is None
@@ -1276,6 +1265,7 @@ def test_profile_service_owns_only_existing_app_dependencies() -> None:
     assert not hasattr(TldwCli, "_close_tts_profile_service")
 
 
+@pytest.mark.bootstrap_profile
 def test_app_constructs_one_tts_service(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1292,6 +1282,7 @@ def test_app_constructs_one_tts_service(
     builder.assert_called_once_with(app.app_config)
 
 
+@pytest.mark.bootstrap_profile
 def test_app_construction_keeps_audio_cpp_import_and_all_adapters_lazy(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

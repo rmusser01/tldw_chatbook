@@ -547,6 +547,7 @@ async def test_console_tts_metrics_use_only_the_safe_slice_one_allowlist(
     await handler.cleanup_tts_resources()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_invalid_initial_provider_is_unconfigured_without_private_metrics(
     monkeypatch: pytest.MonkeyPatch,

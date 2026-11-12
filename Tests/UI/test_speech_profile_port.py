@@ -76,6 +76,7 @@ def test_the_pane_inherits_rather_than_redefining(name):
     assert getattr(SpeechPlaygroundPane, name) is getattr(SpeechProfileMixin, name)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("control", PROFILE_CONTROLS)
 async def test_the_profile_controls_are_mounted(control):
@@ -88,6 +89,7 @@ async def test_the_profile_controls_are_mounted(control):
         assert app.query(f"#{control}"), f"{control} is not mounted"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_profile_state_exists_before_any_action():
     """dev's methods read these without guards."""

@@ -20,6 +20,7 @@ from tldw_chatbook.UI.Screens.stats_screen import StatCard, StatsScreen
 _APP_CSS = str(Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stats_screen_renders_stat_cards_with_real_db(tmp_path):
     """The mounted screen lays out visible StatCards under the real app CSS."""

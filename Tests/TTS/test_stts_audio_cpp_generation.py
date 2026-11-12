@@ -530,6 +530,7 @@ def test_generation_event_owns_one_immutable_request_snapshot() -> None:
         event.request.options["nested"]["value"] = 2  # type: ignore[index]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_playground_captures_audio_cpp_request_before_controls_change(
     monkeypatch: pytest.MonkeyPatch,
@@ -570,6 +571,7 @@ async def test_playground_captures_audio_cpp_request_before_controls_change(
         assert dict(request.options) == {}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_playground_shortcut_does_not_replace_active_operation(
     monkeypatch: pytest.MonkeyPatch,
@@ -600,6 +602,7 @@ async def test_playground_shortcut_does_not_replace_active_operation(
         assert len(app.generation_events) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_playground_shortcut_rejects_stale_configuration_revision(
     monkeypatch: pytest.MonkeyPatch,
@@ -626,6 +629,7 @@ async def test_playground_shortcut_rejects_stale_configuration_revision(
         assert app.generation_events == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_playground_stores_delivered_artifact_not_current_selectors(
     monkeypatch: pytest.MonkeyPatch,
@@ -677,6 +681,7 @@ async def test_playground_stores_delivered_artifact_not_current_selectors(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_audio_cpp_playground_runs_end_to_end_through_handler(
     monkeypatch: pytest.MonkeyPatch,
@@ -717,6 +722,7 @@ async def test_audio_cpp_playground_runs_end_to_end_through_handler(
     await app._stts_handler.cleanup_tts_resources()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_catalog_refresh_does_not_cancel_handler_generation(
     monkeypatch: pytest.MonkeyPatch,

@@ -628,6 +628,7 @@ async def test_revert_and_reset_restore_only_the_studio_scope() -> None:
     assert not app.global_saves
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reset_to_global_discards_the_bounded_playground_draft() -> None:
     """A reset must not leave stale exact axes ahead of inherited globals."""

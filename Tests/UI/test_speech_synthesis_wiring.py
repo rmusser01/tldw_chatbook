@@ -43,6 +43,7 @@ def test_synthesis_comes_from_the_shared_mixin():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_generate_invokes_the_synthesis_path(monkeypatch):
     """The wiring this whole phase turns on.
@@ -73,6 +74,7 @@ async def test_pressing_generate_invokes_the_synthesis_path(monkeypatch):
     assert called == [True], "Generate did not reach the synthesis path"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_synthesis_state_exists_before_any_press():
     """`_generate_tts` reads these four with no guard; a host that forgets

@@ -150,6 +150,7 @@ async def test_alltalk_advertises_endpoint_aliases_instead_of_native_speakers():
         assert tuple(await backend.list_voices()) == _PINNED_ALLTALK_VOICES
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("dtype_name", ("float32", "float16", "bfloat16"))
 async def test_higgs_configured_dtype_reaches_pinned_v2_constructor(
@@ -191,6 +192,7 @@ async def test_higgs_configured_dtype_reaches_pinned_v2_constructor(
         await backend.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_higgs_retains_legacy_dtype_constructor_support(tmp_path):
     torch = pytest.importorskip("torch")
