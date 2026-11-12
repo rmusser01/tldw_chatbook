@@ -558,6 +558,88 @@ def test_workspace_guard_projects_late_executor_refusal(tmp_path):
     assert result.approval_decision is None
 
 
+@pytest.mark.parametrize("record_evidence", [False, True])
+def test_workspace_guard_retires_native_call_after_prelaunch_refusal(
+    tmp_path, monkeypatch, record_evidence
+):
+    from contextvars import Context
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.run_context import use_run_id
+    from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+    from tldw_chatbook.Chat.console_raw_cli import RawCliRuntime
+    from tldw_chatbook.Tools import raw_cli_executor
+    from tldw_chatbook.Utils import platform_files
+
+    runtime = RawCliRuntime(read_permitted=lambda: True)
+    assert runtime.arm().armed
+    runtime.grant_model_session("workspace-chat")
+    provider = RawShellToolProvider(
+        runtime=runtime,
+        console_session_id="workspace-chat",
+        initial_directory=lambda: tmp_path,
+        protected_roots=lambda: (tmp_path,),
+    )
+    registry = ToolCatalogRegistry()
+    registry.register_provider(provider)
+    # This path exercises native custody without launching a worker.
+    monkeypatch.setattr(platform_files, "supports_native_process_groups", lambda: True)
+    call = raw_cli_executor.capture_model_raw_cli(registry, "shell_exec")
+    assert call is not None
+
+    decisions = iter((None, "workspace-folder-wipe"))
+    monkeypatch.setattr(
+        raw_cli_executor,
+        "workspace_deletion_violation",
+        lambda *a, **k: next(decisions),
+    )
+
+    def unexpected_worker_setup(_limit):
+        pytest.fail("a refused command reached worker setup")
+
+    def unexpected_stopping():
+        pytest.fail("a prelaunch refusal entered the unproven cleanup wait")
+
+    monkeypatch.setattr(raw_cli_executor, "_open_spool", unexpected_worker_setup)
+    operation = SimpleNamespace(mark_stopping=unexpected_stopping)
+
+    if record_evidence:
+        from tldw_chatbook.Agents import workflow_task_scope
+        from tldw_chatbook.Agents.workflow_run_service import _TaskEvidence
+
+        authorization = SimpleNamespace(
+            claim=SimpleNamespace(launch_run_id="guard-run"), _binding_state=((None,),)
+        )
+        evidence = _TaskEvidence(service=None, authorization=authorization, inputs=None)
+        authorization._required_evidence = [evidence]
+        monkeypatch.setattr(
+            workflow_task_scope, "current_task_authorization", lambda: authorization
+        )
+        monkeypatch.setattr(workflow_task_scope, "check_task_provider", lambda *a: None)
+
+        def begin_shell(_provider, request):
+            observation = SimpleNamespace(
+                request=request, output=raw_cli_executor.RequiredCliOutput()
+            )
+            evidence.pending[request.invocation_id] = observation
+            return observation
+
+        monkeypatch.setattr(evidence, "begin_shell", begin_shell)
+
+    def invoke():
+        with use_run_id("guard-run"), call.activate(operation):
+            return provider.invoke("shell_exec", {"command": "echo harmless"})
+
+    # Keep a failure in the custody context from leaking into later tests.
+    result = Context().run(invoke)
+    assert result.outcome == "blocked", result.error
+    assert "workspace-folder-wipe" in result.error
+    assert call.operation is None
+    if record_evidence:
+        assert evidence.pending == {}
+        assert evidence.records == []
+
+
 def _workspace_guard_controller(runtime, store, registry=None):
     from types import SimpleNamespace
 

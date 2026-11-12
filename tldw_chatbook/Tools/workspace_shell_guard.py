@@ -1,5 +1,6 @@
 """Recognize common raw-shell deletes without evaluating shell code."""
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -30,6 +31,13 @@ class _Word:
 
 
 @dataclass(frozen=True, slots=True)
+class _Segment:
+    words: list[_Word]
+    separator: str
+    redirected: bool
+
+
+@dataclass(frozen=True, slots=True)
 class _Delete:
     path: str
     kind: _ItemKind = "item"
@@ -38,15 +46,16 @@ class _Delete:
     prune_parents: bool = False
 
 
-def _segments(command: str, dialect: ShellDialect) -> list[tuple[list[_Word], str]]:
+def _segments(command: str, dialect: ShellDialect) -> list[_Segment]:
     """Split simple commands while preserving literal and wildcard operands."""
-    segments: list[tuple[list[_Word], str]] = []
+    segments: list[_Segment] = []
     words: list[_Word] = []
     chars: list[str] = []
     wildcards: list[int] = []
     quote = ""
     nesting = 0
     dynamic = starts_quoted = quoted_word = opaque = started = redirecting = False
+    redirected = literal_call = False
     escape = {"bash": "\\", "powershell": chr(96), "cmd": "^"}[dialect]
     quotes = '"' if dialect == "cmd" else "\"'"
     separators = "&|\n" if dialect == "cmd" else ";&|\n"
@@ -56,7 +65,12 @@ def _segments(command: str, dialect: ShellDialect) -> list[tuple[list[_Word], st
         if started:
             if not redirecting:
                 words.append(
-                    _Word("".join(chars), tuple(wildcards), dynamic, starts_quoted)
+                    _Word(
+                        "".join(chars),
+                        tuple(wildcards),
+                        dynamic,
+                        starts_quoted and not (literal_call and not words),
+                    )
                 )
             redirecting = False
         chars.clear()
@@ -153,6 +167,7 @@ def _segments(command: str, dialect: ShellDialect) -> list[tuple[list[_Word], st
                 finish_word()
                 opaque |= redirecting
                 redirecting = True
+                redirected = True
                 if char == "&":
                     char = ">"
                     i += 1
@@ -171,13 +186,23 @@ def _segments(command: str, dialect: ShellDialect) -> list[tuple[list[_Word], st
                 nesting = max(nesting - 1, 0)
                 opaque = True
             if not nesting and char in separators:
+                if (
+                    dialect == "powershell"
+                    and char == "&"
+                    and following != "&"
+                    and not (words or started or redirecting or literal_call)
+                ):
+                    literal_call = True
+                    continue
                 finish_word()
                 if char in "&|" and following == char:
                     char += following
                     i += 1
-                segments.append(([] if opaque or redirecting else words, char))
+                segments.append(
+                    _Segment([] if opaque or redirecting else words, char, redirected)
+                )
                 words = []
-                opaque = redirecting = False
+                opaque = redirecting = redirected = literal_call = False
                 continue
             if char.isspace() or (dialect == "powershell" and char == ","):
                 finish_word()
@@ -193,7 +218,11 @@ def _segments(command: str, dialect: ShellDialect) -> list[tuple[list[_Word], st
         chars.append(char)
         started = True
     finish_word()
-    segments.append(([] if quote or nesting or opaque or redirecting else words, ""))
+    segments.append(
+        _Segment(
+            [] if quote or nesting or opaque or redirecting else words, "", redirected
+        )
+    )
     return segments
 
 
@@ -206,6 +235,21 @@ def _name(words: list[_Word], dialect: ShellDialect) -> str:
     if dialect == "bash":
         return first.text.rsplit("/", 1)[-1]
     return first.text.replace("\\", "/").rsplit("/", 1)[-1].lstrip("@").casefold()
+
+
+def _literal_builtin(segment: _Segment, dialect: ShellDialect) -> str:
+    words = segment.words
+    if not words or segment.redirected or any(word.dynamic for word in words):
+        return ""
+    if dialect == "powershell" and words[0].starts_quoted:
+        return ""
+    if dialect == "bash":
+        return words[0].text
+    return words[0].text.lstrip("@").casefold()
+
+
+def _is_location(name: str, dialect: ShellDialect) -> bool:
+    return name in (_PS_LOCATION if dialect == "powershell" else {"cd", "chdir"})
 
 
 def _operand(
@@ -225,7 +269,8 @@ def _operand(
     text = word.text.rstrip(separators)
     start = max(text.rfind(sep) for sep in separators) + 1
     leaf = text[start:]
-    if leaf == "*" and word.wildcards == (start,):
+    all_stars = leaf == "*" or (dialect == "bash" and leaf and not leaf.strip("*"))
+    if all_stars and word.wildcards == tuple(range(start, len(text))):
         return _Delete(text[:start] or ".", kind, recursive, children=True)
     if dialect == "cmd" and leaf == "*.*" and word.wildcards == (start, start + 2):
         return _Delete(text[:start] or ".", kind, recursive, children=True)
@@ -372,30 +417,87 @@ def _path(value: str, cwd: Path | None, dialect: ShellDialect) -> Path | None:
 
 def _changed_directory(
     args: list[_Word], cwd: Path | None, dialect: ShellDialect
-) -> Path | None:
+) -> tuple[Path | None, bool | None]:
+    """Return the new directory and the known status of a literal location change."""
     literal = False
     switch_drive = False
     if dialect == "powershell":
         parsed = _ps_arguments(args)
         if parsed is None:
-            return None
+            return None, None
         args, literal, _ = parsed
     elif args and args[0].text.casefold() == ("/d" if dialect == "cmd" else "--"):
         switch_drive = dialect == "cmd"
         args = args[1:]
     if len(args) != 1 or args[0].dynamic or (args[0].wildcards and not literal):
-        return None
+        return None, None
     path = _path(args[0].text, cwd, dialect)
     if path is None:
-        return None
+        return None, None
+    if not path.is_dir():
+        return cwd, False
     if (
         dialect == "cmd"
         and not switch_drive
         and cwd is not None
-        and path.drive != cwd.drive
+        and path.drive.casefold() != cwd.drive.casefold()
     ):
-        return cwd
-    return path.resolve() if path.is_dir() else cwd
+        return cwd, True
+    return path.resolve(), True
+
+
+def _directory_options(
+    segments: list[_Segment], dialect: ShellDialect, cwd: Path
+) -> Iterator[set[Path | None]]:
+    """Track literal working directories through simple success and fallback chains."""
+    active: set[Path | None] = {cwd}
+    skipped: set[Path | None] = set()
+    preceding = ""
+    in_pipeline = False
+    for segment in segments:
+        yield active
+        words, separator = segment.words, segment.separator
+        if separator == "|":
+            in_pipeline = True
+            continue
+        if (
+            _is_location(_name(words, dialect), dialect)
+            and not in_pipeline
+            and (separator != "&" or dialect == "cmd")
+        ):
+            succeeded: set[Path | None] = set()
+            failed: set[Path | None] = set()
+            for directory in active:
+                target, success = _changed_directory(words[1:], directory, dialect)
+                if success is not False:
+                    succeeded.add(target)
+                if success is not True:
+                    failed.add(directory)
+        else:
+            builtin = (
+                _literal_builtin(segment, dialect)
+                if dialect == "bash" and not in_pipeline
+                else ""
+            )
+            succeeded = set(active) if builtin != "false" else set()
+            failed = set(active) if builtin != "true" else set()
+        if preceding == "||":
+            succeeded.update(skipped)
+        elif preceding == "&&":
+            failed.update(skipped)
+        if separator == "&&":
+            active, skipped = succeeded, failed
+        elif separator == "||":
+            active, skipped = failed, succeeded
+        else:
+            active, skipped = succeeded | failed, set()
+        # More than two possible locations indicates a compound branch.
+        if len(active) > 2:
+            active = {None}
+        if len(skipped) > 2:
+            skipped = {None}
+        preceding = separator
+        in_pipeline = False
 
 
 def _entry_path(path: Path) -> Path:
@@ -457,6 +559,102 @@ def _empties_root(root: Path, covered: set[Path]) -> bool:
         return False
 
 
+def _removed_child(
+    root: Path, entry: Path, deletion: _Delete, named_parents: tuple[Path, ...]
+) -> Path | None:
+    if _same_entry(entry.parent, root):
+        return entry if _removes_child(entry, deletion) else None
+    if not any(_same_entry(parent.parent, root) for parent in named_parents):
+        return None
+    if not _removes_child(entry, deletion):
+        return None
+    for parent in named_parents:
+        if not _same_entry(entry.parent, parent) or not _empties_root(parent, {entry}):
+            return None
+        if _same_entry(parent.parent, root):
+            return parent
+        entry = parent
+    return None
+
+
+def _check_deletions(
+    deletes: list[_Delete | None],
+    directory: Path | None,
+    dialect: ShellDialect,
+    protected_roots: tuple[Path, ...],
+    roots: dict[Path, set[Path]],
+    covered: dict[Path, set[Path]],
+) -> WorkspaceDeletionRule | None:
+    for deletion in deletes:
+        if (
+            deletion is None
+            or (path := _path(deletion.path, directory, dialect)) is None
+        ):
+            continue
+        if not roots:
+            for bound in protected_roots:
+                root = bound.resolve()
+                roots.setdefault(root, {root}).add(_entry_path(bound))
+        entry = _entry_path(path)
+        children = deletion.children or (
+            deletion.kind == "cmd-file"
+            and (
+                path.is_dir()
+                or any(
+                    _same_entry(entry, alias)
+                    for names in roots.values()
+                    for alias in names
+                )
+            )
+        )
+        if children:
+            entry = path.resolve()
+        # rmdir -p names the parents in its operand, stopping before the
+        # implicit cwd of a relative path. It does not prune every
+        # ancestor of the resolved path.
+        named_parents = (
+            tuple(
+                _entry_path(parent_path)
+                for parent in Path(deletion.path).parents
+                if parent.name
+                and (parent_path := _path(str(parent), directory, dialect)) is not None
+            )
+            if deletion.prune_parents
+            else ()
+        )
+        for root, aliases in roots.items():
+            if any(_same_entry(entry, alias) for alias in aliases):
+                return (
+                    "workspace-folder-wipe" if children else "workspace-folder-delete"
+                )
+            contains_root = any(
+                _same_entry(entry, parent)
+                for alias in aliases
+                for parent in alias.parents
+            )
+            if contains_root and deletion.recursive:
+                return (
+                    "workspace-folder-wipe"
+                    if deletion.kind == "cmd-file"
+                    else "workspace-folder-delete"
+                )
+            if children and deletion.kind != "file" and deletion.kind != "cmd-file":
+                if any(_same_entry(entry, alias.parent) for alias in aliases):
+                    return "workspace-folder-delete"
+            if children:
+                continue
+            if any(
+                _same_entry(parent, alias)
+                for parent in named_parents
+                for alias in aliases
+            ):
+                return "workspace-folder-delete"
+            removed = _removed_child(root, entry, deletion, named_parents)
+            if removed is not None:
+                covered.setdefault(root, set()).add(removed)
+    return None
+
+
 def workspace_deletion_violation(
     command: str,
     *,
@@ -478,103 +676,48 @@ def workspace_deletion_violation(
     if not protected_roots:
         return None
     segments = _segments(command, dialect)
-    directory: Path | None = cwd
     roots: dict[Path, set[Path]] = {}
     covered: dict[Path, set[Path]] = {}
-    preceding = ""
-    for i, (words, separator) in enumerate(segments):
+    for i, (segment, directories) in enumerate(
+        zip(segments, _directory_options(segments, dialect, cwd), strict=True)
+    ):
+        if not directories:
+            continue
+        words, separator = segment.words, segment.separator
         name = _name(words, dialect)
         args = words[1:]
-        is_location = name in (
-            _PS_LOCATION if dialect == "powershell" else {"cd", "chdir"}
-        )
-        if is_location and preceding != "|" and separator != "|":
-            directory = _changed_directory(args, directory, dialect)
         if dialect == "powershell":
-            piped = segments[i + 1][0] if separator == "|" else None
+            piped = segments[i + 1].words if separator == "|" else None
             deletes = _powershell_deletes(name, args, piped)
         elif dialect == "cmd":
             deletes = _cmd_deletes(name, args)
         else:
             deletes = _bash_deletes(name, args)
 
-        for deletion in deletes:
-            if (
-                deletion is None
-                or (path := _path(deletion.path, directory, dialect)) is None
+        for directory in directories:
+            # A compound working-directory choice does not share child
+            # coverage across its alternatives.
+            affected = covered if len(directories) == 1 else {}
+            violation = _check_deletions(
+                deletes, directory, dialect, protected_roots, roots, affected
+            )
+            if violation is not None:
+                return violation
+            if affected is not covered and any(
+                _empties_root(root, entries) for root, entries in affected.items()
             ):
-                continue
-            if not roots:
-                for bound in protected_roots:
-                    root = bound.resolve()
-                    roots.setdefault(root, {root}).add(_entry_path(bound))
-            entry = _entry_path(path)
-            children = deletion.children or (
-                deletion.kind == "cmd-file"
-                and (
-                    path.is_dir()
-                    or any(
-                        _same_entry(entry, alias)
-                        for names in roots.values()
-                        for alias in names
-                    )
-                )
-            )
-            if children:
-                entry = path.resolve()
-            # rmdir -p names the parents in its operand, stopping before the
-            # implicit cwd of a relative path. It does not prune every
-            # ancestor of the resolved path.
-            named_parents = (
-                tuple(
-                    _entry_path(parent_path)
-                    for parent in Path(deletion.path).parents
-                    if parent.name
-                    and (parent_path := _path(str(parent), directory, dialect))
-                    is not None
-                )
-                if deletion.prune_parents
-                else ()
-            )
-            for root, aliases in roots.items():
-                if any(_same_entry(entry, alias) for alias in aliases):
-                    return (
-                        "workspace-folder-wipe"
-                        if children
-                        else "workspace-folder-delete"
-                    )
-                contains_root = any(
-                    _same_entry(entry, parent)
-                    for alias in aliases
-                    for parent in alias.parents
-                )
-                if contains_root and deletion.recursive:
-                    return (
-                        "workspace-folder-wipe"
-                        if deletion.kind == "cmd-file"
-                        else "workspace-folder-delete"
-                    )
-                if children and deletion.kind != "file" and deletion.kind != "cmd-file":
-                    if any(_same_entry(entry, alias.parent) for alias in aliases):
-                        return "workspace-folder-delete"
-                if children:
-                    continue
-                if any(
-                    _same_entry(parent, alias)
-                    for parent in named_parents
-                    for alias in aliases
-                ):
-                    return "workspace-folder-delete"
-                if _same_entry(entry.parent, root) and _removes_child(entry, deletion):
-                    covered.setdefault(root, set()).add(entry)
+                return "workspace-folder-wipe"
 
+        preserves_children = (
+            _is_location(name, dialect) or _literal_builtin(segment, dialect) == "echo"
+        )
         if (
-            (not deletes and not is_location)
+            len(directories) != 1
+            or (not deletes and not preserves_children)
             or separator in {"", "||", "|"}
             or (separator == "&" and dialect != "cmd")
         ):
             if any(_empties_root(root, entries) for root, entries in covered.items()):
                 return "workspace-folder-wipe"
             covered.clear()
-        preceding = separator
     return None
