@@ -33,6 +33,7 @@ from textual.widgets import Button, Input
 from Tests.UI.library_notes_bulk_support import (
     RENDERED,
     TRIP_TITLES,
+    click_settled,
     enter_select_mode,
     folder_row,
     mounted,
@@ -42,6 +43,7 @@ from Tests.UI.library_notes_bulk_support import (
     row_for,
     strip_text,
     until,
+    until_settled,
 )
 from tldw_chatbook.Widgets.Library.library_note_folder_dialog import (
     LibraryNoteFolderTargetDialog,
@@ -71,7 +73,9 @@ async def test_select_all_names_the_rendered_count_and_selects_exactly_that_many
             f"{strip_text(host, screen)!r}",
         )
 
-        await pilot.click("#library-notes-select-all")
+        await click_settled(
+            host, pilot, screen, "#library-notes-select-all", "Select all"
+        )
         await until(
             pilot,
             lambda: f"{RENDERED} selected" in painted(host),
@@ -81,18 +85,26 @@ async def test_select_all_names_the_rendered_count_and_selects_exactly_that_many
         assert all(str(row.label).startswith("☑") for row in note_rows(screen))
 
         # Export and back: the strip still names the rows it would select.
-        await pilot.click("#library-notes-export-selected")
+        await click_settled(
+            host, pilot, screen, "#library-notes-export-selected", "Export selected"
+        )
         await until(
             pilot,
             lambda: bool(screen.query("#library-export-submit")),
             lambda: f"the export canvas: {painted(host)}",
         )
         await pilot.press("escape")
-        await until(
+        await until_settled(
             pilot,
+            screen,
             lambda: f"Select all {RENDERED} shown" in strip_text(host, screen),
             lambda: f"the strip after Export: {strip_text(host, screen)!r}",
         )
+        # Where Done sits at 160x45, to click it only once the round trip
+        # below has laid the wide shell out again (PR #3423 CI: the click
+        # right after the resize back hit the transitional layout -- the
+        # rail's All artifacts row -- and Done never came).
+        wide_done = screen.query_one("#library-notes-select-toggle").region
 
         # The compact spelling counts the same rows (the in-place path read
         # the flat list: "All 28").
@@ -106,9 +118,18 @@ async def test_select_all_names_the_rendered_count_and_selects_exactly_that_many
         await pilot.resize_terminal(*WIDE)
 
         # A filter: Done, filter Trip, Select -- three rows, three selected.
-        await pilot.click("#library-notes-select-toggle")
+        await click_settled(
+            host,
+            pilot,
+            screen,
+            "#library-notes-select-toggle",
+            "Done",
+            region=wide_done,
+        )
         await until(pilot, lambda: not screen._notes_state.select_mode, "Done")
-        await pilot.click("#library-notes-filter")
+        # Done rebuilt the list pane; the new filter has no region until the
+        # next layout, and a click before it lands at (0, 0), the Home tab.
+        await click_settled(host, pilot, screen, "#library-notes-filter", "the filter")
         await pilot.press(*"Trip", "enter")
         await until(
             pilot,
@@ -122,8 +143,12 @@ async def test_select_all_names_the_rendered_count_and_selects_exactly_that_many
             lambda: "Select all 3 shown" in strip_text(host, screen),
             lambda: f"'Select all 3 shown': {strip_text(host, screen)!r}",
         )
-        await pilot.click("#library-notes-select-all")
-        await until(pilot, lambda: "3 selected" in painted(host), "'3 selected'")
+        await click_settled(
+            host, pilot, screen, "#library-notes-select-all", "Select all"
+        )
+        await until_settled(
+            pilot, screen, lambda: "3 selected" in painted(host), "'3 selected'"
+        )
         assert _selected(screen) == 3
 
         # A real key still works: Escape leaves select mode.

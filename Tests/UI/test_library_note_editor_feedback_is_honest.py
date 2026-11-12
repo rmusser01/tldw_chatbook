@@ -27,6 +27,7 @@ import pytest
 from textual.widgets import Button, Input
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.library_notes_bulk_support import notes_settled
 from Tests.UI.library_quit_guard_support import (
     SIZE,
     _armed_editor,
@@ -174,15 +175,28 @@ async def _back_on_screen(host, screen, pilot) -> None:
 async def _focus_settles_on(
     host, screen, pilot, control: str, chip: str, *, after: str
 ) -> None:
-    """Focus is on ``control`` and the footer says Enter there does ``chip``."""
-    await _wait(
-        pilot,
-        lambda: _focused_id(screen) == control and chip in _footer(host, screen),
-        lambda: (
-            f"focus on #{control} after {after} (focus: #{_focused_id(screen)}, "
-            f"footer: {_footer(host, screen)!r})"
-        ),
-    )
+    """Focus is on ``control``, the footer says Enter there does ``chip``, and
+    Notes is settled, so the next key reaches ``control``.
+
+    PR #3423 CI: closing the export picker resumes the screen into a visit
+    refresh whose reads land later and rebuild the editor, each rebuild
+    parking focus on the items grip until the replay hands it back. Focus
+    sat on the button between two rebuilds, Enter reached the grip, and the
+    picker never re-opened. Confirmed after one full message flush
+    (``notes_settled``).
+    """
+    for _ in range(2):
+        await _wait(
+            pilot,
+            lambda: _focused_id(screen) == control
+            and chip in _footer(host, screen)
+            and notes_settled(screen),
+            lambda: (
+                f"focus on #{control} after {after} on a settled screen (focus: "
+                f"#{_focused_id(screen)}, footer: {_footer(host, screen)!r})"
+            ),
+        )
+        await pilot.pause()
 
 
 async def test_dismissing_the_export_dialog_leaves_no_failure_copy_and_one_toast(
@@ -270,6 +284,9 @@ async def test_focus_returns_to_the_control_that_started_the_export(
         assert pushes == ["FileSave"]
         await pilot.press("escape")
         await _back_on_screen(host, screen, pilot)
+        # The picker's close restores focus before the cancel releases the
+        # export's token; an Enter in between is refused as a second export.
+        await _wait(pilot, lambda: CANCELLED in toasts, "the export's cancel")
         await _focus_settles_on(
             host, screen, pilot, EXPORT_MD, "export Markdown",
             after="the cancelled export",
