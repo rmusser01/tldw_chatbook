@@ -187,6 +187,14 @@ def _segments(command: str, dialect: ShellDialect) -> list[_Segment]:
                 opaque = True
             if not nesting and char in separators:
                 if (
+                    char == "\n"
+                    and dialect != "cmd"
+                    and not (words or started or opaque or redirecting or literal_call)
+                    and segments
+                    and segments[-1].separator in {"&&", "||", "|"}
+                ):
+                    continue
+                if (
                     dialect == "powershell"
                     and char == "&"
                     and following != "&"
@@ -471,7 +479,7 @@ def _directory_options(
                 target, success = _changed_directory(words[1:], directory, dialect)
                 if success is not False:
                     succeeded.add(target)
-                if success is not True:
+                if success is not True or segment.redirected:
                     failed.add(directory)
         else:
             builtin = (
@@ -708,8 +716,19 @@ def workspace_deletion_violation(
             ):
                 return "workspace-folder-wipe"
 
-        preserves_children = (
-            _is_location(name, dialect) or _literal_builtin(segment, dialect) == "echo"
+        builtin = _literal_builtin(segment, dialect)
+        literal_output = (
+            builtin == "echo"
+            or (dialect == "powershell" and builtin == "write-output")
+            or (
+                dialect == "bash"
+                and builtin == "printf"
+                and args
+                and not args[0].text.startswith("-")
+            )
+        )
+        preserves_children = not segment.redirected and (
+            _is_location(name, dialect) or literal_output
         )
         if (
             len(directories) != 1

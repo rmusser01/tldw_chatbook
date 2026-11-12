@@ -35,6 +35,7 @@ def bound_roots(tmp_path: Path) -> tuple[Path, Path]:
         ("bash", "rm -r src .keep", "workspace-folder-wipe"),
         ("bash", "rm -r src; rm .keep", "workspace-folder-wipe"),
         ("bash", "rm -r src; echo done; rm .keep", "workspace-folder-wipe"),
+        ("bash", "rm -r src; printf '%s' done; rm .keep", "workspace-folder-wipe"),
         ("bash", "rm -r src\nrm .keep", "workspace-folder-wipe"),
         (
             "bash",
@@ -66,7 +67,17 @@ def bound_roots(tmp_path: Path) -> tuple[Path, Path]:
         ),
         (
             "powershell",
+            "Remove-Item -Recurse src; Write-Output done; Remove-Item .keep",
+            "workspace-folder-wipe",
+        ),
+        (
+            "powershell",
             "Get-ChildItem -Force | Remove-Item -Recurse -Force",
+            "workspace-folder-wipe",
+        ),
+        (
+            "powershell",
+            "Get-ChildItem -Force |\n# Continue the pipeline\nRemove-Item -Recurse",
             "workspace-folder-wipe",
         ),
         (
@@ -178,13 +189,16 @@ def test_missing_binding_still_protects_its_location(tmp_path):
         ("probe", "workspace-folder-wipe"),
     ],
 )
-def test_fallback_location_respects_command_reachability(bound_roots, status, expected):
+@pytest.mark.parametrize("continuation", [" ", "\n# Continue the fallback\n"])
+def test_fallback_location_respects_command_reachability(
+    bound_roots, status, expected, continuation
+):
     root, _ = bound_roots
     sibling = root.parent / "unbound project"
     sibling.mkdir()
     assert (
         workspace_deletion_violation(
-            f'{status} || cd "{root.as_posix()}"; rm -r ./*',
+            f'{status} ||{continuation}cd "{root.as_posix()}"; rm -r ./*',
             dialect="bash",
             cwd=sibling,
             protected_roots=(root,),
@@ -199,7 +213,22 @@ def test_skipped_fallback_leaves_bound_working_directory(bound_roots):
     sibling.mkdir()
     assert (
         workspace_deletion_violation(
-            f'true || cd "{sibling.as_posix()}"; rm -r ./*',
+            f'true ||\ncd "{sibling.as_posix()}"; rm -r ./*',
+            dialect="bash",
+            cwd=root,
+            protected_roots=(root,),
+        )
+        == "workspace-folder-wipe"
+    )
+
+
+def test_fallback_after_a_redirected_location_can_reach_the_binding(bound_roots):
+    root, _ = bound_roots
+    sibling = root.parent / "unbound project"
+    sibling.mkdir()
+    assert (
+        workspace_deletion_violation(
+            f'cd "{sibling.as_posix()}" > missing/status.txt || rm -r ./*',
             dialect="bash",
             cwd=root,
             protected_roots=(root,),
