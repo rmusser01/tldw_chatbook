@@ -48,6 +48,14 @@ SAVING_COPY = "Saving…"
 SaveToLibrary = Callable[[str, str], Awaitable[str]]
 
 
+class _SaveStatus(Static):
+    """Save feedback that scrolls itself into view once its wrapped height is laid out."""
+
+    def on_resize(self) -> None:
+        if str(self.content):
+            self.scroll_visible(animate=False)
+
+
 class ConsoleSystemPromptModal(SafeModalDismissMixin, ModalScreen[Optional[str]]):
     """Edit (or clear) the active Console session's system prompt.
 
@@ -101,7 +109,7 @@ class ConsoleSystemPromptModal(SafeModalDismissMixin, ModalScreen[Optional[str]]
                     id=SAVE_LIBRARY_BUTTON_ID,
                     compact=True,
                 )
-            yield Static(
+            yield _SaveStatus(
                 "",
                 id=SAVE_STATUS_ID,
                 classes="console-system-prompt-row",
