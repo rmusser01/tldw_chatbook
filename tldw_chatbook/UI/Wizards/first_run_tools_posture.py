@@ -30,9 +30,10 @@ FILE_TOOL_NAMES = frozenset(
     {"read_file", "list_directory", "write_file", "glob_files", "grep_files"}
 )
 
-#: Where file tools can reach, and where a folder is added.
+#: Where file tools can reach, and where a folder is added. "Local": these
+#: tools never reach a Workspace's SSH folders (`allowed_file_roots`).
 WORKSPACE_HINT = (
-    "File tools only reach folders you add as a Workspace (Settings ▸ "
+    "File tools only reach local folders you add to a Workspace (Settings ▸ "
     "Workspaces) and the chat's scratch area."
 )
 
