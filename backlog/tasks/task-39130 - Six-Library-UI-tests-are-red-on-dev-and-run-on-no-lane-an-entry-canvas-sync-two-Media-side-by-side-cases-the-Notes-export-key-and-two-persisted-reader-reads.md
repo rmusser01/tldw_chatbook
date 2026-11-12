@@ -4,7 +4,7 @@ title: "Six Library UI tests are red on dev and run on no lane: an entry canvas 
 status: In Progress
 assignee:
 - '@claude'
-updated_date: '2026-11-10 17:25'
+updated_date: '2026-11-12 19:38'
 created_date: 2026-11-07 02:03
 labels:
 - follow-up
@@ -74,3 +74,4 @@ Found in round 11 of the 2026-10-23 burn-down; checked on dev 2684e5453f, 2026-1
 
 **Files.** `Tests/UI/test_library_canvas_sync_defects.py`, `Tests/UI/test_library_media_side_by_side.py`, `Tests/UI/test_library_notes_w5_kbd_focus.py`, `Tests/UI/test_library_media_reader_shell.py`, `tldw_chatbook/UI/Screens/library_screen.py`, `tldw_chatbook/UI/Library_Modules/library_notes_controller.py`, `Tests/Architecture/test_screen_size_ratchet.py`, `Tests/Architecture/test_library_modules_size_ratchet.py`, `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `Docs/User_Guide/library/notes.md` (Select all and Clear keep focus).
 
+**2026-11-12 (round-13 closeout).** The sixth node, `Tests/UI/test_library_media_side_by_side.py::test_compact_media_viewer_back_empty_page_focuses_recovery_control`, is still red at the round-13 stack top 8b633d0101 ("Empty viewer return did not focus the Import recovery action; focus is None."). TASK-40293 now owns its fix and its lane, together with the four Library shell entry-focus nodes that share the entry-focus arm.

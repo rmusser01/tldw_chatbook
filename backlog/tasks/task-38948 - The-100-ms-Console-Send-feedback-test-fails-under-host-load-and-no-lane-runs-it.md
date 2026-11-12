@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-05 21:35
-updated_date: 2026-11-12 18:49
+updated_date: '2026-11-12 19:38'
 labels:
 - follow-up
 - console
@@ -356,4 +356,5 @@ AC#1 is met on that tree. AC#4 remains open pending hosted qualification and re-
 - **Covering runs, `-n 4`, load 7-9.** The acknowledgement core, extended, resend guard, received-intent and sync-tick files: 68 passed. Preflight passes.
 
 **Dev-push watch committed (2026-11-12 restack).** The step "Watch the 100 ms Send-feedback nodes" is the last step of `library-shell-dev` in `.github/workflows/derived-artifacts.yml` (first shard only, the UI lane's flags; not in the required aggregate), pinned by `Tests/CI/test_derived_artifacts_workflow.py::test_library_shell_runs_by_node_on_dev_pushes_only_and_is_never_required`.
+**Round-13 closeout (2026-11-12): re-gating stays with AC#4.** The dev-push watch ("Watch the 100 ms Send-feedback nodes", last step of `library-shell-dev`) exists only in the round-13 stack (8b633d0101); origin/dev has no `library-shell-dev` job yet, so no CI run has executed it. Once the watch shows both nodes passing on dev pushes (the owner's 2026-11-10 ruling: "Re-gate it once it passes on CI"), put both nodes back on the UI census tail, drop the watch step and its pin in `Tests/CI/test_derived_artifacts_workflow.py`, and tick AC#4 with the lane time.
 <!-- SECTION:NOTES:END -->

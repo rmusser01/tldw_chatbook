@@ -3,6 +3,7 @@ id: TASK-40135
 title: "A replace restore makes restored Personal Context records readable"
 status: To Do
 created_date: 2026-11-10 17:13
+updated_date: '2026-11-12 19:38'
 labels:
 - follow-up
 - backup
@@ -63,3 +64,7 @@ Filed in round 13 of the 2026-10-23 burn-down from TASK-39148's owner-approved d
 - [ ] #9 A restore interrupted after the key step and finished with `recover --finish` or `--rollback` leaves the database's key reference naming an account that exists and holds its key; a test covers both
 - [ ] #10 The restore plan says, before the restore runs, whether Personal Context will be restored readable with its key or will end locked, and why
 <!-- AC:END -->
+
+## Implementation Notes
+
+**2026-11-12 (round-13 closeout): ADR-203.** ADR-203's model-disclosure grants have not shipped: the ADR is "Accepted (design only)", and `tldw_chatbook/` has no grant code. Grants are "encrypted, peer-local and never synchronize/export" (ADR-203 :30), and "Recovery never imports local grant authority" (:85). When they ship, their storage must stay out of the captured repository database, or a restore must drop them, with a test that pins it.

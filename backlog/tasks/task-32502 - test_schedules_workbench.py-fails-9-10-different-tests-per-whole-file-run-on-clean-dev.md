@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-09-11 10:30'
+updated_date: '2026-11-12 19:38'
 labels:
   - scheduling
   - tests
@@ -70,4 +71,5 @@ serially: `test_header_paints_checking…` fails 2/2 on BOTH trees;
 branch-only set is this file's instability, not the harness pin: every name
 also fails on dev alone, and the same five appear across the earlier dev
 whole-file runs (`sched-dev.txt`, `sched-dev-2.txt`).
+**2026-11-12 (round-13 closeout).** The same `NoMatches` shape reaches beyond `test_schedules_workbench.py`. TASK-39170's covering runs hit worker `NoMatches` races on DefinitionDetail and the task table, red at base too (node names not recorded). In production `_render_table` queries the task table unguarded (`schedules_workbench.py:1508`; also `:3713`, `:3787`, `:5181`), and the settle helper `Tests/UI/schedules_test_helpers.py:395` is used by only 3 of the 20 `test_schedules*.py` files (`test_schedules_automations_tab.py`: 0 uses, 19 table or DefinitionDetail queries; `test_schedules_unified_list.py`: 0 uses, 11). Widening AC#2 to every Schedules UI test (wait for mount and settle before querying, with a three-run baseline per file) would cover it.
 <!-- SECTION:NOTES:END -->
