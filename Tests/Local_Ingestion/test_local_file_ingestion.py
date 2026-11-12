@@ -88,6 +88,7 @@ def test_quick_ingest_uses_canonical_media_database_path(
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_pdf_options_are_routed_to_process_pdf(tmp_path: Path, monkeypatch) -> None:
     source = tmp_path / "doc.pdf"
     source.write_bytes(b"%PDF-1.4 stub")
@@ -121,6 +122,7 @@ def test_pdf_options_are_routed_to_process_pdf(tmp_path: Path, monkeypatch) -> N
     assert call["page_range"] is None
 
 
+@pytest.mark.bootstrap_profile
 def test_pdf_unimplemented_options_record_warnings(tmp_path: Path, monkeypatch) -> None:
     source = tmp_path / "doc.pdf"
     source.write_bytes(b"%PDF-1.4 stub")
@@ -157,6 +159,7 @@ def test_pdf_unimplemented_options_record_warnings(tmp_path: Path, monkeypatch) 
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_audio_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> None:
     source = tmp_path / "recording.mp3"
     source.write_bytes(b"ID3\x00" + b"\x00" * 64)
@@ -246,6 +249,7 @@ def test_audio_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> N
     assert all(measured_data not in event for event in progress_events)
 
 
+@pytest.mark.bootstrap_profile
 def test_video_options_are_routed_to_processor(tmp_path: Path, monkeypatch) -> None:
     source = tmp_path / "clip.mp4"
     source.write_bytes(b"\x00\x00\x00\x20ftypisom" + b"\x00" * 64)
@@ -467,6 +471,7 @@ def test_measured_transcription_percent_ignores_hostile_mapping() -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_ebook_options_are_routed_to_process_ebook(tmp_path: Path, monkeypatch) -> None:
     source = tmp_path / "book.epub"
     source.write_bytes(b"PK\x03\x04" + b"\x00" * 64)
@@ -498,6 +503,7 @@ def test_ebook_options_are_routed_to_process_ebook(tmp_path: Path, monkeypatch) 
     assert call["split_chapters"] is True
 
 
+@pytest.mark.bootstrap_profile
 def test_ebook_split_chapters_false_records_warning(
     tmp_path: Path, monkeypatch
 ) -> None:

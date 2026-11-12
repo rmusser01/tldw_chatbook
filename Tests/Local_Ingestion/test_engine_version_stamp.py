@@ -15,6 +15,7 @@ code, all minimal):
 import pytest
 
 
+@pytest.mark.bootstrap_profile
 def test_new_chunks_stamped(tmp_path):
     """Brief's test, adapted to exercise the stamper (see module docstring).
 
@@ -138,6 +139,7 @@ def test_persist_parsed_media_stamps_chunks(tmp_path):
     assert rows and all(r["chunk_engine_version"] == "parity-1@385afa95" for r in rows)
 
 
+@pytest.mark.bootstrap_profile
 def test_shim_stamps_chunk_metadata():
     """Spec §8: in-memory consumers see the engine version without a DB read.
 

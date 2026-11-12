@@ -297,6 +297,7 @@ def test_parakeet_buffer_temp_file_is_removed_even_when_transcribe_raises(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_onnx_buffer_uses_injected_source_without_acquisition(
     service_module, monkeypatch: pytest.MonkeyPatch
 ) -> None:

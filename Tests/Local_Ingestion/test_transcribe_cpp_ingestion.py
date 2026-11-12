@@ -4,6 +4,8 @@ import json
 import sys
 import wave
 from pathlib import Path
+
+import pytest
 from types import SimpleNamespace
 
 import tldw_chatbook.app_ingest_queue as ingest_queue_module
@@ -90,6 +92,7 @@ def _failed_attempt() -> dict[str, object]:
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_audio_processor_uses_direct_runner_and_returns_normalized_provenance(
     tmp_path: Path,
     monkeypatch,
@@ -144,6 +147,7 @@ def test_audio_processor_uses_direct_runner_and_returns_normalized_provenance(
     assert row["transcription_provenance"]["artifact_root"] is None
 
 
+@pytest.mark.bootstrap_profile
 def test_audio_parse_payload_preserves_model_and_provenance(
     tmp_path: Path,
     monkeypatch,
@@ -182,6 +186,7 @@ def test_audio_parse_payload_preserves_model_and_provenance(
     assert payload["transcription_provenance"] is provenance
 
 
+@pytest.mark.bootstrap_profile
 def test_video_processor_preserves_direct_transcription_metadata(
     tmp_path: Path,
 ) -> None:
@@ -256,6 +261,7 @@ def test_parse_worker_preserves_bounded_stt_failure_and_failed_attempt(
     assert "/private/model-owner" not in str(result)
 
 
+@pytest.mark.bootstrap_profile
 def test_manual_library_job_reaches_fake_native_model_and_parent_writer(
     tmp_path: Path,
     monkeypatch,

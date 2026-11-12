@@ -123,6 +123,7 @@ def _download(tmp_path: Path, **kwargs: Any) -> Any:
 
 
 class TestUserCookiefileIsNotDestroyed:
+    @pytest.mark.bootstrap_profile
     def test_user_supplied_cookiefile_in_the_temp_dir_survives(
         self, tmp_path: Path, fake_ytdlp, user_cookiefile_in_tmpdir: Path
     ):
@@ -133,6 +134,7 @@ class TestUserCookiefileIsNotDestroyed:
         )
         assert user_cookiefile_in_tmpdir.read_text().startswith("# Netscape")
 
+    @pytest.mark.bootstrap_profile
     def test_user_cookiefile_survives_repeated_imports(
         self, tmp_path: Path, fake_ytdlp, user_cookiefile_in_tmpdir: Path
     ):
@@ -144,6 +146,7 @@ class TestUserCookiefileIsNotDestroyed:
             )
         assert user_cookiefile_in_tmpdir.exists()
 
+    @pytest.mark.bootstrap_profile
     def test_self_created_temp_cookiefile_is_still_cleaned_up(
         self, tmp_path: Path, fake_ytdlp
     ):
@@ -159,6 +162,7 @@ class TestUserCookiefileIsNotDestroyed:
 
 
 class TestCookiesReachEveryYtDlpCall:
+    @pytest.mark.bootstrap_profile
     def test_cookies_reach_the_file_size_probe(
         self, tmp_path: Path, fake_ytdlp, user_cookiefile_in_tmpdir: Path
     ):
@@ -173,6 +177,7 @@ class TestCookiesReachEveryYtDlpCall:
         )
         assert fake_ytdlp[0]["cookiefile"] == str(user_cookiefile_in_tmpdir)
 
+    @pytest.mark.bootstrap_profile
     def test_extract_metadata_uses_the_cookies_it_declares(
         self, fake_ytdlp, user_cookiefile_in_tmpdir: Path
     ):
@@ -186,6 +191,7 @@ class TestCookiesReachEveryYtDlpCall:
         assert fake_ytdlp, "extract_metadata constructed no YoutubeDL"
         assert fake_ytdlp[0].get("cookiefile") == str(user_cookiefile_in_tmpdir)
 
+    @pytest.mark.bootstrap_profile
     def test_extract_metadata_without_cookies_sends_none(self, fake_ytdlp):
         processor = LocalVideoProcessor(None)
         processor.extract_metadata("https://example.com/watch?v=x")
@@ -193,6 +199,7 @@ class TestCookiesReachEveryYtDlpCall:
         assert fake_ytdlp
         assert "cookiefile" not in fake_ytdlp[0]
 
+    @pytest.mark.bootstrap_profile
     def test_metadata_temp_cookiefile_is_cleaned_up(self, fake_ytdlp):
         processor = LocalVideoProcessor(None)
         processor.extract_metadata(
@@ -206,6 +213,7 @@ class TestCookiesReachEveryYtDlpCall:
 
 
 class TestMissingCookiefileIsHonest:
+    @pytest.mark.bootstrap_profile
     def test_nonexistent_cookiefile_names_the_file(self, tmp_path: Path, fake_ytdlp):
         """A path that does not exist used to be handed to ``json.loads``,
         logged as "Invalid cookie format" and then ignored -- the download
@@ -219,6 +227,7 @@ class TestMissingCookiefileIsHonest:
         assert "cookies.txt" in str(excinfo.value)
         assert not fake_ytdlp, "yt-dlp ran despite the cookies being unusable"
 
+    @pytest.mark.bootstrap_profile
     def test_cookie_json_string_still_works(self, tmp_path: Path, fake_ytdlp):
         """The JSON-string spelling is a real (if undocumented) input; the
         stricter path must not break it."""

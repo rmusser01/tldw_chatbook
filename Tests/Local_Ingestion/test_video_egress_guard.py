@@ -105,6 +105,7 @@ def recording_ytdlp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> List[str
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_download_video_refuses_a_cloud_metadata_endpoint(
     tmp_path: Path, recording_ytdlp: List[str]
 ) -> None:
@@ -115,6 +116,7 @@ def test_download_video_refuses_a_cloud_metadata_endpoint(
     assert recording_ytdlp == [], f"an unchecked URL reached yt-dlp: {recording_ytdlp}"
 
 
+@pytest.mark.bootstrap_profile
 def test_download_video_refuses_a_non_http_scheme(
     tmp_path: Path, recording_ytdlp: List[str]
 ) -> None:
@@ -125,6 +127,7 @@ def test_download_video_refuses_a_non_http_scheme(
     assert recording_ytdlp == []
 
 
+@pytest.mark.bootstrap_profile
 def test_download_video_still_allows_a_user_typed_private_url(
     tmp_path: Path, recording_ytdlp: List[str]
 ) -> None:
@@ -152,6 +155,7 @@ def test_download_video_still_allows_a_user_typed_private_url(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_extract_metadata_refuses_a_cloud_metadata_endpoint(
     recording_ytdlp: List[str],
 ) -> None:
@@ -160,6 +164,7 @@ def test_extract_metadata_refuses_a_cloud_metadata_endpoint(
     assert recording_ytdlp == []
 
 
+@pytest.mark.bootstrap_profile
 def test_extract_metadata_still_allows_a_user_typed_private_url(
     recording_ytdlp: List[str],
 ) -> None:
