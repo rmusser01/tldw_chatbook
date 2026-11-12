@@ -8,6 +8,7 @@ import os
 import sqlite3
 import threading
 import tomllib
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 
@@ -822,7 +823,7 @@ async def test_new_action_reconstruction_rejects_override_token_corruption(
             recovery_capacity_bytes=4096,
             after_stage=crash_after_first,
         ).execute(request)
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         raw = connection.execute(
             "SELECT metadata FROM notes_sync_recovery WHERE operation_id = ?",
             (request.operation_id,),
@@ -927,7 +928,7 @@ def _recovery(
 
 
 def _counts(database: Path) -> tuple[int, int]:
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         return (
             connection.execute("SELECT COUNT(*) FROM notes_sync_operations").fetchone()[
                 0
@@ -2734,7 +2735,7 @@ async def test_cleanup_locator_corruption_cannot_delete_another_private_file(
             file=files.snapshot,
         )
     )
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         raw = connection.execute(
             "SELECT metadata FROM notes_sync_recovery WHERE operation_id = ?",
             ("operation-1",),
@@ -2923,7 +2924,7 @@ async def test_unicode_path_cleanup_authority_fits_exact_admitted_capacity(
     def setup_store(directory: Path) -> NotesDeviceStateStore:
         directory.mkdir()
         store, database = _execution_store(make_notes_state_store, directory)
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection, connection:
             connection.execute(
                 "UPDATE notes_sync_bindings SET normalized_relative_path = ?",
                 (relative_path,),
@@ -3278,7 +3279,7 @@ async def test_reconstruction_rejects_corrupt_recovery_payload_after_first_write
         ).execute(_request(action=action, note=notes.snapshot, file=files.snapshot))
     note_writes = notes.replace_calls
     file_writes = files.replace_calls
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         connection.execute(
             "UPDATE notes_sync_recovery SET payload = ? WHERE operation_id = ?",
             (b"corrupt-authority", "operation-1"),
@@ -3328,7 +3329,7 @@ async def test_new_action_reconstruction_rejects_corrupt_recovery_after_first(
             after_stage=crash_after_first,
         ).execute(request)
     writes = _new_action_mutation_count(action, notes, files)
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         connection.execute(
             "UPDATE notes_sync_recovery SET payload = ? WHERE operation_id = ?",
             (b"corrupt-authority", request.operation_id),
@@ -4174,7 +4175,7 @@ async def test_disconnect_remains_available_when_recovery_is_missing(
             after_stage=crash_after_admission,
         ).execute(request)
     store.mark_operation_attention("operation-1", "disconnect_requested")
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         connection.execute(
             "DELETE FROM notes_sync_recovery WHERE operation_id = ?",
             ("operation-1",),

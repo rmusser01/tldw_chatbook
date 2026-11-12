@@ -23,6 +23,7 @@ refused and goes to a two-sided review, with both texts intact.
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -64,7 +65,7 @@ def _binding_version(vault: Vault) -> int:
 def _operation_count(vault: Vault) -> int:
     """Every operation the store ever journaled, complete or not."""
 
-    with sqlite3.connect(vault.state_path) as connection:
+    with closing(sqlite3.connect(vault.state_path)) as connection, connection:
         row = connection.execute(
             "SELECT COUNT(*) FROM notes_sync_operations"
         ).fetchone()

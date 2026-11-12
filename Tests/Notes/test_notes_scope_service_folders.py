@@ -1101,9 +1101,10 @@ async def test_local_folder_mutations_do_not_enter_sync_v2_note_outbox() -> None
     "local_state", ["initializing", "pulling", "adoption_review", "failed"]
 )
 async def test_synchronized_folder_create_rejects_until_group_ready(
-    tmp_path, local_state: str
+    tmp_path, request: pytest.FixtureRequest, local_state: str
 ) -> None:
     notes = CharactersRAGDB(tmp_path / f"{local_state}.sqlite", client_id="folders")
+    request.addfinalizer(notes.close_idle_connections)
     state = SyncStateRepository(tmp_path / f"{local_state}-sync.sqlite")
     state.set_sync_v2_profile_state(
         server_profile_id="server-a",
@@ -1158,9 +1159,10 @@ async def test_synchronized_folder_create_rejects_until_group_ready(
 
 @pytest.mark.asyncio
 async def test_ready_folder_create_commits_mutation_and_one_explicit_intent(
-    tmp_path,
+    tmp_path, request: pytest.FixtureRequest,
 ) -> None:
     notes = CharactersRAGDB(tmp_path / "ready.sqlite", client_id="folders")
+    request.addfinalizer(notes.close_idle_connections)
     state = SyncStateRepository(tmp_path / "ready-sync.sqlite")
     state.set_sync_v2_profile_state(
         server_profile_id="server-a",
@@ -1225,9 +1227,10 @@ async def test_ready_folder_create_commits_mutation_and_one_explicit_intent(
 
 @pytest.mark.asyncio
 async def test_ready_scope_managed_membership_routes_through_organization_owner(
-    tmp_path,
+    tmp_path, request: pytest.FixtureRequest,
 ) -> None:
     notes = CharactersRAGDB(tmp_path / "membership.sqlite", client_id="folders")
+    request.addfinalizer(notes.close_idle_connections)
     state = SyncStateRepository(tmp_path / "membership-sync.sqlite")
     state.set_sync_v2_profile_state(
         server_profile_id="server-a",
