@@ -2541,7 +2541,13 @@ class ConsolePromptsController:
             if not system_prompt.strip():
                 return
             self._apply_console_session_system_prompt(system_prompt)
+            take_draft()
 
+        # An applied pick takes "/system <query>" out (TASK-33628.20); Escape
+        # keeps it.
+        from .command_draft import ran_command_draft_taker
+
+        take_draft = ran_command_draft_taker(self)
         self.push_screen(
             ConsolePromptPickerModal(
                 mode=CONSOLE_PROMPT_PICKER_MODE_APPLY_SYSTEM,
@@ -2560,6 +2566,7 @@ class ConsolePromptsController:
             if result is None:
                 return
             self._apply_console_session_system_prompt(result)
+            take_draft()
 
         # TASK-34720: status-line and rail-line opens run as workers, so a
         # burst queues several; only the one that finds the Console on top
@@ -2569,7 +2576,11 @@ class ConsolePromptsController:
         from ...Widgets.Console.console_system_prompt_modal import (
             ConsoleSystemPromptModal,
         )
+        from .command_draft import ran_command_draft_taker
 
+        # Applied from a bare /system, the editor takes it out (TASK-33628.20);
+        # Cancel keeps it. From the status or rail line nothing is taken.
+        take_draft = ran_command_draft_taker(self)
         self.push_screen(
             ConsoleSystemPromptModal(
                 system_prompt=settings.system_prompt,

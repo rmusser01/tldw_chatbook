@@ -18576,7 +18576,9 @@ class ChatScreen(BaseAppScreen):
         from ...Chat.console_help import (  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
             build_command_detail,
             build_help_listing,
+            find_command,
         )
+        from ..Console_Modules.command_draft import take_ran_command_draft
 
         commands = self._console_command_registry.commands()
         query = (parse.args or "").strip()
@@ -18588,6 +18590,10 @@ class ChatScreen(BaseAppScreen):
             text = build_help_listing(
                 commands, _COMMAND_DESCRIPTIONS, availability_fn=_availability
             )
+        # It ran: take "/help" out (TASK-33628.20). "/help <unknown>" stays to
+        # be corrected. Before the append, whose nested syncs show the row.
+        if not query or find_command(commands, query) is not None:
+            take_ran_command_draft(self)
         await self._append_native_console_system_message(text)
 
     async def _console_command_doctor(self, parse: CommandParse) -> None:
@@ -18599,6 +18605,7 @@ class ChatScreen(BaseAppScreen):
         import asyncio as _asyncio
 
         from ...Utils.doctor import database_integrity_fn, format_doctor_report, run_doctor
+        from ..Console_Modules.command_draft import take_ran_command_draft
         from ..Console_Modules.command_handoff import append_command_output
 
         include_network = "network" in (parse.args or "").lower()
@@ -18613,6 +18620,8 @@ class ChatScreen(BaseAppScreen):
             report = format_doctor_report(checks)
         except Exception as exc:  # noqa: BLE001 - a command must not crash the screen
             report = f"Doctor could not complete: {exc}"
+        # It ran, even when a check failed: take "/doctor" out (TASK-33628.20).
+        take_ran_command_draft(self)
         await append_command_output(self._append_native_console_system_message, report)
 
     async def _console_command_run_action(self, parse: CommandParse) -> None:
@@ -18974,6 +18983,10 @@ class ChatScreen(BaseAppScreen):
         policy_note = (
             f" [policy: {source_policy}]" if source_policy != "balanced" else ""
         )
+        # It ran: take "/research <question>" out (TASK-33628.20).
+        from ..Console_Modules.command_draft import take_ran_command_draft
+
+        take_ran_command_draft(self)
         await self._append_native_console_system_message(
             f"Deep research started: {question}{policy_note}\n"
             "The report will be added to this conversation when the run "
@@ -19164,6 +19177,11 @@ class ChatScreen(BaseAppScreen):
             ),
             callback=_apply_choice,
         )
+        # Its menu opened: take "/rewind <args>" out, as the send already does
+        # for a bare /rewind (TASK-33628.20). A no-op outside a sent command.
+        from ..Console_Modules.command_draft import take_ran_command_draft
+
+        take_ran_command_draft(self)
         return True
 
     @staticmethod

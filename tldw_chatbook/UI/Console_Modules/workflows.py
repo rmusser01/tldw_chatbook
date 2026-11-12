@@ -263,6 +263,7 @@ class ConsoleWorkflowsController:
                     self._coordinator(), chat, self.open_detail, self.open_setup
                 )
             )
+            self._take_command_draft()
         except WORKFLOW_VIEW_ERRORS as error:
             self.screen.notify(
                 workflow_view_error("History", error), severity="warning", markup=False
@@ -332,7 +333,15 @@ class ConsoleWorkflowsController:
             if self._session() is not session or not self.screen.is_mounted:
                 return
 
+            from .command_draft import ran_command_draft_taker
+
+            # A started workflow takes "/workflow new" out (TASK-33628.20);
+            # Cancel keeps it.
+            take_draft = ran_command_draft_taker(self.screen)
+
             def started(result):
+                if result is not None:
+                    take_draft()
                 if result is not None and self.screen.is_mounted:
                     self.open_detail(result.request.conversation_id, result.id)
 
@@ -354,6 +363,16 @@ class ConsoleWorkflowsController:
                     severity="warning",
                     markup=False,
                 )
+
+    def _take_command_draft(self):
+        """History opened: take "/workflow" out (TASK-33628.20).
+
+        Refusals keep it; from a button there is no command, and nothing is
+        taken.
+        """
+        from .command_draft import take_ran_command_draft
+
+        take_ran_command_draft(self.screen)
 
     def open_detail(self, conversation_id, workflow_id):
         from tldw_chatbook.Widgets.Console.console_workflow_status import (

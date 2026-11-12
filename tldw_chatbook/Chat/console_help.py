@@ -62,6 +62,23 @@ def build_help_listing(
     return "\n".join(lines)
 
 
+def find_command(
+    commands: Sequence[ConsoleCommand], name: str
+) -> Optional[ConsoleCommand]:
+    """Find the registered command ``/help <name>`` asks about.
+
+    Args:
+        commands: The registered commands.
+        name: The name as typed, with or without its leading slash.
+
+    Returns:
+        The command, matched case-insensitively, or None when no registered
+        command has that name.
+    """
+    target = str(name or "").lstrip(COMMAND_PREFIX).strip().lower()
+    return next((command for command in commands if command.name.lower() == target), None)
+
+
 def build_command_detail(
     commands: Sequence[ConsoleCommand],
     descriptions: Mapping[str, str],
@@ -70,16 +87,16 @@ def build_command_detail(
     availability_fn: Optional[AvailabilityFn] = None,
 ) -> str:
     """Render the detail for one command, honest when unknown (AC#3)."""
+    command = find_command(commands, name)
+    if command is not None:
+        hint = f" {command.argument_hint}" if command.argument_hint else ""
+        detail = f"{COMMAND_PREFIX}{command.name}{hint}\n{_describe(command.name, descriptions)}"
+        if availability_fn is not None:
+            reason = availability_fn(command.name)
+            if reason:
+                detail += f"\nUnavailable right now: {reason}"
+        return detail
     target = str(name or "").lstrip(COMMAND_PREFIX).strip().lower()
-    for command in commands:
-        if command.name.lower() == target:
-            hint = f" {command.argument_hint}" if command.argument_hint else ""
-            detail = f"{COMMAND_PREFIX}{command.name}{hint}\n{_describe(command.name, descriptions)}"
-            if availability_fn is not None:
-                reason = availability_fn(command.name)
-                if reason:
-                    detail += f"\nUnavailable right now: {reason}"
-            return detail
     return (
         f"{COMMAND_PREFIX}{target or name} is not a known command. "
         f"Type {COMMAND_PREFIX}help to list commands."

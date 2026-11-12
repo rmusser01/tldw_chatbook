@@ -131,7 +131,11 @@ from .review_selection import (
 )
 from .send_price import ConsoleSendPriceController
 from .session import ConsoleSessionController
-from .skill import ConsoleSkillController, _sync_console_skill_popup
+from .skill import (
+    ConsoleSkillController,
+    _sync_console_skill_popup,
+    _take_ran_skills_command_draft,
+)
 from .transcript import ConsoleChangeReviewProjection
 from .video import ConsoleVideoController
 from .workspace import (
@@ -1652,6 +1656,7 @@ def build_console_controllers(
         task_resume_state=lambda: screen._task_resume_state,
         set_task_resume_state=lambda state: screen.set_task_resume_state(state),
         current_chat_controller=lambda: screen._console_chat_controller,
+        take_ran_command_draft=partial(_take_ran_skills_command_draft, screen),
     )
 
     #: Workspace policy, lifecycle, resume, scope, and conversation-browser
