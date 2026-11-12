@@ -79,8 +79,6 @@ from tldw_chatbook.Widgets.Console.console_composer_bar import (
 ACK_ATTRIBUTE = "_console_send_ack"
 #: Screen attribute holding the visible sends in flight (TASK-33620.15).
 FLIGHT_ATTRIBUTE = "_console_send_flight"
-#: Screen attribute holding the user row's deferred mount (TASK-38948).
-ROW_MOUNT_ATTRIBUTE = "_console_send_ack_row_mount"
 #: Run chip / hidden mode-bar copy while a send is acknowledged.
 SENDING_RUN_COPY = "Sending…"
 #: A press while the composer still shows a draft being sent (TASK-33620.15).
@@ -530,7 +528,8 @@ def schedule_acknowledged_send(screen: Any, pending_send: Any) -> None:
     if token is None or not screen.call_later(
         _paint_then, screen, session_id, dispatch
     ):
-        ack.show_row(session_id)
+        if token is not None:
+            ack.show_row(session_id)
         dispatch()
 
 
@@ -815,8 +814,9 @@ async def _paint_then(
     screen: Any, session_id: str, dispatch: Callable[[], None]
 ) -> None:
     """Push the acknowledgement on this pump; send once a frame shows it."""
+    mount = None
     try:
-        await paint_acknowledgement(screen, session_id)
+        mount = await paint_acknowledgement(screen, session_id)
     except Exception as exc:  # noqa: BLE001 -- the send must never depend on its paint
         # Type only: an exception's text can carry the draft or session ids.
         logger.warning(
@@ -827,7 +827,6 @@ async def _paint_then(
         # TASK-38948: the hand-off waits for the row's deferred mount (see
         # ``paint_acknowledgement``), so the send never starts before the row.
         hand_off = partial(_hand_off, screen, session_id, dispatch)
-        mount = getattr(screen, ROW_MOUNT_ATTRIBUTE, None)
         if isinstance(mount, _RowMount) and not mount.done:
             mount.after.append(hand_off)
         else:
@@ -855,11 +854,17 @@ class _RowMount:
 
 
 def _row_anchor(screen: Any) -> Any | None:
-    """The status line whose "Sending…" repaint the row's mount follows.
+    """The status line whose "Sending…" repaint the row's mount waits for.
 
-    A callback the line posts reaches the screen only after the line's own
-    repaint does; a screen-level ``call_after_refresh`` could run before the
-    child widgets posted theirs, painting the row in the same frame.
+    Posting the mount on the line does not order it after that repaint by
+    itself: the line forwards its ``InvokeLater`` to the screen before its
+    own idle posts the ``Update``. The order holds for three other reasons.
+    The tabs sync's await before the post lets the changed widgets hand
+    their repaints to the screen first. The screen runs after-refresh
+    callbacks only when it is idle with nothing dirty, and draws first
+    otherwise. And ``_mount_row`` re-checks the draw
+    (``_sending_frame_pending``), which covers an update tick that runs the
+    callbacks while another task's batch holds the frame back.
     """
     try:
         return screen.query_one("#console-status-chips").query_one(
@@ -874,9 +879,11 @@ def _sending_frame_pending(screen: Any, anchor: Any) -> bool:
 
     Textual 8 runs the screen's after-refresh callbacks on an update tick
     even while a batch (another task's ``batch_update``) holds the frame
-    back, so a callback alone does not prove the frame is out: in 2 of 24
-    received-intent sends the row still mounted first. The flags read here
-    are the ones Textual clears when it draws the widget.
+    back, so a callback alone does not prove the frame is out. Only the
+    screen-level flags read here (``_dirty_widgets``, the screen's
+    ``_layout_required``) clear when the frame is drawn; the widget's own
+    flags clear earlier, when it hands its repaint to the screen, so they
+    cover only the stretch before that hand-over.
     """
     return bool(
         getattr(anchor, "_repaint_required", False)
@@ -913,8 +920,9 @@ async def _mount_row(
             pass
     ack = acknowledgement_for(screen)
     try:
-        if not ack.show_row(session_id):
-            pass  # Released meanwhile, or never held: nothing new to show.
+        ack.show_row(session_id)
+        if ack.pending_row_id(session_id) is None:
+            pass  # Released meanwhile: its release repaints what it changed.
         elif _torn_down(screen) or (
             screen._console_chat_store.active_session_id != session_id
         ):
@@ -933,8 +941,6 @@ async def _mount_row(
         )
     finally:
         mount.done = True
-        if getattr(screen, ROW_MOUNT_ATTRIBUTE, None) is mount:
-            setattr(screen, ROW_MOUNT_ATTRIBUTE, None)
         after, mount.after = mount.after, []
         for hand_off in after:
             hand_off()
@@ -994,7 +1000,7 @@ def _acknowledgement_laid_out(screen: Any, session_id: str) -> bool:
     return bool(line.region.area) and chips.segment_visible("run")
 
 
-async def paint_acknowledgement(screen: Any, session_id: str) -> None:
+async def paint_acknowledgement(screen: Any, session_id: str) -> _RowMount | None:
     """Push the acknowledged state straight to each surface it changes.
 
     Built from the screen's whole derivations (the full transcript sync, the
@@ -1009,6 +1015,11 @@ async def paint_acknowledgement(screen: Any, session_id: str) -> None:
             shown by now (a tab press landed first), nothing is painted: the
             composer, Run chip and header belong to the shown tab, whose own
             sync derives its state, and the send is refused for the change.
+
+    Returns:
+        The user row's mount (TASK-38948), deferred until "Sending…" is
+        drawn; the caller hands the send off once it is done. ``None`` when
+        another tab is shown and nothing was painted.
     """
     from tldw_chatbook.Chat.console_display_state import (
         QUEUE_REASON_PREPARING,
@@ -1016,7 +1027,7 @@ async def paint_acknowledgement(screen: Any, session_id: str) -> None:
     )
 
     if screen._console_chat_store.active_session_id != session_id:
-        return
+        return None
     widget = screen.query_one("#console-native-transcript")
     screen._last_native_transcript_refresh_key = None
     # Every lookup happens before the first await: the screen can be torn
@@ -1042,12 +1053,11 @@ async def paint_acknowledgement(screen: Any, session_id: str) -> None:
     # hand-off to the send waits for that mount (``_paint_then``).
     mount = _RowMount()
     anchor = _row_anchor(screen)
-    if anchor is not None and anchor.call_after_refresh(
+    if anchor is None or not anchor.call_after_refresh(
         _mount_row, screen, session_id, widget, mount, 0
     ):
-        setattr(screen, ROW_MOUNT_ATTRIBUTE, mount)
-        return
-    await _mount_row(screen, session_id, widget, mount, _PAINT_HOPS)
+        await _mount_row(screen, session_id, widget, mount, _PAINT_HOPS)
+    return mount
 
 
 def _session_message_ids(screen: Any, session_id: str) -> tuple[str, ...]:

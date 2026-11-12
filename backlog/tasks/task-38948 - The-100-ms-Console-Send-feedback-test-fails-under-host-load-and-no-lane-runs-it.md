@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-05 21:35
-updated_date: 2026-11-12 16:18
+updated_date: 2026-11-12 17:36
 labels:
 - follow-up
 - console
@@ -236,7 +236,7 @@ AC#1 is met on that tree. AC#4 remains open pending hosted qualification and re-
 **Change** (`tldw_chatbook/UI/Console_Modules/send_acknowledgement.py`; commits 1b444d220f and d583254ddd).
 - **What paints when.** The status line, composer, header and tabs are pushed first and painted in a frame of their own. The user row mounts after that frame.
 - **The row is held back until then.** From `begin` until its own mount, the acknowledgement keeps the pending row out of every projection (`hold_row` / `show_row`), so nothing else can draw it earlier.
-- **The deferred mount** (`_mount_row`) is posted on the status line (`_row_anchor`). It re-checks that the line's "Sending…" repaint has been drawn, reading the flags Textual clears when it draws a widget (`console_transcript_fill._ready` already reads them the same way). It waits at most `_PAINT_HOPS` frame-length hops, then shows, projects and mounts the row.
+- **The deferred mount** (`_mount_row`) is posted on the status line (`_row_anchor`). It re-checks that the line's "Sending…" repaint has been drawn (`_sending_frame_pending`). Of the flags it reads, only the screen-level ones (`_dirty_widgets`, the screen's `_layout_required`) clear when the frame is drawn; the widget's own `_repaint_required` and `_layout_required` clear when it hands its repaint to the screen. `console_transcript_fill._ready` reads only `_layout_required`, not the other two. The mount waits at most `_PAINT_HOPS` frame-length hops, then shows, projects and mounts the row. (Corrected in review r13n-rev3: this line used to say both modules read the same flags.)
 - **The hand-off to the send** (`_RowMount.after`) runs after that mount, and still waits until the row is laid out. The send never starts before the row is on screen.
 - **Fallback.** If no mount is owed (another tab is shown, or the paint failed), the row is shown again and a whole sync repaints it. With no status line, or a refused post, the row mounts at once, as before.
 - **Why each piece is needed.** These are first-frame coalescing rates: "Sending…" and the row drawn in the same frame.
@@ -311,4 +311,39 @@ AC#1 is met on that tree. AC#4 remains open pending hosted qualification and re-
   - Fix: 104 ms and 123 ms (alone, `[enter]`), both with "Sending…" alone in its frame. These are the incidental tail: settling work that lands in the window, outside the send path.
 - **The one coalesced fix case** read 62 ms and passed. It is the hop-bounded fallback: past `_PAINT_HOPS`, the row mounts anyway.
 - **AC#1 is not met.** Load was 21-28, and the fix still misses the 100 ms loop-CPU budget in some cases from the incidental tail. Re-gating waits for CI evidence, per the ruling.
+### Round 13, review r13n-rev3 (2026-11-12)
+
+**Owner decision (2026-11-12, AskUserQuestion), verbatim:** "Accept the frame (Recommended)": "Keep the reorder as is. Record in TASK-33620.5 and TASK-38948 that the rule yields for that one frame, and pin the behaviour in the test. Clearing the empty state in the first frame would put back much of the CPU cost the reorder removed."
+- **What the rule yields.** In a fresh chat, the "Sending…"-only frame still shows the empty transcript ("Ready · … type a message to begin") for the roughly 30-55 ms until the row's frame. TASK-33620.5 AC#2 otherwise forbids that.
+- A dated note recording this is in TASK-33620.5's notes too.
+
+**Pins added** (both in `Tests/UI/test_console_send_acknowledgement.py`, a whole-file census entry).
+- **The empty state in the Sending frame.** `test_sending_paints_a_frame_before_the_row_and_the_send_waits_for_it[80x24|160x45]` now also asserts that the empty state is visible in the Sending frame and gone by the row's frame.
+  - The file's `paint_state` matched "type a message to begin" line by line, and at 80x24 the empty state wraps "type a" / "message to begin.". It now joins the lines before matching.
+  - That also makes the existing "no empty state after the acknowledgement" checks meaningful at 80x24; they used to be vacuous there. They pass.
+  - Red under a temporary edit that hides the empty-state panel in the first part of the paint: both sizes failed with "the Sending frame no longer shows the empty state". Green on head.
+- **I2: the draw check.** New `test_a_batch_holding_the_sending_frame_still_draws_it_before_the_row`, the reviewer's deterministic case.
+  - It wraps `paint_acknowledgement` so the app's batch is opened before the real paint and closed 50 ms after it.
+  - It asserts the first frame with "Sending…" comes before the first frame with the row.
+  - Red in 3 of 3 runs with `_sending_frame_pending` forced to return False. Green in 8 of 8 runs on head.
+
+**Fixes.**
+- **The mount is returned, not stored on the screen.** `paint_acknowledgement` now returns its `_RowMount`, or `None` when another tab is shown, and `_paint_then` attaches the hand-off to that object. The `ROW_MOUNT_ATTRIBUTE` screen attribute and its cleanup are gone, so a stale mount that never ran can no longer capture a later send's hand-off.
+- **`_mount_row` mounts whenever the row is still pending,** not only when it was the call that un-held it. A wrapper that discards the return value then still ends with the row mounted.
+- **`schedule_acknowledged_send`** now calls `ack.show_row` only when there is a token.
+- **Docstrings.** `_sending_frame_pending` now says which flags clear when the frame is drawn and which clear on the hand-over. `_row_anchor` now gives the real reasons the order holds: the tabs-sync await before the post, the screen running after-refresh callbacks only when it is idle with nothing dirty, and the draw check. The line forwards `InvokeLater` before its own idle posts the `Update`, so the post alone does not order anything.
+- **Note (b)** is corrected above.
+
+**Runs** (`-n 4`, through run.sh):
+- **Acknowledgement core, extended, resend guard and the received-intent file:** 66 passed at load 13-21. That includes the two new tests and the stricter 80x24 empty-state checks.
+- **The other 34 files that touch the acknowledgement:** 946 passed, 20 failed, at load 14-21.
+  - 18 are the same 18 as before.
+  - `test_console_library_pause_recovery.py::…[stream]` fails alone on cd7d3aa10e and d583254ddd too, so it is not from this round.
+  - `test_console_sync_tick_storage.py::test_sync_ticks_during_a_run_check_the_character_scope_once_a_second` fails now and then on its last check ("outside a run every sync checks": `32 >= 34`), when the host is loaded.
+    - Plain runs: 4 of 24 on the reorder versions (d583254ddd and later) at load 8-20, against 0 of 28 on cd7d3aa10e.
+    - It passed 0 failures in 16 runs at load 3-7, and in 36 runs with a probe attached.
+    - The reorder shifts a run's timing by about a frame. The failing state (no scope read in two ticks after the run) could not be caught under the probe.
+    - This file is on no PR lane; it is listed as a follow-up.
+- **Size ratchets:** 224 passed. Preimport payload budget and first-send preimport: 25 passed.
+- **Preflight:** passes. The diagnostic inventory verified with no change this round.
 <!-- SECTION:NOTES:END -->

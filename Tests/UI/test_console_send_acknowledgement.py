@@ -87,7 +87,10 @@ def paint_state(host) -> Paint:
         header_idle="Ready" in header,
         tab_running=any("●" in line for line in tabs),
         run_chip="Run:" in text,
-        empty_state="No messages yet." in text or "type a message to begin" in text,
+        # Joined across lines: at 80x24 the empty state wraps "type a" /
+        # "message to begin." and a per-line match never saw it (TASK-38948).
+        empty_state="No messages yet." in text
+        or "type a message to begin" in " ".join(line.strip() for line in lines),
         empty_draft_reason="Send disabled: type a message" in text,
     )
 
@@ -439,8 +442,63 @@ async def test_sending_paints_a_frame_before_the_row_and_the_send_waits_for_it(s
     assert sending < row, ("Sending and the row painted in one frame", paints)
     first = dict(paints)[sending]
     assert first.draft_in_composer and not first.empty_draft_reason, first
+    # Owner ruling 2026-11-12 ("Accept the frame"): in a fresh chat the
+    # "Sending…"-only frame still shows the empty transcript, an exception to
+    # TASK-33620.5 AC#2 for that one frame. Clearing it there would put back
+    # much of the CPU the reorder removed. Pinned so a change is deliberate.
+    assert first.empty_state, ("the Sending frame no longer shows the empty state", first)
+    assert not dict(paints)[row].empty_state, ("the row's frame shows the empty state", paints)
     assert row < send, ("the send started before the row's frame", paints)
     assert at_send and at_send[0] is not None and at_send[0].user_row, at_send
+
+
+@pytest.mark.asyncio
+async def test_a_batch_holding_the_sending_frame_still_draws_it_before_the_row(
+    monkeypatch,
+):
+    """TASK-38948 review r13n-rev3: the deferred mount waits for the draw.
+
+    Textual 8 runs the screen's after-refresh callbacks on an update tick
+    even while a batch holds the frame back, so the row's mount could run
+    before "Sending…" was drawn. Only the draw-flag check
+    (``_sending_frame_pending``) keeps them apart here: a batch open from
+    the paint until 50 ms after it.
+    """
+    from tldw_chatbook.UI.Console_Modules import send_acknowledgement as module
+
+    real_paint = module.paint_acknowledgement
+    host, gateway, timeline = build()
+
+    async def paint_in_a_batch(screen, session_id):
+        host._begin_batch()
+        try:
+            return await real_paint(screen, session_id)
+        finally:
+            asyncio.get_running_loop().call_later(0.05, host._end_batch)
+
+    monkeypatch.setattr(module, "paint_acknowledgement", paint_in_a_batch)
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            timeline.install()
+            try:
+                timeline.mark("enter")
+                press(host, "enter", "\r")
+                await until(gateway.validation_started.is_set)
+            finally:
+                gateway.validation_release.set()
+            await until(lambda: gateway.stream_calls == 1)
+            timeline.uninstall()
+
+    enter = timeline.index("enter")
+    paints = [
+        (i, value)
+        for i, (kind, value) in enumerate(timeline.entries)
+        if kind == "paint" and i > enter
+    ]
+    sending = next(i for i, paint in paints if paint.run_chip and not paint.header_idle)
+    row = next(i for i, paint in paints if paint.user_row)
+    assert sending < row, ("Sending and the row painted in one frame", paints)
 
 
 @pytest.mark.asyncio
