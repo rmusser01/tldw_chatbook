@@ -155,6 +155,8 @@ _BUDGETS: dict[str, int] = {
     # TldwCli.__init__ installs the stock Select exit gate.
     # 2026-11-18, TASK-41642 review (owner rule: raise by the change's own lines):
     # +4, TldwCli.__init__ registers the policy state provider it builds.
+    # owner decision 2026-10-04 (expand limits): TASK-34100.5.3.2 +19 (the
+    # one-time Full agent tools upgrade's boot-worker starter and body).
     "tldw_chatbook/app.py": 5711,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
