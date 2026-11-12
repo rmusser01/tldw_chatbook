@@ -424,17 +424,29 @@ def test_build_diarizer_passes_the_resolved_engine(tmp_path, monkeypatch):
     assert seen["models_dir_override"] == tmp_path / "m"
 
 
-def test_no_diarizer_built_when_live_off(tmp_path, monkeypatch):
+def _retire_meeting_owner(owner: mo.MeetingOwner) -> None:
+    owner.shutdown()
+    watchdog = owner._watchdog
+    if watchdog is not None:
+        watchdog.join(timeout=5)
+        assert not watchdog.is_alive()
+
+
+@pytest.mark.bootstrap_profile
+def test_no_diarizer_built_when_live_off(tmp_path, monkeypatch, request):
     owner, _, _ = _owner(tmp_path, live_diarization=False)
+    request.addfinalizer(lambda: _retire_meeting_owner(owner))
     owner.prepare(); session = owner.start()
     assert session._diarizer is None
 
 
-def test_diarizer_built_when_live_on_and_deps_present(tmp_path, monkeypatch):
+@pytest.mark.bootstrap_profile
+def test_diarizer_built_when_live_on_and_deps_present(tmp_path, monkeypatch, request):
     monkeypatch.setattr(mo, "diarization_requirements", lambda: ())
     built = {}
     monkeypatch.setattr(mo, "build_diarizer", lambda settings, **kw: built.setdefault("d", object()))
     owner, _, _ = _owner(tmp_path, live_diarization=True)
+    request.addfinalizer(lambda: _retire_meeting_owner(owner))
     owner.prepare(); session = owner.start()
     assert session._diarizer is built["d"]
 
@@ -451,6 +463,7 @@ def test_max_speakers_must_be_at_least_one(tmp_path):
     assert _settings(tmp_path, max_speakers=1).max_speakers == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_a_live_diarizer_does_not_force_the_offline_ingest_pass(tmp_path, monkeypatch):
     """Qodo Q12: `post_diarize` only asks Library ingest for a SECOND, offline
     diarization of mixed.wav that knows nothing of the live ids or renames.
@@ -466,15 +479,18 @@ def test_a_live_diarizer_does_not_force_the_offline_ingest_pass(tmp_path, monkey
     owner.stop()
 
 
-def test_live_on_missing_deps_falls_back_to_coarse(tmp_path, monkeypatch):
+@pytest.mark.bootstrap_profile
+def test_live_on_missing_deps_falls_back_to_coarse(tmp_path, monkeypatch, request):
     monkeypatch.setattr(mo, "diarization_requirements", lambda: ("torch",))
     # No engine resolves at all (31827): neither stack is installed.
     monkeypatch.setattr(mo, "resolve_engine", lambda settings, find_spec=None: (None, ("torch",)))
     owner, _, _ = _owner(tmp_path, live_diarization=True)
+    request.addfinalizer(lambda: _retire_meeting_owner(owner))
     owner.prepare(); session = owner.start()
     assert session._diarizer is None
 
 
+@pytest.mark.bootstrap_profile
 def test_start_creates_folder_writers_and_session_in_room_mode_when_tap_unavailable(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     owner, _, _ = _owner(tmp_path)
@@ -489,6 +505,7 @@ def test_start_creates_folder_writers_and_session_in_room_mode_when_tap_unavaila
     assert not owner.is_active
 
 
+@pytest.mark.bootstrap_profile
 def test_start_call_mode_has_three_writers(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
 
@@ -525,6 +542,7 @@ def test_start_stamps_the_configured_display_name_onto_meta(tmp_path, monkeypatc
     owner.stop()
 
 
+@pytest.mark.bootstrap_profile
 def test_start_stamps_diarize_mic_channel_onto_meta(tmp_path, monkeypatch):
     """task 31743: the owner stamps the configured flag onto `meta` so the
     session/render path can read a single source of truth."""
@@ -536,6 +554,7 @@ def test_start_stamps_diarize_mic_channel_onto_meta(tmp_path, monkeypatch):
     owner.stop()
 
 
+@pytest.mark.bootstrap_profile
 def test_start_leaves_diarize_mic_channel_off_by_default(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     owner, _, _ = _owner(tmp_path)
@@ -545,6 +564,7 @@ def test_start_leaves_diarize_mic_channel_off_by_default(tmp_path, monkeypatch):
     owner.stop()
 
 
+@pytest.mark.bootstrap_profile
 def test_stop_submits_through_call_from_thread(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     owner, marshalled, submitted = _owner(tmp_path)
@@ -570,6 +590,7 @@ def _wait_for_result(owner: mo.MeetingSessionOwner, timeout: float = 2.0) -> Non
         time.sleep(0.01)
 
 
+@pytest.mark.bootstrap_profile
 def test_watchdog_stops_on_fault(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     owner, _, _ = _owner(tmp_path)
@@ -580,6 +601,7 @@ def test_watchdog_stops_on_fault(tmp_path, monkeypatch):
     assert not owner.is_active and owner.last_result.stop_reason == "disk_error"
 
 
+@pytest.mark.bootstrap_profile
 def test_watchdog_stops_on_stalled_clock_but_not_while_paused(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     owner, _, _ = _owner(tmp_path)
@@ -593,6 +615,7 @@ def test_watchdog_stops_on_stalled_clock_but_not_while_paused(tmp_path, monkeypa
     assert not owner.is_active and owner.last_result.stop_reason == "mic_lost"
 
 
+@pytest.mark.bootstrap_profile
 def test_shutdown_finalises_files_without_submitting(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     owner, _, submitted = _owner(tmp_path)
@@ -649,6 +672,7 @@ def test_recover_folder_survives_a_folder_key_in_meeting_json(tmp_path):
     assert payload["folder"] == str(folder)
 
 
+@pytest.mark.bootstrap_profile
 def test_cleanup_raw_tracks_only_when_job_done(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     states = {"ingest-job-1": "parsing"}
@@ -694,6 +718,7 @@ def _tap_owner(tmp_path, monkeypatch, **over):
     return owner
 
 
+@pytest.mark.bootstrap_profile
 def test_stop_subscribes_to_the_registry_and_cleans_up_when_the_job_is_done(tmp_path, monkeypatch):
     """Q12: `cleanup_raw_tracks_if_done` had no production caller at all, so
     `keep_raw_tracks = false` never deleted anything. The wait outlives the
@@ -715,6 +740,7 @@ def test_stop_subscribes_to_the_registry_and_cleans_up_when_the_job_is_done(tmp_
     assert registry.listeners == []       # unsubscribed itself
 
 
+@pytest.mark.bootstrap_profile
 def test_a_failed_ingest_job_stops_waiting_without_deleting(tmp_path, monkeypatch):
     registry = FakeJobRegistry("failed")
     owner = _tap_owner(tmp_path, monkeypatch, registry=registry, keep_raw_tracks=False)
@@ -726,6 +752,7 @@ def test_a_failed_ingest_job_stops_waiting_without_deleting(tmp_path, monkeypatc
     assert registry.listeners == []
 
 
+@pytest.mark.bootstrap_profile
 def test_keep_raw_tracks_never_subscribes(tmp_path, monkeypatch):
     registry = FakeJobRegistry("done")
     owner = _tap_owner(tmp_path, monkeypatch, registry=registry, keep_raw_tracks=True)
@@ -735,6 +762,7 @@ def test_keep_raw_tracks_never_subscribes(tmp_path, monkeypatch):
     assert (session.meta.folder / "you.wav").exists()
 
 
+@pytest.mark.bootstrap_profile
 def test_shutdown_unsubscribes_the_registry_listener(tmp_path, monkeypatch):
     registry = FakeJobRegistry("parsing")
     owner = _tap_owner(tmp_path, monkeypatch, registry=registry, keep_raw_tracks=False)
@@ -745,6 +773,7 @@ def test_shutdown_unsubscribes_the_registry_listener(tmp_path, monkeypatch):
     assert registry.listeners == []
 
 
+@pytest.mark.bootstrap_profile
 def test_cleanup_tolerates_an_unlink_failure(tmp_path, monkeypatch):
     registry = FakeJobRegistry("done")
     owner = _tap_owner(tmp_path, monkeypatch, registry=registry, keep_raw_tracks=False)
@@ -766,6 +795,7 @@ def test_cleanup_tolerates_an_unlink_failure(tmp_path, monkeypatch):
     assert registry.listeners == []
 
 
+@pytest.mark.bootstrap_profile
 def test_capture_receives_the_configured_microphone_name(tmp_path, monkeypatch):
     """Q15: the owner persisted and displayed the picked mic but built the
     capture without it, so meetings recorded from the system default."""
@@ -836,6 +866,7 @@ def test_settings_recordings_dir_goes_through_the_path_validator(tmp_path, monke
     assert settings.recordings_dir == (tmp_path / "rec").resolve()
 
 
+@pytest.mark.bootstrap_profile
 def test_failed_start_closes_writers_and_removes_folder(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     monkeypatch.setattr(FakeDictation, "start_dictation", lambda self, **callbacks: False)
@@ -848,6 +879,7 @@ def test_failed_start_closes_writers_and_removes_folder(tmp_path, monkeypatch):
     assert list((tmp_path / "meetings").glob("*")) == []
 
 
+@pytest.mark.bootstrap_profile
 def test_failed_start_closes_the_transcript_sink(tmp_path, monkeypatch):
     """Q4: the sink's JSONL handle is released on every exit from start(),
     not only on the stop() that never happens after a failed start."""
@@ -868,6 +900,7 @@ def test_failed_start_closes_the_transcript_sink(tmp_path, monkeypatch):
     assert closed
 
 
+@pytest.mark.bootstrap_profile
 def test_raising_start_cleans_up_and_leaves_no_session(tmp_path, monkeypatch):
     """I3: `self.session = session` is assigned BEFORE `session.start()`, and
     only a `False` return used to run the cleanup path. A raising start (a
@@ -948,6 +981,7 @@ def test_recover_folder_survives_missing_mixed_wav(tmp_path):
     assert not wav_needs_patch(folder / "others.wav")
 
 
+@pytest.mark.bootstrap_profile
 def test_start_waits_for_an_in_flight_stop(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     owner, _, _ = _owner(tmp_path)
@@ -982,6 +1016,7 @@ def test_start_waits_for_an_in_flight_stop(tmp_path, monkeypatch):
     owner.stop()
 
 
+@pytest.mark.bootstrap_profile
 def test_stop_does_not_hold_owner_lock_during_session_stop(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     owner, _, _ = _owner(tmp_path)
@@ -1193,6 +1228,7 @@ def test_voice_settings_round_trip_and_bounds(tmp_path):
             _settings(tmp_path, **bad)
 
 
+@pytest.mark.bootstrap_profile
 def test_room_mode_builds_the_diarizer_with_the_stored_vector(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     backend, seen = _backend_spy(monkeypatch)
@@ -1235,6 +1271,7 @@ def test_build_diarizer_forwards_the_vector_and_the_match_settings(tmp_path, mon
     assert seen["max_speakers"] == settings.max_speakers
 
 
+@pytest.mark.bootstrap_profile
 def test_no_stored_voiceprint_reports_no_voiceprint_and_passes_no_vector(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     backend, _ = _backend_spy(monkeypatch)
@@ -1245,6 +1282,7 @@ def test_no_stored_voiceprint_reports_no_voiceprint_and_passes_no_vector(tmp_pat
     owner.stop()
 
 
+@pytest.mark.bootstrap_profile
 def test_voice_match_off_never_reads_the_store(tmp_path, monkeypatch):
     """Matching off (and no learning offer) means the key is never touched --
     no Keychain prompt for a feature the user turned off."""
@@ -1262,6 +1300,7 @@ def test_voice_match_off_never_reads_the_store(tmp_path, monkeypatch):
     assert keys.reads == reads_after_save        # no key read at all
 
 
+@pytest.mark.bootstrap_profile
 def test_plain_call_mode_never_matches(tmp_path, monkeypatch):
     """Spec §3.4: in plain call mode the mic channel already IS the user, so
     remote clusters are never compared against the voiceprint."""
@@ -1278,6 +1317,7 @@ def test_plain_call_mode_never_matches(tmp_path, monkeypatch):
     owner.stop()
 
 
+@pytest.mark.bootstrap_profile
 def test_hybrid_call_mode_does_match(tmp_path, monkeypatch):
     """`diarize_mic_channel` makes the mic one cluster among many again, so
     matching is back on in call mode."""
@@ -1292,6 +1332,7 @@ def test_hybrid_call_mode_does_match(tmp_path, monkeypatch):
     owner.stop()
 
 
+@pytest.mark.bootstrap_profile
 def test_locked_keyring_never_delays_start(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     _backend_spy(monkeypatch)
@@ -1308,6 +1349,7 @@ def test_locked_keyring_never_delays_start(tmp_path, monkeypatch):
     owner.stop()
 
 
+@pytest.mark.bootstrap_profile
 def test_a_locked_keyring_is_retried_by_the_next_start(tmp_path, monkeypatch):
     """Review I5: the design's own scenario is "the prompt appeared, the join
     timed out, the user then approved it" -- the next meeting must try again
@@ -1351,6 +1393,7 @@ def test_invalidate_voiceprint_never_waits_for_an_in_flight_load(tmp_path, monke
     loader.join(5.0)
 
 
+@pytest.mark.bootstrap_profile
 def test_a_terminal_verdict_is_not_retried_every_start(tmp_path, monkeypatch):
     """... but a record that simply is not there stays cached: no repeated
     reads, and `invalidate_voiceprint` is the escape."""
@@ -1367,6 +1410,7 @@ def test_a_terminal_verdict_is_not_retried_every_start(tmp_path, monkeypatch):
     assert owner.voice_match.reason == "no_voiceprint"
 
 
+@pytest.mark.bootstrap_profile
 def test_prepare_never_reads_the_key(tmp_path, monkeypatch):
     """Controller ruling / review I2: `prepare()` runs at screen mount and
     after every device change, so it may only STAT the store -- the decrypt
@@ -1404,6 +1448,7 @@ def test_prepare_reports_no_voiceprint_from_a_stat_alone(tmp_path, monkeypatch):
     assert keys.reads == 0
 
 
+@pytest.mark.bootstrap_profile
 def test_voice_match_is_off_without_live_speaker_labels(tmp_path, monkeypatch):
     """Final review I1: `live_diarization` is off by DEFAULT, and with it off
     `build_diarizer` returns None -- no clusters, so nothing can ever be
@@ -1477,6 +1522,7 @@ def _reenrollment_store(stored_model_id):
     ))
 
 
+@pytest.mark.bootstrap_profile
 def test_start_stamps_engine_and_model_id_onto_meta(tmp_path, monkeypatch):
     from tldw_chatbook.Audio.diarizer_local import model_id_for
 
@@ -1497,6 +1543,7 @@ def test_start_stamps_engine_and_model_id_onto_meta(tmp_path, monkeypatch):
     assert payload["diarizer_model_id"] == model_id_for("onnx")
 
 
+@pytest.mark.bootstrap_profile
 def test_start_stamps_no_engine_when_none_resolves(tmp_path, monkeypatch):
     """The negative control: a meeting recorded with coarse labels says so
     rather than claiming an engine that never ran (spec §4 "Stamping")."""
@@ -1509,6 +1556,7 @@ def test_start_stamps_no_engine_when_none_resolves(tmp_path, monkeypatch):
     owner.stop()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "why, live, build",
     [
@@ -1541,6 +1589,7 @@ def test_start_stamps_no_engine_when_no_diarizer_was_built(why, live, build, tmp
     assert payload["diarizer_engine"] is None and payload["diarizer_model_id"] is None
 
 
+@pytest.mark.bootstrap_profile
 def test_start_republishes_the_engine_it_re_resolved_to(tmp_path, monkeypatch):
     """Qodo 6 (Bug): `start()` deliberately re-resolves the engine -- packages
     can be installed or removed while a prepared screen sits open -- but the
@@ -1568,6 +1617,7 @@ def test_start_republishes_the_engine_it_re_resolved_to(tmp_path, monkeypatch):
     owner.stop()
 
 
+@pytest.mark.bootstrap_profile
 def test_voiceprint_load_uses_the_resolved_engines_model_id(tmp_path, monkeypatch):
     from tldw_chatbook.Audio import voiceprint as vp
     from tldw_chatbook.Audio.diarizer_local import model_id_for
@@ -1590,6 +1640,7 @@ def test_voiceprint_load_uses_the_resolved_engines_model_id(tmp_path, monkeypatc
     owner.stop()
 
 
+@pytest.mark.bootstrap_profile
 def test_switch_copy_names_the_engines(tmp_path, monkeypatch):
     from tldw_chatbook.Audio.diarizer_worker import MODEL_ID
 
@@ -1606,6 +1657,7 @@ def test_switch_copy_names_the_engines(tmp_path, monkeypatch):
     owner.stop()
 
 
+@pytest.mark.bootstrap_profile
 def test_no_switch_copy_for_an_unrecognisable_stored_model_id(tmp_path, monkeypatch):
     """Only the two known engines get named; anything else leaves the reason
     to speak for itself rather than putting a raw model id on screen."""
@@ -1621,6 +1673,7 @@ def test_no_switch_copy_for_an_unrecognisable_stored_model_id(tmp_path, monkeypa
     owner.stop()
 
 
+@pytest.mark.bootstrap_profile
 def test_a_changed_engine_drops_the_cached_voiceprint_load(tmp_path, monkeypatch):
     """Review M6: the cached load was verified against the PREVIOUS engine's
     model id. A run where the resolved engine changes (the user installed or
@@ -1655,6 +1708,7 @@ def test_a_changed_engine_drops_the_cached_voiceprint_load(tmp_path, monkeypatch
     owner.stop()
 
 
+@pytest.mark.bootstrap_profile
 def test_no_learning_offer_when_the_stored_voiceprint_is_from_another_engine(tmp_path, monkeypatch):
     """Spec §6: an offer merges into the stored print, and a print from
     another engine is in a different vector space -- Enroll replaces it."""
@@ -1672,6 +1726,7 @@ def test_no_learning_offer_when_the_stored_voiceprint_is_from_another_engine(tmp
     assert owner.learning_offer(result) is None
 
 
+@pytest.mark.bootstrap_profile
 def test_learning_offer_still_made_for_the_active_engines_voiceprint(tmp_path, monkeypatch):
     """The negative control for the gate above: same meeting shape, same
     engine on both sides -- the offer stands."""
@@ -1690,6 +1745,7 @@ def test_learning_offer_still_made_for_the_active_engines_voiceprint(tmp_path, m
     assert offer is not None and offer.kind == "mic_channel"
 
 
+@pytest.mark.bootstrap_profile
 def test_diarizer_status_reads_the_live_backends_warm_up(tmp_path, monkeypatch):
     """The rail's per-second tick (spec §3): the LIVE meeting's backend first,
     then the worker retained for a learning offer, then None."""
@@ -1712,6 +1768,7 @@ def test_diarizer_status_reads_the_live_backends_warm_up(tmp_path, monkeypatch):
     assert owner.diarizer_status() is None
 
 
+@pytest.mark.bootstrap_profile
 def test_diarizer_coarse_reason_reads_the_same_backend_as_the_status(tmp_path, monkeypatch):
     """Final review I3: the rail needs to tell a failed model fetch apart
     from a worker that never warmed up -- both report `"unavailable"`. The
@@ -1764,6 +1821,7 @@ def test_prepare_reports_store_unavailable_without_raising(tmp_path, monkeypatch
     assert owner.prepare().voice_match.reason == "store_unavailable"
 
 
+@pytest.mark.bootstrap_profile
 def test_a_key_file_with_loose_permissions_reports_store_unavailable(tmp_path, monkeypatch):
     """Task 6 review M8: the key provider returned None for a key file the
     user (or an installer) chmod'd wide, which `_load_voiceprint` read as
@@ -1784,6 +1842,7 @@ def test_a_key_file_with_loose_permissions_reports_store_unavailable(tmp_path, m
     owner.stop()
 
 
+@pytest.mark.bootstrap_profile
 def test_start_reports_store_unavailable_when_the_store_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     backend, _ = _backend_spy(monkeypatch)
@@ -1816,6 +1875,7 @@ def _stopped_owner(tmp_path, monkeypatch, *, backend=None, matched="S1", **over)
     return owner, result, made
 
 
+@pytest.mark.bootstrap_profile
 def test_learning_offer_once_and_merge_on_accept(tmp_path, monkeypatch):
     store = _store(tmp_path, meetings=1)
     owner, result, backend = _stopped_owner(tmp_path, monkeypatch, voiceprint_store=store)
@@ -1831,6 +1891,7 @@ def test_learning_offer_once_and_merge_on_accept(tmp_path, monkeypatch):
     assert backend.closed == 1                            # ... and closed after it
 
 
+@pytest.mark.bootstrap_profile
 def test_no_offer_for_an_overridden_match(tmp_path, monkeypatch):
     store = _store(tmp_path)
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
@@ -1845,6 +1906,7 @@ def test_no_offer_for_an_overridden_match(tmp_path, monkeypatch):
     assert backend.closed == 1                            # nothing to offer -> released
 
 
+@pytest.mark.bootstrap_profile
 def test_no_offer_without_a_stored_voiceprint(tmp_path, monkeypatch):
     """Learning MERGES into an enrolled voiceprint; with none stored there is
     nothing to improve (that is what explicit enrollment is for)."""
@@ -1855,6 +1917,7 @@ def test_no_offer_without_a_stored_voiceprint(tmp_path, monkeypatch):
     assert backend.closed == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_learning_offer_off_never_retains_the_worker(tmp_path, monkeypatch):
     owner, result, backend = _stopped_owner(
         tmp_path, monkeypatch, voiceprint_store=_store(tmp_path), voice_learn_offer=False,
@@ -1863,6 +1926,7 @@ def test_learning_offer_off_never_retains_the_worker(tmp_path, monkeypatch):
     assert backend.closed == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_learning_in_plain_call_mode_embeds_you_wav(tmp_path, monkeypatch):
     store = _store(tmp_path)
     backend, _ = _backend_spy(monkeypatch)
@@ -1882,6 +1946,7 @@ def test_learning_in_plain_call_mode_embeds_you_wav(tmp_path, monkeypatch):
     assert backend.closed == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_accepting_an_offer_reports_the_warm_up(tmp_path, monkeypatch):
     """Final review I3: the mic-channel offer's common configuration has NO
     live diarizer, so accepting spawns a fresh worker and blocks on
@@ -1909,6 +1974,7 @@ def test_accepting_an_offer_reports_the_warm_up(tmp_path, monkeypatch):
     assert spawned.closed == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_accepting_an_offer_without_a_progress_callback_still_works(tmp_path, monkeypatch):
     """`progress` is optional: every existing caller passes nothing."""
     store = _store(tmp_path)
@@ -1917,6 +1983,7 @@ def test_accepting_an_offer_without_a_progress_callback_still_works(tmp_path, mo
     assert owner.accept_learning(offer) is True
 
 
+@pytest.mark.bootstrap_profile
 def test_a_raising_session_stop_still_releases_the_meetings_worker(tmp_path, monkeypatch):
     """Final review Minor 5: `_settle_offer` ran after `session.stop()`, so a
     raise there orphaned the live worker for the app's lifetime -- nothing
@@ -1938,6 +2005,7 @@ def test_a_raising_session_stop_still_releases_the_meetings_worker(tmp_path, mon
     owner.stop()
 
 
+@pytest.mark.bootstrap_profile
 def test_decline_and_dismiss_release_the_worker(tmp_path, monkeypatch):
     store = _store(tmp_path)
     owner, result, backend = _stopped_owner(tmp_path, monkeypatch, voiceprint_store=store)
@@ -1951,6 +2019,7 @@ def test_decline_and_dismiss_release_the_worker(tmp_path, monkeypatch):
     assert owner.accept_learning(offer) is False                 # the offer is gone
 
 
+@pytest.mark.bootstrap_profile
 def test_an_unanswered_offer_lapses_when_the_screen_dismisses_it(tmp_path, monkeypatch):
     owner, result, backend = _stopped_owner(tmp_path, monkeypatch, voiceprint_store=_store(tmp_path))
     owner.learning_offer(result)
@@ -1958,6 +2027,7 @@ def test_an_unanswered_offer_lapses_when_the_screen_dismisses_it(tmp_path, monke
     assert backend.closed == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_a_new_meeting_lapses_the_previous_offer(tmp_path, monkeypatch):
     owner, result, backend = _stopped_owner(tmp_path, monkeypatch, voiceprint_store=_store(tmp_path))
     owner.learning_offer(result)
@@ -1966,6 +2036,7 @@ def test_a_new_meeting_lapses_the_previous_offer(tmp_path, monkeypatch):
     owner.stop()
 
 
+@pytest.mark.bootstrap_profile
 def test_shutdown_lapses_the_offer_and_closes_the_worker(tmp_path, monkeypatch):
     owner, result, backend = _stopped_owner(tmp_path, monkeypatch, voiceprint_store=_store(tmp_path))
     owner.learning_offer(result)
@@ -1973,6 +2044,7 @@ def test_shutdown_lapses_the_offer_and_closes_the_worker(tmp_path, monkeypatch):
     assert backend.closed == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_accept_reports_failure_without_raising_when_the_export_fails(tmp_path, monkeypatch):
     store = _store(tmp_path)
     backend = FakeBackend()
@@ -1984,6 +2056,7 @@ def test_accept_reports_failure_without_raising_when_the_export_fails(tmp_path, 
     assert backend.closed == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_enroll_from_mic_refused_while_meeting_active(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "resolve_effective_config", lambda: SimpleNamespace(provider="p", model="m", language="en"))
     owner, _, _ = _owner(tmp_path, voiceprint_store=_store(tmp_path, enrolled=False))
@@ -2303,6 +2376,7 @@ def test_enroll_from_mic_returns_cancelled_before_it_records(tmp_path, monkeypat
     assert PcmRecorder.instances == []
 
 
+@pytest.mark.bootstrap_profile
 def test_start_refuses_while_an_enrollment_holds_the_mic(tmp_path, monkeypatch):
     """Review I4, the reverse guard: `enroll_from_mic` already refuses during
     a meeting; a Start during an enrollment opened a second recorder on the
@@ -2445,6 +2519,7 @@ def test_enroll_from_mic_refuses_a_second_concurrent_enrollment(tmp_path, monkey
 
 # ---- review C1: an offer's release must never touch a live meeting --------
 
+@pytest.mark.bootstrap_profile
 def test_accepting_an_offer_after_a_new_start_leaves_the_live_worker_open(tmp_path, monkeypatch):
     """The reviewer's repro 1: Accept is in flight (an export can take up to
     10 s) when the user starts the next meeting. The lapse closes the offer's
@@ -2483,6 +2558,7 @@ def test_accepting_an_offer_after_a_new_start_leaves_the_live_worker_open(tmp_pa
     owner.stop()
 
 
+@pytest.mark.bootstrap_profile
 def test_dismissing_a_lapsed_offer_leaves_the_live_worker_open(tmp_path, monkeypatch):
     """The reviewer's repro 2 -- the likely Task-5 wiring: a new meeting hides
     the offer card, and the screen calls `dismiss_learning()` afterwards.
@@ -2510,6 +2586,7 @@ def test_dismissing_a_lapsed_offer_leaves_the_live_worker_open(tmp_path, monkeyp
     owner.stop()
 
 
+@pytest.mark.bootstrap_profile
 def test_declining_a_stale_offer_is_a_no_op(tmp_path, monkeypatch):
     """Review M9: `decline_learning` honours its argument."""
     owner, result, backend = _stopped_owner(tmp_path, monkeypatch, voiceprint_store=_store(tmp_path))
@@ -2521,6 +2598,7 @@ def test_declining_a_stale_offer_is_a_no_op(tmp_path, monkeypatch):
     assert backend.closed == 1 and owner.pending_offer is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("with_pending_offer", [False, True])
 def test_dismiss_never_blocks_behind_an_in_flight_stop(tmp_path, monkeypatch, with_pending_offer):
     """Re-review N1: the offer-answer paths run on the UI thread, and a Stop
@@ -2572,6 +2650,7 @@ def test_dismiss_never_blocks_behind_an_in_flight_stop(tmp_path, monkeypatch, wi
     owner.dismiss_learning()       # tidy up whatever the Stop settled
 
 
+@pytest.mark.bootstrap_profile
 def test_a_refused_start_keeps_the_pending_offer(tmp_path, monkeypatch):
     """Re-review N3: only a meeting that actually starts lapses the previous
     one's offer -- a Start refused during an enrollment used to destroy it on
@@ -2604,6 +2683,7 @@ def test_a_refused_start_keeps_the_pending_offer(tmp_path, monkeypatch):
     assert offer_backend.closed == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_enrollment_owns_its_worker_while_an_offer_is_answered(tmp_path, monkeypatch):
     """Re-review N2: a 30 s recording is long enough for the user to answer
     the pending offer meanwhile. Borrowing that offer's worker meant the
@@ -2659,6 +2739,7 @@ def test_the_recorder_is_released_when_a_recording_slice_raises(tmp_path, monkey
     assert backend.closed == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_pending_offer_survives_a_screen_remount(tmp_path, monkeypatch):
     """Review M11: `learning_offer()` stays one-shot, but a screen that
     remounted between Stop and the answer can read the offer back."""
@@ -2670,6 +2751,7 @@ def test_pending_offer_survives_a_screen_remount(tmp_path, monkeypatch):
     assert owner.pending_offer is None
 
 
+@pytest.mark.bootstrap_profile
 def test_stop_without_a_qualifying_sample_never_reads_the_store(tmp_path, monkeypatch):
     """Review I3: a meeting that could never produce a sample must not raise a
     Keychain prompt at Stop just to discover that."""
@@ -2689,6 +2771,7 @@ def test_stop_without_a_qualifying_sample_never_reads_the_store(tmp_path, monkey
     assert backend.closed == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_a_concurrent_second_stop_still_releases_the_worker(tmp_path, monkeypatch):
     """Review M4: `session.stop()` returning None (a genuinely concurrent
     second caller) computed no offer and left the worker running."""
@@ -2702,6 +2785,7 @@ def test_a_concurrent_second_stop_still_releases_the_worker(tmp_path, monkeypatc
     assert backend.closed == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_the_voiceprint_vector_never_reaches_a_log_line(tmp_path, monkeypatch, captured_lines):
     """Spec §6: logs carry modes, counts and exception types -- never the
     vector, a speaker name, or a path."""
