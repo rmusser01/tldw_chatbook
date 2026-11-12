@@ -15,7 +15,7 @@ This document describes the lasting file↔DB notes sync: the runtime owner, the
 | `Notes/notes_device_state_store.py` | Durable roots/bindings/operations/recovery records at `<user_data_dir>/tldw_chatbook_notes_sync_state.db` |
 | `Notes/notes_sync_authority.py` + `notes_scope_service.py` | `NotesScopeSyncAuthority` (DB-side CRUD authority), global/workspace scopes |
 | `Notes/sync_paths.py` + `notes_sync_filesystem.py` | Descriptor-anchored FS boundary (`O_NOFOLLOW`, dir-fd pinned ops, 10 MiB file cap, xattr bounds) |
-| `Notes/notes_sync_legacy.py` | Read-only migrator of legacy evidence into paused candidates — the only place LWW ever existed |
+| `Notes/notes_sync_legacy.py` | Read-only migrator of legacy evidence into paused candidates and source of the legacy picker directory suggestion |
 | `Notes/file_notes_service.py` | `FileNotesService` — session-scoped file-notes editing (disk authority) |
 | `Notes/file_notes_git_*.py`, `git_process_containment.py` | Guarded session git commit/push (ADR-038/039) |
 

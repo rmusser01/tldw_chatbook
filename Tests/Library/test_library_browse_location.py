@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from tldw_chatbook import config
 from tldw_chatbook.Library import library_browse_location as module
 from tldw_chatbook.Library.library_browse_location import (
     claim_browse_directory,
@@ -152,14 +153,12 @@ def test_a_remembered_directory_still_wins(tmp_path, monkeypatch):
     from tldw_chatbook.Library.library_browse_location import browse_start_directory
 
     remembered = tmp_path / "remembered"
-    configured = tmp_path / "configured"
     remembered.mkdir()
-    configured.mkdir()
-    monkeypatch.setattr(
-        module,
-        "get_cli_setting",
-        lambda section, key=None, default=None: str(configured),
-    )
+
+    def unexpected_read(*_args, **_kwargs):
+        pytest.fail("a remembered directory must not read the legacy suggestion")
+
+    monkeypatch.setattr(config, "get_cli_setting", unexpected_read)
     assert browse_start_directory(str(remembered)) == remembered.resolve()
 
 
@@ -175,7 +174,7 @@ def test_the_configured_notes_folder_is_offered_before_home(tmp_path, monkeypatc
         seen.append((section, key))
         return str(configured)
 
-    monkeypatch.setattr(module, "get_cli_setting", fake_get)
+    monkeypatch.setattr(config, "get_cli_setting", fake_get)
     assert browse_start_directory(None) == configured.resolve()
     assert seen == [("notes", "sync_directory")]
 
@@ -184,7 +183,7 @@ def test_home_is_still_the_last_resort(monkeypatch):
     from tldw_chatbook.Library.library_browse_location import browse_start_directory
 
     monkeypatch.setattr(
-        module, "get_cli_setting", lambda section, key=None, default=None: None
+        config, "get_cli_setting", lambda section, key=None, default=None: None
     )
     assert browse_start_directory(None) == Path.home()
 
@@ -193,7 +192,7 @@ def test_an_unusable_configured_notes_folder_is_skipped(monkeypatch):
     from tldw_chatbook.Library.library_browse_location import browse_start_directory
 
     monkeypatch.setattr(
-        module,
+        config,
         "get_cli_setting",
         lambda section, key=None, default=None: "~/definitely/not/here/32251",
     )

@@ -29198,7 +29198,7 @@ class LibraryScreen(BaseAppScreen):
         await self._open_library_notes_sync_roots()
 
     @on(LibraryNotesAddFromFilesCanvas.ManageRootsRequested)
-    async def handle_library_notes_sync_manage_roots(
+    async def handle_library_notes_receipt_manage_roots(
         self, event: LibraryNotesAddFromFilesCanvas.ManageRootsRequested
     ) -> None:
         """Open the root list from the activation receipt (TASK-34000.17 AC#4)."""
