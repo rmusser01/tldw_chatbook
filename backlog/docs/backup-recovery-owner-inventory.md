@@ -3026,9 +3026,9 @@ other row, and each call was read in source:
   (Chatbooks import extraction, File Notes git private proof and hook directories).
   `Utils/secure_temp_files` is a generic boundary. `_rename_with_flags` renames
   inside the pinned Notes sync root, so it is `external_input`, as `PinnedSyncRoot` is.
-- One row is in a Plugins symbol (`SourceService.commit_import.operation`); it keeps
-  that symbol's `unsupported` / `miscellaneous` disposition until the Plugins
-  capture (TASK-40132) classifies it.
+- One row is in a Plugins symbol (`SourceService.commit_import.operation`); it takes
+  that symbol's disposition, `qualified` / `plugins`, which the Plugins capture
+  (TASK-40132) gave the symbol's other rows (2026-11-12, restack onto TASK-40132).
 
 The `pydub.export` row is `unsupported` / `tts`: its symbol's only other row is the
 system-temp `.m4a` (`process_artifact`), but the fallback export writes the M4B that
@@ -3101,7 +3101,7 @@ subprocess writer is the owner review's job, not the census's.
 | tldw_chatbook/Persona_Buddy/library.py | BuddyLibrary.publish_review | TemporaryDirectory | 1 | unsupported | assets |
 | tldw_chatbook/Petdex/review.py | review_petdex_import | TemporaryDirectory | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Petdex/review.py | write_native_export | NamedTemporaryFile | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Plugins/source_service.py | SourceService.commit_import.operation | TemporaryDirectory | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Plugins/source_service.py | SourceService.commit_import.operation | TemporaryDirectory | 1 | qualified | plugins |
 | tldw_chatbook/Prompt_Management/Prompts_Interop.py | <module> | mkdtemp | 1 | unsupported | miscellaneous |
 | tldw_chatbook/RAG_Search/eval/regression.py | RegressionDetector._save_atomic | mkstemp | 1 | unsupported | rag |
 | tldw_chatbook/STT/executor.py | LocalSTTExecutor._start_worker_locked | mkdtemp | 1 | process_artifact | process |
