@@ -524,8 +524,6 @@ async def test_semantic_read_error_preserves_last_known_state_and_retry_guidance
 async def test_actual_settings_semantic_controls_are_focusable_in_mounted_pane(
     tmp_path, request, theme, size
 ):
-    from pathlib import Path
-
     from Tests.UI.app_factory import _build_test_app
     from Tests.UI.test_library_rag_result_focus import _assert_painted
     from Tests.UI.test_settings_configuration_hub import _wait_for_selector
@@ -588,12 +586,9 @@ async def test_actual_settings_semantic_controls_are_focusable_in_mounted_pane(
                 _assert_painted(screen, button)
                 assert app.focused is button
                 assert button.region.width <= screen.region.width
-            qa = (
-                Path(__file__).resolve().parents[2]
-                / ".superpowers/sdd/2026-10-20-workspace-project-semantic-index"
-            )
             app.save_screenshot(
-                filename=f"task4-settings-semantic-{theme}-{size[0]}.svg", path=str(qa)
+                filename=f"task4-settings-semantic-{theme}-{size[0]}.svg",
+                path=str(tmp_path),
             )
             await asyncio.wait_for(boot_worker.wait(), timeout=120)
             assert boot_worker.state is WorkerState.SUCCESS
