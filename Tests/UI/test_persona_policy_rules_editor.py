@@ -501,6 +501,7 @@ def _import_review(policy_rule_count: int):
     )
 
 
+@pytest.mark.bootstrap_profile
 async def test_import_completion_surfaces_policy_rule_notice(
     monkeypatch, mock_app_instance, stub_characters, local_scope, tmp_path
 ):
@@ -544,6 +545,7 @@ async def test_import_completion_surfaces_policy_rule_notice(
         assert "policy rule" not in notice
 
 
+@pytest.mark.bootstrap_profile
 async def test_policy_rules_changed_persists_validated_rules_via_service(
     monkeypatch, mock_app_instance, stub_characters, local_scope
 ):
@@ -592,6 +594,7 @@ async def test_policy_rules_changed_persists_validated_rules_via_service(
         assert any("policy rules saved" in item.lower() for item in notifications)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.usefixtures("stub_characters")
 async def test_policy_rule_save_failure_logs_metadata_only(
     monkeypatch, mock_app_instance, local_scope

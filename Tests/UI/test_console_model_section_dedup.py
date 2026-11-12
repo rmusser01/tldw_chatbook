@@ -19,6 +19,7 @@ import pytest
 from textual.widgets import Button, Static
 
 from Tests.UI.console_rail_section_helpers import open_rail_section
+from Tests.UI.test_console_fleet_targets import _painted_text
 from Tests.UI.test_console_left_rail import make_console_pilot
 
 
@@ -31,6 +32,7 @@ def _section_text(screen) -> str:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_model_section_does_not_repeat_provider_and_model() -> None:
     async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
@@ -46,6 +48,7 @@ async def test_model_section_does_not_repeat_provider_and_model() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_model_section_keeps_what_is_not_shown_elsewhere() -> None:
     """De-duplicating must not gut the section."""
@@ -64,6 +67,7 @@ async def test_model_section_keeps_what_is_not_shown_elsewhere() -> None:
         assert "Max tokens" in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_status_bar_still_carries_provider_and_model() -> None:
     """The surviving copy must actually survive."""
@@ -71,10 +75,7 @@ async def test_the_status_bar_still_carries_provider_and_model() -> None:
         screen = pilot.app.screen
         await pilot.pause(0.3)
 
-        painted = " ".join(
-            str(getattr(widget, "renderable", ""))
-            for widget in screen.query("*")
-            if widget.display
-        )
-        assert "llama_cpp" in painted, "the provider vanished from the Console chrome"
+        status = screen.query_one("#console-status-text", Static)
+        painted = _painted_text(pilot.app, status)
+        assert "llama.cpp" in painted, "the provider vanished from the Console status bar"
         assert "local-model" in painted, "the model vanished from the Console chrome"

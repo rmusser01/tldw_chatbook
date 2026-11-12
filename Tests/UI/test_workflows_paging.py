@@ -151,6 +151,7 @@ async def choose_option(harness, pilot, option_id):
     await choose_existing(harness, pilot, option_id)
 
 
+@pytest.mark.bootstrap_profile
 async def test_slow_old_search_cannot_replace_newer_library_results(
     tmp_path, monkeypatch
 ):
