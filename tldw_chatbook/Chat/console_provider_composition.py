@@ -926,7 +926,7 @@ def _compose_raw_shell_provider(
             return ()
         if not workspace_id:
             raise ValueError("raw shell workspace unavailable")
-        registry = getattr(self.app, "workspace_registry_service", None)
+        registry = self.app.workspace_registry_service
         if registry is None:
             raise ValueError("workspace registry unavailable")
         with operation_owned_connection(registry.db):

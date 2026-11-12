@@ -24,7 +24,7 @@ import tempfile
 import threading
 from threading import Event
 import time
-from typing import Any, BinaryIO, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, BinaryIO, Literal, TypeAlias
 
 from tldw_chatbook.Agents.run_log import configured_max_record_bytes
 from tldw_chatbook.Utils.input_validation import (
@@ -40,10 +40,9 @@ from tldw_chatbook.STT.executor_process_tree import (
     WorkerContainmentIdentity,
     enter_worker_containment,
 )
-from tldw_chatbook.Tools.workspace_shell_guard import (
-    ShellDialect,
-    workspace_deletion_violation,
-)
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Tools.workspace_shell_guard import ShellDialect
 
 MAX_RAW_COMMAND_BYTES = RAW_CLI_COMMAND_MAX_BYTES
 MAX_RAW_TIMEOUT_SECONDS = RAW_CLI_TIMEOUT_MAX_SECONDS
@@ -591,6 +590,10 @@ def resolve_checked_workspace_shell_argv(request: RawCliRequest) -> tuple[str, .
         request.shell, request.command, executable_lookup=shutil.which
     )
     if request.caller == "model" and request.protected_roots:
+        from tldw_chatbook.Tools.workspace_shell_guard import (
+            workspace_deletion_violation,
+        )
+
         try:
             violation = workspace_deletion_violation(
                 request.command,

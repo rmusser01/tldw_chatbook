@@ -568,7 +568,7 @@ def test_workspace_guard_retires_native_call_after_prelaunch_refusal(
     from tldw_chatbook.Agents.run_context import use_run_id
     from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
     from tldw_chatbook.Chat.console_raw_cli import RawCliRuntime
-    from tldw_chatbook.Tools import raw_cli_executor
+    from tldw_chatbook.Tools import raw_cli_executor, workspace_shell_guard
     from tldw_chatbook.Utils import platform_files
 
     runtime = RawCliRuntime(read_permitted=lambda: True)
@@ -589,7 +589,7 @@ def test_workspace_guard_retires_native_call_after_prelaunch_refusal(
 
     decisions = iter((None, "workspace-folder-wipe"))
     monkeypatch.setattr(
-        raw_cli_executor,
+        workspace_shell_guard,
         "workspace_deletion_violation",
         lambda *a, **k: next(decisions),
     )
