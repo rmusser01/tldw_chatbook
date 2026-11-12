@@ -17,17 +17,11 @@ Note (chunking-template-parity PR 0): the bespoke table serialization
 dead code; tables are chunked as structural blocks by the vendored engine.
 """
 
-import pytest
 import logging
+import sys
+from contextlib import contextmanager
 
-# Import optional dependency checker
-from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
-
-# Retrieval cases keep their dependency gate until their offline fixtures are owned.
-_requires_embeddings = pytest.mark.skipif(
-    not DEPENDENCIES_AVAILABLE.get("embeddings_rag", False),
-    reason="RAG tests require embeddings dependencies: pip install tldw_chatbook[embeddings_rag]",
-)
+import pytest
 
 # Configure logging
 logging.basicConfig(
@@ -186,8 +180,6 @@ async def test_enhanced_chunking():
 @pytest.mark.asyncio
 async def test_enhanced_rag_service(tmp_path, monkeypatch):
     """Index child chunks and expand a semantic result to its parent text."""
-    import sys
-
     from tldw_chatbook.RAG_Search import config_profiles
     from tldw_chatbook.RAG_Search.simplified import create_rag_service
     from tldw_chatbook.RAG_Search.simplified.config import (
@@ -250,104 +242,102 @@ async def test_enhanced_rag_service(tmp_path, monkeypatch):
             service.close()
 
 
-@_requires_embeddings
-@pytest.mark.asyncio
-async def test_v2_full_features():
-    """Test V2 service with all features enabled."""
-    from tldw_chatbook.RAG_Search.simplified import create_rag_service, RAGConfig
+@pytest.fixture
+def offline_profile_service(tmp_path, monkeypatch):
+    from Tests.RAG_Search.test_reranker_degraded_paths import _install_fake_provider
+    from tldw_chatbook.RAG_Search import config_profiles
+    from tldw_chatbook.RAG_Search.simplified import RAGConfig, create_rag_service
 
-    logger.info("\n=== Testing V2 Service with Full Features ===")
+    manager = config_profiles.get_profile_manager(profiles_dir=tmp_path / "profiles")
+    monkeypatch.setattr(config_profiles, "_GLOBAL_PROFILE_MANAGER", manager)
+    provider_calls = _install_fake_provider(monkeypatch)
 
-    # Create service with full profile
-    config = RAGConfig()
-    config.embedding.model = "mock"
-    config.vector_store.type = "in_memory"
-
-    service = create_rag_service(
-        profile_name="hybrid_full",  # All features enabled
-        config=config,
-    )
-
-    # Verify all features are enabled
-    assert service.enable_parent_retrieval, "Parent retrieval should be enabled"
-    assert service.enable_reranking, "Reranking should be enabled"
-    assert service.enable_parallel_processing, "Parallel processing should be enabled"
-
-    content = create_test_document()
-
-    # Index document
-    result = await service.index_document(
-        doc_id="test_v2_001",
-        content=content,
-        title="Test Document for V2",
-        metadata={"test": "v2_features"},
-    )
-
-    logger.info(f"Indexed document: {result}")
-
-    # Test search with all features
-    queries = ["revenue growth", "customer satisfaction"]
-
-    for query in queries:
-        logger.info(f"\nSearching with all features for: '{query}'")
-
-        results = await service.search(
-            query=query,
-            top_k=5,
-            search_type="hybrid",  # Uses both keyword and semantic
-            rerank=True,  # Should use reranking
-        )
-
-        logger.info(f"Found {len(results)} results")
-        for i, result in enumerate(results[:2]):
-            logger.info(f"  Result {i + 1}: Score={result.score:.3f}")
-            logger.info(f"    Preview: {result.document[:100]}...")
-
-
-@_requires_embeddings
-@pytest.mark.asyncio
-async def test_profile_switching():
-    """Test switching between different profiles."""
-    from tldw_chatbook.RAG_Search.simplified import create_rag_service, RAGConfig
-
-    logger.info("\n=== Testing Profile Switching ===")
-
-    config = RAGConfig()
-    config.embedding.model = "mock"
-    config.vector_store.type = "in_memory"
-
-    profiles = [
-        "bm25_only",
-        "vector_only",
-        "hybrid_basic",
-        "hybrid_enhanced",
-        "hybrid_full",
-    ]
-
-    for profile in profiles:
-        logger.info(f"\nTesting profile: {profile}")
+    @contextmanager
+    def open_service(profile, prompts_db=None):
+        config = RAGConfig()
+        config.embedding.model = "mock"
+        config.embedding.device = "cpu"
+        config.vector_store.type = "memory"
+        config.search.media_db_path = tmp_path / "absent-media.db"
+        config.search.chachanotes_db_path = tmp_path / "absent-chacha.db"
+        config.search.prompts_db_path = prompts_db or tmp_path / "absent-prompts.db"
         service = create_rag_service(profile_name=profile, config=config)
+        try:
+            assert service.profile.id == profile
+            yield service
+        finally:
+            with monkeypatch.context() as cleanup:
+                cleanup.setitem(sys.modules, "torch", None)
+                service.close()
 
-        # Index a simple document
-        await service.index_document(
-            doc_id=f"test_{profile}",
-            content="This is a test document for profile testing.",
-            title=f"Test {profile}",
+    return open_service, provider_calls
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_v2_full_features(tmp_path, offline_profile_service):
+    """Test V2 service with all features enabled."""
+    from Tests.RAG_Search.test_keyword_leg_prompts import _seed_prompts
+
+    prompts, ids = _seed_prompts(
+        tmp_path,
+        [("Quarterly review", "Summarize revenue growth and customer satisfaction.")],
+    )
+    open_service, provider_calls = offline_profile_service
+    with open_service("hybrid_full", prompts) as service:
+        assert service.enable_parent_retrieval
+        assert service.enable_reranking
+        assert service.enable_parallel_processing
+        indexed = await service.index_document(
+            doc_id="test_v2_001",
+            content=create_test_document(),
+            title="Test Document for V2",
+            metadata={"test": "v2_features"},
         )
+        assert indexed.success and indexed.chunks_created > 0
 
-        # Search based on profile type
-        if profile == "bm25_only":
-            search_type = "keyword"
-        elif profile == "vector_only":
-            search_type = "semantic"
-        else:
-            search_type = "hybrid"
+        for query in ("revenue growth", "customer satisfaction"):
+            calls_before = len(provider_calls)
+            results = await service.search(
+                query=query, top_k=5, search_type="hybrid", rerank=True
+            )
+            assert any(row.metadata.get("doc_id") == "test_v2_001" for row in results)
+            assert any(row.id == f"prompt_{ids['Quarterly review']}" for row in results)
+            assert any(row.metadata.get("rerank_score") == 0.5 for row in results)
+            assert len(provider_calls) > calls_before
 
-        results = await service.search(
-            query="test document", search_type=search_type, top_k=1
-        )
 
-        logger.info(f"  Search type: {search_type}, Results: {len(results)}")
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_profile_switching(tmp_path, offline_profile_service):
+    """Test switching between different profiles."""
+    from Tests.RAG_Search.test_keyword_leg_prompts import _seed_prompts
+
+    text = "This is a test document for profile testing."
+    prompts, ids = _seed_prompts(tmp_path, [("Profile test", text)])
+    open_service, _ = offline_profile_service
+    profiles = {
+        "bm25_only": "keyword",
+        "vector_only": "semantic",
+        "hybrid_basic": "hybrid",
+        "hybrid_enhanced": "hybrid",
+        "hybrid_full": "hybrid",
+    }
+    for profile, search_type in profiles.items():
+        doc_id = f"test_{profile}"
+        with open_service(profile, prompts if search_type == "keyword" else None) as service:
+            indexed = await service.index_document(
+                doc_id=doc_id, content=text, title=f"Test {profile}"
+            )
+            assert indexed.success and indexed.chunks_created > 0
+            results = await service.search(
+                query="test document", search_type=search_type, top_k=1
+            )
+            assert len(results) == 1, profile
+            if search_type == "keyword":
+                assert results[0].id == f"prompt_{ids['Profile test']}"
+            else:
+                assert results[0].metadata["doc_id"] == doc_id
 
 
 # Remove main function and if __name__ block - pytest will find and run the tests automatically
