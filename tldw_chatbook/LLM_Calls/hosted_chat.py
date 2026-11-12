@@ -702,7 +702,6 @@ def hosted_chat_request(
     allowed_choice_keys: frozenset[str] = frozenset(),
     allowed_message_keys: frozenset[str] = frozenset(),
     tolerant_top_level_extras: bool = False,
-    allowed_tool_call_keys: frozenset[str] = frozenset(),
     wire_normalizer: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
     allowed_tool_call_keys: frozenset[str] = frozenset(),
 ) -> HostedChatTurn | HostedChatStream:
@@ -738,7 +737,6 @@ def hosted_chat_request(
         allowed_choice_keys=allowed_choice_keys,
         allowed_message_keys=allowed_message_keys,
         tolerant_top_level_extras=tolerant_top_level_extras,
-        allowed_tool_call_keys=allowed_tool_call_keys,
         wire_normalizer=wire_normalizer,
         allowed_tool_call_keys=allowed_tool_call_keys,
     )
