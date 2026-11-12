@@ -585,7 +585,12 @@ async def test_spoken_send_skill_read_ignores_background_and_repeated_fetches(
                 exercise_background_reads=True,
             )
             assert spoken == ["Sent."], notices
-            await until(lambda: gateway.stream_calls == 1)
+            try:
+                await until(lambda: gateway.stream_calls == 1)
+            except AssertionError as error:
+                controller = console._ensure_console_chat_controller()
+                error.add_note(repr(controller.run_state_for(session_id)))
+                raise
             await _idle(host, console, pilot, session_id)
             assert _sent_or_queued(console, session_id) == [ARMED]
             assert gateway.stream_calls == 1

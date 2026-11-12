@@ -869,23 +869,32 @@ def _stub_llama_network(
 
 
 async def _console_settled(console, pilot, predicate, header) -> None:
-    """Wait until readiness settles and the header badge paints its word.
+    """Wait until readiness and all three asserted surfaces paint the same word.
 
     TASK-38961: the rail rows repaint inside the 0.25 s idle poll, but the
     header badge repaints through ``_sync_console_control_bar``, which can
     defer to a coalesced replay (0.2 s or a backoff); a fixed 0.3 s after
-    readiness moved lost that race under load. ``header`` maps the settled
-    readiness to the badge's expected text.
+    readiness moved lost that race under load. The header can also refresh
+    on its own, so wait for the rail rows too. ``header`` maps the settled
+    readiness to the expected text.
     """
-    painted = ""
+    painted = {}
     for _ in range(300):
         await pilot.pause(0.05)
         readiness = console._active_console_settings_readiness()[1]
         if predicate(readiness):
-            painted = _rail_text(console, "#workbench-header-status")
-            if painted == header(readiness):
+            expected = header(readiness)
+            painted = {
+                selector: _rail_text(console, selector)
+                for selector in (
+                    "#workbench-header-status",
+                    "#console-model-section-recovery",
+                    "#console-settings-readiness-row",
+                )
+            }
+            if all(word == expected for word in painted.values()):
                 return
-    pytest.fail(f"Console readiness or its header badge never settled: {painted!r}")
+    pytest.fail(f"Console readiness or its surfaces never settled: {painted!r}")
 
 
 async def _mounted_pick_popover(harness, pilot):

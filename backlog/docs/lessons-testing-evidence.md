@@ -25337,3 +25337,14 @@ minutes:
 **Incident.** The spoken Send fixture returned object() from its skill-context stub. Real background discovery called .get on that value and terminated the mounted host before the Send acknowledgement. The same stub also repeated its draft edit for later reads. A valid mapping for every caller plus an exact, one-shot spoken-worker claim fixed the demonstrated defect; a real background/repeated-read control and both original Send controls passed after rebasing onto dev4a9. This earlier failure does not establish the cause of the separate hosted turn_refused.
 
 **What to do.** Preserve a shared reader's return contract for all callers, and scope injected side effects to the actual operation owner. Test background and repeated calls without disabling them. Receipts: pr3496-send-refusal-diagnostic-20261112-1 and pr3496-rebased-ui-fixes-20261112-1 under claude-watch-final-gate-review.
+## Do not wait for a render the measuring task need not perform (PR3496, 2026-11-12)
+
+**Incident.** The cadence test paused its timer, called it once and then waited for a successful render in a list that recorded only its own task. A controlled real background poll on unchanged dev rendered and served19/19; the manual poll correctly skipped unchanged state, leaving that list empty forever. The original30-second assertion failed. Qualifying the natural current-run projection before pausing let the initial manual poll skip while preserving all later exact coalescing and freshness assertions. This establishes a valid failing interleaving, not the exact historical CI branch.
+
+**What to do.** Establish the real state that measurement requires, and wait only for outcomes the observed owner can still produce. Do not repeat callbacks until a counter turns green. Receipts: baseline-4a9-ui9-first-tick-injected-20261112-1 and pr3496-ui9-first-tick-corrected-20261112-1.
+
+## Re-query a control after waiting through its redraw (PR3496, 2026-11-12)
+
+**Incident.** The Library fixture captured Manage, awaited its painted label, then pressed the captured object. With the existing real receipt-widget host, same-receipt recomposition closed and detached that button: its press posted zero events, while a current painted button posted one. The full root-activation case cannot reach this boundary on Windows because writable sync roots are unsupported there; the widget control proves the reference hazard without claiming the historical CI cause.
+
+**What to do.** Resolve the current widget inside the bounded observation and again immediately before the original press, with no intervening await. Retain the actual message path, navigation assertions and timeout. Receipt: pr3496-notes-recompose-control-20261112-1.

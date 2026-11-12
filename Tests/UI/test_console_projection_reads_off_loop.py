@@ -404,8 +404,8 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
 ):
     """AC#3 (coalescing) and AC#5 (freshness: one poll interval at most).
 
-    The run is held at provider validation (its run start) and its poll's
-    timer is held too, so this test decides when it ticks; the backstop's
+    The run is held at provider validation. Once its natural projection settles,
+    its poll timer is held so this test decides when it ticks; the backstop's
     clock stands still unless the test moves it. Projections are counted in
     the test's own task only.
     """
@@ -418,6 +418,22 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
             console = await _held_run(host, pilot, gateway)
             timer = console._console_transcript_sync_timer
             assert timer is not None, "the run start started no poll"
+            cadence = config_sync._cadence(console)
+
+            def sync_settled() -> bool:
+                return not console._console_sync_in_progress and not _replay_pending(
+                    console
+                )
+
+            def run_start_projected() -> bool:
+                if not sync_settled() or cadence.at != clock.now:
+                    return False
+                _objects, values = config_sync._projection_inputs(console)
+                return cadence.values == values
+
+            # Let the natural poll serve startup work before measuring coalescing.
+            await until(run_start_projected, timeout=30)
+            assert console._console_run_active(), "the held run ended during setup"
             timer.pause()
             owner = asyncio.current_task()
             calls: list[bool] = []
@@ -436,11 +452,6 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
                 console, "_sync_console_rail_and_controls", counting_project
             )
 
-            def sync_settled() -> bool:
-                return not console._console_sync_in_progress and not _replay_pending(
-                    console
-                )
-
             async def settled_sync() -> None:
                 await until(sync_settled, timeout=30)
                 await console._sync_native_console_chat_ui()
@@ -450,9 +461,8 @@ async def test_explicit_syncs_of_a_run_start_share_the_next_ticks_projection(
                 await timer._callback()
 
             try:
-                await tick()  # The run start's own tick projects.
-                await until(lambda: True in calls, timeout=30)
-                cadence = config_sync._cadence(console)
+                # A poll may skip work already served by the natural startup poll.
+                await tick()
                 before = len(calls)
 
                 # Three syncs requested within the poll interval: none projects.
