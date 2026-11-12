@@ -71,8 +71,9 @@ def test_version_states_empty_input_reads_nothing(db: CharactersRAGDB) -> None:
     assert db.get_note_version_states([]) == {}
 
 
+@pytest.mark.bootstrap_profile
 def test_interop_service_wrapper_passes_through(
-    db: CharactersRAGDB, tmp_path: Path
+    db: CharactersRAGDB, tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
     base_dir = tmp_path / "notes-base"
     base_dir.mkdir(mode=0o700)
@@ -81,6 +82,7 @@ def test_interop_service_wrapper_passes_through(
         api_client_id="test-app",
         global_db_to_use=db,
     )
+    request.addfinalizer(service.close_all_user_connections)
     db.add_note("Wrapped", "wrapped body", note_id="note-wrapped")
 
     states = service.get_note_version_states(_USER, ["note-wrapped"])

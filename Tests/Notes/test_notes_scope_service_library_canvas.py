@@ -32,7 +32,7 @@ USER_ID = "library-canvas-user"
 
 
 @pytest.fixture
-def notes_scope_service(tmp_path):
+def notes_scope_service(tmp_path, request):
     """Real ``NotesScopeService`` over a real (temp-file) ChaChaNotes DB.
 
     Mirrors ``app.py``'s construction: a ``NotesInteropService`` given a
@@ -47,11 +47,13 @@ def notes_scope_service(tmp_path):
     global_db = CharactersRAGDB(
         str(db_dir / "unified.db"), client_id="library-canvas-app"
     )
+    request.addfinalizer(global_db.close_connection)
     interop = NotesInteropService(
         base_db_directory=db_dir,
         api_client_id="library-canvas-client",
         global_db_to_use=global_db,
     )
+    request.addfinalizer(interop.close_all_user_connections)
     return NotesScopeService(
         local_notes_service=interop,
         server_service=None,
@@ -60,6 +62,7 @@ def notes_scope_service(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_create_then_update_round_trip_bumps_version(notes_scope_service):
     """Create (no keywords) returns the raw note id; a correct-version
     update (no keywords) returns the real backend's plain ``True`` and the
@@ -93,6 +96,7 @@ async def test_create_then_update_round_trip_bumps_version(notes_scope_service):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_update_with_stale_version_raises_conflict_and_does_not_mutate(
     notes_scope_service,
 ):
@@ -137,6 +141,7 @@ async def test_update_with_stale_version_raises_conflict_and_does_not_mutate(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_save_with_keywords_returns_dict_with_bumped_version_and_persists(
     notes_scope_service,
 ):
@@ -186,6 +191,7 @@ async def test_save_with_keywords_returns_dict_with_bumped_version_and_persists(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_create_from_note_template_round_trips_title_and_content(
     notes_scope_service,
 ):
@@ -223,6 +229,7 @@ async def test_create_from_note_template_round_trips_title_and_content(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_delete_with_correct_version_removes_the_note(notes_scope_service):
     """A correct-version delete returns the real local backend's plain
     ``True`` (``CharactersRAGDB.soft_delete_note``'s success return), and
@@ -256,6 +263,7 @@ async def test_delete_with_correct_version_removes_the_note(notes_scope_service)
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_repeated_delete_conflicts_instead_of_reporting_a_second_success(
     notes_scope_service,
 ):
@@ -293,6 +301,7 @@ async def test_repeated_delete_conflicts_instead_of_reporting_a_second_success(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_delete_then_restore_round_trip_bumps_version_and_restores_count(
     notes_scope_service,
 ):
@@ -351,6 +360,7 @@ async def test_delete_then_restore_round_trip_bumps_version_and_restores_count(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_restore_paths_do_not_execute_trigger_schema_ddl(notes_scope_service):
     """Restore never repairs the FTS trigger inside a user mutation."""
     created = await notes_scope_service.save_note(
@@ -386,6 +396,7 @@ async def test_restore_paths_do_not_execute_trigger_schema_ddl(notes_scope_servi
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_delete_with_stale_version_raises_conflict_and_does_not_remove(
     notes_scope_service,
 ):
@@ -429,6 +440,7 @@ async def test_delete_with_stale_version_raises_conflict_and_does_not_remove(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_count_notes_excludes_soft_deleted_notes(notes_scope_service):
     """``count_notes`` gives the Library rail badge an exact total instead
     of the "showing up to N" sample-cap suffix ``list_notes`` alone allows
@@ -461,6 +473,7 @@ async def test_count_notes_excludes_soft_deleted_notes(notes_scope_service):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_notes_user_content_evidence_tracks_only_accessible_active_local_notes(
     notes_scope_service,
 ):
@@ -491,6 +504,7 @@ async def test_notes_user_content_evidence_tracks_only_accessible_active_local_n
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_notes_user_content_evidence_does_not_log_exact_local_count(
     notes_scope_service, monkeypatch
 ):
@@ -627,6 +641,7 @@ async def test_notes_user_content_evidence_accepts_exact_server_total_only():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_create_with_keywords_returns_dict_and_persists_keywords(
     notes_scope_service,
 ):
@@ -655,6 +670,7 @@ async def test_create_with_keywords_returns_dict_and_persists_keywords(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_get_note_detail_enriched_with_keywords_round_trips_through_editor_state(
     notes_scope_service,
 ):
