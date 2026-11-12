@@ -1445,7 +1445,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-06, rebased onto dev 8b762b52fa: 38161 -> 38885 lines,
     #: 1376 -> 1403 methods (polish-1b's own +724 lines, +27 methods;
     #: same owner decision: expand limits, don't contort code).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38164, 1376),
+    #: 2026-11-12, rebased onto dev 4b90eb860b: 38164 -> 38888 lines,
+    #: 1376 -> 1403 methods (polish-1b's own +724 lines, +27 methods;
+    #: same owner decision: expand limits, don't contort code).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38888, 1403),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

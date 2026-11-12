@@ -194,7 +194,10 @@ _BUDGETS: dict[str, int] = {
     # own +18; same owner decision: expand limits, don't contort code).
     # 2026-11-06, rebased onto dev 2684e5453f: 3693 -> 3711 (polish-1b's
     # own +18; same owner decision: expand limits, don't contort code).
-    "tldw_chatbook/app_service_wiring.py": 3704,
+    # 2026-11-12, rebased onto dev 4b90eb860b: 3704 -> 3715 (dev measures
+    # 3697; polish-1b's own +18; same owner decision: expand limits,
+    # don't contort code).
+    "tldw_chatbook/app_service_wiring.py": 3715,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
@@ -898,6 +901,8 @@ _BUDGETS: dict[str, int] = {
     # limits, don't contort code): 26171 -> 26181 (measured): +10 a purge
     # keeps a pending unlink only when it is the link's latest intent and,
     # with no predecessor, has a bound base; a copied one is kept (I-A, m-A).
+    # 2026-11-12, rebased onto dev 4b90eb860b: 23517 -> 23828 (polish-1b's
+    # own +311; same owner decision: expand limits, don't contort code).
     "tldw_chatbook/DB/ChaChaNotes_DB.py": 22552,
     # TASK-39147: the rebased report reader and workflow migrations cross 4000.
     # 2026-11-12, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
@@ -1132,7 +1137,9 @@ _BUDGETS: dict[str, int] = {
     # own +53; same owner decision: expand limits, don't contort code).
     # 2026-11-06, rebased onto dev 2684e5453f: 5167 -> 5220 (polish-1b's
     # own +53; same owner decision: expand limits, don't contort code).
-    "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
+    # 2026-11-12, rebased onto dev 4b90eb860b: 5167 -> 5220 (polish-1b's
+    # own +53; same owner decision: expand limits, don't contort code).
+    "tldw_chatbook/Notes/notes_sync_runtime.py": 5220,
     "tldw_chatbook/Personal_Context/repository.py": 4997,
     # owner decision 2026-11-06 (expand limits, never contort code): TASK-39040
     # fix rounds 2 and 3, 4968 -> 5138 (+170) -- a clip handed to the default

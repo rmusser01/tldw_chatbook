@@ -491,7 +491,10 @@ _BUDGETS: dict[str, int] = {
     # own +40; same owner decision: expand limits, don't contort code).
     # 2026-11-06, rebased onto dev 2684e5453f: 5275 -> 5315 (polish-1b's
     # own +40; same owner decision: expand limits, don't contort code).
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5315,
+    # 2026-11-12, rebased onto dev 4b90eb860b: 5315 -> 5307 (dev measures
+    # 5267; polish-1b's own +40; same owner decision: expand limits,
+    # don't contort code).
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5307,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only
@@ -770,7 +773,9 @@ _BUDGETS: dict[str, int] = {
     # expand limits, don't contort code): the bulk keyword worker resolves
     # the Sync v2 profile once, before its per-note transactions:
     # 9093 -> 9115 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7425,
+    # 2026-11-12, rebased onto dev 4b90eb860b: 7425 -> 9117 (polish-1b's
+    # own +1692; same owner decision: expand limits, don't contort code).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 9117,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
@@ -836,7 +841,10 @@ _BUDGETS: dict[str, int] = {
     # own +87; same owner decision: expand limits, don't contort code).
     # 2026-11-06, rebased onto dev 2684e5453f: 2468 -> 2555 (polish-1b's
     # own +87; same owner decision: expand limits, don't contort code).
-    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2555,
+    # 2026-11-12, rebased onto dev 4b90eb860b: 2555 -> 2554 (dev measures
+    # 2467; polish-1b's own +87; same owner decision: expand limits,
+    # don't contort code).
+    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2554,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based
