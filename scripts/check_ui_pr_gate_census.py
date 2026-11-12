@@ -730,7 +730,7 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # PR3323 integration: preserve1311 selectors and append4 verified readiness/modal entries.
 # PR3330 integration appends the coded Send strip selector.
 # PR3333 integration appends the recorded MiniMax Stop outcome file.
-MINIMUM_FILES = 2035
+MINIMUM_FILES = 1317
 # 2026-10-26, Roleplay frame B2b (TASK-33910.4), owner decision (expand
 # limits, never contort code): appends Tests/UI/test_roleplay_import_sniff.py
 # at the tail (the last assignment is the one that takes effect). History:
@@ -738,6 +738,7 @@ MINIMUM_FILES = 2035
 # (1,156 entries, its floor read 1,149): 1,157; rebased 2026-10-30 onto dev
 # 7536ac3b87 (1,163 entries, floor 1,163): the floor is the measured count, 1,164.
 # PR3334 integration: retain current dev and append B2b sniff.
+MINIMUM_FILES = 1318
 # (Task 3) and Tests/UI/test_tag_filter_picker.py (Task 11) at the tail, one
 # commit each (the last assignment is the one that takes effect). History:
 # 1,145 -> 1,146 -> 1,147 on dev 38623632e9; rebased 2026-10-29 onto dev
@@ -748,138 +749,195 @@ MINIMUM_FILES = 2035
 # PR3346: preserve the reviewed 1,333-entry prefix and append two extraction controls.
 # PR3346: reader cases use their existing whole-file slot; append closed-owner coverage.
 # PR3346: append both native landing recomposition windows through one file.
+MINIMUM_FILES = 1337
 # TASK-38643 (2026-11-03) appends 12 node ids at the tail, one per test: the
 # Console rails' compact access and rail-scope seeding. The whole file runs
 # about 54-90 s serially, over the 30 s per-file budget. The floor is the
 # measured entry count.
+MINIMUM_FILES = 1349
 # TASK-38649 (2026-11-03): appends four readiness nodes at the tail (closed
 # owner, retry backoff, single retry timer, late delivery). The floor is the
 # measured entry count.
+MINIMUM_FILES = 1353
 # TASK-36527 (2026-11-03): append eight File Notes git-panel quit/removal
 # node ids at the tail: 1337 + 8.
+MINIMUM_FILES = 1361
 # TASK-38689 (2026-11-03): append the spoken-send capture node at the tail.
 # The floor is the measured entry count.
+MINIMUM_FILES = 1362
 # TASK-38689 review (2026-11-03): append the spent-capture spoken-send node
 # at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1363
 # TASK-36524 (2026-11-03): append the skill-eval panel file at the tail.
+MINIMUM_FILES = 1364
 # TASK-36525 (2026-11-03): append the Settings category sweep's six
 # (group, size) nodes and its coverage check at the tail.
+MINIMUM_FILES = 1371
 # TASK-38697 (2026-11-04): append the two widget-CSS base-before-subclass
 # nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1373
 # TASK-38686 (2026-11-04): append the mix-in off-loop save node, the
 # contended-save cancel node and the Save to Library double-press node at the
 # tail. The floor is the measured entry count.
+MINIMUM_FILES = 1376
 # TASK-38710/38711/38700 (2026-11-04): append 18 File Notes regression node
 # ids at the tail (width sweeps, refit, quit, push rehydrate). The floor is
 # the measured entry count.
+MINIMUM_FILES = 1394
 # TASK-38701 (2026-11-03): append two archive-recovery flow nodes at the tail.
+MINIMUM_FILES = 1396
 # TASK-38695 (2026-11-04): append the File Notes git, push and workspace
 # files' test functions (by parameter where one ran over the 30 s per-entry
 # budget) at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1660
 # TASK-38740 (2026-11-05): append the narrow Settings sweep's six
 # (category, height) nodes at the tail.
+MINIMUM_FILES = 1666
 # TASK-38714 (2026-11-05): append the Settings ▸ Agents worker-connection
 # node at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1667
 # TASK-38718 review (2026-11-05): append the Console resend guard's fifteen
 # tests as node entries at the tail (the file runs 113-118 s serially).
 # The floor is the measured entry count.
+MINIMUM_FILES = 1682
 # TASK-38745 (2026-11-05): append the pending display-owner controls file at
 # the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1683
 # TASK-38755 (2026-11-05): append the git panel fixed-region refit node at
 # the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1684
 # TASK-38757 (2026-11-05): append the File Notes narrow-view sweep's three
 # nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1687
 # TASK-38719 (2026-11-05): append the split modal tier-rule pin at the
 # tail. The floor is the measured entry count.
+MINIMUM_FILES = 1688
 # TASK-38741 (2026-11-05): append the 40x20 Notes source choices keyboard
 # case at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1689
 # TASK-38757 review (2026-11-05): append the four Library-screen nodes for
 # the hidden work pane coming forward at the tail. The floor is the measured
 # entry count.
+MINIMUM_FILES = 1693
 # TASK-38757 re-review (2026-11-05): append the five New-cancel, create and
 # resize-failure nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1698
 # TASK-38757 rev3 (2026-11-05): append the two navigator-choice nodes at the
 # tail. The floor is the measured entry count.
+MINIMUM_FILES = 1700
 # TASK-38966 (2026-11-06): append the Settings discovery-row capability node
 # at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1701
 # TASK-38983 (2026-11-06): append the failed-save next-step node at the tail.
 # The floor is the measured entry count.
+MINIMUM_FILES = 1702
 # TASK-38982 (2026-11-06): append the six narrow-navigator focus, Session
 # Git and refresh-failure nodes at the tail. The floor is the measured entry
 # count.
+MINIMUM_FILES = 1708
 # TASK-38981 (2026-11-06): append the fifteen list-beside-item, Prompts and
 # empty-list nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1723
 # TASK-38957 (2026-11-06): append the Folder files focus-supersede node at
 # the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1724
 # TASK-38981 / TASK-38983 review (2026-11-06): append the fourteen
 # stage-pick, empty-stage, Artifacts-stage and Retry-conflict nodes at the
 # tail. The floor is the measured entry count.
+MINIMUM_FILES = 1738
 # TASK-38981 re-review (2026-11-06): append the Media adjacent-key and Notes
 # wide-step nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1741
 # TASK-38981 re-review 3 (2026-11-06): append the three Notes widen nodes at
 # the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1744
 # TASK-38981 re-review 4 (2026-11-06): append the four stage-pick
 # user-move nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1748
 # TASK-39051 (2026-11-06): append the Library Notes Session Git layout file
 # at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1749
 # TASK-39050 (2026-11-06): append the two click-between-restores nodes
 # (Database Notes, Folder files) at the tail. The floor is the measured
 # entry count.
+MINIMUM_FILES = 1751
 # TASK-39062 (2026-11-06): append the two empty narrow Artifacts stage Tab
 # nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1753
 # TASK-39062 review (2026-11-06): append the two narrow Artifacts
 # first-artifact Tab nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1755
 # TASK-39052 review (2026-11-06): append the six per-destination Library
 # grip persistence nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1761
 # TASK-38978 / TASK-38979 / TASK-38980 (2026-11-06): append the Promote
 # write node, the real-key Ctrl+Q in-flight modal tests (17 entries, one per
 # test) and the portrait region editor tests (30 entries, per case for its
 # five heaviest tests) at the tail, split so they spread over consecutive
 # shards. The floor is the measured entry count.
+MINIMUM_FILES = 1809
 # TASK-33910.36 (2026-11-06, rebased on dev 8b762b52fa): append the five
 # TestPersonaHumanIdentityRemoval node ids at the tail (the class errored at
 # setup on dev until this change; the whole file is far over the 30 s
 # per-file budget). The floor is the measured entry count.
+MINIMUM_FILES = 1814
 # TASK-38605 (2026-11-02 audit, re-landed 2026-11-06): the dead MediaViewerPanel
 # and its whole-file entry Tests/UI/test_media_viewer_prompt_search_15477.py are
 # deleted, so the census drops one entry: 1814 - 1 = 1813.
+MINIMUM_FILES = 1813
 # PR3036 resync: retain all 1813 current entries and append 4 approval contracts.
+MINIMUM_FILES = 1817
 # PR3036 whole-branch review: append two bounded literal-Details regressions.
+MINIMUM_FILES = 1819
 # TASK-34569: preserve actual feedback MessagePump dispatch without eager helpers.
+MINIMUM_FILES = 1820
 # TASK-39122 (2026-11-07): append the region editor's cancelled-before-mount
 # case at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1821
 # TASK-39146 (2026-11-07): append the cancelled-dialog-wait file (nine
 # cases at insertion, eight since dev deleted media_viewer_panel.py; about
 # 10 s) at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1822
 # TASK-38977 (2026-11-07): append the five Prompts modal and response-rule
 # copy/gateway nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1827
 # TASK-38961 (2026-11-07): append the three Console endpoint-discovery
 # retry and pick-mode nodes at the tail. The floor is the measured entry
 # count.
+MINIMUM_FILES = 1830
 # TASK-38968 (2026-11-07): append the send-admission deferred-Enter capture
 # node at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1831
 # TASK-39120 (2026-11-07): append the Console Inspector section file at the
 # tail. The floor is the measured entry count.
+MINIMUM_FILES = 1832
 # TASK-38948 (2026-11-07): append the two 100 ms Send-feedback route nodes
 # at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1834
 # TASK-39133 / TASK-39135 / TASK-39134 (2026-11-07): append the llama.cpp
 # Settings handoff nodes (9), the moved-focus swap nodes (3) and the detail
 # width sweep (1) at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1847
 # TASK-39135 review r12s-rev1 (2026-11-07): append the PageDown case of the
 # moved-focus swap test at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1848
 # TASK-39135 review r12s-rev2 (2026-11-07): append the mid-rebuild move and
 # the Tab-into-the-rebuilt-panes nodes at the tail. The floor is the measured
 # entry count.
+MINIMUM_FILES = 1850
 # TASK-39135 review r12s-rev3 (2026-11-07): append the focus-reset and the
 # new-pane control nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1852
 # TASK-39142 / TASK-38993 / TASK-39136 (2026-11-07): append the inspector
 # workflow file's 18 tests, the llama.cpp snapshot file's [size0] and its 13
 # plain tests, and TASK-38953's 13 Settings sweep nodes at the tail, one
 # entry each. The floor is the measured entry count.
+MINIMUM_FILES = 1897
 # Review r12l-rev1 (2026-11-07): append the inspector focus carriers file's 15
 # nodes and the Console full config preparation file at the tail, out of the
 # recovered-suites job (the census holds bootstrap_profile files). The floor
 # is the measured entry count.
+MINIMUM_FILES = 1913
 # Round-12 restack (2026-11-09, dev 3a6498ae14): every round-12 block above
 # was written before dev's blocks above joined, so each floor here counts
 # dev's six net entries too; the two TASK-39142 / review r12l-rev1 blocks were
@@ -889,33 +947,44 @@ MINIMUM_FILES = 2035
 # 2026-11-10 (TASK-38948, owner decision "Off the gate, reorder next"): the
 # two 100 ms Send-feedback entries leave the PR gate until the paint reorder
 # passes on CI. The floor is the measured entry count.
+MINIMUM_FILES = 1911
 # TASK-39169 (2026-11-10): append the Settings focus-keeping nodes (three
 # parameter cases and one test) at the tail. The floor is the measured entry
 # count.
+MINIMUM_FILES = 1915
 # TASK-39169 review r13p-rev1 (2026-11-10): append four more Settings focus
 # nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1919
 # TASK-39169 review r13p-rev2 (2026-11-10): append five more Settings focus
 # and region-batch nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1924
 # Round 13 (2026-11-10): TASK-39154's MCP approval file, TASK-39158's resize
 # node and 69 of TASK-39170's destination visual-parity functions join the
 # tail. The floor is the measured entry count.
+MINIMUM_FILES = 1995
 # Review r13c-rev1 (2026-11-10): TASK-39170's Collections action node joins
 # the tail. The floor is the measured entry count.
+MINIMUM_FILES = 1996
 # TASK-39171 (2026-11-10): append the theme picker's 80x24 status-line node
 # and its Try-then-clean category switch node at the tail. The floor is the
 # measured entry count.
+MINIMUM_FILES = 1998
 # TASK-39130 / TASK-39153 (2026-11-10): append five re-pinned Library nodes
 # and the Console inspector rail minors file at the tail. The floor is the
 # measured entry count.
+MINIMUM_FILES = 2004
 # TASK-40132 review r13g-rev1 (2026-11-10): append the Backup screen group file
 # and the Plugins screen file's fifteen tests at the tail. The floor is the
 # measured entry count.
+MINIMUM_FILES = 2020
 # TASK-40132 review r13g-rev2 (2026-11-10): append the Plugins authority
 # dialog's restore-mismatch copy test at the tail. The floor is the measured
 # entry count.
+MINIMUM_FILES = 2021
 # TASK-38948 round 13 (2026-11-10): append the skill discovery's eager-factory
 # off-loop node and its superseded-refresh node at the tail. The floor is the
 # measured entry count.
+MINIMUM_FILES = 2023
 # TASK-38948 review r13n-rev1 (2026-11-10): append the four subscription
 # stale-snapshot pins and the eager held-trust-build closing node at the tail.
 # The floor is the measured entry count.
@@ -926,6 +995,7 @@ MINIMUM_FILES = 2029
 # TASK-33620.15.41 review (2026-11-05): append the run-chip activity-copy
 # file and the Library Auto outcome file's six cases at the tail. The floor
 # is the measured entry count.
+MINIMUM_FILES = 2036
 MINIMUM_FILES = 2036
 
 # TASK-34601.1 (2026-11-11): feedback handoff, Stop and actual image-reader
